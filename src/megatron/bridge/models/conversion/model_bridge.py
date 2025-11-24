@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import fnmatch
 import itertools
 import logging
 import re
@@ -415,7 +416,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return converted_weights_dict
 
     def load_weights_hf_to_megatron(
-        self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
+        self,
+        hf_pretrained: HFPreTrained,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        allowed_mismatched_params: Optional[List[str]] = None,
     ) -> List[MegatronModel]:
         """Load HuggingFace weights into Megatron models.
 
@@ -431,6 +435,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 weights to load.
             megatron_model (Union[MegatronModel, List[MegatronModel]]): Megatron model instance
                 or list of model instances (one per virtual pipeline stage).
+            allowed_mismatched_params (Optional[List[str]]): List of parameter names or patterns
+                to allow mismatch (skip instead of raise error).
 
         Returns:
             List[MegatronModel]: The input megatron_model as a list with loaded weights.
@@ -482,6 +488,22 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
                 # Check shape compatibility before copying
                 if converted_weights.shape != task.param_weight.shape:
+                    # Check whitelist
+                    is_whitelisted = False
+                    if allowed_mismatched_params:
+                        for pattern in allowed_mismatched_params:
+                            if fnmatch.fnmatch(task.mapping.megatron_param, pattern) or fnmatch.fnmatch(
+                                task.param_name, pattern
+                            ):
+                                is_whitelisted = True
+                                break
+
+                    if is_whitelisted:
+                        print_rank_0(
+                            f"WARNING: Shape mismatch for megatron param {task.mapping.megatron_param} allowed by whitelist. Skipping."
+                        )
+                        continue
+
                     raise ValueError(
                         f"Shape mismatch for megatron param {task.mapping.megatron_param}:\n"
                         f"  Expected shape: {task.param_weight.shape}\n"

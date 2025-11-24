@@ -134,7 +134,7 @@ def parse_cli_args():
         "-c",
         "--compute_dtype",
         type=str,
-        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc"],
+        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc", "nvfp4"],
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
@@ -216,6 +216,14 @@ def parse_cli_args():
         "--custom_mounts",
         type=list_of_strings,
         help="Comma separated string of mounts",
+        required=False,
+        default=[],
+    )
+    parser.add_argument(
+        "-cs",
+        "--custom_srun_args",
+        type=list_of_strings,
+        help="Comma separated string of srun arguments",
         required=False,
         default=[],
     )

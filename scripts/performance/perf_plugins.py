@@ -250,9 +250,6 @@ class PerfEnvPlugin(Plugin):
         if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-        if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
-            if compute_dtype == "bf16" and (not use_tokendrop):
-                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_name == "llama3" and model_size == "8b":

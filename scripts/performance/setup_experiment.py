@@ -184,6 +184,7 @@ if __name__ == "__main__":
             args.time_limit,
             args.container_image,
             custom_env_vars={},
+            custom_srun_args=args.custom_srun_args,
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,

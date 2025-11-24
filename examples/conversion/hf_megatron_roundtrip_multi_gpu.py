@@ -47,6 +47,7 @@ from rich.table import Table
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
@@ -63,6 +64,7 @@ def main(
     etp: int = 1,
     megatron_save_path: str | None = None,
     megatron_load_path: str | None = None,
+    trust_remote_code: bool | None = None,
     strict: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
@@ -77,7 +79,14 @@ def main(
     else:
         save_path = model_name
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True, torch_dtype=torch.bfloat16)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_model_id,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=trust_remote_code,
+            hf_path=hf_model_id,
+        ),
+        torch_dtype=torch.bfloat16,
+    )
 
     if megatron_load_path:
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -192,6 +201,7 @@ if __name__ == "__main__":
         default=None,
         help="Path to load the model in Megatron checkpoint format. If provided, model will not start from HF checkpoint.",
     )
+    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
     args = parser.parse_args()
     main(
@@ -203,6 +213,7 @@ if __name__ == "__main__":
         args.etp,
         args.megatron_save_path,
         args.megatron_load_path,
+        args.trust_remote_code,
     )
 
     if torch.distributed.is_initialized():
