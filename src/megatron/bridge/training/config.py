@@ -153,7 +153,7 @@ class DistributedInitConfig:
     Make sure EP and CP aren't used with this option enabled.
     """
 
-    use_gloo_process_groups: bool = True
+    use_gloo_process_groups: bool = False # True NOTE (yiakwy)
     """If set, create Gloo process groups for communications."""
 
     use_sharp: bool = False
