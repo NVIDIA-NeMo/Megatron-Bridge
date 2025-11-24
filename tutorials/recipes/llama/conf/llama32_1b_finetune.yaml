@@ -17,7 +17,7 @@
 # Modify values as needed for your use case.
 
 # Data configuration
-data:
+dataset:
   # Replace with your dataset path (JSONL format recommended)
   # data_path: /path/to/your/finetuning_dataset.jsonl
   seq_length: 4096
@@ -56,7 +56,7 @@ peft:
   alpha: 16  # LoRA alpha scaling
 
 # Model configuration
-# Note: seq_length must match data.seq_length
+# Note: seq_length must match dataset.seq_length
 model:
   seq_length: 4096
   tensor_model_parallel_size: 1
@@ -73,4 +73,3 @@ logger:
 # Random seed
 rng:
   seed: 1234
-

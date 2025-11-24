@@ -17,7 +17,7 @@
 # Modify values as needed for your use case.
 
 # Data configuration
-data:
+dataset:
   # Replace with your dataset path
   # data_path: /path/to/your/dataset
   sequence_length: 4096
@@ -67,4 +67,3 @@ logger:
 # Random seed
 rng:
   seed: 1234
-

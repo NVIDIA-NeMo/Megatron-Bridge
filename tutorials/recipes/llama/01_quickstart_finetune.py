@@ -85,15 +85,14 @@ def main() -> None:
     # === Use your own dataset ===
     # Replace SQuAD with your custom dataset
     # Option 1: Simple path override
-    # config.data.data_path = "/path/to/your/dataset.jsonl"
+    # config.dataset.dataset_root = "/path/to/your/dataset"
 
-    # Option 2: Use FinetuningDatasetConfig for custom JSONL datasets
-    # from megatron.bridge.training.data import FinetuningDatasetConfig
-    # config.data = FinetuningDatasetConfig(data_path="/path/to/your/dataset.jsonl")
-
-    # Option 3: Use HFDatasetConfig for HuggingFace datasets
-    # from megatron.bridge.training.data import HFDatasetConfig
-    # config.data = HFDatasetConfig(hf_dataset="squad", split="train")
+    # Or replace the dataset with FinetuningDatasetConfig for JSONL data
+    # from megatron.bridge.training.config import FinetuningDatasetConfig
+    # config.dataset = FinetuningDatasetConfig(
+    #     dataset_root="/path/to/your/dataset_dir",  # expects training/validation/test jsonl files
+    #     seq_length=config.model.seq_length,
+    # )
 
     # === Adjust learning rate ===
     # config.optimizer.lr = 5e-5
