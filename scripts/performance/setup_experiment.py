@@ -109,7 +109,7 @@ def main(
         plugins.append(NsysPlugin(
             profile_step_start=profiling_start_step,
             profile_step_end=profiling_stop_step,
-            profiling_gpu_metrics=profiling_gpu_metrics))
+            nsys_gpu_metrics=profiling_gpu_metrics))
 
     executor.container_mounts.extend(
         custom_mounts
