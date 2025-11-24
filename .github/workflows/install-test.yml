@@ -153,7 +153,9 @@ jobs:
       - name: Regenerate lockfile (if MCore was updated)
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
-          echo "🔄 Regenerating uv.lock for updated MCore dependencies..."
+          echo "🔄 Installing uv and regenerating lockfile for updated MCore dependencies..."
+          curl -LsSf https://astral.sh/uv/0.7.2/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
           uv lock
           echo "✅ Lockfile regenerated"
 
