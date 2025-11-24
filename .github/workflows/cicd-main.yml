@@ -228,6 +228,7 @@ jobs:
           context: .
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
           cache-from: |
             type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number || 0 }}-buildcache,mode=max
             type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
