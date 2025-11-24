@@ -154,7 +154,7 @@ jobs:
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
           echo "MCORE_TESTING=true" | tee -a "$GITHUB_ENV"
-          echo "⚙️ MCore testing mode enabled - will skip lockfile enforcement"
+          echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Set PATH
         run: |

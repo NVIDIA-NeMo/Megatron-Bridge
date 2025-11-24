@@ -114,7 +114,7 @@ main() {
         # Install dependencies
         # Skip --locked flag when testing against different MCore version
         if [[ "${MCORE_TESTING}" == "true" ]]; then
-            echo "⚙️ MCore testing mode: skipping lockfile enforcement"
+            echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
             uv sync --only-group build ${UV_ARGS[@]}
             uv sync \
                 --link-mode copy \
