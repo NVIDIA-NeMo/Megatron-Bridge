@@ -359,6 +359,8 @@ def training_log(
     timers = global_state.timers
     train_state = global_state.train_state
     iteration = train_state.step
+    # WandB logging uses 0-indexed iteration
+    wandb_iteration = iteration - 1 if iteration > 0 else 0
     writer = global_state.tensorboard_logger
     wandb_writer = global_state.wandb_logger
     energy_monitor = global_state.energy_monitor
@@ -451,14 +453,16 @@ def training_log(
             for metric, value in throughput_report.items():
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
-                wandb_writer.log(throughput_report, iteration)
+                throughput_report["trainer/global_step"] = wandb_iteration
+                wandb_writer.log(throughput_report)
         if logger_config.log_memory_to_tensorboard:
             memory_report = report_memory(memory_keys=logger_config.memory_keys)
             memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
             for metric, value in memory_report.items():
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
-                wandb_writer.log(memory_report, iteration)
+                memory_report["trainer/global_step"] = wandb_iteration
+                wandb_writer.log(memory_report)
         if logger_config.log_runtime_to_tensorboard:
             runtime_report = report_runtime(
                 train_state=train_state,
@@ -470,64 +474,67 @@ def training_log(
             for metric, value in runtime_report.items():
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
-                wandb_writer.log(runtime_report, iteration)
+                runtime_report["trainer/global_step"] = wandb_iteration
+                wandb_writer.log(runtime_report)
         if logger_config.log_l2_norm_grad_to_tensorboard:
             l2_report = report_l2_norm_grad(model)
             for metric, value in l2_report.items():
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
-                wandb_writer.log(l2_report, iteration)
+                l2_report["trainer/global_step"] = wandb_iteration
+                wandb_writer.log(l2_report)
         if wandb_writer:
-            wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
+            wandb_writer.log({"samples vs steps": train_state.consumed_train_samples, "trainer/global_step": wandb_iteration})
         writer.add_scalar("learning-rate", learning_rate, iteration)
         writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
         if wandb_writer:
-            wandb_writer.log({"learning-rate": learning_rate}, iteration)
+            wandb_writer.log({"learning-rate": learning_rate, "trainer/global_step": wandb_iteration})
         if config.optimizer.decoupled_lr is not None:
             writer.add_scalar("decoupled-learning-rate", decoupled_learning_rate, iteration)
         if global_state.train_state.skipped_train_samples > 0:
             writer.add_scalar("skipped-train-samples", global_state.train_state.skipped_train_samples, iteration)
             if wandb_writer:
-                wandb_writer.log({"skipped-train-samples": global_state.train_state.skipped_train_samples}, iteration)
+                wandb_writer.log({"skipped-train-samples": global_state.train_state.skipped_train_samples, "trainer/global_step": wandb_iteration})
         writer.add_scalar("batch-size", batch_size, iteration)
         writer.add_scalar("batch-size vs samples", batch_size, global_state.train_state.consumed_train_samples)
         if wandb_writer:
-            wandb_writer.log({"batch-size": batch_size}, iteration)
+            wandb_writer.log({"batch-size": batch_size, "trainer/global_step": wandb_iteration})
         for key in loss_dict:
             writer.add_scalar(key, loss_dict[key], iteration)
             writer.add_scalar(key + " vs samples", loss_dict[key], global_state.train_state.consumed_train_samples)
             if wandb_writer:
-                wandb_writer.log({key: loss_dict[key]}, iteration)
+                # Rename "lm loss" to "reduced_train_loss" for wandb
+                wandb_key = "reduced_train_loss" if key == "lm loss" else key
+                wandb_writer.log({wandb_key: loss_dict[key], "trainer/global_step": wandb_iteration})
         if logger_config.log_loss_scale_to_tensorboard:
             writer.add_scalar("loss-scale", loss_scale, iteration)
             writer.add_scalar("loss-scale vs samples", loss_scale, global_state.train_state.consumed_train_samples)
             if wandb_writer:
-                wandb_writer.log({"loss-scale": loss_scale}, iteration)
+                wandb_writer.log({"loss-scale": loss_scale, "trainer/global_step": wandb_iteration})
         if logger_config.log_world_size_to_tensorboard:
             writer.add_scalar("world-size", get_world_size_safe(), iteration)
             writer.add_scalar(
                 "world-size vs samples", get_world_size_safe(), global_state.train_state.consumed_train_samples
             )
             if wandb_writer:
-                wandb_writer.log({"world-size": get_world_size_safe()}, iteration)
+                wandb_writer.log({"world-size": get_world_size_safe(), "trainer/global_step": wandb_iteration})
         if grad_norm is not None:
             writer.add_scalar("grad-norm", grad_norm, iteration)
             writer.add_scalar("grad-norm vs samples", grad_norm, global_state.train_state.consumed_train_samples)
             if wandb_writer:
-                wandb_writer.log({"grad-norm": grad_norm}, iteration)
+                wandb_writer.log({"grad-norm": grad_norm, "trainer/global_step": wandb_iteration})
         if num_zeros_in_grad is not None:
             writer.add_scalar("num-zeros", num_zeros_in_grad, iteration)
             writer.add_scalar(
                 "num-zeros vs samples", num_zeros_in_grad, global_state.train_state.consumed_train_samples
             )
             if wandb_writer:
-                wandb_writer.log({"num-zeros": num_zeros_in_grad}, iteration)
+                wandb_writer.log({"num-zeros": num_zeros_in_grad, "trainer/global_step": wandb_iteration})
         if params_norm is not None:
             writer.add_scalar("params-norm", params_norm, iteration)
             writer.add_scalar("params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples)
             if wandb_writer:
-                wandb_writer.log({"params-norm": params_norm}, iteration)
-
+                wandb_writer.log({"params-norm": params_norm, "trainer/global_step": wandb_iteration})
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
@@ -572,14 +579,14 @@ def training_log(
                 writer.add_scalar("throughput/tflops/device", per_gpu_tf, iteration)
                 writer.add_scalar("throughput/tflops", per_gpu_tf * get_world_size_safe(), iteration)
                 if wandb_writer:
-                    wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
-                    wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
+                    wandb_writer.log({"throughput/tflops/device": per_gpu_tf, "trainer/global_step": wandb_iteration})
+                    wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe(), "trainer/global_step": wandb_iteration})
 
         if logger_config.log_timers_to_tensorboard:
             if writer:
-                writer.add_scalar("iteration-time", elapsed_time_per_iteration, iteration)
+                writer.add_scalar("train_step_timing in s", elapsed_time_per_iteration, iteration)
             if wandb_writer:
-                wandb_writer.log({"iteration-time": elapsed_time_per_iteration}, iteration)
+                wandb_writer.log({"train_step_timing in s": elapsed_time_per_iteration, "trainer/global_step": wandb_iteration})
         log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
         log_string += " iteration {:8d}/{:8d} |".format(iteration, train_config.train_iters)
         log_string += " consumed samples: {:12d} |".format(global_state.train_state.consumed_train_samples)
@@ -599,8 +606,8 @@ def training_log(
                 writer.add_scalar("iter-energy/gpu", energy, iteration)
                 writer.add_scalar("power/gpu", power, iteration)
             if wandb_writer:
-                wandb_writer.log({"iter-energy/gpu": energy}, iteration)
-                wandb_writer.log({"power/gpu": power}, iteration)
+                wandb_writer.log({"iter-energy/gpu": energy, "trainer/global_step": wandb_iteration})
+                wandb_writer.log({"power/gpu": power, "trainer/global_step": wandb_iteration})
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"

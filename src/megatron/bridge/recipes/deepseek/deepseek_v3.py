@@ -87,6 +87,10 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     enable_deepep: bool
     apply_rope_fusion: bool
     layout: Optional[Union[str, List[List[str]]]]
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
 
 
 def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
@@ -190,6 +194,10 @@ def _deepseek_v3_common(
     enable_deepep: bool = False,
     apply_rope_fusion: bool = False,
     layout: Optional[Union[str, List[List[str]]]] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 models using a given HuggingFace path.
@@ -328,6 +336,9 @@ def _deepseek_v3_common(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
         ),
         tokenizer=TokenizerConfig(
             tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
