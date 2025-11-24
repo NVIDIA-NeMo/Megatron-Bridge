@@ -17,6 +17,7 @@ import os
 import torch
 from typing_extensions import TypedDict, Unpack
 
+from megatron.bridge.models import NemotronHModelProvider
 from megatron.bridge.models.nemotronh import (
     NemotronHModelProvider4B,
     NemotronHModelProvider8B,
@@ -46,9 +47,7 @@ class NemotronHCommonKwargs(TypedDict, total=False):
     """Typed options accepted by NemotronH recipe helper functions."""
 
     # Core identifiers
-    model_provider: (
-        NemotronHModelProvider4B | NemotronHModelProvider8B | NemotronHModelProvider47B | NemotronHModelProvider56B
-    )
+    model_provider: type[NemotronHModelProvider]
     tokenizer_model: str | None
     dir: str | None
     name: str
@@ -188,12 +187,7 @@ def nemotronh_56b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) 
 
 
 def _nemotronh_common(
-    model_provider: (
-        type[NemotronHModelProvider4B]
-        | type[NemotronHModelProvider8B]
-        | type[NemotronHModelProvider47B]
-        | type[NemotronHModelProvider56B]
-    ),
+    model_provider: type[NemotronHModelProvider],
     tokenizer_model: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -229,10 +223,10 @@ def _nemotronh_common(
     enable_default_comm_overlap: bool = True,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for NemotronH models.
+    Create a pre-training configuration for NemotronH and Nemotron Nano v2 models.
 
     Args:
-        model_provider: The model provider class for the specific NemotronH variant.
+        model_provider: The model provider class for the specific NemotronH or Nemotron Nano v2 variant.
         tokenizer_model: HuggingFace tokenizer model name (only used when use_null_tokenizer=False).
         dir: Base directory for saving logs and checkpoints.
         name: Name of the pre-training run.
@@ -378,6 +372,7 @@ def nemotronh_4b_finetune_config(**user_kwargs: Unpack[NemotronHFinetuneKwargs])
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
         "min_lr": 1e-6 if is_full_sft else 1e-5,
         "precision_config": "bf16_mixed",
+        "hf_tokenizer_kwargs": {"eos_token": "<SPECIAL_11>"},  # Correct eos token for Nemotron H
     }
     combined_kwargs: NemotronHFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotronh_finetune_common(tokenizer_model="nvidia/Nemotron-H-4B-Base-8K", **combined_kwargs)
@@ -402,6 +397,7 @@ def nemotronh_8b_finetune_config(**user_kwargs: Unpack[NemotronHFinetuneKwargs])
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
         "min_lr": 1e-6 if is_full_sft else 1e-5,
         "precision_config": "bf16_mixed",
+        "hf_tokenizer_kwargs": {"eos_token": "<SPECIAL_11>"},  # Correct eos token for Nemotron H
     }
     combined_kwargs: NemotronHFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotronh_finetune_common(tokenizer_model="nvidia/Nemotron-H-8B-Base-8K", **combined_kwargs)
@@ -427,6 +423,7 @@ def nemotronh_47b_finetune_config(**user_kwargs: Unpack[NemotronHFinetuneKwargs]
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
         "min_lr": 1e-6 if is_full_sft else 1e-5,
+        "hf_tokenizer_kwargs": {"eos_token": "<SPECIAL_11>"},  # Correct eos token for Nemotron H
     }
     combined_kwargs: NemotronHFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotronh_finetune_common(tokenizer_model="nvidia/Nemotron-H-47B-Base-8K", **combined_kwargs)
@@ -452,18 +449,14 @@ def nemotronh_56b_finetune_config(**user_kwargs: Unpack[NemotronHFinetuneKwargs]
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
         "min_lr": 1e-6 if is_full_sft else 1e-5,
+        "hf_tokenizer_kwargs": {"eos_token": "<SPECIAL_11>"},  # Correct eos token for Nemotron H
     }
     combined_kwargs: NemotronHFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotronh_finetune_common(tokenizer_model="nvidia/Nemotron-H-56B-Base-8K", **combined_kwargs)
 
 
 def _nemotronh_finetune_common(
-    model_provider: (
-        type[NemotronHModelProvider4B]
-        | type[NemotronHModelProvider8B]
-        | type[NemotronHModelProvider47B]
-        | type[NemotronHModelProvider56B]
-    ),
+    model_provider: type[NemotronHModelProvider],
     tokenizer_model: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -497,11 +490,13 @@ def _nemotronh_finetune_common(
     # Precision
     precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
     comm_overlap_config: CommOverlapConfig | None = None,
+    # Tokenizer kwargs (for model-specific tokenizer settings)
+    hf_tokenizer_kwargs: dict | None = None,
 ) -> ConfigContainer:
-    """Common finetuning configuration for NemotronH models.
+    """Common finetuning configuration for NemotronH and Nemotron Nano v2 models.
 
     Args:
-        model_provider: The model provider class for the specific NemotronH variant.
+        model_provider: The model provider class for the specific NemotronH or Nemotron Nano v2 variant.
         tokenizer_model: HuggingFace tokenizer model name.
         dir: Base directory for saving logs and checkpoints.
         name: Name of the finetuning run.
@@ -529,6 +524,7 @@ def _nemotronh_finetune_common(
         wandb_exp_name: Weights & Biases experiment name.
         precision_config: Precision configuration.
         comm_overlap_config: Communication overlap configuration.
+        hf_tokenizer_kwargs: Additional kwargs for HuggingFace tokenizer (e.g., {"eos_token": "<SPECIAL_12>"}).
 
     Returns:
         ConfigContainer: Configuration for finetuning.
@@ -536,6 +532,8 @@ def _nemotronh_finetune_common(
     Note:
         - 4B model: TP=1, SP=False, BF16 mixed precision
         - 8B model: TP=2 (full SFT) or TP=1 (LoRA), SP=True (full SFT), BF16 mixed precision
+        - 9B Nano v2: TP=2 (full SFT) or TP=1 (LoRA), SP=True (full SFT), BF16 mixed precision
+        - 12B Nano v2: TP=4 (full SFT) or TP=1 (LoRA), SP=True (full SFT), BF16 mixed precision
         - 47B model: TP=8 (full SFT) or TP=4 (LoRA), SP=True (full SFT), FP8 precision
         - 56B model: TP=8 (full SFT) or TP=4 (LoRA), SP=True (full SFT), FP8 precision
         - Uses SQuAD dataset format for finetuning
@@ -583,6 +581,7 @@ def _nemotronh_finetune_common(
     tokenizer_cfg = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=tokenizer_model,
+        hf_tokenizer_kwargs=hf_tokenizer_kwargs,
     )
 
     cfg = ConfigContainer(
