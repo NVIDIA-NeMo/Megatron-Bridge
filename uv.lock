@@ -2927,7 +2927,7 @@ dependencies = [
     { name = "jinja2" },
     { name = "leptonai" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6rc0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "networkx", version = "3.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "omegaconf" },
     { name = "packaging" },
     { name = "rich" },
@@ -2955,7 +2955,7 @@ wheels = [
 
 [[package]]
 name = "networkx"
-version = "3.6rc0"
+version = "3.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'linux'",
@@ -2967,9 +2967,9 @@ resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform != 'linux'",
     "python_full_version == '3.11.*' and sys_platform != 'linux'",
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/94/9a/36478bc8f4ec62071657ab52017b9884ef75c934f5a3596ae2cdff269f01/networkx-3.6rc0.tar.gz", hash = "sha256:025d33515a05844d3bece4cbda3a96485aa41aaf1d03fda937ba6e7d6118ebdd", size = 2508712, upload-time = "2025-11-04T15:20:51.025Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/fc/7b6fd4d22c8c4dc5704430140d8b3f520531d4fe7328b8f8d03f5a7950e8/networkx-3.6.tar.gz", hash = "sha256:285276002ad1f7f7da0f7b42f004bcba70d381e936559166363707fdad3d72ad", size = 2511464, upload-time = "2025-11-24T03:03:47.158Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/4d/41a32aefff47c4a7e17869cfa823368d6c8f8be825cfd7b8611b1365b0c3/networkx-3.6rc0-py3-none-any.whl", hash = "sha256:86ea7545ac5b7e9a3f5ec35b35fb428d511e84cfb432499148a490024099aa84", size = 2061866, upload-time = "2025-11-04T15:20:48.9Z" },
+    { url = "https://files.pythonhosted.org/packages/07/c7/d64168da60332c17d24c0d2f08bdf3987e8d1ae9d84b5bbd0eec2eb26a55/networkx-3.6-py3-none-any.whl", hash = "sha256:cdb395b105806062473d3be36458d8f1459a4e4b98e236a66c3a48996e07684f", size = 2063713, upload-time = "2025-11-24T03:03:45.21Z" },
 ]
 
 [[package]]
@@ -5331,16 +5331,16 @@ wheels = [
 
 [[package]]
 name = "sphinxcontrib-mermaid"
-version = "1.1.0"
+version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
     { name = "sphinx", version = "8.1.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "sphinx", version = "8.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9c/3eefdb1bbb5ec8094ff4baeb9fd310e8320a43311aebe230cf4aaef3c942/sphinxcontrib_mermaid-1.1.0.tar.gz", hash = "sha256:e674e04503956de8263163e0c8f446d99f9d60455cb395f64e998f1137f04f8e", size = 18766, upload-time = "2025-11-19T19:51:09.902Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/97/83/11fe1f2968c05fae725e473e8b3be08cbe5f51b83ddaf3309ab4c841082a/sphinxcontrib_mermaid-1.2.2.tar.gz", hash = "sha256:35423c13e565abb839b13f955f9722f0769e77e5d607ca07877ce93e1636c196", size = 18851, upload-time = "2025-11-24T01:05:48.702Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/89/899495013b11b09e687310dc76bab626babdbee2dd0e6640df0942090ab4/sphinxcontrib_mermaid-1.1.0-py3-none-any.whl", hash = "sha256:1133b4c00f33aedb76e37bfbd1a4280a0104c0a836da642a113eabdf261bdd0c", size = 14898, upload-time = "2025-11-19T19:51:06.036Z" },
+    { url = "https://files.pythonhosted.org/packages/77/74/f24437b92c3a34eadf93987d8472def6532200621df223e1b818c4318d63/sphinxcontrib_mermaid-1.2.2-py3-none-any.whl", hash = "sha256:51655f592300fc70e73b3ef2007cfc44fac11da5ff1f15c4725c83bf4a5b517c", size = 13416, upload-time = "2025-11-24T01:05:47.252Z" },
 ]
 
 [[package]]
@@ -5682,7 +5682,7 @@ dependencies = [
     { name = "fsspec" },
     { name = "jinja2" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6rc0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "networkx", version = "3.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "setuptools", marker = "python_full_version >= '3.12'" },
     { name = "sympy" },
     { name = "triton", marker = "sys_platform == 'never'" },
