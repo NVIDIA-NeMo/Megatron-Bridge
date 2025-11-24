@@ -276,13 +276,33 @@ def qwen3_30b_a3b_pretrain_config_h100(precision: str = "bf16", mock: bool = Tru
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_next_80b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
-        base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB200_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = qwen3_next_80b_a3b_pretrain_config(
+        mock=mock,
+        precision_config=precision_config,
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_next_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def qwen3_next_80b_a3b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """B200, baseline config."""
+    if precision == "bf16":
+        base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_next_80b_a3b_pretrain_config(

@@ -58,7 +58,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB300_NVFP4_BASE_CONFIG = replace(
     BASE_LLAMA3_70B_CONFIG,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=5,
-    cuda_graph_impl="local",
+    cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
 )
 
@@ -191,7 +191,7 @@ LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG = LLAMA3_8B_PRETRAIN_CONFIG_G
 LLAMA3_8B_PRETRAIN_CONFIG_GB200_NVFP4_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=4,
-    cuda_graph_impl="local",
+    cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
 )
 
