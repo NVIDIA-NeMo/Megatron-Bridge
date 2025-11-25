@@ -91,10 +91,22 @@ jobs:
           cd 3rdparty/Megatron-LM
           git fetch origin ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
-          cd ../..
+          
+          # Verify the checkout was successful
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
           
           echo "✅ MCore submodule updated successfully"
-          git -C 3rdparty/Megatron-LM log -1 --oneline
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+          
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          
+          git log -1 --oneline
+          cd ../..
       
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_commit != '' }}
