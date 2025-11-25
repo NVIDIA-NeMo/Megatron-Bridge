@@ -45,9 +45,8 @@ scheduler:
 checkpoint:
   # Directory to save checkpoints
   save: ./checkpoints/llama32_1b
+  load: ./checkpoints/llama32_1b
   save_interval: 50
-  # Resume from checkpoint (optional)
-  # load: ./checkpoints/llama32_1b/iter_0000050
 
 # Model configuration
 # Note: seq_length must match data.sequence_length

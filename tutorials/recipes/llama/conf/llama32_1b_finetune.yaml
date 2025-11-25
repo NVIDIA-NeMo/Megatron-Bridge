@@ -30,8 +30,6 @@ train:
   eval_iters: 10
   eval_interval: 50
   
-  # Load from pretrained checkpoint
-  # load: /path/to/pretrained/checkpoint
 
 # Optimizer configuration
 optimizer:
@@ -48,6 +46,11 @@ scheduler:
 checkpoint:
   # Directory to save finetuned checkpoints
   save: ./checkpoints/llama32_1b_finetuned
+  # Directory to resume from during training
+  load: ./checkpoints/llama32_1b
+  # Directory for pretrained weights in Megatron format
+  pretrained_checkpoint: ./path/to/pretrained/checkpoint/
+
   save_interval: 50
 
 # LoRA configuration
