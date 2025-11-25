@@ -54,19 +54,12 @@ Recipe Arguments:
 import argparse
 import logging
 import sys
-from pathlib import Path
-
-from omegaconf import OmegaConf
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.utils.omegaconf_utils import (
-    apply_overrides,
-    create_omegaconf_dict_config,
-    parse_hydra_overrides,
-)
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 logger = logging.getLogger(__name__)
@@ -124,25 +117,17 @@ def main() -> None:
     """Run GPT finetuning."""
     args, cli_overrides = parse_args()
 
-    # Load base configuration from recipe
     config: ConfigContainer = load_recipe(args.recipe)
 
-    omega_conf, excluded_fields = create_omegaconf_dict_config(config)
-
-    if args.config_file:
-        config_file_path = Path(args.config_file)
-        if not config_file_path.exists():
-            logger.error(f"Config file not found: {config_file_path}")
-            sys.exit(1)
-
-        yaml_conf = OmegaConf.load(config_file_path)
-        omega_conf = OmegaConf.merge(omega_conf, yaml_conf)
-
-    if cli_overrides:
-        omega_conf = parse_hydra_overrides(omega_conf, cli_overrides)
-
-    final_config_dict = OmegaConf.to_container(omega_conf, resolve=True)
-    apply_overrides(config, final_config_dict, excluded_fields)
+    try:
+        config = process_config_with_overrides(
+            config,
+            config_file=args.config_file,
+            cli_overrides=cli_overrides or None,
+        )
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        sys.exit(1)
 
     finetune(config=config, forward_step_func=forward_step)
 
