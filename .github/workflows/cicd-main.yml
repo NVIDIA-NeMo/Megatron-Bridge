@@ -288,10 +288,14 @@ jobs:
         with:
           submodules: recursive
       
-      - name: Verify and log MCore version
+      - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
+          echo "🔄 Updating MCore submodule for unit tests..."
           cd 3rdparty/Megatron-LM
+          git fetch origin ${{ github.event.inputs.mcore_commit }}
+          git checkout ${{ github.event.inputs.mcore_commit }}
+          
           ACTUAL_COMMIT=$(git rev-parse HEAD)
           EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
           
@@ -374,10 +378,14 @@ jobs:
         with:
           submodules: recursive
       
-      - name: Verify and log MCore version
+      - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
+          echo "🔄 Updating MCore submodule for functional tests..."
           cd 3rdparty/Megatron-LM
+          git fetch origin ${{ github.event.inputs.mcore_commit }}
+          git checkout ${{ github.event.inputs.mcore_commit }}
+          
           ACTUAL_COMMIT=$(git rev-parse HEAD)
           EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
           
