@@ -148,10 +148,25 @@ jobs:
           cd 3rdparty/Megatron-LM
           git fetch origin ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
-          cd ../..
+          
+          # Verify the checkout was successful
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
           
           echo "✅ MCore submodule updated successfully"
-          git -C 3rdparty/Megatron-LM log -1 --oneline
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+          
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          
+          git log -1 --pretty=format:"📝 Commit: %H%n👤 Author: %an%n📅 Date: %ad%n💬 Message: %s" --date=short
+          cd ../..
+          
+          # Store for later verification in Docker
+          echo "EXPECTED_MCORE_COMMIT=${EXPECTED_COMMIT}" | tee -a "$GITHUB_ENV"
 
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_commit != '' }}
@@ -241,6 +256,25 @@ jobs:
             ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
+      
+      - name: Verify MCore version in Docker image
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          echo "🔍 Verifying MCore commit inside Docker image..."
+          EXPECTED="${{ env.EXPECTED_MCORE_COMMIT }}"
+          
+          ACTUAL=$(docker run --rm ${{ env.container-registry }}/megatron-bridge:${{ github.sha }} \
+            bash -c "cd /opt/megatron-lm && git rev-parse HEAD")
+          
+          echo "Expected MCore commit: ${EXPECTED}"
+          echo "Actual MCore commit:   ${ACTUAL}"
+          
+          if [ "${ACTUAL}" = "${EXPECTED}" ]; then
+            echo "✅ MCore commit verified in Docker image!"
+          else
+            echo "❌ ERROR: MCore commit mismatch in Docker image! The build did not use the correct MCore version."
+            exit 1
+          fi
 
   cicd-unit-tests:
     if: |
@@ -261,6 +295,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Verify and log MCore version
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          cd 3rdparty/Megatron-LM
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          
+          echo "🧪 UNIT TESTS - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+          
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          
+          echo "✅ MCore commit verified"
+          git log -1 --oneline
+      
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -325,6 +381,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Verify and log MCore version
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          cd 3rdparty/Megatron-LM
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          
+          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+          
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          
+          echo "✅ MCore commit verified"
+          git log -1 --oneline
+      
       - name: main
         uses: ./.github/actions/test-template
         with:
