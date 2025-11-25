@@ -176,6 +176,9 @@ jobs:
           
           git log -1 --pretty=format:"📝 Commit: %H%n👤 Author: %an%n📅 Date: %ad%n💬 Message: %s" --date=short
           cd ../..
+          
+          # Store for Docker build arg
+          echo "MCORE_COMMIT_SHA=${EXPECTED_COMMIT}" | tee -a "$GITHUB_ENV"
 
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_commit != '' }}
@@ -253,6 +256,7 @@ jobs:
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
+            MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
             type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number || 0 }}-buildcache,mode=max
             type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
@@ -265,6 +269,25 @@ jobs:
             ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
+      
+      - name: Verify MCore commit in Docker image
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          echo "🔍 Verifying MCore commit inside Docker image..."
+          EXPECTED="${{ env.MCORE_COMMIT_SHA }}"
+          
+          ACTUAL=$(docker run --rm ${{ env.container-registry }}/megatron-bridge:${{ github.sha }} \
+            cat /opt/Megatron-Bridge/.mcore_commit_sha)
+          
+          echo "Expected: ${EXPECTED}"
+          echo "Actual:   ${ACTUAL}"
+          
+          if [ "${ACTUAL}" = "${EXPECTED}" ]; then
+            echo "✅ MCore commit verified in Docker image!"
+          else
+            echo "❌ ERROR: MCore commit mismatch in Docker image!"
+            exit 1
+          fi
 
   cicd-unit-tests:
     if: |
@@ -309,6 +332,7 @@ jobs:
           fi
           
           echo "✅ MCore commit verified"
+          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
       
       - name: main
@@ -399,6 +423,7 @@ jobs:
           fi
           
           echo "✅ MCore commit verified"
+          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
       
       - name: main
