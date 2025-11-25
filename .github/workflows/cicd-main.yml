@@ -277,8 +277,10 @@ jobs:
           echo "🔍 Verifying MCore commit inside Docker image..."
           EXPECTED="${{ env.MCORE_COMMIT_SHA }}"
           
+          # Get last line first (the SHA), then trim whitespace
           ACTUAL=$(docker run --rm ${{ env.container-registry }}/megatron-bridge:${{ github.sha }} \
-            cat /opt/Megatron-Bridge/.mcore_commit_sha 2>/dev/null | tr -d '\n\r ')
+            cat /opt/Megatron-Bridge/.mcore_commit_sha 2>&1 | tail -1)
+          ACTUAL=$(echo "${ACTUAL}" | tr -d '\n\r ')
           
           # Trim whitespace from expected value too
           EXPECTED=$(echo "${EXPECTED}" | tr -d '\n\r ')
