@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Blocked on upstream quantization dependency issue; re-enable once fixed.")
+
+
 class TestQuantizationWorkflow:
     """
     Test complete quantization workflow: quantize HuggingFace models to Megatron format,

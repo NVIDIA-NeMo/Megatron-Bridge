@@ -20,6 +20,9 @@ from pathlib import Path
 
 import pytest
 
+
+pytestmark = pytest.mark.pleasefixme(reason="Blocked on upstream quantization dependency issue; re-enable once fixed.")
+
 from megatron.bridge.training.utils.checkpoint_utils import (
     TRACKER_PREFIX,
     get_checkpoint_name,

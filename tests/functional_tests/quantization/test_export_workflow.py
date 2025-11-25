@@ -21,6 +21,9 @@ import torch
 from safetensors import safe_open
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Blocked on upstream quantization dependency issue; re-enable once fixed.")
+
+
 class TestExportWorkflow:
     """
     Test complete export workflow: quantize HuggingFace models to Megatron format,

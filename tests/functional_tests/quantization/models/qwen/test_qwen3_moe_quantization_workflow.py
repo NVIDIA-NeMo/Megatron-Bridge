@@ -21,6 +21,9 @@ import torch
 from transformers import AutoTokenizer, Qwen3MoeConfig, Qwen3MoeForCausalLM
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Blocked on upstream quantization dependency issue; re-enable once fixed.")
+
+
 HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen3MoeForCausalLM"],
     "attention_bias": False,
