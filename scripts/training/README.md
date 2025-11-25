@@ -128,10 +128,11 @@ python launch_with_nemo_run.py \
     --script pretrain_decoder.py \
     --recipe llama32_1b_pretrain_config \
     --devices 2 \
+    --dry-run \
     train.train_iters=10
 ```
 
-This uses `LocalExecutor` with torchrun for single-node testing.
+This uses `LocalExecutor` with torchrun for single-node testing. Include `--dry-run` to confirm the composed nemo-run command before actually launching it.
 
 #### Launch on Slurm
 
