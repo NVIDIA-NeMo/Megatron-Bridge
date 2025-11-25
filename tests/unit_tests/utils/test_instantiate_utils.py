@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import functools
 import logging
 from unittest.mock import MagicMock, patch
@@ -586,3 +587,31 @@ def test_raises_on_unexpected_kwargs_in_strict_mode() -> None:
 
     with pytest.raises(InstantiationException):
         instantiate(config, mode=InstantiationMode.STRICT)
+
+
+class TestEnum(enum.Enum):
+    A = 1
+    B = 2
+
+
+class TestInstantiateEnum:
+    """Test instantiation of Enums."""
+
+    def test_instantiate_enum_with_args(self):
+        """Test instantiating an Enum with _args_."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestEnum",
+            "_args_": [1],
+        }
+        result = instantiate(config)
+        assert result == TestEnum.A
+
+    def test_instantiate_enum_with_args_lenient(self):
+        """Test instantiating an Enum with _args_ in lenient mode (default)."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestEnum",
+            "_args_": [2],
+        }
+        # This previously failed because _args_ was dropped in lenient mode
+        result = instantiate(config)
+        assert result == TestEnum.B

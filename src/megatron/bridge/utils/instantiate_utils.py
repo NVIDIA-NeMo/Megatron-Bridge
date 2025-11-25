@@ -376,6 +376,9 @@ def _filter_kwargs_for_target(
     }
 
     unexpected = set(kwargs.keys()) - allowed_keys
+    if _Keys.ARGS in unexpected:
+        unexpected.remove(_Keys.ARGS)
+
     if not unexpected:
         return kwargs
 
@@ -386,7 +389,10 @@ def _filter_kwargs_for_target(
         if full_key:
             warning_msg += f"\nfull_key: {full_key}"
         logging.warning(warning_msg)
-        return {k: v for k, v in kwargs.items() if k in allowed_keys}
+        filtered = {k: v for k, v in kwargs.items() if k in allowed_keys}
+        if _Keys.ARGS in kwargs:
+            filtered[_Keys.ARGS] = kwargs[_Keys.ARGS]
+        return filtered
     else:
         msg = f"Unexpected config keys for target '{target_str}': {sorted(unexpected)}"
         if full_key:
