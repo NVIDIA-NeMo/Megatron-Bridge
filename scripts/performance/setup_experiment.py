@@ -137,6 +137,7 @@ def main(
         executor.container_mounts.extend([f"{megatron_ckpt_dir}:/mnt/megatron_ckpt"])
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
+    vp_size = vp_size if vp_size != -1 else None
     exp_name = (
         f"{task}_{model_name}_{model_size}_{compute_dtype}"
         f"_gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}"
