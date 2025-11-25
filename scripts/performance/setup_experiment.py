@@ -142,7 +142,7 @@ if __name__ == "__main__":
             executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
     del_cudnn_ln = False
     if args.gpu.lower() in ["h100"]:
-        if args.model_name in ["llama3","llama31"] and args.model_size != "8b":
+        if args.model_name in ["llama3","llama31"] and (args.model_size == "405b" or args.model_size == "70b"):
             executor.env_vars["TORCH_NCCL_HIGH_PRIORITY"] = "1"
             executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
             executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = "2097152"
