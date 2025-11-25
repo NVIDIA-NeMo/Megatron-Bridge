@@ -22,22 +22,22 @@ YAML configuration files and CLI overrides.
 
 Usage:
     Basic usage:
-        torchrun --nproc_per_node=8 finetune_gpt.py \
+        torchrun --nproc_per_node=8 finetune_decoder.py \
             --recipe llama32_1b_finetune_config
 
     With YAML config:
-        torchrun --nproc_per_node=8 finetune_gpt.py \
+        torchrun --nproc_per_node=8 finetune_decoder.py \
             --recipe llama3_8b_finetune_config \
             --config-file conf/my_finetune.yaml
 
     With CLI overrides:
-        torchrun --nproc_per_node=8 finetune_gpt.py \
+        torchrun --nproc_per_node=8 finetune_decoder.py \
             --recipe llama32_1b_finetune_config \
             peft.dim=16 \
             train.train_iters=1000
 
     Combined:
-        torchrun --nproc_per_node=8 finetune_gpt.py \
+        torchrun --nproc_per_node=8 finetune_decoder.py \
             --recipe gemma3_1b_finetune_config \
             --config-file conf/my_config.yaml \
             optimizer.lr=5e-5
