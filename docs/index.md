@@ -61,3 +61,12 @@ bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
 ```
+
+```{toctree}
+:caption: Releases
+:hidden:
+
+releases/software-versions.md
+releases/changelog.md
+releases/known-issues.md
+```
