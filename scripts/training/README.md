@@ -16,6 +16,8 @@ All scripts dynamically import recipes from `megatron.bridge.recipes`, apply use
 
 ## Quick Start
 
+For the end-to-end overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, see the official [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
+
 ### Pretrain
 
 ```bash
@@ -276,29 +278,3 @@ Generic scripts call recipes with no arguments passed to the recipe function.
 All customization happens through YAML and CLI overrides after the config is built.
 
 If you need to pass arguments to the recipe constructor itself (e.g., custom parallelism at recipe build time), use model-specific examples, create a custom script.
-
-## Finetune with Custom YAML
-
-```bash
-# Create config
-cat > conf/my_finetune.yaml << EOF
-checkpoint:
-  pretrained_checkpoint: ./checkpoints/gemma3_1b
-
-train:
-  train_iters: 1000
-
-dataset:
-  data_path: /path/to/my/dataset.jsonl
-
-peft:
-  _target_: megatron.bridge.peft.lora.LoRA
-  dim: 16
-  alpha: 32
-EOF
-
-# Run finetuning
-torchrun --nproc_per_node=2 finetune_decoder.py \
-    --recipe gemma3_1b_finetune_config \
-    --config-file conf/my_finetune.yaml
-```

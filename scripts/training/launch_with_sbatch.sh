@@ -66,7 +66,7 @@ CONFIG_FILE=""
 CLI_OVERRIDES=""
 # CLI_OVERRIDES="train.train_iters=1000 train.global_batch_size=512 optimizer.lr=0.0002"
 
-# Container image (optional, only if using containers)
+# Container image (required)
 CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
@@ -142,23 +142,23 @@ fi
 echo "Executing: $CMD"
 echo "======================================"
 
-# Execute with or without container
-if [ -n "$CONTAINER_IMAGE" ]; then
-    # With container
-    SRUN_CMD="srun --container-image=$CONTAINER_IMAGE"
-    
-    # Add container mounts
-    if [ -n "$CONTAINER_MOUNTS" ]; then
-        for mount in $CONTAINER_MOUNTS; do
-            SRUN_CMD="$SRUN_CMD --container-mounts=$mount"
-        done
-    fi
-    
-    $SRUN_CMD bash -c "$CMD"
-else
-    # Without container
-    srun bash -c "$CMD"
+# Require container image
+if [ -z "$CONTAINER_IMAGE" ]; then
+    echo "ERROR: CONTAINER_IMAGE must be set. Please use a valid container image."
+    exit 1
 fi
+
+# Build srun command (always containerized)
+SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
+
+# Add container mounts
+if [ -n "$CONTAINER_MOUNTS" ]; then
+    for mount in $CONTAINER_MOUNTS; do
+        SRUN_CMD="$SRUN_CMD --container-mounts=$mount"
+    done
+fi
+
+$SRUN_CMD bash -c "$CMD"
 
 echo "======================================"
 echo "Job completed"
