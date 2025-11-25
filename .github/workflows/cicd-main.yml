@@ -276,7 +276,7 @@ jobs:
           EXPECTED="${{ env.EXPECTED_MCORE_COMMIT }}"
           
           ACTUAL=$(docker run --rm ${{ env.container-registry }}/megatron-bridge:${{ github.sha }} \
-            bash -c "cd /opt/megatron-lm && git rev-parse HEAD")
+            bash -c "cd /opt/Megatron-Bridge/3rdparty/Megatron-LM && git rev-parse HEAD")
           
           echo "Expected MCore commit: ${EXPECTED}"
           echo "Actual MCore commit:   ${ACTUAL}"
