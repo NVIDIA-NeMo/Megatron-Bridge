@@ -22,6 +22,11 @@ import importlib
 import logging
 
 import torch
+from scripts.performance.utils.datasets import (
+    create_mock_dataset_config,
+    create_rp2_dataset_config,
+    create_squad_dataset_config,
+)
 
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -53,83 +58,6 @@ def parse_plugin_config_overrides(unknown_args: list[str]) -> list[str]:
         logging.info(f"Found {len(config_overrides)} config overrides from plugins: {config_overrides}")
 
     return config_overrides
-
-
-def create_mock_dataset_config(seq_length):
-    """Create mock dataset configuration for Megatron-Bridge."""
-    from megatron.bridge.training.config import MockGPTDatasetConfig
-
-    # Create mock dataset using MockGPTDatasetConfig which enforces blend=None, blend_per_split=None
-    return MockGPTDatasetConfig(
-        random_seed=1234,
-        reset_attention_mask=False,
-        reset_position_ids=False,
-        eod_mask_loss=False,
-        sequence_length=seq_length,
-        num_dataset_builder_threads=1,
-        split="99990,8,2",  # Standard train/val/test split
-        # Dataloader config parameters
-        data_sharding=True,
-        dataloader_type="single",
-        num_workers=1,
-    )
-
-
-def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None):
-    """Create RedPajama2 dataset configuration for Megatron-Bridge."""
-    from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-    from megatron.bridge.training.config import GPTDatasetConfig
-
-    # Get blend configuration for rp2 data paths
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(data_paths=dataset_paths, mock=False)
-
-    return GPTDatasetConfig(
-        random_seed=1234,
-        reset_attention_mask=False,
-        reset_position_ids=False,
-        eod_mask_loss=False,
-        sequence_length=seq_length,
-        num_dataset_builder_threads=1,
-        blend=blend,
-        blend_per_split=blend_per_split,
-        split=split or "99990,8,2",
-        path_to_cache=index_mapping_dir,
-        # Dataloader config parameters
-        data_sharding=True,
-        dataloader_type="single",
-        num_workers=1,
-        persistent_workers=True,
-    )
-
-
-def create_squad_dataset_config(dataset_root, seq_length, packed=False):
-    """Create SQuAD dataset configuration for Megatron-Bridge using HF dataset."""
-    from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-    from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-    from megatron.bridge.data.hf_processors import process_squad_example
-
-    # Create packed sequence specs if needed
-    packed_sequence_specs = None
-    if packed:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
-
-    return HFDatasetConfig(
-        dataset_name="squad",  # Hugging Face dataset name
-        process_example_fn=process_squad_example,  # Processing function
-        dataset_root=dataset_root,  # Local cache/processed files location
-        seq_length=seq_length,
-        seed=1234,
-        memmap_workers=1,
-        # Dataloader config parameters
-        dataloader_type="single",
-        num_workers=2,
-        data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,  # Rewrite existing processed files
-        delete_raw=False,  # Keep raw HF dataset cache
-    )
 
 
 def apply_args_to_config(config, args):
