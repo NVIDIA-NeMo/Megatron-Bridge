@@ -15,6 +15,17 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+echo "=================================================="
+echo "🧪 UNIT TESTS - MCore Commit Information"
+echo "=================================================="
+if [ -f "/opt/Megatron-Bridge/.mcore_commit_sha" ]; then
+    echo "📦 MCore commit: $(cat /opt/Megatron-Bridge/.mcore_commit_sha)"
+else
+    echo "⚠️  MCore commit: Unknown (image built before commit tracking was added)"
+fi
+echo "=================================================="
+echo ""
+
 CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
     --timeout=0.75 \
     -o log_cli=true \
