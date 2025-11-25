@@ -165,7 +165,7 @@ For more details on supported models, see our documentation:
 
 For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
 
-Runnable tutorials live in [`tutorials/recipes/llama`](tutorials/recipes/llama) and ship with a detailed README that covers:
+Runnable tutorials live in `tutorials/recipes/llama` that covers:
 
 - `00_quickstart_pretrain.py` for mock-data pretraining
 - `01_quickstart_finetune.py` + LoRA configs
