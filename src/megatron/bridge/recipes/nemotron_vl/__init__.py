@@ -12,16 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+from .nemotron_nano_v2_vl import (
+    nemotron_nano_v2_vl_12b_finetune_config,
+    nemotron_nano_v2_vl_12b_pretrain_config,
+)
 
-# Ensure required packages are installed
-pip install -q datasets
 
-export CUDA_VISIBLE_DEVICES="0,1"
-
-uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
-  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/quantization/test_qat_workflow.py
-coverage combine -q
-
+__all__ = [
+    "nemotron_nano_v2_vl_12b_pretrain_config",
+    "nemotron_nano_v2_vl_12b_finetune_config",
+]
