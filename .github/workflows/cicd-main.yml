@@ -125,7 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: test
     if: |
-      !(needs.pre-flight.outputs.is_ci_workload == 'true'
+      github.event.inputs.triggered_by != 'mcore-ci'
+      && !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
       || needs.pre-flight.outputs.docs_only == 'true')
     steps:
@@ -139,7 +140,7 @@ jobs:
     environment: nemo-ci
     if: |
       (
-        success()
+        (success() || needs.cicd-wait-in-queue.result == 'skipped')
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
