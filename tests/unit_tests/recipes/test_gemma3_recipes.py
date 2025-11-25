@@ -30,7 +30,7 @@ _gemma_module = importlib.import_module("megatron.bridge.recipes.gemma")
 _GEMMA3_RECIPE_FUNCS = [
     getattr(_gemma_module, name)
     for name in getattr(_gemma_module, "__all__", [])
-    if callable(getattr(_gemma_module, name, None))
+    if callable(getattr(_gemma_module, name, None)) and "gemma3" in name.lower()
 ]
 
 
