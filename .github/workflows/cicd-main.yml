@@ -278,15 +278,20 @@ jobs:
           EXPECTED="${{ env.MCORE_COMMIT_SHA }}"
           
           ACTUAL=$(docker run --rm ${{ env.container-registry }}/megatron-bridge:${{ github.sha }} \
-            cat /opt/Megatron-Bridge/.mcore_commit_sha)
+            cat /opt/Megatron-Bridge/.mcore_commit_sha 2>/dev/null | tr -d '\n\r ')
           
-          echo "Expected: ${EXPECTED}"
-          echo "Actual:   ${ACTUAL}"
+          # Trim whitespace from expected value too
+          EXPECTED=$(echo "${EXPECTED}" | tr -d '\n\r ')
+          
+          echo "Expected MCore commit: ${EXPECTED}"
+          echo "Actual MCore commit:   ${ACTUAL}"
           
           if [ "${ACTUAL}" = "${EXPECTED}" ]; then
             echo "✅ MCore commit verified in Docker image!"
           else
-            echo "❌ ERROR: MCore commit mismatch in Docker image!"
+            echo "❌ ERROR: MCore commit mismatch in Docker image! The build did not use the correct MCore version."
+            echo "Expected length: ${#EXPECTED}"
+            echo "Actual length:   ${#ACTUAL}"
             exit 1
           fi
 
