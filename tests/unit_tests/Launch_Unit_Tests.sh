@@ -18,11 +18,35 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 echo "=================================================="
 echo "🧪 UNIT TESTS - MCore Commit Information"
 echo "=================================================="
-if [ -f "/opt/Megatron-Bridge/.mcore_commit_sha" ]; then
-    echo "📦 MCore commit: $(cat /opt/Megatron-Bridge/.mcore_commit_sha)"
+
+# Check if the commit SHA file exists
+MCORE_SHA_FILE="/opt/Megatron-Bridge/.mcore_commit_sha"
+echo "🔍 Checking for file: ${MCORE_SHA_FILE}"
+
+if [ -f "${MCORE_SHA_FILE}" ]; then
+    MCORE_COMMIT=$(cat "${MCORE_SHA_FILE}")
+    echo "✅ File exists!"
+    echo "📦 MCore commit SHA from file: ${MCORE_COMMIT}"
+    echo "📏 SHA length: ${#MCORE_COMMIT} characters"
+    
+    # Verify it's a valid SHA format (40 hex characters)
+    if [[ "${MCORE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "✅ Valid SHA-1 hash format"
+    else
+        echo "⚠️  WARNING: Does not match SHA-1 format (expected 40 hex chars)"
+    fi
 else
+    echo "❌ File NOT found: ${MCORE_SHA_FILE}"
     echo "⚠️  MCore commit: Unknown (image built before commit tracking was added)"
+    echo "📂 Listing /opt/Megatron-Bridge directory:"
+    ls -la /opt/Megatron-Bridge/ | grep -E "^\.|mcore" || echo "   (no .mcore files found)"
 fi
+
+# Additional debugging: Check if MCore is installed
+echo ""
+echo "📍 MCore installation path:"
+ls -ld /opt/Megatron-Bridge/3rdparty/Megatron-LM 2>/dev/null || echo "   Directory not found"
+
 echo "=================================================="
 echo ""
 
