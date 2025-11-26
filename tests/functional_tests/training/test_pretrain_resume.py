@@ -129,7 +129,7 @@ class TestPretrainResume:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    seq_length=seq_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",
@@ -149,6 +149,7 @@ class TestPretrainResume:
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
+                    dist_ckpt_optim_fully_reshardable=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )
@@ -210,7 +211,7 @@ class TestPretrainResume:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    seq_length=seq_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",
@@ -231,6 +232,7 @@ class TestPretrainResume:
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
+                    dist_ckpt_optim_fully_reshardable=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )

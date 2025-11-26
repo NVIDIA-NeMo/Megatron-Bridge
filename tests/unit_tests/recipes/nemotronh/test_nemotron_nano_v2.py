@@ -52,7 +52,7 @@ class TestNemotronNano9Bv2:
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration (should be in mock mode)
-        assert config.dataset.sequence_length == 8192
+        assert config.dataset.seq_length == 8192
         assert config.dataset.split == "1,1,1"
 
         # Check tokenizer (default is NullTokenizer for pretraining)
@@ -69,10 +69,10 @@ class TestNemotronNano9Bv2:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotron_nano_9b_v2_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            context_parallelism=8,
-            sequence_parallelism=False,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=8,
+            sequence_parallel=False,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -134,8 +134,8 @@ class TestNemotronNano12Bv2:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotron_nano_12b_v2_pretrain_config(
-            tensor_parallelism=2,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 2
@@ -189,7 +189,7 @@ class TestNemotronNanoV2Common:
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2
-        assert config.dataset.sequence_length == 4096
+        assert config.dataset.seq_length == 4096
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
 

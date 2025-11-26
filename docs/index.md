@@ -49,6 +49,7 @@ training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
+training/distillation.md
 ```
 
 ```{toctree}
@@ -59,4 +60,13 @@ adding-new-models.md
 bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
+```
+
+```{toctree}
+:caption: Releases
+:hidden:
+
+releases/software-versions.md
+releases/changelog.md
+releases/known-issues.md
 ```

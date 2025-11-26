@@ -33,7 +33,7 @@ class TestVLMHFMasking:
         hf_processor = os.environ.get("HF_VLM_PROCESSOR", "Qwen/Qwen2.5-VL-3B-Instruct")
 
         provider = HFDatasetConversationProvider(
-            sequence_length=256,
+            seq_length=256,
             hf_processor_path=hf_processor,
             maker_name="rdr",  # small and public HF dataset
             num_workers=0,

@@ -88,10 +88,10 @@ Example usage for full parameter finetuning using the
 torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint <megatron model path> \
-dataset.maker_name make_raven_dataset \
-logger.wandb_project <optional wandb project name> \
-logger.wandb_save_dir $SAVE_DIR \
-checkpoint.save $SAVE_DIR/<experiment name>
+dataset.maker_name=make_raven_dataset \
+logger.wandb_project=<optional wandb project name> \
+logger.wandb_save_dir=$SAVE_DIR \
+checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
 Note:
@@ -100,6 +100,7 @@ Note:
 - To change the dataset, you only need to change `dataset.maker_name`. See the dataset section below for details.
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint. 
   You can also export the trained checkpoint to Hugging Face format.
+- This full finetuning recipe requires at least 4xH100 (80G) GPUs.
 
 ### Parameter-Efficient Finetuning (PEFT)
 Parameter-efficient finetuning (PEFT) using LoRA is supported. 
@@ -113,13 +114,13 @@ torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
-dataset.maker_name make_raven_dataset \
-logger.wandb_project <optional wandb project name> \
-logger.wandb_save_dir $SAVE_DIR \
-checkpoint.save $SAVE_DIR/<experiment name> \
-model.freeze_language_model True \
-model.freeze_vision_model False \
-model.freeze_vision_projection False
+dataset.maker_name=make_raven_dataset \
+logger.wandb_project=<optional wandb project name> \
+logger.wandb_save_dir=$SAVE_DIR \
+checkpoint.save=$SAVE_DIR/<experiment name> \
+model.freeze_language_model=True \
+model.freeze_vision_model=False \
+model.freeze_vision_projection=False
 ```
 
 2. Apply LoRA to all linear layers in attention and MLP modules of the vision model, vision projection, and the language model.
@@ -130,14 +131,16 @@ torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
 —-lora-on-vision-model \
-dataset.maker_name make_raven_dataset \
-logger.wandb_project <optional wandb project name> \
-logger.wandb_save_dir $SAVE_DIR \
-checkpoint.save $SAVE_DIR/<experiment name> \
-model.freeze_language_model True \
-model.freeze_vision_model True \
-model.freeze_vision_projection True
+dataset.maker_name=make_raven_dataset \
+logger.wandb_project=<optional wandb project name> \
+logger.wandb_save_dir=$SAVE_DIR \
+checkpoint.save=$SAVE_DIR/<experiment name> \
+model.freeze_language_model=True \
+model.freeze_vision_model=True \
+model.freeze_vision_projection=True
 ```
+
+These LoRA finetuning recipe requires at least 2xH100 (80G) GPUs.
 
 A LoRA checkpoint only contains the learnable adapter weights. In order to convert the LoRA checkpoint to Hugging Face
 format for downstream evaluation, it is necessary to merge the LoRA adapters back to the base model. 
@@ -162,6 +165,8 @@ Megatron Bridge supports various vision-language dataset examples which can be u
 | [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 | [LLaVA-Video-178K (0_30_s_nextqa subset)](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K) | `make_llava_video_178k_dataset` | Video understanding: video question-answer dataset covering every-day scenarios. |
 
+`cord-v2` is a tiny dataset and is included for demonstration only. This dataset is not recommended for PEFT tuning for this model since the XML output format interacts with the special tokens, leading to unexpected results. 
+
 Note on video training example:
 - We provide a video config yaml file instead of the default config yaml file that overwrites a few commands. Please
   pass in `--config-file "examples/recipes/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml"`.
@@ -185,8 +190,8 @@ torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --config-file "examples/recipes/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml" \
-logger.wandb_project <optional wandb project name> \
-logger.wandb_save_dir $SAVE_DIR \
-checkpoint.save $SAVE_DIR/<experiment name> \
-dataset.maker_kwargs {"video_root_path":$VIDEO_ROOT}
+logger.wandb_project=<optional wandb project name> \
+logger.wandb_save_dir=$SAVE_DIR \
+checkpoint.save=$SAVE_DIR/<experiment name> \
+dataset.maker_kwargs={"video_root_path":$VIDEO_ROOT}
 ```

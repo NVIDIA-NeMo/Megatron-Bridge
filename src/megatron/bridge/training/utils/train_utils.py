@@ -444,7 +444,7 @@ def training_log(
             throughput_report = report_throughput(
                 iteration=iteration,
                 train_config=train_config,
-                seq_length=config.dataset.sequence_length,
+                seq_length=config.dataset.seq_length,
                 history_wct=history_wct,
                 window_size=logger_config.throughput_window_size,
             )
@@ -463,7 +463,7 @@ def training_log(
             runtime_report = report_runtime(
                 train_state=train_state,
                 start_time=global_state.start_time,
-                seq_length=config.dataset.sequence_length,
+                seq_length=config.dataset.seq_length,
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )
@@ -565,7 +565,9 @@ def training_log(
         # Calculate GPU utilization
         num_flops = num_floating_point_operations(config, batch_size)
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
-        print_rank_0(f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}TFLOP/s/GPU")
+        print_rank_0(
+            f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
+        )
 
         if logger_config.log_throughput_to_tensorboard:
             if writer:
