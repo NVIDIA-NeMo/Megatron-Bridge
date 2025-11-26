@@ -25,7 +25,7 @@ from nemo_curator.stages.text.io.writer import MegatronTokenizerWriter
 from nemo_curator.stages.text.modules import ScoreFilter
 
 
-def main(args: argparse.Namespace) -> None:
+def main(args: argparse.Namespace) -> None:  # noqa: D103
     # Initialize and start the Ray client
     ray_client = RayClient()
     ray_client.start()
