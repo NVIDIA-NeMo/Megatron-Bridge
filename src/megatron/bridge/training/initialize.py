@@ -589,9 +589,6 @@ def _initialize_distributed(
                 continue
             if pg_name in ["ep", "tp_ep"]:
                 print(f"!!!! {pg_name}")
-                if torch.distributed.get_rank() == 0:
-                    breakpoint()
-                torch.distributed.barrier()
                 setattr(pg_collection, pg_name, mpu_pg_val)
                 print(
                     f"#####{torch.distributed.get_process_group_ranks(mpu_pg_val)}"
