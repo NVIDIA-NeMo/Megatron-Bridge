@@ -15,7 +15,7 @@
 import datetime
 import os
 import warnings
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 import torch.distributed
@@ -365,6 +365,22 @@ def _create_pg_collection(
         raise RuntimeError(f"world_size ({world_size}) is not divisible by {model_size}")
     dp_size = world_size // model_size
 
+    def _sync_group_creation(create_fn: Callable[[], Any] | None) -> Any:
+        """Ensure every rank reaches each ProcessGroup creation in the same order.
+
+        Some groups (e.g., embedding groups) are created only by a subset of ranks.
+        Without explicit barriers the remaining ranks can race ahead and start
+        creating the next communicator, which confuses NCCL's bootstrap logic and
+        leads to connection-refused errors. Two barriers keep all ranks aligned
+        regardless of whether they participate in the current group.
+        """
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        result = create_fn() if create_fn is not None else None
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        return result
+
     grid = HyperCommGrid(
         shape=[tp_size, cp_size, dp_size, pp_size],
         dim_names=["tp", "cp", "dp", "pp"],
@@ -372,33 +388,16 @@ def _create_pg_collection(
         backend="nccl",
     )
     # Core groups
-    tp_pg = grid.create_pg(["tp"])
-    cp_pg = grid.create_pg(["cp"])
-    pp_pg = grid.create_pg(["pp"])
-    dp_pg = grid.create_pg(["dp"])
-    mp_pg = grid.create_pg(["tp", "pp"])
-    tp_cp_pg = grid.create_pg(["tp", "cp"])
-    tp_dp_pg = grid.create_pg(["tp", "dp"])
-    tp_dp_cp_pg = grid.create_pg(["tp", "dp", "cp"])
-    dp_cp_pg = grid.create_pg(["dp", "cp"])
+    tp_pg = _sync_group_creation(lambda: grid.create_pg(["tp"]))
+    cp_pg = _sync_group_creation(lambda: grid.create_pg(["cp"]))
+    pp_pg = _sync_group_creation(lambda: grid.create_pg(["pp"]))
+    dp_pg = _sync_group_creation(lambda: grid.create_pg(["dp"]))
+    mp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "pp"]))
+    tp_cp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "cp"]))
+    tp_dp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "dp"]))
+    tp_dp_cp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "dp", "cp"]))
+    dp_cp_pg = _sync_group_creation(lambda: grid.create_pg(["dp", "cp"]))
 
-    # Embedding and position-embedding groups: pick the group this rank belongs to.
-    current_rank = torch.distributed.get_rank()
-    embd_pg = None
-    pos_embd_pg = None
-    # Enumerate ranks per PP group
-    pp_rank_lists = grid._gen_rank_enum(["pp"])
-    # Determine embedding ranks for each pp group
-    for ranks in pp_rank_lists:
-        if not ranks:
-            continue
-        # embedding_ranks: first and last pp stage (or only one if pp_size==1)
-        embedding_ranks = [ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]]
-        position_embedding_ranks = [ranks[0]]
-        if current_rank in embedding_ranks and embd_pg is None:
-            embd_pg, _ = torch.distributed.new_subgroups_by_enumeration([embedding_ranks], backend="nccl")
-        if current_rank in position_embedding_ranks and pos_embd_pg is None:
-            pos_embd_pg, _ = torch.distributed.new_subgroups_by_enumeration([position_embedding_ranks], backend="nccl")
 
     # Expert/MoE related groups (refer to original parallel_state.initialize_model_parallel)
     expert_tp_size = (
@@ -422,11 +421,49 @@ def _create_pg_collection(
         rank_offset=0,
         backend="nccl",
     )
-    ep_pg = expert_grid.create_pg(["ep"])
-    expt_tp_pg = expert_grid.create_pg(["tp"])
-    tp_ep_pg = expert_grid.create_pg(["tp", "ep"])
-    tp_ep_pp_pg = expert_grid.create_pg(["tp", "ep", "pp"])
-    expt_dp_pg = expert_grid.create_pg(["dp"])
+    ep_pg = _sync_group_creation(lambda: expert_grid.create_pg(["ep"]))
+    expt_tp_pg = _sync_group_creation(lambda: expert_grid.create_pg(["tp"]))
+    tp_ep_pg = _sync_group_creation(lambda: expert_grid.create_pg(["tp", "ep"]))
+    tp_ep_pp_pg = _sync_group_creation(lambda: expert_grid.create_pg(["tp", "ep", "pp"]))
+    expt_dp_pg = _sync_group_creation(lambda: expert_grid.create_pg(["dp"]))
+
+
+    # Embedding and position-embedding groups: pick the group this rank belongs to.
+    current_rank = torch.distributed.get_rank()
+    embd_pg = None
+    pos_embd_pg = None
+    # Enumerate ranks per PP group
+    pp_rank_lists = grid._gen_rank_enum(["pp"])
+    # Determine embedding ranks for each pp group
+    for ranks in pp_rank_lists:
+        if not ranks:
+            continue
+        # embedding_ranks: first and last pp stage (or only one if pp_size==1)
+        embedding_ranks = [ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]]
+        position_embedding_ranks = [ranks[0]]
+        participate_embd = embd_pg is None and current_rank in embedding_ranks
+        embd_pg_tuple = _sync_group_creation(
+            (
+                lambda ranks=embedding_ranks: torch.distributed.new_subgroups_by_enumeration([ranks], backend="nccl")
+            )
+            if participate_embd
+            else None
+        )
+        if embd_pg_tuple is not None:
+            embd_pg, _ = embd_pg_tuple
+
+        participate_pos = pos_embd_pg is None and current_rank in position_embedding_ranks
+        pos_embd_pg_tuple = _sync_group_creation(
+            (
+                lambda ranks=position_embedding_ranks: torch.distributed.new_subgroups_by_enumeration(
+                    [ranks], backend="nccl"
+                )
+            )
+            if participate_pos
+            else None
+        )
+        if pos_embd_pg_tuple is not None:
+            pos_embd_pg, _ = pos_embd_pg_tuple
 
     # Build Partial-Distributed-Optimizer groups for Expert DP when multiple instances are used.
     intra_expt_dp_pg = None
@@ -452,12 +489,24 @@ def _create_pg_collection(
             for col in range(intra_size):
                 inter_groups.append([rows[i][col] for i in range(num_distributed_optimizer_instances)])
         # Create groups and pick the one containing current rank
-        if intra_groups:
-            intra_expt_dp_pg, _ = torch.distributed.new_subgroups_by_enumeration(intra_groups, backend="nccl")
-            # Use intra_expt_dp as the per-instance grad-stats group
-            intra_dist_opt_pg = intra_expt_dp_pg
-        if inter_groups:
-            inter_dist_opt_pg, _ = torch.distributed.new_subgroups_by_enumeration(inter_groups, backend="nccl")
+        if intra_groups and intra_expt_dp_pg is None:
+            intra_tuple = _sync_group_creation(
+                (
+                    lambda: torch.distributed.new_subgroups_by_enumeration(intra_groups, backend="nccl")
+                )
+            )
+            if intra_tuple is not None:
+                intra_expt_dp_pg = intra_tuple[0]
+                # Use intra_expt_dp as the per-instance grad-stats group
+                intra_dist_opt_pg = intra_expt_dp_pg
+        if inter_groups and inter_dist_opt_pg is None:
+            inter_tuple = _sync_group_creation(
+                (
+                    lambda: torch.distributed.new_subgroups_by_enumeration(inter_groups, backend="nccl")
+                )
+            )
+            if inter_tuple is not None:
+                inter_dist_opt_pg = inter_tuple[0]
 
     # Build ProcessGroupCollection with available groups.
     pg_collection = ProcessGroupCollection(
@@ -548,69 +597,10 @@ def _initialize_distributed(
 
     # Set the tensor model-parallel, pipeline model-parallel, and
     # data-parallel communicators using HyperCommGrid and populate a ProcessGroupCollection.
-    parallel_state.initialize_model_parallel(
-        tensor_model_parallel_size=model_config.tensor_model_parallel_size,
-        pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
-        pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
-        context_parallel_size=model_config.context_parallel_size,
-        hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
-        expert_model_parallel_size=model_config.expert_model_parallel_size,
-        num_distributed_optimizer_instances=num_distributed_optimizer_instances,
-        expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
-        distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
-        nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
-        order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-pp-dp",
-        get_embedding_ranks=get_embedding_ranks,
-        get_position_embedding_ranks=get_position_embedding_ranks,
-        create_gloo_process_groups=dist_config.use_gloo_process_groups,
-        use_sharp=dist_config.use_sharp,
-        high_priority_stream_groups=dist_config.high_priority_stream_groups,
-        sharp_enabled_group=dist_config.sharp_enabled_group,
-    )
-    mpu_pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     if device_count > 0:
-        pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
-
-        # Verify that the process groups in pg_collection match those in mpu_pg_collection
-        from dataclasses import fields
-
-        for field in fields(ProcessGroupCollection):
-            pg_name = field.name
-            pg_val = getattr(pg_collection, pg_name, None)
-            mpu_pg_val = getattr(mpu_pg_collection, pg_name, None)
-            if pg_val is None and mpu_pg_val is None:
-                continue
-            if (pg_val is None and mpu_pg_val is not None):
-                print(f"!!!! {pg_name}")
-                # setattr(pg_collection, pg_name, mpu_pg_val)
-                continue
-            if pg_name in ["ep", "tp_ep"]:
-                print(f"!!!! {pg_name}")
-                setattr(pg_collection, pg_name, mpu_pg_val)
-                print(
-                    f"#####{torch.distributed.get_process_group_ranks(mpu_pg_val)}"
-                    f", {torch.distributed.get_process_group_ranks(pg_val)}"
-                )
-
-                continue
-            pg_ranks = torch.distributed.get_process_group_ranks(pg_val)
-            mpu_pg_ranks = torch.distributed.get_process_group_ranks(mpu_pg_val)
-            if pg_ranks != mpu_pg_ranks:
-                raise RuntimeError(
-                    f"ProcessGroup mismatch for {pg_name}: "
-                    f"pg_collection ranks={pg_ranks}, "
-                    f"mpu_pg_collection ranks={mpu_pg_ranks}"
-                )
-            if pg_val.size() != mpu_pg_val.size() or pg_val.rank() != mpu_pg_val.rank():
-                raise RuntimeError(
-                    f"ProcessGroup mismatch for {pg_name} (checked via size/rank): "
-                    f"pg_collection (size={pg_val.size()}, rank={pg_val.rank()}), "
-                    f"mpu_pg_collection (size={mpu_pg_val.size()}, rank={mpu_pg_val.rank()})"
-                )
-        parallel_state.destroy_model_parallel()
         parallel_state._set_global_memory_buffer()
+        pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
             pp = int(model_config.pipeline_model_parallel_size)
