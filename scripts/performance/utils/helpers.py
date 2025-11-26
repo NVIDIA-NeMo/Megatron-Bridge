@@ -269,6 +269,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
+
 def set_deepseek_v3_layout(recipe: ConfigContainer) -> None:
     """Set the DeepSeek V3 layout."""
     pp = recipe.model.pipeline_model_parallel_size
@@ -286,6 +287,7 @@ def set_deepseek_v3_layout(recipe: ConfigContainer) -> None:
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
     }
     recipe.model.pipeline_model_parallel_layout = layout_map[(pp, vp)]
+
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     """Get the model recipe with user overrides."""

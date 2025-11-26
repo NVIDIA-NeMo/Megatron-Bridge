@@ -106,10 +106,13 @@ def main(
         )
     )
     if enable_nsys:
-        plugins.append(NsysPlugin(
-            profile_step_start=profiling_start_step,
-            profile_step_end=profiling_stop_step,
-            nsys_gpu_metrics=profiling_gpu_metrics))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                nsys_gpu_metrics=profiling_gpu_metrics,
+            )
+        )
 
     executor.container_mounts.extend(
         custom_mounts
@@ -161,7 +164,7 @@ if __name__ == "__main__":
 
     # Parse additional SLURM parameters if provided
     additional_slurm_params = None
-    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
         additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
 
     main(
