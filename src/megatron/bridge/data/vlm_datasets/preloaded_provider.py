@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from transformers import AutoProcessor
 
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
@@ -179,7 +180,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
     """
 
     # Required to match model.seq_length
-    sequence_length: int
+    seq_length: int
 
     # HF processor/model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
     hf_processor_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
@@ -223,7 +224,13 @@ class PreloadedVLMConversationProvider(DatasetProvider):
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-        processor = AutoProcessor.from_pretrained(self.hf_processor_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(
+            self.hf_processor_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=self.trust_remote_code,
+                hf_path=self.hf_processor_path,
+            ),
+        )
         train_ds = self._build_split_dataset(self.train_data_path, context.train_samples, processor)
         valid_ds = self._build_split_dataset(self.valid_data_path, context.valid_samples, processor)
         test_ds = self._build_split_dataset(self.test_data_path, context.test_samples, processor)

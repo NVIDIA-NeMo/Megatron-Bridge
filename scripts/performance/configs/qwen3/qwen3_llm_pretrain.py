@@ -46,6 +46,7 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
+
 def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
     """Set common performance configurations for all Qwen3 next configs."""
     cfg.model.bias_activation_fusion = True
@@ -61,6 +62,7 @@ def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
+
 
 def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
@@ -246,6 +248,7 @@ def qwen3_30b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
 
     return cfg
 
+
 def qwen3_next_80b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
@@ -264,6 +267,7 @@ def qwen3_next_80b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     return cfg
+
 
 def qwen3_next_80b_a3b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
@@ -284,6 +288,7 @@ def qwen3_next_80b_a3b_gb300_config(precision: str = "bf16") -> ConfigContainer:
 
     return cfg
 
+
 def qwen3_next_80b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
@@ -302,4 +307,3 @@ def qwen3_next_80b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     return cfg
-

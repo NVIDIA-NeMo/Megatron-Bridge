@@ -221,6 +221,7 @@ class TestNemotronHConversion:
             str(tp),
             "--pp",
             str(pp),
+            "--trust-remote-code",
         ]
 
         try:
