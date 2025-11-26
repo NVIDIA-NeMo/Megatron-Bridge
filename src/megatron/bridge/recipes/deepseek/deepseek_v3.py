@@ -85,7 +85,7 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
-    moe_flex_dispatcher_backend: str
+    moe_flex_dispatcher_backend: str | None
     apply_rope_fusion: bool
     layout: Optional[Union[str, List[List[str]]]]
 
@@ -138,6 +138,7 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
         "recompute_granularity": "full",
         "recompute_method": "uniform",
         "recompute_num_layers": 1,
+        "moe_flex_dispatcher_backend": "deepep",
     }
     combined_kwargs: DeepSeekV3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return deepseek_v3_pretrain_config(**combined_kwargs)
@@ -188,7 +189,7 @@ def _deepseek_v3_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
-    moe_flex_dispatcher_backend: str = None,
+    moe_flex_dispatcher_backend: str | None = None,
     apply_rope_fusion: bool = False,
     layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> ConfigContainer:
