@@ -425,7 +425,6 @@ def parse_cli_args():
         "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
     )
     parser.add_argument(
-        "-pgm",
         "--profiling_gpu_metrics",
         help="Enable nsys gpu metrics. Disabled by default.",
         action="store_true",
@@ -441,6 +440,7 @@ def parse_cli_args():
     )
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
+
 
 def parse_additional_slurm_params(params_str):
     """
@@ -467,10 +467,10 @@ def parse_additional_slurm_params(params_str):
     params = {}
 
     # Try semicolon separation first (most reliable for complex values)
-    if ';' in params_str:
-        parts = params_str.split(';')
+    if ";" in params_str:
+        parts = params_str.split(";")
     # Try space separation next
-    elif ' ' in params_str:
+    elif " " in params_str:
         parts = params_str.split()
     # No separators found - treat as single parameter
     else:
@@ -481,8 +481,8 @@ def parse_additional_slurm_params(params_str):
         if not part:
             continue
 
-        if '=' in part:
-            key, value = part.split('=', 1)
+        if "=" in part:
+            key, value = part.split("=", 1)
             params[key.strip()] = value.strip()
         else:
             # Boolean flag (no value)

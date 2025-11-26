@@ -63,6 +63,7 @@ def nemotronh_56b_gb200_config(precision: str = "bf16") -> ConfigContainer:
 
     return cfg
 
+
 def nemotronh_56b_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_B200_FP8_CS_BASE_CONFIG
@@ -76,6 +77,7 @@ def nemotronh_56b_b200_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     return cfg
+
 
 def nemotronh_56b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""

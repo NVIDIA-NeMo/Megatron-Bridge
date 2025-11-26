@@ -111,20 +111,23 @@ def main(
         )
     )
     if enable_nsys:
-        plugins.append(NsysPlugin(
-            profile_step_start=profiling_start_step,
-            profile_step_end=profiling_stop_step,
-            profile_ranks=list(range(num_gpus)),
-            nsys_gpu_metrics=profiling_gpu_metrics,
-            nsys_trace=['cuda'],
-            nsys_extra_args=[
-                "--force-overwrite=true",
-                "--capture-range=cudaProfilerApi",
-                "--capture-range-end=stop",
-                "--cuda-graph-trace=node",
-                "--cuda-event-trace=false",
-                "--nvtx-domain-include=NCCL",
-            ]))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                profile_ranks=list(range(num_gpus)),
+                nsys_gpu_metrics=profiling_gpu_metrics,
+                nsys_trace=["cuda"],
+                nsys_extra_args=[
+                    "--force-overwrite=true",
+                    "--capture-range=cudaProfilerApi",
+                    "--capture-range-end=stop",
+                    "--cuda-graph-trace=node",
+                    "--cuda-event-trace=false",
+                    "--nvtx-domain-include=NCCL",
+                ],
+            )
+        )
 
     executor.container_mounts.extend(
         custom_mounts
@@ -180,7 +183,7 @@ if __name__ == "__main__":
 
     # Parse additional SLURM parameters if provided
     additional_slurm_params = None
-    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
         additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
 
     main(
