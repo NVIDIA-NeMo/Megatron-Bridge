@@ -1249,7 +1249,14 @@ def load_checkpoint(
         cfg.checkpoint.finetune = True
 
     return _load_checkpoint_from_path(
-        load_dir, state, model, optimizer, opt_param_scheduler, strict, checkpointing_context
+        load_dir,
+        state,
+        model,
+        optimizer,
+        opt_param_scheduler,
+        strict,
+        checkpointing_context,
+        skip_load_to_model_and_opt,
     )
 
 
@@ -1291,6 +1298,7 @@ def _load_checkpoint_from_path(
         checkpointing_context: Dictionary to store context across loads (e.g., strategies).
         skip_load_to_model_and_opt: If True, only loads metadata (iteration, rng) but
                                       skips loading state into model and optimizer modules.
+                                      Used for FSDP2 where tensors are loaded in-place via DTensor.
         ignore_ckpt_step: If True, ignores the ckpt_step config and loads latest checkpoint.
                           Used when loading pretrained checkpoints in PEFT scenarios.
 
@@ -1300,7 +1308,9 @@ def _load_checkpoint_from_path(
         - num_floating_point_operations_so_far: The total FLOPs computed so far.
     """
     cfg = state.cfg
-    model = unwrap_model(model)
+    # Create unwrapped reference for sharded_state_dict generation
+    ddp_model = model
+    model = unwrap_model(ddp_model)
     ckpt_format = cfg.checkpoint.ckpt_format
 
     # Step 1: Load base checkpoint with rank0=True (torch_dist only)
@@ -1554,14 +1564,14 @@ def _load_checkpoint_from_path(
         )
         load_strict = False if is_peft_resume else strict
 
-        if len(model) == 1:
-            _load_model_state_dict(model[0], state_dict["model"], load_strict)
+        if len(ddp_model) == 1:
+            _load_model_state_dict(ddp_model[0], state_dict["model"], load_strict)
         else:
-            for i in range(len(model)):
+            for i in range(len(ddp_model)):
                 model_key = "model%d" % i
                 if model_key not in state_dict:
                     continue
-                _load_model_state_dict(model[i], state_dict[model_key], load_strict)
+                _load_model_state_dict(ddp_model[i], state_dict[model_key], load_strict)
 
     checkpoint_version = get_checkpoint_version()
     print_rank_0(f" checkpoint version {checkpoint_version}")

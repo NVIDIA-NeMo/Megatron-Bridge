@@ -21,6 +21,7 @@ from typing import Any, Callable, NamedTuple, Optional
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed.torch_fully_sharded_data_parallel_config import TorchFullyShardedDataParallelConfig
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
@@ -212,8 +213,16 @@ def setup(
 
         cfg.model.register_pre_wrap_hook(modelopt_pre_wrap_hook)
 
+    # Create appropriate DDP config based on distributed strategy
+    if cfg.dist.use_torch_fsdp2:
+        ddp_config_to_use = TorchFullyShardedDataParallelConfig(
+            reshard_after_forward=cfg.dist.torch_fsdp2_reshard_after_forward
+        )
+    else:
+        ddp_config_to_use = cfg.ddp
+
     model = cfg.model.provide_distributed_model(
-        ddp_config=cfg.ddp,
+        ddp_config=ddp_config_to_use,
         use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
@@ -248,13 +257,17 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
+        skip_load = (
+            cfg.dist.use_torch_fsdp2
+            and cfg.checkpoint.ckpt_format == "torch_dist"
+        )
         load_checkpoint(
             state,
             model,
             optimizer,
             scheduler,
             checkpointing_context=checkpointing_context,
-            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
+            skip_load_to_model_and_opt=skip_load,
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

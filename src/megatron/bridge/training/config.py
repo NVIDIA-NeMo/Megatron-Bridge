@@ -143,6 +143,10 @@ class DistributedInitConfig:
     It is still not in a stable release stage, and may therefore contain bugs or other
     potential issues."""
 
+    torch_fsdp2_reshard_after_forward: bool = True
+    """Whether to reshard weights after forward pass when using PyTorch FSDP2.
+    Set to False to enable FSDP ZeRO-2 behavior."""
+
     nccl_communicator_config_path: Optional[str] = None
     """Path to the yaml file with NCCL communicator configurations. The number of min/max thread
     groups and thread group cluster size of each communicator can be configured by setting
@@ -1212,32 +1216,6 @@ class ConfigContainer(Container):
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
-    def _validate_and_apply_deterministic_mode(self) -> None:
-        """Apply and validate deterministic mode requirements.
-
-        This enforces restrictions and settings that must hold when
-        the model is configured to run in deterministic mode.
-        """
-        if not getattr(self.model, "deterministic_mode", False):
-            return
-
-        # Disallow flash attention when running deterministically
-        if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
-            raise AssertionError("Flash attention can not be used in deterministic mode.")
-
-        # Disallow cross-entropy loss fusion as it is not deterministic
-        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
-            "Cross Entropy Fusion is currently not deterministic."
-        )
-
-        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
-        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
-            f"NCCL_ALGO must be one of {all_reduce_choices}."
-        )
-
-        # Enable deterministic algorithms in torch
-        torch.use_deterministic_algorithms(True)
-
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1282,14 +1260,17 @@ class ConfigContainer(Container):
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
 
+        if self.dist.use_torch_fsdp2 and (self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp):
+            raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+
+        # Torch FSDP2 validations and settings
+        self._validate_and_apply_torch_fsdp2_config()
+
         # Deterministic mode validations and settings
         self._validate_and_apply_deterministic_mode()
 
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
-
-        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
-            raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
 
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
@@ -1478,6 +1459,92 @@ class ConfigContainer(Container):
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
             else:
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+
+    def _validate_and_apply_deterministic_mode(self) -> None:
+        """Apply and validate deterministic mode requirements.
+
+        This enforces restrictions and settings that must hold when
+        the model is configured to run in deterministic mode.
+        """
+        if not getattr(self.model, "deterministic_mode", False):
+            return
+
+        # Disallow flash attention when running deterministically
+        if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
+            raise AssertionError("Flash attention can not be used in deterministic mode.")
+
+        # Disallow cross-entropy loss fusion as it is not deterministic
+        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
+            "Cross Entropy Fusion is currently not deterministic."
+        )
+
+        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
+        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
+            f"NCCL_ALGO must be one of {all_reduce_choices}."
+        )
+
+        # Enable deterministic algorithms in torch
+        torch.use_deterministic_algorithms(True)
+
+    def _validate_and_apply_torch_fsdp2_config(self) -> None:
+        """Validate and apply Torch FSDP2 configuration requirements."""
+
+        if not self.dist.use_torch_fsdp2:
+            return
+
+        from megatron.core.utils import is_te_min_version, is_torch_min_version
+
+        assert is_torch_min_version("2.4.0"), "FSDP2 requires PyTorch >= 2.4.0 with FSDP 2 support"
+
+        assert self.model.pipeline_model_parallel_size == 1, (
+            "Torch FSDP2 is not supported with pipeline parallelism. Please set model.pipeline_model_parallel_size=1"
+        )
+
+        assert self.model.expert_model_parallel_size == 1, (
+            "Torch FSDP2 is not supported with expert parallelism. Please set model.expert_model_parallel_size=1"
+        )
+
+        assert not self.optimizer.use_distributed_optimizer and not self.ddp.use_distributed_optimizer, (
+            "Torch FSDP2 is not compatible with Megatron's distributed optimizer. "
+            "Please set both optimizer.use_distributed_optimizer=False and "
+            "ddp.use_distributed_optimizer=False"
+        )
+
+        assert not self.model.gradient_accumulation_fusion, (
+            "Torch FSDP2 is not supported with gradient accumulation fusion. "
+            "Please set model.gradient_accumulation_fusion=False"
+        )
+
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            assert self.checkpoint.ckpt_format == "torch_dist", (
+                "Torch FSDP2 in Megatron Bridge requires ckpt_format='torch_dist'. "
+                "Please set checkpoint.ckpt_format='torch_dist'"
+            )
+
+        assert not self.model.share_embeddings_and_output_weights, (
+            "Torch FSDP2 requires untied embeddings and output weights. "
+            "Please set model.share_embeddings_and_output_weights=False"
+        )
+
+        assert not self.model.fp16, (
+            "Torch FSDP2 is not supported with fp16 yet. "
+            "Please use bf16 instead by setting model.bf16=True and model.fp16=False"
+        )
+
+        assert os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") != "1", (
+            "FSDP always requires CUDA_DEVICE_MAX_CONNECTIONS value larger than one. "
+            "Please unset CUDA_DEVICE_MAX_CONNECTIONS or set it to a value > 1"
+        )
+
+        if getattr(self.model, "fp8_param_gather", False) and is_te_min_version("2.0.0"):
+            warn_rank_0(
+                "FSDP2 FP8 param gather is not supported yet in TE 2.0, will fallback to bf16 "
+                "all_gather instead, turning off fp8_param_gather"
+            )
+            self.model.fp8_param_gather = False
+
+        if getattr(self.model, "fp4_param", False):
+            assert is_te_min_version("2.7.0.dev0"), "FP4 param with FSDP2 requires Transformer Engine >= 2.7.0.dev0"
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:

@@ -2265,3 +2265,318 @@ class TestDatasetSequenceLengthValidation:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestTorchFSDP2Validation:
+    """Tests for Torch FSDP2 configuration validation."""
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_requires_pipeline_parallel_1(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 requires pipeline_model_parallel_size=1."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            pipeline_model_parallel_size=2,
+            pipeline_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="Torch FSDP2 is not supported with pipeline parallelism"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_requires_expert_parallel_1(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 requires expert_model_parallel_size=1."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            expert_model_parallel_size=2,
+            num_moe_experts=8,  # Required when expert_model_parallel_size > 1
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="Torch FSDP2 is not supported with expert parallelism"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_incompatible_with_distributed_optimizer(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 fails with distributed optimizer enabled."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Torch FSDP2 is not compatible with Megatron's distributed optimizer.*use_distributed_optimizer=False",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_incompatible_with_gradient_accumulation_fusion(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 fails with gradient accumulation fusion enabled."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=True,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Torch FSDP2 is not supported with gradient accumulation fusion.*gradient_accumulation_fusion=False",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_requires_torch_dist_checkpoint_format(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 requires torch_dist checkpoint format (torch_dcp not supported in Bridge)."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+        ckpt_cfg = create_test_checkpoint_config(save="/tmp/ckpt", ckpt_format="zarr")
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+            checkpoint_config=ckpt_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Torch FSDP2 in Megatron Bridge requires ckpt_format='torch_dist'",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_requires_untied_embeddings(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 requires share_embeddings_and_output_weights=False."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=True,  # Invalid for FSDP2
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Torch FSDP2 requires untied embeddings.*share_embeddings_and_output_weights=False",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_not_supported_with_fp16(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 is not supported with fp16."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+            fp16=True,
+            bf16=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Torch FSDP2 is not supported with fp16.*use bf16 instead",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_requires_cuda_device_max_connections_not_1(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 requires CUDA_DEVICE_MAX_CONNECTIONS != '1'."""
+        mock_is_torch_min_version.return_value = True
+        monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="FSDP always requires CUDA_DEVICE_MAX_CONNECTIONS value larger than one",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    @patch("megatron.core.utils.is_te_min_version")
+    def test_fsdp2_valid_configuration_passes(self, mock_is_te_min_version, mock_is_torch_min_version, monkeypatch):
+        """Test that a valid FSDP2 configuration passes all validation checks."""
+        mock_is_torch_min_version.return_value = True
+        mock_is_te_min_version.return_value = True
+        monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            expert_model_parallel_size=1,
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+            fp16=False,
+            bf16=True,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False)
+        ckpt_cfg = create_test_checkpoint_config(ckpt_format="torch_dist", save="/tmp/ckpt")
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+            checkpoint_config=ckpt_cfg,
+        )
+
+        try:
+            # Should pass all FSDP2 validations
+            container.validate()
+            assert container.dist.use_torch_fsdp2 is True
+            assert container.model.share_embeddings_and_output_weights is False
+            assert container.optimizer.use_distributed_optimizer is False
+            assert container.ddp.use_distributed_optimizer is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_torch_min_version")
+    def test_fsdp2_incompatible_with_megatron_fsdp(self, mock_is_torch_min_version, monkeypatch):
+        """Test that FSDP2 cannot be used with Megatron FSDP simultaneously."""
+        mock_is_torch_min_version.return_value = True
+
+        gpt_model_cfg = create_test_gpt_config(
+            share_embeddings_and_output_weights=False,
+            gradient_accumulation_fusion=False,
+        )
+        dist_cfg = create_test_distributed_init_config(use_torch_fsdp2=True, use_megatron_fsdp=True)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=False, use_megatron_fsdp=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            ddp_config=ddp_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Using use_megatron_fsdp and use_torch_fsdp2.*not supported"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
