@@ -366,8 +366,8 @@ def _create_pg_collection(
     dp_size = world_size // model_size
 
     grid = HyperCommGrid(
-        shape=[tp_size, cp_size, pp_size, dp_size],
-        dim_names=["tp", "cp", "pp", "dp"],
+        shape=[tp_size, cp_size, dp_size, pp_size],
+        dim_names=["tp", "cp", "dp", "pp"],
         rank_offset=0,
         backend="nccl",
     )
@@ -417,8 +417,8 @@ def _create_pg_collection(
         )
     expt_dp_size = world_size // expt_model_block
     expert_grid = HyperCommGrid(
-        shape=[expert_tp_size, ep_size, pp_size, expt_dp_size],
-        dim_names=["tp", "ep", "pp", "dp"],
+        shape=[expert_tp_size, ep_size, expt_dp_size, pp_size],
+        dim_names=["tp", "ep", "dp", "pp"],
         rank_offset=0,
         backend="nccl",
     )
@@ -548,30 +548,72 @@ def _initialize_distributed(
 
     # Set the tensor model-parallel, pipeline model-parallel, and
     # data-parallel communicators using HyperCommGrid and populate a ProcessGroupCollection.
-    # parallel_state.initialize_model_parallel(
-    #     tensor_model_parallel_size=model_config.tensor_model_parallel_size,
-    #     pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
-    #     virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
-    #     pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
-    #     context_parallel_size=model_config.context_parallel_size,
-    #     hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
-    #     expert_model_parallel_size=model_config.expert_model_parallel_size,
-    #     num_distributed_optimizer_instances=num_distributed_optimizer_instances,
-    #     expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
-    #     distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
-    #     nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
-    #     order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-pp-dp",
-    #     get_embedding_ranks=get_embedding_ranks,
-    #     get_position_embedding_ranks=get_position_embedding_ranks,
-    #     create_gloo_process_groups=dist_config.use_gloo_process_groups,
-    #     use_sharp=dist_config.use_sharp,
-    #     high_priority_stream_groups=dist_config.high_priority_stream_groups,
-    #     sharp_enabled_group=dist_config.sharp_enabled_group,
-    # )
-    # return ProcessGroupCollection.use_mpu_process_groups()
+    parallel_state.initialize_model_parallel(
+        tensor_model_parallel_size=model_config.tensor_model_parallel_size,
+        pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
+        context_parallel_size=model_config.context_parallel_size,
+        hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
+        expert_model_parallel_size=model_config.expert_model_parallel_size,
+        num_distributed_optimizer_instances=num_distributed_optimizer_instances,
+        expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
+        distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
+        nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
+        order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-pp-dp",
+        get_embedding_ranks=get_embedding_ranks,
+        get_position_embedding_ranks=get_position_embedding_ranks,
+        create_gloo_process_groups=dist_config.use_gloo_process_groups,
+        use_sharp=dist_config.use_sharp,
+        high_priority_stream_groups=dist_config.high_priority_stream_groups,
+        sharp_enabled_group=dist_config.sharp_enabled_group,
+    )
+    mpu_pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
     if device_count > 0:
-        parallel_state._set_global_memory_buffer()
+        # parallel_state._set_global_memory_buffer()
         pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
+
+        # Verify that the process groups in pg_collection match those in mpu_pg_collection
+        from dataclasses import fields
+
+        for field in fields(ProcessGroupCollection):
+            pg_name = field.name
+            pg_val = getattr(pg_collection, pg_name, None)
+            mpu_pg_val = getattr(mpu_pg_collection, pg_name, None)
+            if pg_val is None and mpu_pg_val is None:
+                continue
+            if (pg_val is None and mpu_pg_val is not None):
+                print(f"!!!! {pg_name}")
+                # setattr(pg_collection, pg_name, mpu_pg_val)
+                continue
+            if pg_name in ["ep", "tp_ep"]:
+                print(f"!!!! {pg_name}")
+                if torch.distributed.get_rank() == 0:
+                    breakpoint()
+                torch.distributed.barrier()
+                setattr(pg_collection, pg_name, mpu_pg_val)
+                print(
+                    f"#####{torch.distributed.get_process_group_ranks(mpu_pg_val)}"
+                    f", {torch.distributed.get_process_group_ranks(pg_val)}"
+                )
+
+                continue
+            pg_ranks = torch.distributed.get_process_group_ranks(pg_val)
+            mpu_pg_ranks = torch.distributed.get_process_group_ranks(mpu_pg_val)
+            if pg_ranks != mpu_pg_ranks:
+                raise RuntimeError(
+                    f"ProcessGroup mismatch for {pg_name}: "
+                    f"pg_collection ranks={pg_ranks}, "
+                    f"mpu_pg_collection ranks={mpu_pg_ranks}"
+                )
+            if pg_val.size() != mpu_pg_val.size() or pg_val.rank() != mpu_pg_val.rank():
+                raise RuntimeError(
+                    f"ProcessGroup mismatch for {pg_name} (checked via size/rank): "
+                    f"pg_collection (size={pg_val.size()}, rank={pg_val.rank()}), "
+                    f"mpu_pg_collection (size={mpu_pg_val.size()}, rank={mpu_pg_val.rank()})"
+                )
+        parallel_state.destroy_model_parallel()
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
             pp = int(model_config.pipeline_model_parallel_size)
