@@ -119,8 +119,9 @@ def parse_cli_args():
         default="00:30:00",
     )
     container_img_msg = [
-        "NeMo container to use for experiment. Defaults to latest dev container- 'nvcr.io/nvidia/nemo:dev'",
+        "NeMo container to use for experiment. Defaults to latest release container",
         "Make sure your NGC credentials are accessible in your environment.",
+        "Refer https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags for complete list of release containers",
     ]
     parser.add_argument(
         "-i",
@@ -128,7 +129,7 @@ def parse_cli_args():
         type=str,
         help=" ".join(container_img_msg),
         required=False,
-        default="nvcr.io/nvidia/nemo:dev",
+        default="nvcr.io/nvidia/nemo:25.09",
     )
     parser.add_argument(
         "-c",
