@@ -72,3 +72,5 @@ python3 prepare_commoncrawl.py \
 
 When the script completes, it will automatically generate a **`dataset-prefixes.txt`** file in the output directory.
 This file contains the dataset file prefixes required by **Megatron-LM** and **Megatron-Bridge** via the `--data-args-path` configuration.
+
+For more details about the new `MegatronTokenizerWriter` stage, refer to the ["megatron-tokenizer" tutorial in NeMo Curator](https://github.com/NVIDIA-NeMo/Curator/tree/main/tutorials/text/megatron-tokenizer).
