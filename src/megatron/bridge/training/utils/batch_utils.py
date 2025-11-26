@@ -17,13 +17,13 @@ from __future__ import annotations
 from typing import Iterable
 
 import torch
-from megatron.core import parallel_state
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 
 from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig
 
 
 def get_batch_on_this_tp_rank(
-    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection
 ) -> dict[str, torch.Tensor]:
     """Get a batch from the data iterator, handling TP broadcasting.
 
@@ -33,13 +33,17 @@ def get_batch_on_this_tp_rank(
 
     def _broadcast(item):
         if item is not None:
-            torch.distributed.broadcast(
-                item,
-                parallel_state.get_tensor_model_parallel_src_rank(),
-                group=parallel_state.get_tensor_model_parallel_group(),
-            )
+            # Broadcast from TP group's rank-0 within that group
+            tp_group = pg_collection.tp
+            src_global_rank = torch.distributed.get_process_group_ranks(tp_group)[0]
+            torch.distributed.broadcast(item, src_global_rank, group=tp_group)
 
-    if parallel_state.get_tensor_model_parallel_rank() == 0:
+    # Determine if this rank is TP rank 0 using pg_collection.tp
+    tp_group = pg_collection.tp
+    tp_ranks = torch.distributed.get_process_group_ranks(tp_group)
+    is_tp_rank0 = torch.distributed.get_rank() == tp_ranks[0]
+
+    if is_tp_rank0:
         if data_iterator is not None:
             data = next(data_iterator)
         else:
@@ -60,12 +64,12 @@ def get_batch_on_this_tp_rank(
             _broadcast(batch["attention_mask"])
             _broadcast(batch["position_ids"])
 
-        elif parallel_state.is_pipeline_first_stage():
+        elif is_pp_first_stage(pg_collection.pp):
             _broadcast(batch["tokens"])
             _broadcast(batch["attention_mask"])
             _broadcast(batch["position_ids"])
 
-        elif parallel_state.is_pipeline_last_stage():
+        elif is_pp_last_stage(pg_collection.pp):
             if use_mtp:
                 _broadcast(batch["tokens"])
                 _broadcast(batch["position_ids"])
@@ -117,7 +121,7 @@ def get_batch_on_this_tp_rank(
             _broadcast(attention_mask)
             _broadcast(position_ids)
 
-        elif parallel_state.is_pipeline_first_stage():
+        elif is_pp_first_stage(pg_collection.pp):
             labels = None
             loss_mask = None
 
@@ -125,7 +129,7 @@ def get_batch_on_this_tp_rank(
             _broadcast(attention_mask)
             _broadcast(position_ids)
 
-        elif parallel_state.is_pipeline_last_stage():
+        elif is_pp_last_stage(pg_collection.pp):
             if use_mtp:
                 _broadcast(tokens)
                 _broadcast(position_ids)

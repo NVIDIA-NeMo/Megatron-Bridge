@@ -23,6 +23,14 @@ from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, create_sft_data
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 
 
+def _dummy_pg_collection():
+    class _DummyTP:
+        def rank(self):
+            return 0
+
+    return type("PG", (), {"dp": None, "dp_cp": None, "pp": None, "tp": _DummyTP()})()
+
+
 class TestConvertToOpenAIMessages:
     """Test cases for _convert_to_openai_messages function."""
 
@@ -224,6 +232,7 @@ class TestGPTSFTChatDataset:
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
             tool_schemas=None,
+            pg_collection=_dummy_pg_collection(),
         )
 
         assert dataset.use_hf_tokenizer_chat_template is True
@@ -250,6 +259,7 @@ class TestGPTSFTChatDataset:
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
             tool_schemas=tool_schemas_json,
+            pg_collection=_dummy_pg_collection(),
         )
 
         assert isinstance(dataset.tool_schemas, list)
@@ -276,6 +286,7 @@ class TestGPTSFTChatDataset:
                 tokenizer=mock_tokenizer,
                 max_seq_length=512,
                 use_hf_tokenizer_chat_template=True,
+                pg_collection=_dummy_pg_collection(),
             )
 
     @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
@@ -295,6 +306,7 @@ class TestGPTSFTChatDataset:
             tokenizer=mock_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=False,
+            pg_collection=_dummy_pg_collection(),
         )
 
         assert dataset.use_hf_tokenizer_chat_template is False
@@ -322,6 +334,7 @@ class TestGPTSFTChatDataset:
             tokenizer=mock_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         example = {
@@ -366,6 +379,7 @@ class TestGPTSFTChatDataset:
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
             pad_to_max_length=False,
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Create mock batch with loss_mask (not mask)
@@ -419,6 +433,7 @@ class TestCreateSFTDataset:
             chat=True,
             use_hf_tokenizer_chat_template=True,
             tool_schemas={"type": "function"},
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Verify GPTSFTChatDataset was called with correct args
@@ -440,6 +455,7 @@ class TestCreateSFTDataset:
             tokenizer=mock_tokenizer,
             chat=True,  # Should be ignored for .npy files
             use_hf_tokenizer_chat_template=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Verify GPTSFTPackedDataset was called (not GPTSFTChatDataset)
@@ -609,6 +625,7 @@ class TestOutputOriginalText:
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
             output_original_text=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         example = {
@@ -650,6 +667,7 @@ class TestOutputOriginalText:
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
             output_original_text=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         example = {
@@ -691,6 +709,7 @@ class TestToolSchemasEdgeCases:
                 max_seq_length=512,
                 use_hf_tokenizer_chat_template=True,
                 tool_schemas=tool_schemas_json,
+                pg_collection=_dummy_pg_collection(),
             )
 
             # Verify it was parsed
@@ -740,6 +759,7 @@ class TestToolSchemasEdgeCases:
                     max_seq_length=512,
                     use_hf_tokenizer_chat_template=True,
                     tool_schemas="invalid json {",  # Invalid JSON
+                    pg_collection=_dummy_pg_collection(),
                 )
 
 
@@ -770,6 +790,7 @@ class TestTruncationWithChatTemplates:
             tokenizer=mock_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         example = {"conversations": [{"from": "User", "value": "Test"}]}
@@ -800,6 +821,7 @@ class TestTruncationWithChatTemplates:
             tokenizer=mock_tokenizer,
             max_seq_length=10,  # Very small for truncation
             use_hf_tokenizer_chat_template=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Create batch with sequences longer than max_seq_length
@@ -839,6 +861,7 @@ class TestTruncationWithChatTemplates:
             tokenizer=mock_tokenizer,
             max_seq_length=10,
             use_hf_tokenizer_chat_template=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Create batch where truncation removes all assistant tokens
@@ -893,6 +916,7 @@ class TestSpaceSensitiveInDataset:
             prompt_template="{input} {output}",
             label_key="output",  # Match the prompt template
             truncation_field="input",  # Match a key in the prompt template
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Call _separate_template which uses space_sensitive
@@ -1045,6 +1069,7 @@ class TestPackedChatDatasetIntegration:
             tokenizer=mock_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
+            pg_collection=_dummy_pg_collection(),
         )
 
         example = {"conversations": [{"from": "User", "value": "Test"}]}
@@ -1188,6 +1213,7 @@ class TestBackwardCompatibilityLossMask:
             tokenizer=mock_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=False,  # Legacy mode
+            pg_collection=_dummy_pg_collection(),
         )
 
         # Mock _preprocess to return loss_mask
@@ -1331,6 +1357,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
                 chat=True,
                 use_hf_tokenizer_chat_template=True,
                 prompt_template="{input} {output}",  # Avoid validation error
+                pg_collection=_dummy_pg_collection(),
             )
 
             # Verify it's a packed dataset
@@ -1356,6 +1383,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
                 use_hf_tokenizer_chat_template=True,
                 tool_schemas=tool_schemas,
                 custom_kwarg="custom_value",  # Extra kwargs
+                pg_collection=_dummy_pg_collection(),
             )
 
             # Verify all kwargs passed through

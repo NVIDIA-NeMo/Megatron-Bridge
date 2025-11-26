@@ -66,6 +66,21 @@ class MockModelChunk:
 class TestTrainingLog:
     """Test suite for the training_log function."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_pg_collection(self, monkeypatch):
+        class _PG:
+            def __init__(self):
+                self.dp = object()
+                self.dp_cp = object()
+                self.mp = object()
+                self.pp = object()
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: _PG(),
+            raising=True,
+        )
+
     @pytest.fixture(scope="function")
     def mock_config(self):
         """Create a mock configuration object."""
@@ -925,12 +940,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.core.parallel_state.is_pipeline_first_stage")
-    @mock.patch("megatron.core.parallel_state.is_pipeline_last_stage")
+    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage")
+    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage")
     def test_decoupled_learning_rate(
         self,
-        mock_is_pipeline_last,
-        mock_is_pipeline_first,
+        mock_is_pp_last,
+        mock_is_pp_first,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -949,8 +964,8 @@ class TestTrainingLog:
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
         mock_is_last_rank.return_value = True
-        mock_is_pipeline_first.return_value = True
-        mock_is_pipeline_last.return_value = False
+        mock_is_pp_first.return_value = True
+        mock_is_pp_last.return_value = False
 
         # Enable decoupled learning rate
         mock_config.optimizer.decoupled_lr = 0.01
@@ -1849,6 +1864,29 @@ class TestParamIsNotShared:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for this test")
 class TestCalcParamsL2Norm:
     """Test suite for the calc_params_l2_norm function."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_pg_collection(self, monkeypatch):
+        class _PG:
+            def __init__(self):
+                # Minimal set of groups used by calc_params_l2_norm
+                self.dp_cp = object()
+                self.mp = object()
+                self.tp_ep_pp = object()
+                self.pp = object()
+
+                # Provide dp with size() to satisfy any incidental calls
+                class _DP:
+                    def size(self_inner):
+                        return 1
+
+                self.dp = _DP()
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: _PG(),
+            raising=True,
+        )
 
     @pytest.fixture
     def simple_model(self):
