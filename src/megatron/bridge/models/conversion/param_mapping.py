@@ -487,14 +487,14 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             torch.Tensor: The scattered tensor shard on the current rank.
         """
         if self.tp_size == 1:
-            return splits[0].to(device=device) if splits else None
+            return splits[0].to(device=device, dtype=dtype) if splits else None
 
         output = torch.empty(output_shape, dtype=dtype, device=device)
         global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
 
         scatter_list = None
         if self.tp_rank == src_rank and splits:
-            scatter_list = [s.to(device=device) for s in splits]
+            scatter_list = [s.to(device=device, dtype=dtype) for s in splits]
 
         torch.distributed.scatter(
             output,
