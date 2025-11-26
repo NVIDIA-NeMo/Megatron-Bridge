@@ -176,7 +176,7 @@ config = glm45_air_106b_finetune_config(
 )
 ```
 
-#### LoRA Finetuning (GLM 4.5 Air - Single Node!)
+#### LoRA Finetuning (GLM 4.5 Air)
 ```python
 from megatron.bridge.recipes.glm import glm45_air_106b_finetune_config
 

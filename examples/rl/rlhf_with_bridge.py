@@ -65,6 +65,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -199,6 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Dummy RLHF: HF inference + Megatron training via Bridge")
     p.add_argument("--hf-policy-model", type=str, default="Qwen/Qwen3-0.6B")
     p.add_argument("--hf-reward-model", type=str, default="distilbert-base-uncased-finetuned-sst-2-english")
+    p.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     p.add_argument("--max-new-tokens", type=int, default=32)
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--mbs", type=int, default=1)
@@ -242,12 +244,25 @@ def main() -> None:
         local_device = torch.device("cpu")
 
     # HF tokenizer/model for generation (policy sampling) and HF reward pipeline
-    gen_tokenizer = AutoTokenizer.from_pretrained(args.hf_policy_model, trust_remote_code=True)
+    hf_policy_model = args.hf_policy_model
+    gen_tokenizer = AutoTokenizer.from_pretrained(
+        hf_policy_model,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=hf_policy_model,
+        ),
+    )
     # Use left padding for decoder-only models to avoid generation warnings and ensure correctness
     gen_tokenizer.padding_side = "left"
     if gen_tokenizer.pad_token_id is None:
         gen_tokenizer.pad_token = gen_tokenizer.eos_token
-    hf_gen_model = AutoModelForCausalLM.from_pretrained(args.hf_policy_model, trust_remote_code=True)
+    hf_gen_model = AutoModelForCausalLM.from_pretrained(
+        hf_policy_model,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=hf_policy_model,
+        ),
+    )
     # Ensure pad_token_id is set on model config/generation config
     if getattr(hf_gen_model.config, "pad_token_id", None) is None:
         hf_gen_model.config.pad_token_id = gen_tokenizer.pad_token_id
@@ -266,7 +281,13 @@ def main() -> None:
     )
 
     # Bridge: load HF, create Megatron provider and training stack
-    bridge = AutoBridge.from_hf_pretrained(args.hf_policy_model, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_policy_model,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=hf_policy_model,
+        ),
+    )
     provider = bridge.to_megatron_provider(load_weights=True)
 
     cfg = build_config(provider, args)
