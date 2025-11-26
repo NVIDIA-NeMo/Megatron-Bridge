@@ -571,7 +571,6 @@ def _initialize_distributed(
     mpu_pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     if device_count > 0:
-        # parallel_state._set_global_memory_buffer()
         pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
 
         # Verify that the process groups in pg_collection match those in mpu_pg_collection
@@ -611,6 +610,7 @@ def _initialize_distributed(
                     f"mpu_pg_collection (size={mpu_pg_val.size()}, rank={mpu_pg_val.rank()})"
                 )
         parallel_state.destroy_model_parallel()
+        parallel_state._set_global_memory_buffer()
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
             pp = int(model_config.pipeline_model_parallel_size)
