@@ -365,22 +365,6 @@ def _create_pg_collection(
         raise RuntimeError(f"world_size ({world_size}) is not divisible by {model_size}")
     dp_size = world_size // model_size
 
-    def _sync_group_creation(create_fn: Callable[[], Any] | None) -> Any:
-        """Ensure every rank reaches each ProcessGroup creation in the same order.
-
-        Some groups (e.g., embedding groups) are created only by a subset of ranks.
-        Without explicit barriers the remaining ranks can race ahead and start
-        creating the next communicator, which confuses NCCL's bootstrap logic and
-        leads to connection-refused errors. Two barriers keep all ranks aligned
-        regardless of whether they participate in the current group.
-        """
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-        result = create_fn() if create_fn is not None else None
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-        return result
-
     grid = HyperCommGrid(
         shape=[tp_size, cp_size, dp_size, pp_size],
         dim_names=["tp", "cp", "dp", "pp"],
@@ -388,16 +372,14 @@ def _create_pg_collection(
         backend="nccl",
     )
     # Core groups
-    tp_pg = _sync_group_creation(lambda: grid.create_pg(["tp"]))
-    cp_pg = _sync_group_creation(lambda: grid.create_pg(["cp"]))
-    pp_pg = _sync_group_creation(lambda: grid.create_pg(["pp"]))
-    dp_pg = _sync_group_creation(lambda: grid.create_pg(["dp"]))
-    mp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "pp"]))
-    tp_cp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "cp"]))
-    tp_dp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "dp"]))
-    tp_dp_cp_pg = _sync_group_creation(lambda: grid.create_pg(["tp", "dp", "cp"]))
-    dp_cp_pg = _sync_group_creation(lambda: grid.create_pg(["dp", "cp"]))
-
+    tp_pg = grid.create_pg(["tp"])
+    cp_pg = grid.create_pg(["cp"])
+    pp_pg = grid.create_pg(["pp"])
+    dp_pg = grid.create_pg(["dp"])
+    mp_pg = grid.create_pg(["tp", "pp"])
+    tp_cp_pg = grid.create_pg(["tp", "cp"])
+    tp_dp_cp_pg = grid.create_pg(["tp", "dp", "cp"])
+    dp_cp_pg = grid.create_pg(["dp", "cp"])
 
     # Expert/MoE related groups (refer to original parallel_state.initialize_model_parallel)
     expert_tp_size = (
@@ -415,98 +397,66 @@ def _create_pg_collection(
             f"world_size ({world_size}) is not divisible by expert_tensor_model_pipeline size ({expt_model_block})"
         )
     expt_dp_size = world_size // expt_model_block
-    expert_grid = HyperCommGrid(
-        shape=[expert_tp_size, ep_size, expt_dp_size, pp_size],
-        dim_names=["tp", "ep", "dp", "pp"],
-        rank_offset=0,
-        backend="nccl",
-    )
-    ep_pg = _sync_group_creation(lambda: expert_grid.create_pg(["ep"]))
-    expt_tp_pg = _sync_group_creation(lambda: expert_grid.create_pg(["tp"]))
-    tp_ep_pg = _sync_group_creation(lambda: expert_grid.create_pg(["tp", "ep"]))
-    tp_ep_pp_pg = _sync_group_creation(lambda: expert_grid.create_pg(["tp", "ep", "pp"]))
-    expt_dp_pg = _sync_group_creation(lambda: expert_grid.create_pg(["dp"]))
+    use_optimizer_instance_groups = num_distributed_optimizer_instances > 1
+    inner_dp_dim: Optional[str] = None
+    outer_dp_dim: Optional[str] = None
+    if use_optimizer_instance_groups:
+        assert expt_dp_size % num_distributed_optimizer_instances == 0, (
+            "Expert DP size must be divisible by the number of optimizer instances."
+        )
+        inner_expt_dp_size = expt_dp_size // num_distributed_optimizer_instances
+        expert_grid = HyperCommGrid(
+            shape=[expert_tp_size, ep_size, inner_expt_dp_size, num_distributed_optimizer_instances, pp_size],
+            dim_names=["tp", "ep", "inner_dp", "outer_dp", "pp"],
+            rank_offset=0,
+            backend="nccl",
+        )
+        dp_group_dims: list[str] = ["inner_dp", "outer_dp"]
+        inner_dp_dim = "inner_dp"
+        outer_dp_dim = "outer_dp"
+    else:
+        expert_grid = HyperCommGrid(
+            shape=[expert_tp_size, ep_size, expt_dp_size, pp_size],
+            dim_names=["tp", "ep", "dp", "pp"],
+            rank_offset=0,
+            backend="nccl",
+        )
+        dp_group_dims = ["dp"]
+    ep_pg = expert_grid.create_pg(["ep"])
+    expt_tp_pg = expert_grid.create_pg(["tp"])
+    tp_ep_pg = expert_grid.create_pg(["tp", "ep"])
+    tp_ep_pp_pg = expert_grid.create_pg(["tp", "ep", "pp"])
+    expt_dp_pg = expert_grid.create_pg(dp_group_dims)
 
-
-    # Embedding and position-embedding groups: pick the group this rank belongs to.
-    current_rank = torch.distributed.get_rank()
+    # Embedding and position-embedding groups
     embd_pg = None
     pos_embd_pg = None
     # Enumerate ranks per PP group
     pp_rank_lists = grid._gen_rank_enum(["pp"])
     # Determine embedding ranks for each pp group
+    embedding_rank_lists: list[list[int]] = []
+    pos_embedding_rank_lists: list[list[int]] = []
     for ranks in pp_rank_lists:
         if not ranks:
             continue
         # embedding_ranks: first and last pp stage (or only one if pp_size==1)
-        embedding_ranks = [ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]]
-        position_embedding_ranks = [ranks[0]]
-        participate_embd = embd_pg is None and current_rank in embedding_ranks
-        embd_pg_tuple = _sync_group_creation(
-            (
-                lambda ranks=embedding_ranks: torch.distributed.new_subgroups_by_enumeration([ranks], backend="nccl")
-            )
-            if participate_embd
-            else None
-        )
-        if embd_pg_tuple is not None:
-            embd_pg, _ = embd_pg_tuple
-
-        participate_pos = pos_embd_pg is None and current_rank in position_embedding_ranks
-        pos_embd_pg_tuple = _sync_group_creation(
-            (
-                lambda ranks=position_embedding_ranks: torch.distributed.new_subgroups_by_enumeration(
-                    [ranks], backend="nccl"
-                )
-            )
-            if participate_pos
-            else None
-        )
-        if pos_embd_pg_tuple is not None:
-            pos_embd_pg, _ = pos_embd_pg_tuple
+        embedding_rank_lists.append([ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]])
+        pos_embedding_rank_lists.append([ranks[0]])
+    if embedding_rank_lists:
+        embd_pg, _ = torch.distributed.new_subgroups_by_enumeration(embedding_rank_lists, backend="nccl")
+    if pos_embedding_rank_lists:
+        pos_embd_pg, _ = torch.distributed.new_subgroups_by_enumeration(pos_embedding_rank_lists, backend="nccl")
 
     # Build Partial-Distributed-Optimizer groups for Expert DP when multiple instances are used.
     intra_expt_dp_pg = None
     inter_dist_opt_pg = None
     intra_dist_opt_pg = None
-    if num_distributed_optimizer_instances > 1:
-        assert expt_dp_size % num_distributed_optimizer_instances == 0, (
-            "Expert DP size must be divisible by the number of optimizer instances."
-        )
-        intra_size = expt_dp_size // num_distributed_optimizer_instances
-        # Enumerate expert DP ranks per (tp, ep, pp) block
-        expt_dp_rank_lists = expert_grid._gen_rank_enum(["dp"])
-        # Build intra (rows) and inter (columns) groups
-        intra_groups = []
-        inter_groups = []
-        for dp_list in expt_dp_rank_lists:
-            if not dp_list:
-                continue
-            # rows: contiguous chunks within dp_list
-            rows = [dp_list[i * intra_size : (i + 1) * intra_size] for i in range(num_distributed_optimizer_instances)]
-            intra_groups.extend(rows)
-            # columns: same position across instances
-            for col in range(intra_size):
-                inter_groups.append([rows[i][col] for i in range(num_distributed_optimizer_instances)])
-        # Create groups and pick the one containing current rank
-        if intra_groups and intra_expt_dp_pg is None:
-            intra_tuple = _sync_group_creation(
-                (
-                    lambda: torch.distributed.new_subgroups_by_enumeration(intra_groups, backend="nccl")
-                )
-            )
-            if intra_tuple is not None:
-                intra_expt_dp_pg = intra_tuple[0]
-                # Use intra_expt_dp as the per-instance grad-stats group
-                intra_dist_opt_pg = intra_expt_dp_pg
-        if inter_groups and inter_dist_opt_pg is None:
-            inter_tuple = _sync_group_creation(
-                (
-                    lambda: torch.distributed.new_subgroups_by_enumeration(inter_groups, backend="nccl")
-                )
-            )
-            if inter_tuple is not None:
-                inter_dist_opt_pg = inter_tuple[0]
+    if inner_dp_dim is not None and outer_dp_dim is not None:
+        intra_expt_dp_pg = expert_grid.create_pg([inner_dp_dim])
+        inter_dist_opt_pg = expert_grid.create_pg([outer_dp_dim])
+        # Match distributed optimizer instance grouping from parallel_state:
+        # combine tp-ep-pp ranks across the intra-partial DP slice.
+        intra_dist_opt_pg = expert_grid.create_pg(["tp", "ep", inner_dp_dim, "pp"])
 
     # Build ProcessGroupCollection with available groups.
     pg_collection = ProcessGroupCollection(
@@ -626,8 +576,8 @@ def _set_random_seed(
 
     import numpy as np
 
-    # Ensure that different pipeline MP stages get different seeds.
     current_rank = torch.distributed.get_rank()
+    # Ensure that different pipeline MP stages get different seeds.
     pp_rank = torch.distributed.get_group_rank(pg_collection.pp, current_rank)
     seed = seed_ + (100 * pp_rank)
     # Ensure different data parallel ranks get different seeds
