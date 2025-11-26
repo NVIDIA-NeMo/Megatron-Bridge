@@ -21,6 +21,9 @@ import torch
 from transformers import AutoTokenizer, Qwen3MoeConfig, Qwen3MoeForCausalLM
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Qwen quantization workflow needs model opt update for M4")
+
+
 HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen3MoeForCausalLM"],
     "attention_bias": False,
