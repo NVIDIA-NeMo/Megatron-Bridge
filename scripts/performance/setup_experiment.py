@@ -23,11 +23,11 @@ from nemo_run.config import get_nemorun_home
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import slurm_executor
 
@@ -174,12 +174,16 @@ def main(
     enable_vboost: bool,
     enable_nsys: bool,
     moe_a2a_overlap: bool,
+    moe_flex_dispatcher_backend: str,
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
+    profiling_start_step: int,
+    profiling_stop_step: int,
+    profiling_gpu_metrics: bool,
     nemo_home: str,
     account: str,
     partition: str,
@@ -192,6 +196,7 @@ def main(
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
+    additional_slurm_params: Optional[Dict[str, Any]],
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
@@ -246,6 +251,7 @@ def main(
         custom_srun_args=custom_srun_args,
         hf_token=hf_token,
         nemo_home=nemo_home,
+        additional_slurm_params=additional_slurm_params,
         wandb_key=wandb_key,
     )
 
@@ -256,6 +262,7 @@ def main(
             PerfEnvPlugin(
                 enable_vboost=enable_vboost,
                 moe_a2a_overlap=moe_a2a_overlap,
+                moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
                 tp_size=tp_size,
                 pp_size=pp_size,
                 cp_size=cp_size,
@@ -268,7 +275,13 @@ def main(
         )
 
     if enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                nsys_gpu_metrics=profiling_gpu_metrics,
+            )
+        )
 
     nemorun_script = run.Script(
         path=str(run_script_path),
@@ -374,6 +387,10 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
+    additional_slurm_params = None
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     main(
         use_recipes=args.use_recipes,
         model_family_name=args.model_family_name,
@@ -387,12 +404,16 @@ if __name__ == "__main__":
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
         moe_a2a_overlap=args.moe_a2a_overlap,
+        moe_flex_dispatcher_backend=args.moe_flex_dispatcher_backend,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
+        profiling_start_step=args.profiling_start_step,
+        profiling_stop_step=args.profiling_stop_step,
+        profiling_gpu_metrics=args.profiling_gpu_metrics,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
@@ -405,6 +426,7 @@ if __name__ == "__main__":
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
+        additional_slurm_params=additional_slurm_params,
         golden_values_path=args.golden_values_path,
         convergence_params={
             "correlation_threshold": args.correlation_threshold,
