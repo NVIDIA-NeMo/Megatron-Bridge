@@ -231,6 +231,7 @@ jobs:
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_mamba
+          - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization

@@ -207,7 +207,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size is not None:
+    if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
         recipe.model.expert_model_parallel_size = args.expert_model_parallel_size
@@ -260,3 +260,22 @@ def set_post_overrides(
             )
 
     return recipe
+
+
+def set_deepseek_v3_layout(recipe: ConfigContainer) -> None:
+    """Set the DeepSeek V3 layout."""
+    pp = recipe.model.pipeline_model_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+    mtp_layers = getattr(recipe.model, "mtp_num_layers", 1) or 0
+    last_layer = ["mtp"] * mtp_layers + ["loss"]
+
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    recipe.model.pipeline_model_parallel_layout = layout_map[(pp, vp)]

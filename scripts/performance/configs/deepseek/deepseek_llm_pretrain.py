@@ -14,7 +14,7 @@
 
 import logging
 
-from utils.overrides import set_workload_base_configs
+from utils.overrides import set_deepseek_v3_layout, set_workload_base_configs
 from utils.precision import get_precision_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
@@ -39,6 +39,8 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
+
+    set_deepseek_v3_layout(cfg)
 
 
 def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:

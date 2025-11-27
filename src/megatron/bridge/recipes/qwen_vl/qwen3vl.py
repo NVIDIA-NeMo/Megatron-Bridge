@@ -243,7 +243,7 @@ def _qwen3_vl_common(
         )
     elif _dataset_choice == "hf":
         dataset_cfg = HFDatasetConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             maker_name="make_cord_v2_dataset",
             num_workers=2,

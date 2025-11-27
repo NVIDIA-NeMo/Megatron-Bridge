@@ -163,34 +163,13 @@ For more details on supported models, see our documentation:
 
 #### Launching Recipes
 
-All recipes are ready to train out of the box, using mock data by default. For an example of how to override the default configuration through YAML or Hydra-style CLI overrides, please have a look at this [script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b.py). The script can then be launched with `torchrun`. For example, with the aforementioned script:
+For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
 
-```sh
-torchrun --nproc-per-node=2 pretrain_llama3_8b.py model.tensor_model_parallel_size=1 <additional overrides ...>
-```
+Runnable tutorials live in `tutorials/recipes/llama` that covers:
 
-Optionally, Megatron Bridge also supports launching with [NeMo-Run](https://github.com/NVIDIA-NeMo/Run). See the following examples for reference on launching with NeMo-Run:
-
-- [pretrain_llama3_8b_nemo_run_script.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_script.py)
-- [pretrain_llama3_8b_nemo_run_partial.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_partial.py)
-
-These examples can also be run as-is with the Llama 3 8B recipe (with NeMo-Run installed).
-
-Launch Llama 3 8B pretraining with NeMo-Run's `run.Script`:
-
-```sh
-uv run python pretrain_llama3_8b_nemo_run_script.py \
-    --nproc-per-node=2 \
-    model.pipeline_model_parallel_size=1 \
-    train.train_iters=10 # this script passes Hydra-style overrides to the target script
-```
-
-Launch Llama 3 8B pretraining with NeMo-Run's `run.Partial`:
-
-```sh
-uv run python pretrain_llama3_8b_nemo_run_partial.py \
-    --nproc-per-node=2
-```
+- `00_quickstart_pretrain.py` for mock-data pretraining
+- `01_quickstart_finetune.py` + LoRA configs
+- YAML-driven flows and launch helpers
 
 <!-- ### Vision-Language Models -->
 

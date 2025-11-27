@@ -391,6 +391,11 @@ if __name__ == "__main__":
     if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
         additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
 
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     main(
         use_recipes=args.use_recipes,
         model_family_name=args.model_family_name,

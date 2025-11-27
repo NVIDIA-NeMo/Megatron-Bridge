@@ -123,6 +123,10 @@ from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
+# Cosine similarity threshold: require at least 98% similarity (2% tolerance)
+SIMILARITY_THRESHOLD = 0.98
+
+
 sys.path.append(os.path.dirname(__file__))
 import debugger
 
@@ -453,6 +457,50 @@ def _load_hf_model(args, is_vl_model: bool):
     return hf_model
 
 
+def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model, bridge):
+    """Export HF weights from Megatron model, save, and load exported HF model for comparison.
+
+    Returns:
+        Exported HF model loaded from disk (rank 0) or None (non-rank-0).
+    """
+    print_rank_0("Performing HF round-trip export from Megatron model...")
+    model_name = args.hf_model_path.split("/")[-1]
+    parent_dir = args.exported_hf_dir if args.exported_hf_dir else "."
+    save_path = os.path.join(parent_dir, f"{model_name}_roundtrip")
+
+    if _is_rank_0():
+        print_rank_0(f"Exporting HF checkpoint to: {save_path}")
+    # Quick verification of exported weights against original HF weights (rank 0 summary)
+    matches = 0
+    mismatches = 0
+    for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
+        if _is_rank_0():
+            original_param = bridge.hf_pretrained.state[name]
+            if torch.allclose(param, original_param.to(param.device), atol=1e-1):
+                matches += 1
+            else:
+                mismatches += 1
+    if _is_rank_0():
+        print_rank_0(f"Export verification - matches: {matches}, mismatches: {mismatches}")
+
+    # Save exported HF checkpoint
+    bridge.save_hf_pretrained(megatron_model, save_path)
+
+    # Load exported HF model only on rank 0
+    if _is_rank_0():
+        print_rank_0("Loading exported HF model for comparison...")
+        model_class = get_model_class(args.model_class, is_vl_model)
+        hf_model = model_class.from_pretrained(
+            save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
+        ).eval()
+        if args.enable_debug_hooks:
+            print_rank_0("Registering debug hooks for exported HF model...")
+            debugger.register_hooks(hf_model, file_prefix="hf_debug_")
+            print_rank_0("Exported HF debug hooks registered.")
+        return hf_model
+    return None
+
+
 def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
     """Run HuggingFace model inference and return results.
 
@@ -517,7 +565,7 @@ def _load_megatron_model(args):
         args: Command line arguments.
 
     Returns:
-        List of Megatron model components.
+        Tuple of (List of Megatron model components, bridge).
     """
     print_rank_0("Loading Megatron model...")
     tp, pp, ep, etp = args.tp, args.pp, args.ep, args.etp
@@ -571,7 +619,7 @@ def _load_megatron_model(args):
             debugger.register_hooks(model_component, file_prefix=f"megatron_debug_component_{i}_")
         print_rank_0("Megatron debug hooks registered.")
 
-    return model_components
+    return model_components, bridge
 
 
 def _setup_tokenizer_and_processor(args, is_vl_model: bool):
@@ -633,8 +681,15 @@ def compare_models_one_step(args) -> None:
         print_rank_0("Warning: Image provided but model is not a vision-language model. Ignoring image.")
         args.image_path = None
 
-    # Load HF model
-    hf_model = _load_hf_model(args, is_vl_model)
+    # Load Megatron model (and bridge)
+    megatron_model, bridge = _load_megatron_model(args)
+
+    # Optionally perform HF round-trip export and use exported HF model for comparison
+    if getattr(args, "roundtrip_hf", False):
+        hf_model = _export_and_load_roundtrip_hf_model(args, is_vl_model, megatron_model, bridge)
+    else:
+        # Load HF model directly from the hub/path
+        hf_model = _load_hf_model(args, is_vl_model)
 
     # Setup tokenizer and processor
     tokenizer, processor = _setup_tokenizer_and_processor(args, is_vl_model)
@@ -738,14 +793,22 @@ def compare_models_one_step(args) -> None:
 
                 # Compare outputs (only where we have valid Megatron results)
                 print("=== COMPARISON ===")
-                print(f"Token match: {hf_next_token.item() == megatron_next_token.item()}")
+                token_match = hf_next_token.item() == megatron_next_token.item()
+                token_status_emoji = "✅" if token_match else "❌"
+                print(f"Token match: {token_match} {token_status_emoji}")
 
                 # Compare logits if shapes match
                 if hf_logits.shape == megatron_logits.shape:
                     diff = (hf_logits - megatron_logits).abs()
                     print(f"Logits diff - max: {diff.max():.6f}, mean: {diff.mean():.6f}")
                     cosine_sim = torch.cosine_similarity(hf_logits.unsqueeze(0), megatron_logits.unsqueeze(0))
-                    print(f"Cosine similarity: {cosine_sim.item():.6f}")
+                    cos_val = cosine_sim.item()
+                    percent = cos_val * 100.0
+                    status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
+                    tolerance_text = "within ±2%" if cos_val >= SIMILARITY_THRESHOLD else "outside ±2%"
+                    print(
+                        f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} ({tolerance_text} tolerance)"
+                    )
                 else:
                     print(f"Shape mismatch: HF {hf_logits.shape} vs Megatron {megatron_logits.shape}")
                     print("Cannot compare logits directly due to shape mismatch")
@@ -795,6 +858,17 @@ if __name__ == "__main__":
         "--enable_debug_hooks",
         action="store_true",
         help="Enable debug hooks to log forward pass information for both HF and Megatron models to JSONL files",
+    )
+    parser.add_argument(
+        "--roundtrip_hf",
+        action="store_true",
+        help="Export HF weights from the Megatron model and compare using the exported HF model instead of the original.",
+    )
+    parser.add_argument(
+        "--exported_hf_dir",
+        type=str,
+        default=None,
+        help="Directory where the exported HF model will be saved during round-trip. Defaults to current directory.",
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
 
