@@ -14,10 +14,8 @@
 
 import logging
 
-from utils.helpers import (
-    get_precision_config,
-    set_workload_base_configs,
-)
+from utils.overrides import set_workload_base_configs
+from utils.precision import get_precision_config
 
 from megatron.bridge.recipes.llama import llama3_8b_finetune_config, llama3_70b_finetune_config
 from megatron.bridge.training.comm_overlap import (

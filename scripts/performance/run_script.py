@@ -12,42 +12,73 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import logging
 
 import torch
 from argument_parser import parse_cli_args
-from omegaconf import OmegaConf
-from utils.helpers import get_model_recipe_with_user_overrides
+from utils.overrides import set_post_overrides, set_user_overrides
+from utils.utils import get_perf_optimized_recipe
 
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.utils.omegaconf_utils import (
-    apply_overrides,
-    create_omegaconf_dict_config,
-    parse_hydra_overrides,
-)
 
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
+
+def apply_args_to_config(
+    recipe: ConfigContainer,
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    num_gpus: int,
+    compute_dtype: str,
+    task: str,
+    args: argparse.Namespace,
+) -> ConfigContainer:
+    """Get the model recipe with user overrides."""
+
+    recipe = set_user_overrides(recipe, args)
+
+    recipe = set_post_overrides(
+        recipe,
+        model_family_name,
+        model_recipe_name,
+        gpu,
+        num_gpus,
+        compute_dtype,
+        task,
+        user_gbs=args.global_batch_size,
+    )
+
+    return recipe
 
 
 def main():
     """Main function to run the pretraining/finetuning script."""
-    args, cli_overrides = parse_cli_args()
+    parser = parse_cli_args()
+    args, _ = parser.parse_known_args()
 
-    recipe = get_model_recipe_with_user_overrides(**vars(args))
+    recipe = get_perf_optimized_recipe(
+        model_family_name=args.model_family_name,
+        model_recipe_name=args.model_recipe_name,
+        gpu=args.gpu,
+        compute_dtype=args.compute_dtype,
+        task=args.task,
+    )
 
-    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
-    if cli_overrides:
-        logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
-        merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
-        logger.debug("Hydra-style command-line overrides applied successfully.")
-
-    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
-    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
-    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
-    # Apply overrides while preserving excluded fields
-    apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
+    recipe = apply_args_to_config(
+        recipe=recipe,
+        model_family_name=args.model_family_name,
+        model_recipe_name=args.model_recipe_name,
+        gpu=args.gpu,
+        num_gpus=args.num_gpus,
+        compute_dtype=args.compute_dtype,
+        task=args.task,
+        args=args,
+    )
 
     pretrain(config=recipe, forward_step_func=forward_step)
 

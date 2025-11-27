@@ -14,10 +14,8 @@
 
 import logging
 
-from utils.helpers import (
-    get_precision_config,
-    set_workload_base_configs,
-)
+from utils.overrides import set_workload_base_configs
+from utils.precision import get_precision_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer

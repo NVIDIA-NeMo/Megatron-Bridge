@@ -4,11 +4,11 @@ def create_mock_dataset_config(seq_length):
 
     # Create mock dataset using MockGPTDatasetConfig which enforces blend=None, blend_per_split=None
     return MockGPTDatasetConfig(
+        seq_length=seq_length,
         random_seed=1234,
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
-        sequence_length=seq_length,
         num_dataset_builder_threads=1,
         split="99990,8,2",  # Standard train/val/test split
         # Dataloader config parameters
@@ -31,7 +31,7 @@ def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None)
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
-        sequence_length=seq_length,
+        seq_length=seq_length,
         num_dataset_builder_threads=1,
         blend=blend,
         blend_per_split=blend_per_split,
