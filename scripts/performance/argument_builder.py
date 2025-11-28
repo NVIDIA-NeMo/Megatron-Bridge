@@ -1,6 +1,5 @@
 import argparse
 import os
-import shlex
 from pathlib import Path
 
 from argument_parser import parse_cli_args
@@ -55,11 +54,11 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
                 elif action.type is list_of_strings:
                     if env_value:
                         cli_arg_string.append(long_arg_name)
-                        cli_arg_string.append(shlex.quote(env_value))
+                        cli_arg_string.append(env_value)
                     continue
                 else:
                     cli_arg_string.append(long_arg_name)
-                    cli_arg_string.append(shlex.quote(env_value))
+                    cli_arg_string.append(env_value)
 
     return " ".join(cli_arg_string)
 
