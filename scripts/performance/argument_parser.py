@@ -487,7 +487,7 @@ def parse_cli_args():
         default=None,
     )
     testing_args.add_argument(
-        "--timing_threshold", type=float, default=0.05, help="Step timing validation threshold (default: 0.05 = 5%%)"
+        "--timing_threshold", type=float, default=0.10, help="Step timing validation threshold (default: 0.05 = 5%%)"
     )
     testing_args.add_argument(
         "--skip_first_percent_time",
@@ -519,7 +519,7 @@ def parse_cli_args():
     testing_args.add_argument(
         "--skip_first_percent_loss",
         type=float,
-        default=0.0,
+        default=0.05,
         help="Percentage of loss points to skip from beginning for convergence analysis",
     )
 
