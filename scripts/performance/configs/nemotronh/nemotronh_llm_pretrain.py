@@ -20,7 +20,12 @@ from utils.precision import get_precision_config
 from megatron.bridge.recipes.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from . import nemotronh_workload_base_configs as base_cfgs
+from .nemotronh_workload_base_configs import (
+    NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +39,7 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
 
 def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
-    base_cfg = base_cfgs.NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -49,7 +54,7 @@ def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContai
 
 def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
-    base_cfg = base_cfgs.NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -64,7 +69,7 @@ def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContai
 
 def nemotronh_56b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
-    base_cfg = base_cfgs.NEMOTRONH_56B_B200_FP8_CS_BASE_CONFIG
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -81,7 +86,7 @@ def nemotronh_56b_pretrain_config_h100(precision: str = "bf16") -> ConfigContain
     """H100, baseline config."""
     precision_config = get_precision_config(precision)
 
-    base_cfg = base_cfgs.NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG
     cfg = nemotronh_56b_pretrain_config(
         mock=True,
         precision_config=precision_config,
