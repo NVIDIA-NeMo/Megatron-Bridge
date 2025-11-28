@@ -188,6 +188,7 @@ def main(
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
+    wandb_entity_name: str,
     profiling_start_step: int,
     profiling_stop_step: int,
     profiling_gpu_metrics: bool,
@@ -371,7 +372,7 @@ def main(
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
             wandb_run = wandb.init(
-                project=args.wandb_project_name, entity=args.wandb_entity_name, id=wandb_run_id, resume="allow"
+                project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
             )
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
@@ -435,6 +436,7 @@ if __name__ == "__main__":
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
+        wandb_entity_name=args.wandb_entity_name,
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
