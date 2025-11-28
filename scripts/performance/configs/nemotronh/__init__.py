@@ -7,10 +7,10 @@ except ModuleNotFoundError:
 
 if HAVE_MEGATRON_BRIDGE:
     from .nemotronh_llm_pretrain import (
-        nemotronh_56b_pretrain_config_b200_config,
-        nemotronh_56b_pretrain_config_gb200_config,
-        nemotronh_56b_pretrain_config_gb300_config,
-        nemotronh_56b_pretrain_config_h100_config,
+        nemotronh_56b_pretrain_config_b200,
+        nemotronh_56b_pretrain_config_gb200,
+        nemotronh_56b_pretrain_config_gb300,
+        nemotronh_56b_pretrain_config_h100,
     )
 
 from .nemotronh_workload_base_configs import (
@@ -31,9 +31,9 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "nemotronh_56b_pretrain_config_gb300_config",
-            "nemotronh_56b_pretrain_config_gb200_config",
-            "nemotronh_56b_pretrain_config_b200_config",
-            "nemotronh_56b_pretrain_config_h100_config",
+            "nemotronh_56b_pretrain_config_gb300",
+            "nemotronh_56b_pretrain_config_gb200",
+            "nemotronh_56b_pretrain_config_b200",
+            "nemotronh_56b_pretrain_config_h100",
         ]
     )

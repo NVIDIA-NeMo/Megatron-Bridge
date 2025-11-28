@@ -7,10 +7,10 @@ except ModuleNotFoundError:
 
 if HAVE_MEGATRON_BRIDGE:
     from .deepseek_llm_pretrain import (
-        deepseek_v3_pretrain_config_b200_config,
-        deepseek_v3_pretrain_config_gb200_config,
-        deepseek_v3_pretrain_config_gb300_config,
-        deepseek_v3_pretrain_config_h100_config,
+        deepseek_v3_pretrain_config_b200,
+        deepseek_v3_pretrain_config_gb200,
+        deepseek_v3_pretrain_config_gb300,
+        deepseek_v3_pretrain_config_h100,
     )
 
 from .deepseek_workload_base_configs import (
@@ -47,9 +47,9 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "deepseek_v3_pretrain_config_gb300_config",
-            "deepseek_v3_pretrain_config_gb200_config",
-            "deepseek_v3_pretrain_config_b200_config",
-            "deepseek_v3_pretrain_config_h100_config",
+            "deepseek_v3_pretrain_config_gb300",
+            "deepseek_v3_pretrain_config_gb200",
+            "deepseek_v3_pretrain_config_b200",
+            "deepseek_v3_pretrain_config_h100",
         ]
     )

@@ -51,9 +51,9 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "llama3_8b_pretrain_config_gb300_config",
-            "llama3_8b_pretrain_config_gb200_config",
-            "llama3_8b_pretrain_config_b200_config",
-            "llama3_8b_pretrain_config_h100_config",
+            "llama3_8b_pretrain_config_gb300",
+            "llama3_8b_pretrain_config_gb200",
+            "llama3_8b_pretrain_config_b200",
+            "llama3_8b_pretrain_config_h100",
         ]
     )

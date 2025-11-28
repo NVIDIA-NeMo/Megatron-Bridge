@@ -32,7 +32,7 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def nemotronh_56b_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
@@ -47,7 +47,7 @@ def nemotronh_56b_pretrain_config_gb300_config(precision: str = "bf16") -> Confi
     return cfg
 
 
-def nemotronh_56b_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
@@ -62,7 +62,7 @@ def nemotronh_56b_pretrain_config_gb200_config(precision: str = "bf16") -> Confi
     return cfg
 
 
-def nemotronh_56b_pretrain_config_b200_config(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_B200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
@@ -77,7 +77,7 @@ def nemotronh_56b_pretrain_config_b200_config(precision: str = "bf16") -> Config
     return cfg
 
 
-def nemotronh_56b_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     precision_config = get_precision_config(precision)
 

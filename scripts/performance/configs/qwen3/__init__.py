@@ -7,17 +7,17 @@ except ModuleNotFoundError:
 
 if HAVE_MEGATRON_BRIDGE:
     from .qwen3_llm_pretrain import (
-        qwen3_30b_a3b_pretrain_config_b200_config,
-        qwen3_30b_a3b_pretrain_config_gb200_config,
-        qwen3_30b_a3b_pretrain_config_gb300_config,
-        qwen3_30b_a3b_pretrain_config_h100_config,
-        qwen3_235b_a22b_pretrain_config_b200_config,
-        qwen3_235b_a22b_pretrain_config_gb200_config,
-        qwen3_235b_a22b_pretrain_config_gb300_config,
-        qwen3_235b_a22b_pretrain_config_h100_config,
-        qwen3_next_80b_a3b_pretrain_config_gb200_config,
-        qwen3_next_80b_a3b_pretrain_config_gb300_config,
-        qwen3_next_80b_a3b_pretrain_config_h100_config,
+        qwen3_30b_a3b_pretrain_config_b200,
+        qwen3_30b_a3b_pretrain_config_gb200,
+        qwen3_30b_a3b_pretrain_config_gb300,
+        qwen3_30b_a3b_pretrain_config_h100,
+        qwen3_235b_a22b_pretrain_config_b200,
+        qwen3_235b_a22b_pretrain_config_gb200,
+        qwen3_235b_a22b_pretrain_config_gb300,
+        qwen3_235b_a22b_pretrain_config_h100,
+        qwen3_next_80b_a3b_pretrain_config_gb200,
+        qwen3_next_80b_a3b_pretrain_config_gb300,
+        qwen3_next_80b_a3b_pretrain_config_h100,
     )
 
 from .qwen3_workload_base_configs import (
@@ -86,16 +86,16 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "qwen3_30b_a3b_pretrain_config_b200_config",
-            "qwen3_30b_a3b_pretrain_config_gb200_config",
-            "qwen3_30b_a3b_pretrain_config_gb300_config",
-            "qwen3_30b_a3b_pretrain_config_h100_config",
-            "qwen3_235b_a22b_pretrain_config_b200_config",
-            "qwen3_235b_a22b_pretrain_config_gb200_config",
-            "qwen3_235b_a22b_pretrain_config_gb300_config",
-            "qwen3_235b_a22b_pretrain_config_h100_config",
-            "qwen3_next_80b_a3b_pretrain_config_gb300_config",
-            "qwen3_next_80b_a3b_pretrain_config_gb200_config",
-            "qwen3_next_80b_a3b_pretrain_config_h100_config",
+            "qwen3_30b_a3b_pretrain_config_b200",
+            "qwen3_30b_a3b_pretrain_config_gb200",
+            "qwen3_30b_a3b_pretrain_config_gb300",
+            "qwen3_30b_a3b_pretrain_config_h100",
+            "qwen3_235b_a22b_pretrain_config_b200",
+            "qwen3_235b_a22b_pretrain_config_gb200",
+            "qwen3_235b_a22b_pretrain_config_gb300",
+            "qwen3_235b_a22b_pretrain_config_h100",
+            "qwen3_next_80b_a3b_pretrain_config_gb300",
+            "qwen3_next_80b_a3b_pretrain_config_gb200",
+            "qwen3_next_80b_a3b_pretrain_config_h100",
         ]
     )

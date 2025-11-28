@@ -62,7 +62,7 @@ def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def qwen3_235b_a22b_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_BF16_BASE_CONFIG
@@ -85,7 +85,7 @@ def qwen3_235b_a22b_pretrain_config_gb300_config(precision: str = "bf16") -> Con
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_BF16_BASE_CONFIG
@@ -108,7 +108,7 @@ def qwen3_235b_a22b_pretrain_config_gb200_config(precision: str = "bf16") -> Con
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_config_b200_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_B200_BF16_BASE_CONFIG
@@ -136,7 +136,7 @@ def qwen3_235b_a22b_pretrain_config_b200_config(precision: str = "bf16") -> Conf
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_H100_BF16_BASE_CONFIG
@@ -157,7 +157,7 @@ def qwen3_235b_a22b_pretrain_config_h100_config(precision: str = "bf16") -> Conf
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_BF16_BASE_CONFIG
@@ -180,7 +180,7 @@ def qwen3_30b_a3b_pretrain_config_gb300_config(precision: str = "bf16") -> Confi
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_BF16_BASE_CONFIG
@@ -203,7 +203,7 @@ def qwen3_30b_a3b_pretrain_config_gb200_config(precision: str = "bf16") -> Confi
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_b200_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_B200_BF16_BASE_CONFIG
@@ -226,7 +226,7 @@ def qwen3_30b_a3b_pretrain_config_b200_config(precision: str = "bf16") -> Config
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_H100_BF16_BASE_CONFIG
@@ -247,7 +247,7 @@ def qwen3_30b_a3b_pretrain_config_h100_config(precision: str = "bf16") -> Config
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_next_80b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB200_BF16_BASE_CONFIG
@@ -267,7 +267,7 @@ def qwen3_next_80b_a3b_pretrain_config_gb200_config(precision: str = "bf16") -> 
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_next_80b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB300_BF16_BASE_CONFIG
@@ -287,7 +287,7 @@ def qwen3_next_80b_a3b_pretrain_config_gb300_config(precision: str = "bf16") -> 
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
+def qwen3_next_80b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_H100_BF16_BASE_CONFIG
