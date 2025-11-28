@@ -166,35 +166,96 @@ runs:
             # Verify the reinstall worked by checking source file hash
             echo "🔍 Verifying MCore reinstall..."
             EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-            ACTUAL_COMMIT=$(cd 3rdparty/Megatron-LM && git rev-parse HEAD)
+            VERIFICATION_FAILED=0
+            cd 3rdparty/Megatron-LM
+            
+            # Git metadata check
+            ACTUAL_COMMIT=$(git rev-parse HEAD)
             echo "   Expected submodule commit: ${EXPECTED_COMMIT}"
             echo "   Actual submodule commit:   ${ACTUAL_COMMIT}"
             
-            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-              echo "❌ ERROR: Submodule commit mismatch after checkout!"
-              exit 1
+            # Working directory status
+            echo "   Git status check:"
+            HAS_CHANGES=0
+            if ! git diff-index --quiet HEAD --; then
+              echo "   ⚠️  WARNING: Working directory has uncommitted changes!"
+              git status --short
+              echo "   Modified files:"
+              git diff HEAD --name-only
+              HAS_CHANGES=1
+            else
+              echo "   ✅ Working directory is clean (no uncommitted changes)"
             fi
+            
+            # Show commit details
+            echo "   Git log (last commit):"
+            git log -1 --oneline --stat
+            
+            # Check file hashes at source
+            echo "   Source file hashes (from working directory):"
+            for file in megatron/core/__init__.py megatron/core/package_info.py pyproject.toml; do
+              if [ -f "${file}" ]; then
+                HASH=$(sha256sum "${file}" | awk '\''{print substr($1,1,16)}'\'')
+                FULL_HASH=$(sha256sum "${file}" | awk '\''{print $1}'\'')
+                echo "     ${file}: ${HASH}... (full: ${FULL_HASH})"
+              fi
+            done
+            
+            cd /opt/Megatron-Bridge
             
             # Also verify the INSTALLED package matches the source
             echo "🔍 Verifying installed megatron-core package..."
             SOURCE_HASH=$(sha256sum 3rdparty/Megatron-LM/megatron/core/__init__.py | awk '\''{print substr($1,1,16)}'\'')
+            SOURCE_FULL_HASH=$(sha256sum 3rdparty/Megatron-LM/megatron/core/__init__.py | awk '\''{print $1}'\'')
             echo "import megatron.core; print(megatron.core.__file__)" > /tmp/check_mcore.py
             INSTALLED_PATH=$(uv run python /tmp/check_mcore.py | tr -d '\''\r'\'' | tail -1)
+            HASH_MISMATCH=0
             if [ -f "${INSTALLED_PATH}" ]; then
               INSTALLED_HASH=$(sha256sum "${INSTALLED_PATH}" | awk '\''{print substr($1,1,16)}'\'')
-              echo "   Source __init__.py hash:    ${SOURCE_HASH}"
-              echo "   Installed __init__.py hash: ${INSTALLED_HASH}"
+              INSTALLED_FULL_HASH=$(sha256sum "${INSTALLED_PATH}" | awk '\''{print $1}'\'')
+              echo "   Source __init__.py hash:    ${SOURCE_HASH} (full: ${SOURCE_FULL_HASH})"
+              echo "   Installed __init__.py hash: ${INSTALLED_HASH} (full: ${INSTALLED_FULL_HASH})"
               echo "   Installed location:         ${INSTALLED_PATH}"
               
               if [ "${SOURCE_HASH}" != "${INSTALLED_HASH}" ]; then
-                echo "❌ ERROR: Installed package does not match source! uv sync may have failed."
-                exit 1
+                echo "   ❌ Hash mismatch detected!"
+                echo "   Source file size:    $(stat -f%z 3rdparty/Megatron-LM/megatron/core/__init__.py 2>/dev/null || stat -c%s 3rdparty/Megatron-LM/megatron/core/__init__.py 2>/dev/null) bytes"
+                echo "   Installed file size: $(stat -f%z ${INSTALLED_PATH} 2>/dev/null || stat -c%s ${INSTALLED_PATH} 2>/dev/null) bytes"
+                HASH_MISMATCH=1
+              else
+                echo "   ✅ Installed package matches source (hashes match perfectly)"
               fi
-              echo "✅ Installed package matches source"
             else
-              echo "⚠️  Warning: Could not verify installed package location"
+              echo "   ⚠️  Warning: Could not verify installed package location"
             fi
             rm -f /tmp/check_mcore.py
+            
+            # Now check for errors after collecting ALL diagnostics
+            echo ""
+            echo "📊 Verification Summary:"
+            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+              echo "   ❌ ERROR: Submodule commit mismatch after checkout!"
+              VERIFICATION_FAILED=1
+            fi
+            
+            if [ "${HAS_CHANGES}" -eq 1 ]; then
+              echo "   ❌ ERROR: Working directory is dirty - this will cause hash mismatches!"
+              VERIFICATION_FAILED=1
+            fi
+            
+            if [ "${HASH_MISMATCH}" -eq 1 ]; then
+              echo "   ❌ ERROR: Installed package does not match source!"
+              echo "      Diagnosis: uv sync did not reinstall from updated submodule"
+              VERIFICATION_FAILED=1
+            fi
+            
+            if [ "${VERIFICATION_FAILED}" -eq 1 ]; then
+              echo ""
+              echo "❌ MCore verification FAILED. See diagnostics above."
+              exit 1
+            fi
+            
+            echo "   ✅ All MCore verifications passed!"
             
             # Store commit SHA for verification (since Docker build file was overridden by volume mount)
             echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
