@@ -890,6 +890,18 @@ class LoggerConfig:
     wandb_entity: Optional[str] = None
     """The wandb entity name."""
 
+    mlflow_experiment: Optional[str] = None
+    """The MLFlow experiment name."""
+
+    mlflow_run_name: Optional[str] = None
+    """The MLFlow run name."""
+
+    mlflow_tracking_uri: Optional[str] = None
+    """Optional MLFlow tracking URI."""
+
+    mlflow_tags: Optional[dict[str, str]] = None
+    """Optional tags to apply to the MLFlow run."""
+
     logging_level: int = logging.INFO
     """Set default logging level"""
 

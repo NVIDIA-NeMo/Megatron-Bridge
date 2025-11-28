@@ -31,7 +31,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
-from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, warn_rank_0
 
 
 @dataclass
@@ -124,6 +124,7 @@ class GlobalState:
         self._tokenizer: Optional[Any] = None
         self._tensorboard_logger: Optional[SummaryWriter] = None
         self._wandb_logger: Optional[Any] = None
+        self._mlflow_logger: Optional[Any] = None
         self._timers: Optional[Timers] = None
         self._train_state: Optional[TrainState] = None
         self.rank_monitor_client: Optional[Any] = None
@@ -235,11 +236,87 @@ class GlobalState:
         return self._wandb_logger
 
     @property
+    def mlflow_logger(self) -> Optional[Any]:
+        """The MLFlow logger instance.
+
+        Uses the configuration under LoggerConfig to create or resume an MLFlow run.
+        Restricted to the last rank to avoid duplicate entries or probably any racing conditions.
+        """
+        if self._mlflow_logger is None:
+            cfg = self.cfg
+            if cfg is None:
+                self._mlflow_logger = None
+                return self._mlflow_logger
+
+            logger_cfg = cfg.logger
+            if logger_cfg.mlflow_experiment and get_rank_safe() == (get_world_size_safe() - 1):
+                if logger_cfg.mlflow_run_name == "":
+                    raise ValueError("Please specify the mlflow_run_name for MLFlow logging!")
+    
+                import mlflow
+                # set tracking URI
+                if logger_cfg.mlflow_tracking_uri:
+                    mlflow.set_tracking_uri(logger_cfg.mlflow_tracking_uri)
+
+                # Set or get experiment
+                mlflow.set_experiment(logger_cfg.mlflow_experiment)
+
+                # Prepare tags and params
+                def safe_serialize(obj: Any) -> str:
+                    """Safely convert any object to a JSON-serializable string."""
+                    try:
+                        result = str(obj)
+                        if not isinstance(result, str):
+                            return f"<{type(obj).__name__}>"
+                        return result
+                    except Exception:
+                        return f"<{type(obj).__name__}>"
+
+                def _flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
+                    items: dict[str, Any] = {}
+                    for k, v in d.items():
+                        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+                        if isinstance(v, dict):
+                            items.update(_flatten_dict(v, new_key, sep=sep))
+                        else:
+                            if isinstance(v, (list, tuple)):
+                                v = [safe_serialize(x) for x in v]
+                            items[new_key] = v
+                    return items
+
+                config_dict = cfg.to_dict()
+                sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
+                flat_params = _flatten_dict(sanitized_config)
+
+                # Start or resume a run
+                run_name = logger_cfg.mlflow_run_name
+                tags = logger_cfg.mlflow_tags or {}
+
+                active_run = mlflow.active_run()
+                if active_run is None:
+                    mlflow.start_run(run_name=run_name, tags=tags or None)
+                elif tags:
+                    # If there is already an active run, at least set provided tags
+                    mlflow.set_tags(tags)
+
+                # Log flattened configuration as params (best-effort)
+                stringified_params = {
+                    key: (safe_serialize(value) if not isinstance(value, (int, float, bool, str)) else value)
+                    for key, value in flat_params.items()
+                }
+                mlflow.log_params(stringified_params)
+                self._mlflow_logger = mlflow
+            else:
+                self._mlflow_logger = None
+        return self._mlflow_logger
+
+    @property
     def timers(self) -> Timers:
         """The Megatron Timers instance used for tracking execution times."""
         if self._timers is None:
             self._timers = Timers(self.cfg.logger.timing_log_level, self.cfg.logger.timing_log_option)
             self._timers.write_to_wandb = types.MethodType(_timers_write_to_wandb, self._timers)
+            self._timers.write_to_mlflow = types.MethodType(_timers_write_to_mlflow, self._timers)
         return self._timers
 
     @property
@@ -344,6 +421,7 @@ class GlobalState:
         self._train_state = None
         self._tensorboard_logger = None
         self._wandb_logger = None
+        self._mlflow_logger = None
         self._energy_monitor = None
         self._energy_monitor_created = False
         self._signal_handler = None
@@ -371,3 +449,33 @@ def _timers_write_to_wandb(
         for name in name_to_min_max_time:
             _, max_time = name_to_min_max_time[name]
             writer.log({name + "-time": max_time}, iteration)
+
+
+def _sanitize_mlflow_metric_name(metric_name: str) -> str:
+    """Sanitize metric names for MLFlow by replacing forward slashes with underscores."""
+    return metric_name.replace("/", "_")
+
+
+def _timers_write_to_mlflow(
+    self: Timers,
+    names: list[str],
+    logger: Any,
+    iteration: int,
+    normalizer: float = 1.0,
+    reset: bool = True,
+    barrier: bool = False,
+) -> None:
+    """Patch to write timers to MLFlow for Megatron Core Timers."""
+    assert normalizer > 0.0
+    name_to_min_max_time = self._get_global_min_max_time(names, reset, barrier, normalizer)
+    if logger is not None:
+        metrics: dict[str, float] = {}
+        for name in name_to_min_max_time:
+            _, max_time = name_to_min_max_time[name]
+            sanitized_name = _sanitize_mlflow_metric_name(name + "-time")
+            metrics[sanitized_name] = max_time
+        try:
+            logger.log_metrics(metrics, step=iteration)
+        except Exception:
+            # continue training
+            warn_rank_0("Failed to log timer metrics to MLFlow; continuing without timer metrics.")
