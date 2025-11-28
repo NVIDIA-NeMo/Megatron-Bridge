@@ -371,7 +371,7 @@ def main(
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
             wandb_run = wandb.init(
-                project=args.wandb_project, entity=args.wandb_entity, id=wandb_run_id, resume="allow"
+                project=args.wandb_project_name, entity=args.wandb_entity_name, id=wandb_run_id, resume="allow"
             )
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
