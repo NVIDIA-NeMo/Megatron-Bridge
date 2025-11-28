@@ -155,8 +155,25 @@ runs:
           if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
             echo "🔄 Reinstalling MCore from updated submodule..."
             cd /opt/Megatron-Bridge
+            
+            # Force uninstall existing megatron-core to ensure fresh install
+            uv pip uninstall -y megatron-core || true
+            
+            # Reinstall from the updated submodule
             uv sync --all-extras --all-groups
             echo "✅ MCore reinstalled"
+            
+            # Verify the reinstall worked by checking source file hash
+            echo "🔍 Verifying MCore reinstall..."
+            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+            ACTUAL_COMMIT=$(cd 3rdparty/Megatron-LM && git rev-parse HEAD)
+            echo "   Expected submodule commit: ${EXPECTED_COMMIT}"
+            echo "   Actual submodule commit:   ${ACTUAL_COMMIT}"
+            
+            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+              echo "❌ ERROR: Submodule commit mismatch after checkout!"
+              exit 1
+            fi
             
             # Store commit SHA for verification (since Docker build file was overridden by volume mount)
             echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
