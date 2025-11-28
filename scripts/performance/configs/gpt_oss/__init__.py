@@ -7,10 +7,10 @@ except ModuleNotFoundError:
 
 if HAVE_MEGATRON_BRIDGE:
     from .gpt_oss_llm_pretrain import (
-        gpt_oss_120b_pretrain_config_b200_config,
-        gpt_oss_120b_pretrain_config_gb200_config,
-        gpt_oss_120b_pretrain_config_gb300_config,
-        gpt_oss_120b_pretrain_config_h100_config,
+        gpt_oss_120b_pretrain_config_b200,
+        gpt_oss_120b_pretrain_config_gb200,
+        gpt_oss_120b_pretrain_config_gb300,
+        gpt_oss_120b_pretrain_config_h100,
     )
 
 from .gpt_oss_workload_base_configs import (
@@ -31,9 +31,9 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "gpt_oss_120b_pretrain_config_gb300_config",
-            "gpt_oss_120b_pretrain_config_gb200_config",
-            "gpt_oss_120b_pretrain_config_b200_config",
-            "gpt_oss_120b_pretrain_config_h100_config",
+            "gpt_oss_120b_pretrain_config_gb300",
+            "gpt_oss_120b_pretrain_config_gb200",
+            "gpt_oss_120b_pretrain_config_b200",
+            "gpt_oss_120b_pretrain_config_h100",
         ]
     )

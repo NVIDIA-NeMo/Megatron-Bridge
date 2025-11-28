@@ -20,7 +20,16 @@ from utils.precision import get_precision_config
 from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from . import gpt_oss_workload_base_configs as base_cfgs
+from .gpt_oss_workload_base_configs import (
+    GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG,
+    GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -35,13 +44,13 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def gpt_oss_120b_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.GPT_OSS_120B_GB300_BF16_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.GPT_OSS_120B_GB300_FP8_MX_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
@@ -54,13 +63,13 @@ def gpt_oss_120b_pretrain_config_gb300_config(precision: str = "bf16") -> Config
     return cfg
 
 
-def gpt_oss_120b_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.GPT_OSS_120B_GB200_BF16_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.GPT_OSS_120B_GB200_FP8_MX_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
@@ -73,13 +82,13 @@ def gpt_oss_120b_pretrain_config_gb200_config(precision: str = "bf16") -> Config
     return cfg
 
 
-def gpt_oss_120b_pretrain_config_b200_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.GPT_OSS_120B_B200_BF16_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.GPT_OSS_120B_B200_FP8_MX_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
@@ -92,13 +101,13 @@ def gpt_oss_120b_pretrain_config_b200_config(precision: str = "bf16") -> ConfigC
     return cfg
 
 
-def gpt_oss_120b_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.GPT_OSS_120B_H100_BF16_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.GPT_OSS_120B_H100_FP8_CS_BASE_CONFIG
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
