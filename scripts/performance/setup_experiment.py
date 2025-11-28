@@ -35,6 +35,13 @@ import nemo_run as run
 
 
 try:
+    import wandb
+
+    HAVE_WANDB = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_WANDB = False
+
+try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin
@@ -297,8 +304,20 @@ def main(
     error_msg = None
     n_attempts = 0
     exp_name = exp_name[:37]  # Some k8s clusters have a limit on the length of the experiment name.
+    wandb_run_id = None
     while n_attempts <= MAX_RETRIES:
         while is_finished_experiment is False:
+            wandb_run_id = (
+                (wandb_run_id or wandb.util.generate_id()) if args.is_release_test else wandb.util.generate_id()
+            )
+            executor.env_vars.update(
+                {
+                    "WANDB_RUN_ID": wandb_run_id,
+                    "WANDB_RESUME": "allow",
+                    "WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
+                }
+            )
+
             run.run(
                 nemorun_script,
                 executor=executor,
@@ -351,6 +370,9 @@ def main(
                 log_paths = [log_paths[-1]]
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
+            wandb_run = wandb.init(
+                project=args.wandb_project, entity=args.wandb_entity, id=wandb_run_id, resume="allow"
+            )
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
@@ -362,8 +384,11 @@ def main(
                 golden_values_path=golden_values_path,
                 convergence_config=convergence_params,
                 performance_config=performance_params,
-                wandb_run=None,
+                wandb_run=wandb_run,
             )
+
+            wandb_run.finish()
+            wandb.teardown(exit_code=int(not is_testing_passed))
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < MAX_RETRIES:
