@@ -308,7 +308,7 @@ def main(
     while n_attempts <= MAX_RETRIES:
         while is_finished_experiment is False:
             wandb_run_id = (
-                (wandb_run_id or wandb.util.generate_id()) if args.is_release_test else wandb.util.generate_id()
+                (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
             )
             executor.env_vars.update(
                 {
