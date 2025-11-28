@@ -333,6 +333,17 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
+        "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=10
+    )
+    performance_args.add_argument(
+        "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
+    )
+    performance_args.add_argument(
+        "--profiling_gpu_metrics",
+        help="Enable nsys gpu metrics. Disabled by default.",
+        action="store_true",
+    )
+    performance_args.add_argument(
         "--use_tokendrop",
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
         action="store_true",
