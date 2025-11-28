@@ -42,10 +42,33 @@ else
     ls -la /opt/Megatron-Bridge/ | grep -E "^\.|mcore" || echo "   (no .mcore files found)"
 fi
 
-# Additional debugging: Check if MCore is installed
+# Independent verification: Hash key files (doesn't rely on .mcore_commit_sha)
 echo ""
-echo "📍 MCore installation path:"
-ls -ld /opt/Megatron-Bridge/3rdparty/Megatron-LM 2>/dev/null || echo "   Directory not found"
+echo "🔍 Independent MCore fingerprint (source directory):"
+cd /opt/Megatron-Bridge/3rdparty/Megatron-LM
+if [ -f "megatron/core/__init__.py" ]; then
+    INIT_HASH=$(sha256sum megatron/core/__init__.py | cut -d' ' -f1 | cut -c1-16)
+    echo "   __init__.py hash:     ${INIT_HASH}"
+fi
+if [ -f "megatron/core/package_info.py" ]; then
+    PKG_HASH=$(sha256sum megatron/core/package_info.py | cut -d' ' -f1 | cut -c1-16)
+    echo "   package_info.py hash: ${PKG_HASH}"
+fi
+if [ -f "pyproject.toml" ]; then
+    PROJ_HASH=$(sha256sum pyproject.toml | cut -d' ' -f1 | cut -c1-16)
+    echo "   pyproject.toml hash:  ${PROJ_HASH}"
+    
+    VERSION=$(grep -E '^\s*version\s*=' pyproject.toml | head -1 | sed 's/.*version\s*=\s*"\([^"]*\)".*/\1/' || echo "unknown")
+    echo "   Version string:       ${VERSION}"
+fi
+
+# Check for git metadata (rare but possible)
+if [ -d ".git" ]; then
+    GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    echo "   🎯 Git commit:        ${GIT_COMMIT}"
+fi
+
+cd /opt/Megatron-Bridge
 
 echo "=================================================="
 echo ""
