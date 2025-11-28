@@ -22,7 +22,7 @@ from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_pretrain_
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
-from . import workload_base_configs as base_cfgs
+from . import qwen3_workload_base_configs as base_cfgs
 
 
 logger = logging.getLogger(__name__)
