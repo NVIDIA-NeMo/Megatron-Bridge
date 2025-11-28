@@ -178,12 +178,8 @@ runs:
             # Also verify the INSTALLED package matches the source
             echo "🔍 Verifying installed megatron-core package..."
             SOURCE_HASH=$(sha256sum 3rdparty/Megatron-LM/megatron/core/__init__.py | awk '\''{print substr($1,1,16)}'\'')
-            INSTALLED_PATH=$(uv run python << PYEOF
-import megatron.core
-print(megatron.core.__file__)
-PYEOF
-)
-            INSTALLED_PATH=$(echo "${INSTALLED_PATH}" | tr -d '\''\r'\'' | tail -1)
+            echo "import megatron.core; print(megatron.core.__file__)" > /tmp/check_mcore.py
+            INSTALLED_PATH=$(uv run python /tmp/check_mcore.py | tr -d '\''\r'\'' | tail -1)
             if [ -f "${INSTALLED_PATH}" ]; then
               INSTALLED_HASH=$(sha256sum "${INSTALLED_PATH}" | awk '\''{print substr($1,1,16)}'\'')
               echo "   Source __init__.py hash:    ${SOURCE_HASH}"
@@ -198,6 +194,7 @@ PYEOF
             else
               echo "⚠️  Warning: Could not verify installed package location"
             fi
+            rm -f /tmp/check_mcore.py
             
             # Store commit SHA for verification (since Docker build file was overridden by volume mount)
             echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
