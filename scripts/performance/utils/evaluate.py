@@ -359,7 +359,7 @@ def validate_performance(
     wandb_run.summary["golden_avg_timing"] = golden_avg_timing
     wandb_run.summary["timing_diff"] = timing_diff
     wandb_run.summary["timing_threshold"] = config["timing_threshold"]
-    wandb_run.summary["performance_passed"] = timing_diff > config["timing_threshold"]
+    wandb_run.summary["performance_passed"] = performance_result["passed"]
 
     return performance_result
 
