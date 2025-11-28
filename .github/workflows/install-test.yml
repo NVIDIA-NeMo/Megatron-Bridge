@@ -35,6 +35,11 @@ on:
         description: 'MCore branch name (for reference)'
         required: false
         type: string
+      mcore_repo:
+        description: 'MCore repository URL (for fetching from forks)'
+        required: false
+        type: string
+        default: 'https://github.com/NVIDIA/Megatron-LM.git'
       test_suite:
         description: 'Test suite to run'
         required: false
@@ -140,10 +145,11 @@ jobs:
         run: |
           echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
           echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
+          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
           echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
           
           cd 3rdparty/Megatron-LM
-          git fetch origin ${{ github.event.inputs.mcore_commit }}
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
           
           # Verify the checkout was successful

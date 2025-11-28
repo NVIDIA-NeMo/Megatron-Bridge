@@ -65,8 +65,9 @@ runs:
       working-directory: ${{ github.workspace }}/Megatron-Bridge
       run: |
         echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+        echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
         cd 3rdparty/Megatron-LM
-        git fetch origin ${{ github.event.inputs.mcore_commit }}
+        git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
         git checkout ${{ github.event.inputs.mcore_commit }}
         
         ACTUAL_COMMIT=$(git rev-parse HEAD)
