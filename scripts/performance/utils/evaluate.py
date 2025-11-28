@@ -16,6 +16,7 @@ import logging
 import os
 import pathlib
 import re
+import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from unittest.mock import Mock
@@ -448,7 +449,7 @@ def calc_convergence_and_performance(
             "into the repository before the next run."
         )
         logger.error(error_msg)
-        return False, error_msg
+        sys.exit(1)
 
     logger.info("Found existing golden values file, performing convergence check")
     with open(expected_golden_values_path, "r") as f:
