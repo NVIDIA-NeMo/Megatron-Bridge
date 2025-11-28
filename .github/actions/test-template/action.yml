@@ -177,10 +177,15 @@ runs:
             
             # Also verify the INSTALLED package matches the source
             echo "🔍 Verifying installed megatron-core package..."
-            SOURCE_HASH=$(sha256sum 3rdparty/Megatron-LM/megatron/core/__init__.py | cut -d' ' -f1 | cut -c1-16)
-            INSTALLED_PATH=$(uv run python -c "import megatron.core; print(megatron.core.__file__)")
+            SOURCE_HASH=$(sha256sum 3rdparty/Megatron-LM/megatron/core/__init__.py | awk '\''{print substr($1,1,16)}'\'')
+            INSTALLED_PATH=$(uv run python << PYEOF
+import megatron.core
+print(megatron.core.__file__)
+PYEOF
+)
+            INSTALLED_PATH=$(echo "${INSTALLED_PATH}" | tr -d '\''\r'\'' | tail -1)
             if [ -f "${INSTALLED_PATH}" ]; then
-              INSTALLED_HASH=$(sha256sum "${INSTALLED_PATH}" | cut -d' ' -f1 | cut -c1-16)
+              INSTALLED_HASH=$(sha256sum "${INSTALLED_PATH}" | awk '\''{print substr($1,1,16)}'\'')
               echo "   Source __init__.py hash:    ${SOURCE_HASH}"
               echo "   Installed __init__.py hash: ${INSTALLED_HASH}"
               echo "   Installed location:         ${INSTALLED_PATH}"
