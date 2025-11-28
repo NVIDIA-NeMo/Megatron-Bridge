@@ -175,6 +175,25 @@ runs:
               exit 1
             fi
             
+            # Also verify the INSTALLED package matches the source
+            echo "🔍 Verifying installed megatron-core package..."
+            SOURCE_HASH=$(sha256sum 3rdparty/Megatron-LM/megatron/core/__init__.py | cut -d' ' -f1 | cut -c1-16)
+            INSTALLED_PATH=$(uv run python -c "import megatron.core; print(megatron.core.__file__)")
+            if [ -f "${INSTALLED_PATH}" ]; then
+              INSTALLED_HASH=$(sha256sum "${INSTALLED_PATH}" | cut -d' ' -f1 | cut -c1-16)
+              echo "   Source __init__.py hash:    ${SOURCE_HASH}"
+              echo "   Installed __init__.py hash: ${INSTALLED_HASH}"
+              echo "   Installed location:         ${INSTALLED_PATH}"
+              
+              if [ "${SOURCE_HASH}" != "${INSTALLED_HASH}" ]; then
+                echo "❌ ERROR: Installed package does not match source! uv sync may have failed."
+                exit 1
+              fi
+              echo "✅ Installed package matches source"
+            else
+              echo "⚠️  Warning: Could not verify installed package location"
+            fi
+            
             # Store commit SHA for verification (since Docker build file was overridden by volume mount)
             echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
             echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
