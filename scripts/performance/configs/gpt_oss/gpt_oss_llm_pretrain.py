@@ -22,13 +22,9 @@ from megatron.bridge.training.config import ConfigContainer
 
 from .gpt_oss_workload_base_configs import (
     GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG,
-    GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG,
     GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG,
-    GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG,
     GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG,
-    GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG,
     GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG,
-    GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG,
 )
 
 
@@ -49,9 +45,9 @@ def gpt_oss_120b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContain
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
-    else:
-        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    # else:
+    #     base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG
+    #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
@@ -68,9 +64,9 @@ def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContain
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
-    else:
-        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    # else:
+    #     base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG
+    #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
@@ -87,9 +83,9 @@ def gpt_oss_120b_pretrain_config_b200(precision: str = "bf16") -> ConfigContaine
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
-    else:
-        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    # else:
+    #     base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG
+    #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
@@ -106,9 +102,9 @@ def gpt_oss_120b_pretrain_config_h100(precision: str = "bf16") -> ConfigContaine
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
-    else:
-        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    # else:
+    #     base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG
+    #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
