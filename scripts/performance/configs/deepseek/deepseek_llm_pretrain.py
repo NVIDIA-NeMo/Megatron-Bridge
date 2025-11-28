@@ -43,7 +43,7 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     set_deepseek_v3_layout(cfg)
 
 
-def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_GB300_BF16_BASE_CONFIG
@@ -80,7 +80,7 @@ def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_GB200_BF16_BASE_CONFIG
@@ -117,7 +117,7 @@ def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_b200_config(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_B200_BF16_BASE_CONFIG
@@ -144,7 +144,7 @@ def deepseek_v3_b200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_h100_config(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_H100_BF16_BASE_CONFIG
