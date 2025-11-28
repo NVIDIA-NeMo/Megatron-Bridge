@@ -35,7 +35,7 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def gpt_oss_120b_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_GB300_BF16_BASE_CONFIG
@@ -54,7 +54,7 @@ def gpt_oss_120b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_GB200_BF16_BASE_CONFIG
@@ -73,7 +73,7 @@ def gpt_oss_120b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_b200_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_B200_BF16_BASE_CONFIG
@@ -92,7 +92,7 @@ def gpt_oss_120b_b200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_h100_config(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_H100_BF16_BASE_CONFIG
