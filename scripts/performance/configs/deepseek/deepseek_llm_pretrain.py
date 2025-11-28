@@ -20,7 +20,7 @@ from utils.precision import get_precision_config
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from . import workload_base_configs as base_cfgs
+from . import deepseek_workload_base_configs as base_cfgs
 
 
 logger = logging.getLogger(__name__)

@@ -20,7 +20,7 @@ from utils.precision import get_precision_config
 from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from . import workload_base_configs as base_cfgs
+from . import gpt_oss_workload_base_configs as base_cfgs
 
 
 logger = logging.getLogger(__name__)
