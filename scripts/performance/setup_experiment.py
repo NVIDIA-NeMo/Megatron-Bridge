@@ -50,6 +50,7 @@ def main(
     task: str,
     compute_dtype: str,
     gpu: str,
+    num_gpus: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
@@ -61,6 +62,10 @@ def main(
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    vp_size: Optional[int],
+    ep_size: Optional[int],
+    mbs: Optional[int],
+    gbs: Optional[int],
     wandb_key: str,
     wandb_prj_name: str,
     wandb_exp_name: str,
@@ -108,7 +113,17 @@ def main(
             NsysPlugin(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
+                profile_ranks=list(range(num_gpus)),
                 nsys_gpu_metrics=profiling_gpu_metrics,
+                nsys_trace=["cuda"],
+                nsys_extra_args=[
+                    "--force-overwrite=true",
+                    "--capture-range=cudaProfilerApi",
+                    "--capture-range-end=stop",
+                    "--cuda-graph-trace=node",
+                    "--cuda-event-trace=false",
+                    "--nvtx-domain-include=NCCL",
+                ],
             )
         )
 
@@ -123,9 +138,13 @@ def main(
         executor.container_mounts.extend([f"{megatron_ckpt_dir}:/mnt/megatron_ckpt"])
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
-        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
+    vp_size = vp_size if vp_size != -1 else None
+    exp_name = (
+        f"{task}_{model_name}_{model_size}_{compute_dtype}"
+        f"_gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}"
+        f"_vp{vp_size}_ep{ep_size}_mbs{mbs}_gbs{gbs}"
     )
+
     logger.debug(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
@@ -173,6 +192,7 @@ if __name__ == "__main__":
         task=args.task,
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
+        num_gpus=args.num_gpus,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,
@@ -184,6 +204,10 @@ if __name__ == "__main__":
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        vp_size=args.virtual_pipeline_model_parallel_size,
+        ep_size=args.expert_model_parallel_size,
+        mbs=args.micro_batch_size,
+        gbs=args.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_prj_name=args.wandb_prj_name,
         wandb_exp_name=args.wandb_exp_name,
