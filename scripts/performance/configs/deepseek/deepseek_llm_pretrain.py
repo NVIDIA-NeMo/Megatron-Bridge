@@ -20,7 +20,20 @@ from utils.precision import get_precision_config
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from . import deepseek_workload_base_configs as base_cfgs
+from .deepseek_workload_base_configs import (
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_BASE_CONFIG,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -46,12 +59,12 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
 def deepseek_v3_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_BF16_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
@@ -83,12 +96,12 @@ def deepseek_v3_pretrain_config_gb300(precision: str = "bf16") -> ConfigContaine
 def deepseek_v3_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_BF16_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
@@ -120,12 +133,12 @@ def deepseek_v3_pretrain_config_gb200(precision: str = "bf16") -> ConfigContaine
 def deepseek_v3_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_BF16_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_B200_FP8_MX_BASE_CONFIG
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
@@ -147,12 +160,12 @@ def deepseek_v3_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer
 def deepseek_v3_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_BF16_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG
         if precision == "fp8_sc":
-            base_cfg = base_cfgs.DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
