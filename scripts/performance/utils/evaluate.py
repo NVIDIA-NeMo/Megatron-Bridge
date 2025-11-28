@@ -433,7 +433,10 @@ def calc_convergence_and_performance(
 
     # Always write actuals into experiment directory
     write_golden_values_to_disk(
-        current_values={**current_train_loss, **current_iter_time},
+        current_values={
+            str(step): {loss_metric: current_train_loss[str(step)], timing_metric: current_iter_time[str(step)]}
+            for step in current_train_loss.keys()
+        },
         golden_values_path=next_golden_values_path,
         wandb_run=wandb_run,
     )
