@@ -356,7 +356,7 @@ def main(
                 log_file_paths=log_file_paths,
             )
 
-            if n_attempts <= MAX_RETRIES:
+            if not is_finished_experiment and n_attempts <= MAX_RETRIES:
                 logger.error(f"Starting attempt {n_attempts + 1} of {MAX_RETRIES + 1} for {exp_name}")
 
             if not is_finished_experiment:
