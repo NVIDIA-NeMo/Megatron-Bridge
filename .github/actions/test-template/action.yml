@@ -158,7 +158,7 @@ runs:
             cd /opt/Megatron-Bridge
             
             # Force uninstall existing megatron-core to ensure fresh install
-            uv pip uninstall -y megatron-core || true
+            uv pip uninstall megatron-core || true
             
             # Reinstall from the updated submodule
             uv sync --all-extras --all-groups
