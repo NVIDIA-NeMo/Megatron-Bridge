@@ -19,6 +19,11 @@ from typing import List, Optional
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+from utils.datasets import (
+    create_mock_dataset_config,
+    create_rp2_dataset_config,
+    create_squad_dataset_config,
+)
 from utils.utils import WorkloadBaseConfig, get_workload_base_config
 
 
@@ -232,6 +237,31 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.tokenizer = TokenizerConfig(
             tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
         )
+    # Create dataset configuration based on type
+    if args.data == "mock":
+        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
+    elif args.data == "rp2":
+        if not args.dataset_paths or not args.index_mapping_dir:
+            raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
+        recipe.dataset = create_rp2_dataset_config(
+            dataset_paths=args.dataset_paths,
+            seq_length=args.seq_length or 8192,
+            index_mapping_dir=args.index_mapping_dir,
+        )
+    elif args.data == "squad":
+        if not args.dataset_root:
+            raise ValueError("--dataset-root is required for squad dataset")
+        recipe.dataset = create_squad_dataset_config(
+            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+        )
+    elif args.data == "squad_packed":
+        if not args.dataset_root:
+            raise ValueError("--dataset-root is required for squad_packed dataset")
+        recipe.dataset = create_squad_dataset_config(
+            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+        )
+    else:
+        raise ValueError(f"Unknown dataset type: {args.data}")
     return recipe
 
 
