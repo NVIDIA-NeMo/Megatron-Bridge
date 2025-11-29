@@ -340,17 +340,18 @@ def validate_performance(
     logger.info(f"  Timing difference: {timing_diff:.4f} ({timing_diff * 100:.2f}%)")
     logger.info(f"  Threshold: {config['timing_threshold'] * 100:.1f}%")
 
-    performance_result = {}
+    results = {"passed": True, "failed_metrics": [], "summary": "", "details": "", "metrics": {}}
+
     if timing_diff > config["timing_threshold"]:
         logger.warning(
             f"Step timing validation FAILED: {timing_diff * 100:.2f}% > {config['timing_threshold'] * 100:.1f}%"
         )
         # Add timing failure to convergence result
-        performance_result["passed"] = False
-        performance_result["failed_metrics"].append("step_timing")
-        performance_result["summary"] = f"Failed {len(performance_result['failed_metrics'])} out of 1 tests"
+        results["passed"] = False
+        results["failed_metrics"].append("step_timing")
+        results["summary"] = f"Failed {len(results['failed_metrics'])} out of 1 tests"
     else:
-        performance_result["passed"] = True
+        results["passed"] = True
         logger.info(
             f"✓ Step timing validation passed: {timing_diff * 100:.2f}% <= {config['timing_threshold'] * 100:.1f}%"
         )
@@ -359,9 +360,9 @@ def validate_performance(
     wandb_run.summary["golden_avg_timing"] = golden_avg_timing
     wandb_run.summary["timing_diff"] = timing_diff
     wandb_run.summary["timing_threshold"] = config["timing_threshold"]
-    wandb_run.summary["performance_passed"] = performance_result["passed"]
+    wandb_run.summary["performance_passed"] = results["passed"]
 
-    return performance_result
+    return results
 
 
 def write_golden_values_to_disk(current_values: Dict[str, Any], golden_values_path: str, wandb_run: "wandb.Run"):
