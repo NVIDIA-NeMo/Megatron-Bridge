@@ -172,7 +172,7 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    family_pkg_path = f"megatron.bridge.recipes.{args.model_family}"
+    family_pkg_path = f"megatron.bridge.recipes.{args.model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
     config_builder = getattr(family_pkg, args.model_recipe_name)
     recipe = config_builder(dir="/nemo_run/", name=args.wandb_experiment_name)
