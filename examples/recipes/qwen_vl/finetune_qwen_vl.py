@@ -31,10 +31,15 @@ Examples:
                 --hf-model Qwen/Qwen3-VL-8B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen3vl8b
 
-        For Qwen3-VL (MoE):
+        For Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
                 --hf-model Qwen/Qwen3-VL-30B-A3B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen3vl30b_moe
+
+        For Qwen3-VL 235B (MoE):
+            $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+                --hf-model Qwen/Qwen3-VL-235B-A22B-Instruct \\
+                --megatron-path ./logs/checkpoints/qwen3vl235b_moe
 
     Finetune using the imported checkpoint:
         Qwen2.5-VL 3B:
@@ -56,6 +61,11 @@ Examples:
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_3b_active_30b_moe_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe
+
+        Qwen3-VL 235B (MoE):
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen3_vl_22b_active_235b_moe_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3vl235b_moe
 
     Using a custom YAML config file:
         $  uv run python -m torch.distributed.run --nproc_per_node=8 finetune_qwen_vl.py \\
