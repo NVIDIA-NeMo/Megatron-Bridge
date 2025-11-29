@@ -17,7 +17,7 @@ import logging
 from typing import List, Optional
 
 from megatron.bridge.training.comm_overlap import *
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from utils.utils import WorkloadBaseConfig, get_workload_base_config
 
@@ -219,6 +219,19 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.train.micro_batch_size = args.micro_batch_size
     if args.pretrained_checkpoint is not None:
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+    if args.tokenizer_type == "NullTokenizer":
+        recipe.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
+    elif args.tokenizer_type == "HuggingFaceTokenizer":
+        if not args.tokenizer_model:
+            raise ValueError("--tokenizer-model is required when using HuggingFaceTokenizer")
+        tokenizer_model = args.tokenizer_model
+        recipe.tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
+    elif args.tokenizer_type == "SentencePieceTokenizer":
+        if not args.tokenizer_model:
+            raise ValueError("--tokenizer-model is required for SentencePieceTokenizer")
+        recipe.tokenizer = TokenizerConfig(
+            tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
+        )
     return recipe
 
 
