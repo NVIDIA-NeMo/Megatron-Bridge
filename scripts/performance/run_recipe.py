@@ -27,7 +27,6 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import get_library_recipe
 
 from megatron.bridge.utils.common_utils import get_rank_safe
 
@@ -173,9 +172,10 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    recipe = get_library_recipe(
-        args.model_recipe_name, args.model_family_name, dir="/nemo_run/", name=args.wandb_experiment_name
-    )
+    family_pkg_path = f"megatron.bridge.recipes.{args.model_family}"
+    family_pkg = importlib.import_module(family_pkg_path)
+    config_builder = getattr(family_pkg, args.model_recipe_name)
+    recipe = config_builder(dir="/nemo_run/", name=args.wandb_experiment_name)
 
     recipe = apply_args_to_config(recipe, args)
 
