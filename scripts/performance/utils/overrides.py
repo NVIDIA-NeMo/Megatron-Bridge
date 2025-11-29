@@ -302,6 +302,9 @@ def set_post_overrides(
                 f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
             )
 
+    if model_family_name == "deepseek":
+        set_deepseek_v3_layout(recipe)
+
     return recipe
 
 
