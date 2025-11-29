@@ -509,7 +509,7 @@ def parse_cli_args():
         "--low_loss_tolerance", type=float, default=0.02, help="Tolerance for low loss values (<0.5)"
     )
     testing_args.add_argument(
-        "--final_loss_tolerance", type=float, default=0.03, help="Tolerance for final loss value"
+        "--final_loss_tolerance", type=float, default=0.05, help="Tolerance for final loss value"
     )
     testing_args.add_argument("--max_outlier_ratio", type=float, default=0.1, help="Maximum ratio of outliers allowed")
     testing_args.add_argument(

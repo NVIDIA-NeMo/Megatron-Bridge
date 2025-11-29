@@ -350,6 +350,8 @@ def validate_performance(
         results["passed"] = False
         results["failed_metrics"].append("step_timing")
         results["summary"] = f"Failed {len(results['failed_metrics'])} out of 1 tests"
+        results["timing_diff"] = timing_diff
+        results["timing_threshold"] = config["timing_threshold"]
     else:
         results["passed"] = True
         logger.info(
