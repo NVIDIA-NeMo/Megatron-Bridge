@@ -50,7 +50,6 @@ import logging
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-MAX_RETRIES = 2
 ENTRYPOINT_PEFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
@@ -208,6 +207,7 @@ def main(
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
+    max_retries: int,
 ):
     """Sets up the experiment and runs it."""
     if model_family_name in ["qwen3"] and model_recipe_name in [
@@ -306,7 +306,7 @@ def main(
     n_attempts = 0
     exp_name = exp_name[:37]  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
-    while n_attempts <= MAX_RETRIES:
+    while n_attempts <= max_retries:
         while is_finished_experiment is False:
             wandb_run_id = (
                 (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
@@ -350,14 +350,14 @@ def main(
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
                 n_attempts=n_attempts,
-                max_retries=MAX_RETRIES,
+                max_retries=max_retries,
                 is_finished_experiment=is_finished_experiment,
                 is_long_convergence_run=is_long_convergence_run,
                 log_file_paths=log_file_paths,
             )
 
-            if not is_finished_experiment and n_attempts <= MAX_RETRIES:
-                logger.error(f"Starting attempt {n_attempts + 1} of {MAX_RETRIES + 1} for {exp_name}")
+            if not is_finished_experiment and n_attempts <= max_retries:
+                logger.error(f"Starting attempt {n_attempts + 1} of {max_retries + 1} for {exp_name}")
 
             if not is_finished_experiment:
                 break
@@ -392,8 +392,8 @@ def main(
             wandb.teardown(exit_code=int(not is_testing_passed))
 
             if not is_testing_passed and not is_long_convergence_run:
-                if n_attempts < MAX_RETRIES:
-                    logger.error(f"Starting attempt {n_attempts + 2} of {MAX_RETRIES + 1} for {exp_name}")
+                if n_attempts < max_retries:
+                    logger.error(f"Starting attempt {n_attempts + 2} of {max_retries + 1} for {exp_name}")
                 n_attempts += 1
                 is_finished_experiment = False
 
@@ -468,4 +468,5 @@ if __name__ == "__main__":
             "timing_threshold": args.timing_threshold,
             "skip_first_percent_time": args.skip_first_percent_time,
         },
+        max_retries=args.max_retries,
     )

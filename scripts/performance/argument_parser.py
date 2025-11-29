@@ -91,6 +91,12 @@ def parse_cli_args():
         action="store_false",
         dest="detach",
     )
+    parser.add_argument(
+        "--max_retries",
+        type=int,
+        help="Maximum number of retries. Defaults to 2",
+        default=2,
+    )
 
     # Training
     training_args = parser.add_argument_group("Training arguments")
