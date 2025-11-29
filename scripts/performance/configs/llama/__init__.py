@@ -11,6 +11,10 @@ if HAVE_MEGATRON_BRIDGE:
         llama3_8b_pretrain_config_gb200,
         llama3_8b_pretrain_config_gb300,
         llama3_8b_pretrain_config_h100,
+        llama3_70b_pretrain_config_b200,
+        llama3_70b_pretrain_config_gb200,
+        llama3_70b_pretrain_config_gb300,
+        llama3_70b_pretrain_config_h100,
     )
     from .llama31_llm_pretrain import (
         llama31_405b_pretrain_config_b200,
@@ -119,6 +123,10 @@ if HAVE_MEGATRON_BRIDGE:
             "llama3_8b_pretrain_config_gb200",
             "llama3_8b_pretrain_config_b200",
             "llama3_8b_pretrain_config_h100",
+            "llama3_70b_pretrain_config_gb300",
+            "llama3_70b_pretrain_config_gb200",
+            "llama3_70b_pretrain_config_b200",
+            "llama3_70b_pretrain_config_h100",
             "llama31_405b_pretrain_config_gb300",
             "llama31_405b_pretrain_config_gb200",
             "llama31_405b_pretrain_config_b200",
