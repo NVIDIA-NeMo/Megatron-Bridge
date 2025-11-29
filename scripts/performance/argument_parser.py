@@ -149,12 +149,6 @@ def parse_cli_args():
         help="Dataset type to use",
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
-    data_args.add_argument(
-        "--tokenizer_type",
-        type=str,
-        default="SentencePieceTokenizer",
-        choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
-    )
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
     parser.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
@@ -163,12 +157,11 @@ def parse_cli_args():
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
-    tokenizer_args.add_argument(
-        "--tokenizer-type",
+    data_args.add_argument(
+        "--tokenizer_type",
         type=str,
         default="SentencePieceTokenizer",
         choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
-        help="Type of tokenizer to use",
     )
     tokenizer_args.add_argument(
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
