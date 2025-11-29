@@ -245,7 +245,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
-            seq_length=args.seq_length or 8192,
+            seq_length=recipe.dataset.sequence_length,
             index_mapping_dir=args.index_mapping_dir,
         )
     elif args.data == "squad":
