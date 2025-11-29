@@ -119,7 +119,7 @@ def apply_args_to_config(config, args):
         config.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size:
         config.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size:
+    if args.virtual_pipeline_model_parallel_size != -1:
         config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size:
         config.model.expert_model_parallel_size = args.expert_model_parallel_size
