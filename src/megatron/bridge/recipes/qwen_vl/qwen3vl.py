@@ -131,6 +131,30 @@ def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLComm
     return _qwen3_vl_common(**combined_kwargs)
 
 
+def qwen3_vl_22b_active_235b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen3-VL 235B MoE with 22B Active Params (Qwen3-VL-235B-A22B-Instruct).
+
+    This is a Mixture-of-Experts model with 128 experts and top-8 routing.
+    Recommended to use with expert parallelism (EP) for efficient training.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 1,
+        "expert_parallelism": 8,
+        "expert_tensor_parallelism": 1,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+        "min_lr": 2e-6,
+        "lr": 2e-5,
+        "lr_warmup_iters": 200,
+        "micro_batch_size": 1,
+        "global_batch_size": 32,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
 def _qwen3_vl_common(
     hf_path: str,
     dir: Optional[str] = None,
