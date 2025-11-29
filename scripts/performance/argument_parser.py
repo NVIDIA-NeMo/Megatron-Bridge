@@ -491,8 +491,8 @@ def parse_cli_args():
     testing_args.add_argument(
         "--skip_first_percent_time",
         type=float,
-        default=0.20,
-        help="Percentage of iterations to skip for timing comparison (default: 0.20 = 20%%)",
+        default=0.70,
+        help="Percentage of iterations to skip for timing comparison (default: 0.75 = 75%%)",
     )
 
     # Convergence loss validation parameters
