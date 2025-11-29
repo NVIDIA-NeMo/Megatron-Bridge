@@ -37,13 +37,13 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
     base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_nemotronh_common_configs(cfg)
@@ -52,13 +52,13 @@ def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContai
     return cfg
 
 
-def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_nemotronh_common_configs(cfg)
@@ -67,13 +67,13 @@ def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContai
     return cfg
 
 
-def nemotronh_56b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B200, baseline config."""
     base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_nemotronh_common_configs(cfg)
@@ -82,13 +82,13 @@ def nemotronh_56b_pretrain_config_b200(precision: str = "bf16") -> ConfigContain
     return cfg
 
 
-def nemotronh_56b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
+def nemotronh_56b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
     precision_config = get_precision_config(precision)
 
     base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG
     cfg = nemotronh_56b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_nemotronh_common_configs(cfg)

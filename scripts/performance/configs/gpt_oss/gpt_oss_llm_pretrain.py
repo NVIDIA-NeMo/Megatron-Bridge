@@ -40,7 +40,7 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def gpt_oss_120b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
@@ -50,7 +50,7 @@ def gpt_oss_120b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContain
     #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_gpt_oss_common_configs(cfg)
@@ -59,7 +59,7 @@ def gpt_oss_120b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContain
     return cfg
 
 
-def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
@@ -69,7 +69,7 @@ def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContain
     #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_gpt_oss_common_configs(cfg)
@@ -78,7 +78,7 @@ def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContain
     return cfg
 
 
-def gpt_oss_120b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
@@ -88,7 +88,7 @@ def gpt_oss_120b_pretrain_config_b200(precision: str = "bf16") -> ConfigContaine
     #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_gpt_oss_common_configs(cfg)
@@ -97,7 +97,7 @@ def gpt_oss_120b_pretrain_config_b200(precision: str = "bf16") -> ConfigContaine
     return cfg
 
 
-def gpt_oss_120b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
+def gpt_oss_120b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
@@ -107,7 +107,7 @@ def gpt_oss_120b_pretrain_config_h100(precision: str = "bf16") -> ConfigContaine
     #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
     )
     set_gpt_oss_common_configs(cfg)

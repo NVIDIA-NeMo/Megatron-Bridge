@@ -67,6 +67,7 @@ def main():
         gpu=args.gpu,
         compute_dtype=args.compute_dtype,
         task=args.task,
+        mock=args.data == "mock",
     )
 
     recipe = apply_args_to_config(

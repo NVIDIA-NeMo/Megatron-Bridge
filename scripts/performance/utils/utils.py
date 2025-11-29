@@ -103,6 +103,7 @@ def get_perf_optimized_recipe(
     gpu: str,
     compute_dtype: str,
     task: str,
+    mock: bool = True,
 ):
     """Get the performance optimized recipe."""
     module_name = f"configs.{model_family_name}"
@@ -118,4 +119,4 @@ def get_perf_optimized_recipe(
     except AttributeError as err:
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
-    return recipe_builder(precision=compute_dtype)
+    return recipe_builder(precision=compute_dtype, mock=mock)

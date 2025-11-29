@@ -56,7 +56,7 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     set_deepseek_v3_layout(cfg)
 
 
-def deepseek_v3_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
@@ -68,7 +68,7 @@ def deepseek_v3_pretrain_config_gb300(precision: str = "bf16") -> ConfigContaine
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
@@ -93,7 +93,7 @@ def deepseek_v3_pretrain_config_gb300(precision: str = "bf16") -> ConfigContaine
     return cfg
 
 
-def deepseek_v3_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
@@ -105,7 +105,7 @@ def deepseek_v3_pretrain_config_gb200(precision: str = "bf16") -> ConfigContaine
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
@@ -130,7 +130,7 @@ def deepseek_v3_pretrain_config_gb200(precision: str = "bf16") -> ConfigContaine
     return cfg
 
 
-def deepseek_v3_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
@@ -142,7 +142,7 @@ def deepseek_v3_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
@@ -157,7 +157,7 @@ def deepseek_v3_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer
     return cfg
 
 
-def deepseek_v3_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
@@ -169,7 +169,7 @@ def deepseek_v3_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,

@@ -91,7 +91,7 @@ def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
@@ -103,7 +103,7 @@ def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16") -> ConfigCont
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -114,7 +114,7 @@ def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16") -> ConfigCont
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
@@ -126,7 +126,7 @@ def qwen3_235b_a22b_pretrain_config_gb200(precision: str = "bf16") -> ConfigCont
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -137,7 +137,7 @@ def qwen3_235b_a22b_pretrain_config_gb200(precision: str = "bf16") -> ConfigCont
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
@@ -149,7 +149,7 @@ def qwen3_235b_a22b_pretrain_config_b200(precision: str = "bf16") -> ConfigConta
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -165,7 +165,7 @@ def qwen3_235b_a22b_pretrain_config_b200(precision: str = "bf16") -> ConfigConta
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
@@ -175,7 +175,7 @@ def qwen3_235b_a22b_pretrain_config_h100(precision: str = "bf16") -> ConfigConta
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=False),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -186,7 +186,7 @@ def qwen3_235b_a22b_pretrain_config_h100(precision: str = "bf16") -> ConfigConta
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
@@ -198,7 +198,7 @@ def qwen3_30b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContai
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -209,7 +209,7 @@ def qwen3_30b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContai
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
@@ -221,7 +221,7 @@ def qwen3_30b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContai
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -232,7 +232,7 @@ def qwen3_30b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContai
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_b200(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG
@@ -244,7 +244,7 @@ def qwen3_30b_a3b_pretrain_config_b200(precision: str = "bf16") -> ConfigContain
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -255,7 +255,7 @@ def qwen3_30b_a3b_pretrain_config_b200(precision: str = "bf16") -> ConfigContain
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
@@ -265,7 +265,7 @@ def qwen3_30b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigContain
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
@@ -276,7 +276,7 @@ def qwen3_30b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigContain
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigContainer:
+def qwen3_next_80b_a3b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG
@@ -286,7 +286,7 @@ def qwen3_next_80b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigC
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_next_80b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
@@ -296,7 +296,7 @@ def qwen3_next_80b_a3b_pretrain_config_gb200(precision: str = "bf16") -> ConfigC
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigContainer:
+def qwen3_next_80b_a3b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG
@@ -306,7 +306,7 @@ def qwen3_next_80b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigC
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_next_80b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
@@ -316,7 +316,7 @@ def qwen3_next_80b_a3b_pretrain_config_gb300(precision: str = "bf16") -> ConfigC
     return cfg
 
 
-def qwen3_next_80b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigContainer:
+def qwen3_next_80b_a3b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG
@@ -326,7 +326,7 @@ def qwen3_next_80b_a3b_pretrain_config_h100(precision: str = "bf16") -> ConfigCo
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_next_80b_a3b_pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
