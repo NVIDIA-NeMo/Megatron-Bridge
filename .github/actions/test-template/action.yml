@@ -46,185 +46,78 @@ inputs:
   PAT:
     description: "GitHub Personal Access Token"
     required: true
+  container-image:
+    description: "Container image to use for test"
+    required: true
+  test-data-path:
+    description: "Test data path"
+    required: true
+  runner:
+    description: "Runner to use for test"
+    required: true
 
 runs:
   using: "composite"
   steps:
-    # - name: Install curl, sudo
-    #   shell: bash
-    #   run: |
-    #     apt-get update
-    #     apt-get install -y curl sudo uuid-runtime systemd
-
-    # - name: Install Docker with custom script
-    #   shell: bash
-    #   run: |
-    #     # Download and modify the Docker install script
-    #     curl -fsSL https://get.docker.com -o get-docker.sh
-
-    #     # Install only CLI components (remove daemon installation)
-    #     export DEBIAN_FRONTEND=noninteractive
-    #     apt-get update -qq
-    #     apt-get install -y ca-certificates curl gnupg lsb-release
-
-    #     install -m 0755 -d /etc/apt/keyrings
-    #     curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" -o /etc/apt/keyrings/docker.asc
-    #     chmod a+r /etc/apt/keyrings/docker.asc
-
-    #     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
-
-    #     apt-get update -qq
-    #     # Install CLI only, skip daemon and user management
-    #     apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin
-
-    #     docker --version
-
-    # - name: Install Azure CLI
-    #   if: ${{ inputs.has-azure-credentials == 'true' }}
-    #   shell: bash
-    #   run: |
-    #     echo "::group::Install Azure CLI"
-    #     # Create systemd override for proper dependencies
-    #     curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-    #     echo "::endgroup::"
-
-    # - name: Azure Login
-    #   if: ${{ inputs.has-azure-credentials == 'true' }}
-    #   uses: azure/login@v2
-    #   with:
-    #     client-id: ${{ inputs.azure-client-id }}
-    #     tenant-id: ${{ inputs.azure-tenant-id }}
-    #     subscription-id: ${{ inputs.azure-subscription-id }}
-
-    # - name: Azure ACR Login
-    #   if: ${{ inputs.has-azure-credentials == 'true' }}
-    #   shell: bash
-    #   run: |
-    #     az acr login --name nemoci
-
-    # - name: Configure local file cache
-    #   shell: bash
-    #   if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
-    #   env:
-    #     MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
-    #   run: |
-    #     echo "::group::Configure local artifact cache"
-
-    #     set -x -e -u -o pipefail
-
-    #     sudo apt update
-    #     sudo apt install -y cachefilesd
-
-    #     # Create systemd override for proper dependencies
-    #     sudo mkdir -p /etc/systemd/system/cachefilesd.service.d
-    #     printf "[Unit]\nAfter=network.target local-fs.target\nWants=local-fs.target\n\n[Service]\nRestart=on-failure\nRestartSec=2\n" | sudo tee /etc/systemd/system/cachefilesd.service.d/override.conf > /dev/null
-    #     sudo systemctl daemon-reload
-
-    #     # Enable cachefilesd in config file
-    #     sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
-    #     sudo cat /etc/default/cachefilesd
-
-    #     # Enable and restart the service
-    #     sudo systemctl enable cachefilesd
-    #     sudo systemctl restart cachefilesd
-    #     sudo systemctl status cachefilesd
-    #     echo "::endgroup::"
-
-    # - name: Azure Fileshare
-    #   if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
-    #   shell: bash
-    #   id: azure-fileshare
-    #   run: |
-    #     echo "::group::Mount SMB drive"
-    #     sudo apt update
-    #     sudo apt install -y cifs-utils
-
-    #     RESOURCE_GROUP_NAME="azure-gpu-vm-runner_group"
-    #     STORAGE_ACCOUNT_NAME="nemocistorageaccount2"
-    #     FILE_SHARE_NAME="fileshare"
-
-    #     MNT_ROOT="/media"
-    #     MNT_PATH="$MNT_ROOT/$STORAGE_ACCOUNT_NAME/$FILE_SHARE_NAME"
-
-    #     echo "MNT_PATH=$MNT_PATH" | tee -a "$GITHUB_OUTPUT"
-
-    #     sudo mkdir -p $MNT_PATH
-
-    #     # Create a folder to store the credentials for this storage account and
-    #     # any other that you might set up.
-    #     CREDENTIAL_ROOT="/etc/smbcredentials"
-    #     sudo mkdir -p "/etc/smbcredentials"
-
-    #     # Get the storage account key for the indicated storage account.
-    #     # You must be logged in with az login and your user identity must have
-    #     # permissions to list the storage account keys for this command to work.
-    #     STORAGE_ACCOUNT_KEY=$(az storage account keys list \
-    #         --resource-group $RESOURCE_GROUP_NAME \
-    #         --account-name $STORAGE_ACCOUNT_NAME \
-    #         --query "[0].value" --output tsv | tr -d '"')
-
-    #     # Create the credential file for this individual storage account
-    #     SMB_CREDENTIAL_FILE="$CREDENTIAL_ROOT/$STORAGE_ACCOUNT_NAME.cred"
-    #     if [ ! -f $SMB_CREDENTIAL_FILE ]; then
-    #         echo "username=$STORAGE_ACCOUNT_NAME" | sudo tee $SMB_CREDENTIAL_FILE > /dev/null
-    #         echo "password=$STORAGE_ACCOUNT_KEY" | sudo tee -a $SMB_CREDENTIAL_FILE > /dev/null
-    #     else
-    #         echo "The credential file $SMB_CREDENTIAL_FILE already exists, and was not modified."
-    #     fi
-
-    #     # Change permissions on the credential file so only root can read or modify the password file.
-    #     sudo chmod 600 $SMB_CREDENTIAL_FILE
-
-    #     # This command assumes you have logged in with az login
-    #     HTTP_ENDPOINT=$(az storage account show --resource-group $RESOURCE_GROUP_NAME --name $STORAGE_ACCOUNT_NAME --query "primaryEndpoints.file" --output tsv | tr -d '"')
-    #     SMB_PATH=$(echo $HTTP_ENDPOINT | cut -c7-${#HTTP_ENDPOINT})$FILE_SHARE_NAME
-
-    #     STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP_NAME --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" --output tsv | tr -d '"')
-
-    #     sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks,fsc,cache=strict
-
-    #     ls -al $MNT_PATH/TestData
-    #     echo "::endgroup::"
-
     - name: Checkout repository
       uses: actions/checkout@v2
       with:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
 
-    - name: Cache uv
-      uses: actions/cache@v4
-      id: cache
-      with:
-        path: cache-mount
-        key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-
-    - name: Restore Docker cache mounts
-      uses: reproducible-containers/buildkit-cache-dance@5b81f4d29dc8397a7d341dba3aeecc7ec54d6361
-      with:
-        cache-dir: cache-mount
-        dockerfile: docker/Dockerfile.ci
-        skip-extraction: ${{ steps.cache.outputs.cache-hit }}
-
-    - name: Build container
+    - name: Update MCore submodule (if triggered from MCore)
+      if: ${{ github.event.inputs.mcore_commit != '' }}
       shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.PAT }}
+      working-directory: ${{ github.workspace }}/Megatron-Bridge
       run: |
-        echo "::group::Build test container"
-        cd ${{ github.workspace }}/Megatron-Bridge
-        docker build -f docker/Dockerfile.ci  --secret id=GH_TOKEN -t megatron-bridge .
+        echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+        echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
+        cd 3rdparty/Megatron-LM
+        git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
+        git checkout ${{ github.event.inputs.mcore_commit }}
+
+        ACTUAL_COMMIT=$(git rev-parse HEAD)
+        echo "✅ MCore submodule updated to: ${ACTUAL_COMMIT}"
+        git log -1 --oneline
+
+    - name: Install Azure CLI
+      if: ${{ inputs.has-azure-credentials == 'true' }}
+      shell: bash
+      run: |
+        echo "::group::Install Azure CLI"
+        # Create systemd override for proper dependencies
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
         echo "::endgroup::"
+
+    - name: Azure Login
+      if: ${{ inputs.has-azure-credentials == 'true' }}
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Azure ACR Login
+      if: ${{ inputs.has-azure-credentials == 'true' }}
+      shell: bash
+      run: |
+        az acr login --name nemoci
+
+    - name: Install uuidgen
+      shell: bash -x -e -u -o pipefail {0}
+      if: ${{ contains(inputs.runner, 'aws') }}
+      run: |
+        apt-get update
+        apt-get install -y uuid-runtime
 
     - name: Start container
       shell: bash
       env:
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
-        MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
+        MOUNT_FS: ${{ inputs.is_unit_test == 'false' }}
       run: |
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume /mnt/datadrive/TestData:/home/TestData"
+          VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
         else
           VOLUME_ARGS=""
         fi
@@ -238,8 +131,8 @@ runs:
           --name nemo_container_${{ github.run_id }} \
           --runtime=nvidia --gpus all \
           --shm-size=64g \
-          --env TRANSFORMERS_OFFLINE=0 \
           --cpus=40 \
+          --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
@@ -247,7 +140,7 @@ runs:
           --workdir /opt/Megatron-Bridge \
           --volume ${{ github.workspace }}/Megatron-Bridge:/opt/Megatron-Bridge \
           $VOLUME_ARGS \
-          megatron-bridge \
+          ${{ inputs.container-image }} \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
         RUN_TEST_EOF
         )
@@ -270,7 +163,40 @@ runs:
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
-          
+
+          # Reinstall MCore if the submodule was updated
+          if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
+            echo "🔄 Reinstalling MCore from updated submodule..."
+            cd /opt/Megatron-Bridge
+
+            # Force uninstall existing megatron-core to ensure fresh install
+            uv pip uninstall megatron-core || true
+
+            # Reinstall from the updated submodule
+            uv sync --all-extras --all-groups
+            echo "✅ MCore reinstalled"
+
+            # Verify the commit matches what we expected
+            cd 3rdparty/Megatron-LM
+            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+            ACTUAL_COMMIT=$(git rev-parse HEAD)
+            echo "🔍 Verifying MCore commit..."
+            echo "   Expected: ${EXPECTED_COMMIT}"
+            echo "   Actual:   ${ACTUAL_COMMIT}"
+
+            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+              echo "   ❌ ERROR: Commit mismatch!"
+              exit 1
+            fi
+
+            echo "   ✅ MCore commit verified"
+            cd /opt/Megatron-Bridge
+
+            # Store commit SHA for verification (since Docker build file was overridden by volume mount)
+            echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
+            echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
+          fi
+
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then

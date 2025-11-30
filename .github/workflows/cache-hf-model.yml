@@ -35,9 +35,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
-          pip install torch transformers "huggingface_hub[cli]"
+          TRANSFORMERS_VERSION=$(grep -E 'transformers[[:space:]]*[=><!~]+' ${GITHUB_WORKSPACE}/pyproject.toml | sed -E 's/.*transformers[[:space:]]*([=><!~]+)[[:space:]]*"?([0-9a-zA-Z\.\-\*]+)"?.*/\1\2/')
+          pip install torch "transformers${TRANSFORMERS_VERSION}" "huggingface_hub[cli]"
 
       - name: Log in to HuggingFace
         env:

@@ -6,6 +6,10 @@ on:
         required: true
         type: string
         description: "The target branch to bump"
+      mcore-branch:
+        required: true
+        type: string
+        description: "The mcore branch to bump"
     secrets:
       PAT:
         required: true
@@ -80,7 +84,7 @@ jobs:
       - name: Update submodules
         run: |
           cd 3rdparty/Megatron-LM
-          git fetch origin dev
+          git fetch origin ${{ inputs.mcore-branch }}
           git checkout FETCH_HEAD
 
       - name: Upgrade lock file

@@ -1,7 +1,7 @@
 name: Dependabot
 on:
-  schedule:
-    - cron: "0 8 * * *"
+  # schedule:
+  #   - cron: "0 8 * * *"
   workflow_dispatch: # Allow manual triggering
 
 permissions:
@@ -14,6 +14,7 @@ jobs:
     environment: nemo-ci
     outputs:
       megatron-bridge: ${{ steps.get-branch.outputs.megatron_bridge_release_branch }}
+      mcore: ${{ steps.get-branch.outputs.mcore_latest_branch }}
     steps:
       - name: Get release branch names
         id: get-branch
@@ -24,7 +25,13 @@ jobs:
             grep -o 'r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
             sort -V | 
             tail -n1)
-          echo "megatron_bridge_release_branch=$latest_branch" >> $GITHUB_OUTPUT
+          echo "megatron_bridge_release_branch=$latest_branch" | tee -a $GITHUB_OUTPUT
+
+          mcore_latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA/Megatron-LM.git 'refs/heads/core_r*' | 
+            grep -o 'core_r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
+            sort -V | 
+            tail -n1)
+          echo "mcore_latest_branch=$mcore_latest_branch" | tee -a $GITHUB_OUTPUT
 
   bump-tags:
     needs: [get-release-branch-names]
@@ -33,10 +40,13 @@ jobs:
       matrix:
         include:
           - target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
+            mcore-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
           - target-branch: main
+            mcore-branch: main
     uses: ./.github/workflows/_update_dependencies.yml
     with:
       target-branch: ${{ matrix.target-branch }}
+      mcore-branch: ${{ matrix.mcore-branch }}
     secrets:
       PAT: ${{ secrets.PAT }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

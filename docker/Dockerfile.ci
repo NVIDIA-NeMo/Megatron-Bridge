@@ -12,21 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvcr.io/nvidia/pytorch:25.09-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
+FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV UV_LINK_MODE=copy
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH=$PATH:$CUDA_HOME/bin
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-COPY . .
+ENV UV_VERSION="0.7.2"
+
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    # Address CVE-2025-68973
+    apt-get update && apt install -y --only-upgrade gnupg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
+COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
+COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
+COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
+
+# Build arg to skip --locked when testing with different MCore versions
+ARG MCORE_TRIGGERED_TESTING=false
+ARG UV_CACHE_PRUNE_ARGS
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
-    rm -f /etc/apt/apt.conf.d/docker-clean && \
-    bash docker/common/install.sh --base-image pytorch --use-uv && \
-    uv cache prune --ci
+    if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
+        echo "⚙️ MCore testing mode: skipping --locked flag"; \
+        uv sync --only-group build && \
+        uv sync --link-mode copy --all-extras --all-groups; \
+    else \
+        uv sync --locked --only-group build && \
+        uv sync --link-mode copy --locked --all-extras --all-groups; \
+    fi && \
+    uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
-WORKDIR /opt/Megatron-Bridge
+COPY . /opt/Megatron-Bridge
