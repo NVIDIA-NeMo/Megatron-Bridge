@@ -117,10 +117,16 @@ def test_provider_bridge_basic(WanBridge, mock_hf_pretrained):
 
     # Validate that the provider instance was created and fields mapped correctly
     assert provider.num_layers == mock_hf_pretrained.config.num_layers
-    assert provider.hidden_size == mock_hf_pretrained.config.num_attention_heads * mock_hf_pretrained.config.attention_head_dim
+    assert (
+        provider.hidden_size
+        == mock_hf_pretrained.config.num_attention_heads * mock_hf_pretrained.config.attention_head_dim
+    )
     assert provider.kv_channels == mock_hf_pretrained.config.attention_head_dim
     assert provider.num_query_groups == mock_hf_pretrained.config.num_attention_heads
-    assert provider.crossattn_emb_size == mock_hf_pretrained.config.num_attention_heads * mock_hf_pretrained.config.attention_head_dim
+    assert (
+        provider.crossattn_emb_size
+        == mock_hf_pretrained.config.num_attention_heads * mock_hf_pretrained.config.attention_head_dim
+    )
     assert provider.ffn_hidden_size == mock_hf_pretrained.config.ffn_dim
     assert provider.num_attention_heads == mock_hf_pretrained.config.num_attention_heads
     assert provider.in_channels == mock_hf_pretrained.config.in_channels
@@ -205,5 +211,3 @@ class TestWanBridgeMappingRegistry:
 
         # Ensure all expected special params were present
         assert all(found.values()), f"Missing special replicated mappings: {[k for k, v in found.items() if not v]}"
-
-

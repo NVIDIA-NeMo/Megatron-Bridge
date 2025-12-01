@@ -112,5 +112,3 @@ class PreTrainedWAN(PreTrainedBase):
         except Exception:
             # Best-effort: if config cannot be produced, leave only weights
             pass
-
-

@@ -71,7 +71,6 @@ class WanBridge(MegatronModelBridge):
 
         return provider
 
-
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.
 
@@ -121,7 +120,6 @@ class WanBridge(MegatronModelBridge):
             "proj_out.bias": "head.head.bias",
         }
 
-
         # Custom WAN mapping to safely handle replicated params whose owning module
         # does not expose a top-level `.weight` (e.g., Head.modulation)
         class _ReplicatedByParamNameMapping(ReplicatedMapping):
@@ -144,7 +142,6 @@ class WanBridge(MegatronModelBridge):
                     hf_weights = torch.empty_like(hf_weights)
 
                 return self.broadcast_tensor_to_tp_ranks(hf_weights, src_rank=0)
-
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)

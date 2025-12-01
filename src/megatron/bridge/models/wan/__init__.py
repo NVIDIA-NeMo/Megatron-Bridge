@@ -15,6 +15,7 @@
 # isort: skip_file
 
 from megatron.bridge.models.wan.wan_bridge import WanBridge  # noqa: F401
+
 __all__ = [
     "WanBridge",
 ]
