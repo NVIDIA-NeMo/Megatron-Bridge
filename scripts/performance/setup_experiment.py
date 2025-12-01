@@ -58,7 +58,6 @@ def main(
     enable_nsys: bool,
     use_tokendrop: bool,
     moe_a2a_overlap: bool,
-    moe_flex_dispatcher_backend: str,
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
@@ -92,7 +91,6 @@ def main(
         PerfEnvPlugin(
             enable_vboost=enable_vboost,
             moe_a2a_overlap=moe_a2a_overlap,
-            moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
             tp_size=tp_size,
             pp_size=pp_size,
             cp_size=cp_size,
@@ -183,7 +181,6 @@ if __name__ == "__main__":
         enable_nsys=args.enable_nsys,
         use_tokendrop=args.use_tokendrop,
         moe_a2a_overlap=args.moe_a2a_overlap,
-        moe_flex_dispatcher_backend=args.moe_flex_dispatcher_backend,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
