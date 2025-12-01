@@ -10,17 +10,6 @@ def list_of_strings(arg):
     return arg.split(",")
 
 
-def lower_str(arg):
-    """Lowercase a CLI string argument with a runtime type check."""
-    assert isinstance(arg, str), f"Argument {arg} is not a string"
-    return arg.lower()
-
-
-def get_nemorun_home():
-    """Mock function for demonstration, as this was imported in the original code."""
-    return str(Path.home() / ".cache" / "nemo_run")
-
-
 def normalize_arg_name(arg_name: str) -> str:
     """
     Normalizes a command-line argument name (e.g., '--model_family_name' or '-m')
