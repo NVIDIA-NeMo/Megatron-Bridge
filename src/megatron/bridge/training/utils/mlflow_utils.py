@@ -65,5 +65,3 @@ def on_load_checkpoint_success(
         )
     except Exception as exc:
         print_rank_last(f"Failed to record loaded checkpoint information to MLFlow: {exc}")
-
-

@@ -252,8 +252,9 @@ class GlobalState:
             if logger_cfg.mlflow_experiment and get_rank_safe() == (get_world_size_safe() - 1):
                 if logger_cfg.mlflow_run_name == "":
                     raise ValueError("Please specify the mlflow_run_name for MLFlow logging!")
-    
+
                 import mlflow
+
                 # set tracking URI
                 if logger_cfg.mlflow_tracking_uri:
                     mlflow.set_tracking_uri(logger_cfg.mlflow_tracking_uri)
@@ -451,11 +452,6 @@ def _timers_write_to_wandb(
             writer.log({name + "-time": max_time}, iteration)
 
 
-def _sanitize_mlflow_metric_name(metric_name: str) -> str:
-    """Sanitize metric names for MLFlow by replacing forward slashes with underscores."""
-    return metric_name.replace("/", "_")
-
-
 def _timers_write_to_mlflow(
     self: Timers,
     names: list[str],
@@ -472,7 +468,7 @@ def _timers_write_to_mlflow(
         metrics: dict[str, float] = {}
         for name in name_to_min_max_time:
             _, max_time = name_to_min_max_time[name]
-            sanitized_name = _sanitize_mlflow_metric_name(name + "-time")
+            sanitized_name = name.replace("/", "_") + "-time"
             metrics[sanitized_name] = max_time
         try:
             logger.log_metrics(metrics, step=iteration)

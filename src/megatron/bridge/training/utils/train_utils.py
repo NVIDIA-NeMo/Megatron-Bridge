@@ -75,14 +75,9 @@ MEMORY_KEYS: dict[str, str] = {
 }
 
 
-def _sanitize_mlflow_metric_name(metric_name: str) -> str:
-    """Sanitize metric names for MLFlow by replacing forward slashes with underscores."""
-    return metric_name.replace("/", "_")
-
-
 def _sanitize_mlflow_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     """Sanitize all metric names in a dictionary for MLFlow logging."""
-    return {_sanitize_mlflow_metric_name(key): value for key, value in metrics.items()}
+    return {key.replace("/", "_"): value for key, value in metrics.items()}
 
 
 def param_is_not_shared(param: nn.Parameter) -> bool:
@@ -507,9 +502,7 @@ def training_log(
         if wandb_writer:
             wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
         if mlflow_logger:
-            mlflow_logger.log_metrics(
-                    {"samples vs steps": train_state.consumed_train_samples}, step=iteration
-                )
+            mlflow_logger.log_metrics({"samples vs steps": train_state.consumed_train_samples}, step=iteration)
         writer.add_scalar("learning-rate", learning_rate, iteration)
         writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
         if wandb_writer:
@@ -631,10 +624,12 @@ def training_log(
                     wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
                 if mlflow_logger:
                     mlflow_logger.log_metrics(
-                        _sanitize_mlflow_metrics({
-                            "throughput/tflops/device": per_gpu_tf,
-                            "throughput/tflops": per_gpu_tf * get_world_size_safe(),
-                        }),
+                        _sanitize_mlflow_metrics(
+                            {
+                                "throughput/tflops/device": per_gpu_tf,
+                                "throughput/tflops": per_gpu_tf * get_world_size_safe(),
+                            }
+                        ),
                         step=iteration,
                     )
 

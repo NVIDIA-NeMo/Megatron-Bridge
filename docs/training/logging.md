@@ -156,13 +156,13 @@ This allows seamless integration of W&B logging into your training workflow with
 
 ### MLFlow
 
-Megatron Bridge can also log metrics and artifacts to MLFlow, following the same pattern as the W&B integration.
+Megatron Bridge can log metrics and artifacts to MLFlow, following the same pattern as the W&B integration.
 
 #### What Gets Logged
 
 When enabled, MLFlow receives:
 
-- Flattened training configuration as run parameters
+- Training configuration as run parameters
 - Scalar metrics (losses, learning rate, batch size, throughput, timers, memory, runtime, norms, energy, etc.)
 - Checkpoint artifacts saved under an experiment-specific artifact path per iteration
 
@@ -184,11 +184,11 @@ When enabled, MLFlow receives:
   from megatron.bridge.training.config import LoggerConfig
 
   cfg.logger = LoggerConfig(
-      tensorboard_dir="./runs/tensorboard",       # optional but recommended
+      tensorboard_dir="./runs/tensorboard",
       mlflow_experiment="my_megatron_experiment",
       mlflow_run_name="llama32_1b_pretrain_run",
       mlflow_tracking_uri="http://mlflow:5000",  # optional
-      mlflow_tags={                               # optional
+      mlflow_tags={                              # optional
           "project": "llama32",
           "phase": "pretrain",
       },
