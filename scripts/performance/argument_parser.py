@@ -54,6 +54,13 @@ def parse_cli_args():
         required=True,
     )
     parser.add_argument(
+        "-mr",
+        "--model_recipe_name",
+        type=lower_str,
+        help="Model recipe name to use for experiment.",
+        required=True,
+    )
+    parser.add_argument(
         "--use_recipes",
         action="store_true",
         help="Use library recipes. Disabled by default.",
@@ -279,16 +286,6 @@ def parse_cli_args():
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
         default=None,
-    )
-
-    # For library recipes
-    library_recipes_args = parser.add_argument_group("Library recipes arguments")
-    library_recipes_args.add_argument(
-        "-mr",
-        "--model_recipe_name",
-        type=lower_str,
-        help="Model recipe name to use for experiment.",
-        required=True,
     )
 
     # For performance
