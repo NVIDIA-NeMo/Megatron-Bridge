@@ -84,9 +84,7 @@ class TestWanSafeTensorsStateSourceSaveGenerator:
         src = WanSafeTensorsStateSource(path="dummy")
         gen = [("x", MagicMock())]
 
-        with patch(
-            "megatron.bridge.models.hf_pretrained.state.SafeTensorsStateSource.save_generator"
-        ) as parent_save:
+        with patch("megatron.bridge.models.hf_pretrained.state.SafeTensorsStateSource.save_generator") as parent_save:
             src.save_generator(gen, tmp_path, strict=True)
 
             assert parent_save.call_count == 1
@@ -140,4 +138,3 @@ class TestPreTrainedWANSaveArtifacts:
         t_dest = dest_dir / "transformer"
         assert (t_dest / "config.json").exists()
         assert json.loads((t_dest / "config.json").read_text()) == mock_cfg_dict
-
