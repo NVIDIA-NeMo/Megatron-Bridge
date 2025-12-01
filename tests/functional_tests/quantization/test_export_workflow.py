@@ -21,6 +21,9 @@ import torch
 from safetensors import safe_open
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Quantization export workflow needs model opt update for M4")
+
+
 class TestExportWorkflow:
     """
     Test complete export workflow: quantize HuggingFace models to Megatron format,

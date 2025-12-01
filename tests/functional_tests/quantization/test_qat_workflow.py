@@ -29,6 +29,9 @@ from megatron.bridge.training.utils.checkpoint_utils import (
 from tests.functional_tests.utils import clear_directories
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Quantization aware training workflow  needs model opt update for M4")
+
+
 # QAT workflow test configurations
 # (recipe_name, parallelism_overrides)
 QAT_WORKFLOW_CONFIGS = [

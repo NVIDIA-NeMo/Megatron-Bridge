@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 
+pytestmark = pytest.mark.pleasefixme(reason="Post-training quantization workflow needs model opt update for M4")
+
+
 class TestQuantizationWorkflow:
     """
     Test complete quantization workflow: quantize HuggingFace models to Megatron format,
