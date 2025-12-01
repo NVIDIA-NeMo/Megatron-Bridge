@@ -31,7 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def wan_bridge_module(monkeypatch):
     """
     Prepare dummy external modules so that importing the WAN bridge does not require

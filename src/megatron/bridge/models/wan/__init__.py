@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.wan.wan_bridge import WanBridge  # noqa: F401
+# isort: skip_file
 
+from megatron.bridge.models.wan.wan_bridge import WanBridge  # noqa: F401
 __all__ = [
     "WanBridge",
 ]

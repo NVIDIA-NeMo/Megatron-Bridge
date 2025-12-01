@@ -60,7 +60,7 @@ class PreTrainedWAN(PreTrainedBase):
         # WanTransformer3DModel returns a config-like object with required fields
 
         print(f"Loading config from {self.model_name_or_path}")
-        
+
         return WanTransformer3DModel.from_pretrained(self.model_name_or_path, subfolder="transformer").config
 
     @property
