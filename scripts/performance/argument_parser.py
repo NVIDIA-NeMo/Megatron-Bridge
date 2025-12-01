@@ -271,6 +271,14 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=str,
+        choices=["deepep", "hybridep"],
+        help="MoE flex dispatcher backend to use. Defaults to None",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
         type=bool_arg,
@@ -318,10 +326,10 @@ def parse_cli_args():
     parser.add_argument(
         "-vp",
         "--virtual_pipeline_model_parallel_size",
-        type=int,
+        type=lambda x: None if x == "None" else int(x),
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
         required=False,
-        default=None,
+        default=-1,
     )
     parser.add_argument(
         "-ep",
@@ -419,6 +427,74 @@ def parse_cli_args():
         action="store_false",
         dest="detach",
     )
-
+    parser.add_argument(
+        "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=10
+    )
+    parser.add_argument(
+        "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
+    )
+    parser.add_argument(
+        "--profiling_gpu_metrics",
+        help="Enable nsys gpu metrics. Disabled by default.",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--additional_slurm_params",
+        type=str,
+        help="Additional SLURM parameters as key=value pairs. "
+        "Use semicolons (;) to separate parameters when values contain commas. "
+        "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
+        required=False,
+        default=None,
+    )
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
+
+
+def parse_additional_slurm_params(params_str):
+    """
+    Parse additional SLURM parameters from a string of key=value pairs.
+    This function handles different separator formats:
+    1. Semicolon-separated: "key1=value1;key2=value2" (recommended for multiple parameters)
+    2. Space-separated: "key1=value1 key2=value2"
+    3. Single parameter: "key1=value1,value2" (no separators = single parameter)
+    Args:
+        params_str (str): String with parameters
+    Returns:
+        dict: Dictionary of parameters, or None if params_str is None/empty
+    Example:
+        parse_additional_slurm_params("nodelist=node001,node002")
+        returns {"nodelist": "node001,node002"}
+        parse_additional_slurm_params("nodelist=node001,node002;constraint=gpu")
+        returns {"nodelist": "node001,node002", "constraint": "gpu"}
+        parse_additional_slurm_params("reservation=my_res;constraint=gpu")
+        returns {"reservation": "my_res", "constraint": "gpu"}
+    """
+    if not params_str:
+        return None
+
+    params = {}
+
+    # Try semicolon separation first (most reliable for complex values)
+    if ";" in params_str:
+        parts = params_str.split(";")
+    # Try space separation next
+    elif " " in params_str:
+        parts = params_str.split()
+    # No separators found - treat as single parameter
+    else:
+        parts = [params_str]
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        if "=" in part:
+            key, value = part.split("=", 1)
+            params[key.strip()] = value.strip()
+        else:
+            # Boolean flag (no value)
+            params[part] = True
+
+    return params if params else None
