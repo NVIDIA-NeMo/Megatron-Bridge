@@ -271,14 +271,6 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
-        "--moe_flex_dispatcher_backend",
-        type=str,
-        choices=["deepep", "hybridep"],
-        help="MoE flex dispatcher backend to use. Defaults to None",
-        required=False,
-        default=None,
-    )
-    parser.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
         type=bool_arg,
@@ -326,10 +318,10 @@ def parse_cli_args():
     parser.add_argument(
         "-vp",
         "--virtual_pipeline_model_parallel_size",
-        type=lambda x: None if x == "None" else int(x),
+        type=int,
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
         required=False,
-        default=-1,
+        default=None,
     )
     parser.add_argument(
         "-ep",

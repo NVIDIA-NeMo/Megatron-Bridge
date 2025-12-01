@@ -197,7 +197,6 @@ class PerfEnvPlugin(Plugin):
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
     moe_a2a_overlap: bool = False
-    moe_flex_dispatcher_backend: str
     model_name: str
     model_size: str
     gpu: str
@@ -369,11 +368,7 @@ class PerfEnvPlugin(Plugin):
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
 
         # Force program order kernel launch for TP, CP overlap
-        moe_flex_dispatcher_backend = (
-            self.moe_flex_dispatcher_backend
-            if self.moe_flex_dispatcher_backend is not None
-            else getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
-        )
+        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
         moe_a2a_overlap = (
             self.moe_a2a_overlap
             if self.moe_a2a_overlap is not None
