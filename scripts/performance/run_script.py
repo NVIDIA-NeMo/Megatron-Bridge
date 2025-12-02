@@ -37,6 +37,9 @@ def main():
         else f"{args.model_recipe_name}_finetune_config"
     )
 
+    if args.model_recipe_name == "deepseek_v3_32nodes_pretrain_config":
+        args.model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
+
     recipe = get_perf_optimized_recipe(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
