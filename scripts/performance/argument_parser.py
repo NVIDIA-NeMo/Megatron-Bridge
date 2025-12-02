@@ -236,7 +236,6 @@ def parse_cli_args():
         "--virtual_pipeline_model_parallel_size",
         type=int,
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
-        default=-1,
     )
     parallelism_args.add_argument(
         "-ep",
@@ -364,13 +363,6 @@ def parse_cli_args():
         "--use_tokendrop",
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
         type=bool_arg,
-        required=False,
-    )
-    parser.add_argument(
-        "--moe_flex_dispatcher_backend",
-        type=str,
-        choices=["deepep", "hybridep"],
-        help="MoE flex dispatcher backend to use. Defaults to None",
         required=False,
     )
     performance_args.add_argument(

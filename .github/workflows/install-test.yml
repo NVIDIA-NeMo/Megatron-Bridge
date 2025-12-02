@@ -23,6 +23,33 @@ on:
       - main
       - "pull-request/[0-9]+"
       - "deploy-release/*"
+  
+  # Allow MCore to trigger this workflow remotely for compatibility testing
+  workflow_dispatch:
+    inputs:
+      mcore_commit:
+        description: 'MCore commit SHA to test against'
+        required: false
+        type: string
+      mcore_branch:
+        description: 'MCore branch name (for reference)'
+        required: false
+        type: string
+      mcore_repo:
+        description: 'MCore repository URL (for fetching from forks)'
+        required: false
+        type: string
+        default: 'https://github.com/NVIDIA/Megatron-LM.git'
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        type: string
+        default: 'all'
+      triggered_by:
+        description: 'Trigger source (for tracking)'
+        required: false
+        type: string
+        default: 'manual'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
@@ -112,6 +139,39 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+          echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
+          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
+          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
+          git checkout ${{ github.event.inputs.mcore_commit }}
+          
+          # Verify the checkout was successful
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          
+          echo "✅ MCore submodule updated successfully"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+          
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          
+          git log -1 --oneline
+      
+      - name: Set environment for MCore testing
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          echo "MCORE_TRIGGERED_TESTING=true" | tee -a "$GITHUB_ENV"
+          echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Set PATH
         run: |
@@ -123,6 +183,25 @@ jobs:
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
           echo "CUDACXX=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
           echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
+      
+      - name: Verify MCore version before install
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          cd 3rdparty/Megatron-LM
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          
+          echo "🧪 INSTALL TEST - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+          
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+          
+          echo "✅ MCore commit verified"
+          git log -1 --oneline
 
       - name: Install project
         shell: bash
