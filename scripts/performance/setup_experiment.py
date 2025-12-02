@@ -416,6 +416,12 @@ if __name__ == "__main__":
     # Parse additional SLURM parameters if provided
     additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
 
+    args.model_recipe_name = (
+        f"{args.model_recipe_name}_pretrain_config"
+        if args.task == "pretrain"
+        else f"{args.model_recipe_name}_finetune_config"
+    )
+
     main(
         use_recipes=args.use_recipes,
         model_family_name=args.model_family_name,

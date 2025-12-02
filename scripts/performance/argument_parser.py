@@ -38,6 +38,36 @@ def lower_str(arg):
     return arg.lower()
 
 
+def bool_arg(arg):
+    """Convert a string CLI value to a boolean."""
+    if arg.lower() in ["true", "1", "t", "yes", "y"]:
+        return True
+    elif arg.lower() in ["false", "0", "f", "no", "n"]:
+        return False
+    else:
+        raise ValueError(f"Invalid value for boolean argument: {arg}")
+
+
+def is_cuda_graph_impl_valid(arg):
+    """Validate and normalize the CUDA graph implementation argument."""
+    if arg in VALID_CUDA_GRAPH_IMPLS:
+        return arg
+    else:
+        raise ValueError(f"Invalid value for cuda_graph_impl: {arg}. Valid options are: {VALID_CUDA_GRAPH_IMPLS}")
+
+
+def is_cuda_graph_scope_valid(arg):
+    """Validate the CUDA graph scope argument."""
+    args = arg.split(",")
+    if all(a in VALID_CUDA_GRAPH_SCOPES for a in args):
+        return args
+    else:
+        raise ValueError(
+            f"Invalid value for cuda_graph_scope: {arg}. Valid options are: {VALID_CUDA_GRAPH_SCOPES}. "
+            "Comma separated list of scopes is allowed."
+        )
+
+
 def parse_cli_args():
     """
     Command line arguments for running pre-training and fine-tuning experiments.
@@ -50,14 +80,14 @@ def parse_cli_args():
         "-m",
         "--model_family_name",
         type=lower_str,
-        help="Model family name to use for experiment.",
+        help="Model family name to use for experiment. E.g. `--model_family_name llama` (not llama3)",
         required=True,
     )
     parser.add_argument(
         "-mr",
         "--model_recipe_name",
         type=lower_str,
-        help="Model recipe name to use for experiment.",
+        help="Model recipe name to use for experiment. E.g. `--model_recipe_name llama31_405b`",
         required=True,
     )
     parser.add_argument(
@@ -88,21 +118,21 @@ def parse_cli_args():
     parser.add_argument(
         "--detach",
         help="Detach the experiment from the terminal. Disabled by default",
-        action="store_true",
-        dest="detach",
-        default=True,
-    )
-    parser.add_argument(
-        "--no-detach",
-        help="Do not detach the experiment from the terminal. Enabled by default",
-        action="store_false",
-        dest="detach",
+        type=bool_arg,
+        default=False,
     )
     parser.add_argument(
         "--max_retries",
         type=int,
         help="Maximum number of retries. Defaults to 2",
         default=2,
+    )
+    parser.add_argument(
+        "-ng",
+        "--num_gpus",
+        type=int,
+        help="Number of gpus.",
+        required=True,
     )
 
     # Training
@@ -285,7 +315,6 @@ def parse_cli_args():
         "Use semicolons (;) to separate parameters when values contain commas. "
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
-        default=None,
     )
 
     # For performance
@@ -308,19 +337,11 @@ def parse_cli_args():
         default="bf16",
     )
     performance_args.add_argument(
-        "-ng",
-        "--num_gpus",
-        type=int,
-        help="Number of gpus.",
-        required=False,
-    )
-    performance_args.add_argument(
         "-vb",
         "--enable_vboost",
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
-        action="store_true",
+        type=bool_arg,
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "-en",
@@ -342,9 +363,8 @@ def parse_cli_args():
     performance_args.add_argument(
         "--use_tokendrop",
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
-        action="store_true",
+        type=bool_arg,
         required=False,
-        default=None,
     )
     parser.add_argument(
         "--moe_flex_dispatcher_backend",
@@ -352,35 +372,29 @@ def parse_cli_args():
         choices=["deepep", "hybridep"],
         help="MoE flex dispatcher backend to use. Defaults to None",
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
-        action="store_true",
+        type=bool_arg,
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "--cuda_graph_impl",
         help=f"Cuda graph implementation. Options- {', '.join(VALID_CUDA_GRAPH_IMPLS)}.",
-        choices=VALID_CUDA_GRAPH_IMPLS,
+        type=is_cuda_graph_impl_valid,
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "--cuda_graph_scope",
         help=f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of scopes is allowed.",
-        nargs="+",
-        choices=VALID_CUDA_GRAPH_SCOPES,
+        type=is_cuda_graph_scope_valid,
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "--moe_a2a_overlap",
-        action="store_true",
+        type=bool_arg,
         required=False,
-        default=False,
     )
     performance_args.add_argument(
         "-rl",
@@ -389,7 +403,6 @@ def parse_cli_args():
         help="Number of Transformer layers to recompute, where all the intermediate "
         "activations of a Transformer layer are computed. Defaults to None",
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "-ol",
@@ -397,14 +410,12 @@ def parse_cli_args():
         type=int,
         help="Number of Transformer layers to offload to the CPU memory. Defaults to None",
         required=False,
-        default=None,
     )
     performance_args.add_argument(
         "--recompute_modules",
         type=list_of_strings,
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
-        default=None,
     )
 
     # Logging
@@ -415,7 +426,6 @@ def parse_cli_args():
         type=str,
         help="wandb key. Needed for wandb logger projetion to server",
         required=False,
-        default=None,
     )
     logging_args.add_argument(
         "-wdp",
@@ -423,7 +433,6 @@ def parse_cli_args():
         type=str,
         help="wandb project name",
         required=False,
-        default=None,
     )
     logging_args.add_argument(
         "-wde",
@@ -431,7 +440,6 @@ def parse_cli_args():
         type=str,
         help="wandb project name",
         required=False,
-        default=None,
     )
     logging_args.add_argument(
         "-wdj",
@@ -439,7 +447,6 @@ def parse_cli_args():
         type=str,
         help="wandb job name",
         required=False,
-        default=None,
     )
     logging_args.add_argument(
         "-wds",
@@ -447,7 +454,6 @@ def parse_cli_args():
         type=str,
         help="wandb save directory",
         required=False,
-        default=None,
     )
     logging_args.add_argument(
         "-l",
@@ -480,7 +486,6 @@ def parse_cli_args():
         type=str,
         help="Path to golden values file",
         required=False,
-        default=None,
     )
     testing_args.add_argument(
         "--timing_threshold", type=float, default=0.05, help="Step timing validation threshold (default: 0.05 = 5%%)"

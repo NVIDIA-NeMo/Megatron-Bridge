@@ -102,7 +102,6 @@ def get_perf_optimized_recipe(
     model_recipe_name: str,
     gpu: str,
     compute_dtype: str,
-    task: str,
     mock: bool = True,
 ):
     """Get the performance optimized recipe."""
@@ -120,3 +119,11 @@ def get_perf_optimized_recipe(
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
     return recipe_builder(precision=compute_dtype, mock=mock)
+
+
+def get_library_recipe(model_family_name: str, model_recipe_name: str, wandb_experiment_name: str):
+    """Get the library recipe."""
+    family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
+    family_pkg = importlib.import_module(family_pkg_path)
+    recipe_builder = getattr(family_pkg, model_recipe_name)
+    return recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)

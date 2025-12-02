@@ -17,7 +17,6 @@ Training script for Megatron-Bridge recipes.
 This script runs inside the container and handles the actual training execution.
 """
 
-import importlib
 import logging
 
 import torch
@@ -27,11 +26,12 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
+from utils.utils import get_library_recipe
 
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
-def apply_args_to_config(config, args):
+def set_user_overrides(config, args):
     """Apply CLI arguments to ConfigContainer fields."""
 
     # Training configuration
@@ -172,12 +172,15 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    family_pkg_path = f"megatron.bridge.recipes.{args.model_family_name}"
-    family_pkg = importlib.import_module(family_pkg_path)
-    config_builder = getattr(family_pkg, args.model_recipe_name)
-    recipe = config_builder(dir="/nemo_run/", name=args.wandb_experiment_name)
+    args.model_recipe_name = (
+        f"{args.model_recipe_name}_pretrain_config"
+        if args.task == "pretrain"
+        else f"{args.model_recipe_name}_finetune_config"
+    )
 
-    recipe = apply_args_to_config(recipe, args)
+    recipe = get_library_recipe(args.model_family_name, args.model_recipe_name)
+
+    recipe = set_user_overrides(recipe, args)
 
     # Log final configuration
     if get_rank_safe() == 0:
