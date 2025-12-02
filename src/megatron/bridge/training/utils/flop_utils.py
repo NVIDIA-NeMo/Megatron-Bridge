@@ -138,11 +138,14 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         # TODO(helenn/dnarayanan): Refactor this to reuse the helper methods.
         # Attention projection size.
         query_projection_size = cfg.model.kv_channels * cfg.model.num_attention_heads
-        query_projection_to_hidden_size_ratio = query_projection_size / cfg.model.hidden_size
         # GQA or MHA
-        num_query_groups = (
-            cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
-        )
+        group_query_attention = getattr(cfg.model, "group_query_attention", False)
+        if not group_query_attention:
+            num_query_groups = cfg.model.num_attention_heads
+        else:
+            num_query_groups = (
+                cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
+            )
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.
@@ -261,20 +264,76 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
 
         else:
             ## MHA or GQA
-            self_attn_term = (
-                expansion_factor
-                * num_layers
-                * cfg.model.hidden_size
-                * cfg.model.hidden_size
-                * (
-                    (
-                        1
-                        + (num_query_groups / cfg.model.num_attention_heads)
-                        # # Only half of the attention matrix is non-zero and needs to be multiplied with V.
-                        + (cfg.model.seq_length / cfg.model.hidden_size / 2)
+            key_projection_size = cfg.model.kv_channels * num_query_groups
+            value_projection_size = cfg.model.kv_channels * num_query_groups
+            standard_self_attn_term = expansion_factor * (
+                ## qkv proj
+                cfg.model.hidden_size * (query_projection_size + key_projection_size + value_projection_size)
+                ## core attention
+                + query_projection_size
+                * cfg.model.seq_length
+                / 2  # causal mask (only half of the mask is non-zero)
+                * 2  # QK^T and (QK^T)V
+                ## out proj
+                + query_projection_size * cfg.model.hidden_size
+            )
+
+            linear_attention_type = getattr(cfg.model, "linear_attention_type", None)
+            linear_attention_freq = getattr(cfg.model, "linear_attention_freq", None)
+
+            if linear_attention_type is not None:
+                # Calculate number of dense and MoE Transformer MLPs.
+                if isinstance(linear_attention_freq, int):
+                    linear_attention_pattern = [
+                        # [1,1,...,1,0,1,1,...,1,0,...]
+                        0 if ((i + 1) % linear_attention_freq == 0) else 1
+                        for i in range(num_layers)
+                    ]
+                elif isinstance(linear_attention_freq, list):
+                    linear_attention_pattern = linear_attention_freq
+                    assert len(linear_attention_pattern) == num_layers, (
+                        f"Invalid length of linear_attention_pattern: {len(linear_attention_pattern)}, "
+                        f"expected {num_layers}, "
+                        f"current linear attention pattern: {linear_attention_freq}"
                     )
-                    * query_projection_to_hidden_size_ratio
-                )
+                elif linear_attention_freq is None:
+                    linear_attention_pattern = [1] * num_layers
+                else:
+                    raise ValueError(
+                        f"Invalid linear_attention_freq: {type(linear_attention_freq)}, {linear_attention_freq}"
+                    )
+
+                num_linear_attention_layers = sum(linear_attention_pattern)
+                num_standard_attention_layers = num_layers - num_linear_attention_layers
+
+                if linear_attention_type == "gated_delta_net":
+                    # Calculate the FLOPs for the gated delta net attention.
+                    qk_head_dim = getattr(cfg.model, "linear_key_head_dim")
+                    v_head_dim = getattr(cfg.model, "linear_value_head_dim")
+                    num_qk_heads = getattr(cfg.model, "linear_num_key_heads")
+                    num_v_heads = getattr(cfg.model, "linear_num_value_heads")
+                    qk_dim = qk_head_dim * num_qk_heads
+                    v_dim = v_head_dim * num_v_heads
+                    linear_self_attn_term = expansion_factor * (
+                        ## in proj
+                        cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                        ## conv1d
+                        + getattr(cfg.model, "linear_conv_kernel_dim") * (2 * qk_dim + v_dim)
+                        ## gated delta rule
+                        + num_v_heads * (v_head_dim**2) * 4  # KK^T, VK^T, S(a(I-bKK^T)), and SQ
+                        ## out proj
+                        + cfg.model.hidden_size * v_dim
+                    )
+                else:
+                    raise ValueError(f"Invalid linear_attention_type: {linear_attention_type}")
+            else:
+                num_linear_attention_layers = 0
+                linear_self_attn_term = 0
+                num_standard_attention_layers = num_layers
+
+            self_attn_term = (
+                linear_self_attn_term * num_linear_attention_layers
+                + standard_self_attn_term * num_standard_attention_layers
             )
 
         padded_vocab_size = calculate_padded_vocab_size(
@@ -321,31 +380,35 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
 
     # Main entrypoint for FLOPs calculation.
     if getattr(cfg.model, "is_hybrid_model", False):
-        # TODO: Fix this when onboarding hybrid models
         # Calculate the number of each type of layer.
-        # num_attn_layers, num_mamba_layers, num_mlp_layers = calculate_layer_counts()
+        num_attn_layers, num_mamba_layers, num_mlp_layers = calculate_layer_counts()
+        padded_vocab_size = calculate_padded_vocab_size(
+            cfg.model.vocab_size,
+            cfg.model.make_vocab_size_divisible_by,
+            cfg.model.tensor_model_parallel_size,
+            logging_enabled=False,
+        )
 
-        # # Compute hybrid model FLOPs.
-        # return hybrid_flops(
-        #     batch_size=batch_size,
-        #     seq_len=cfg.model.seq_length,
-        #     hidden_size=cfg.model.hidden_size,
-        #     num_attn_layers=num_attn_layers,
-        #     num_mamba_layers=num_mamba_layers,
-        #     num_mlp_layers=num_mlp_layers,
-        #     mamba_state_dim=getattr(cfg.model, 'mamba_state_dim', 128),
-        #     mamba_head_dim=getattr(cfg.model, 'mamba_head_dim', 64),
-        #     mamba_num_groups=getattr(cfg.model, 'mamba_num_groups', 8),
-        #     mamba_num_heads=getattr(cfg.model, 'mamba_num_heads', 128),
-        #     num_attn_heads=cfg.model.num_attention_heads,
-        #     gqa=getattr(cfg.model, 'group_query_attention', False),
-        #     gqa_groups=getattr(cfg.model, 'num_query_groups', 8),
-        #     kv_channels=getattr(cfg.model, 'kv_channels', None),
-        #     mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
-        #     swiglu=getattr(cfg.model, 'gated_linear_unit', False),
-        #     vocab_size=cfg.tokenizer.padded_vocab_size,
-        # )
-        return 0
+        # Compute hybrid model FLOPs.
+        return hybrid_flops(
+            batch_size=batch_size,
+            seq_len=cfg.model.seq_length,
+            hidden_size=cfg.model.hidden_size,
+            num_attn_layers=num_attn_layers,
+            num_mamba_layers=num_mamba_layers,
+            num_mlp_layers=num_mlp_layers,
+            mamba_state_dim=getattr(cfg.model, "mamba_state_dim", 128),
+            mamba_head_dim=getattr(cfg.model, "mamba_head_dim", 64),
+            mamba_num_groups=getattr(cfg.model, "mamba_num_groups", 8),
+            mamba_num_heads=getattr(cfg.model, "mamba_num_heads", 128),
+            num_attn_heads=cfg.model.num_attention_heads,
+            gqa=getattr(cfg.model, "group_query_attention", False),
+            gqa_groups=getattr(cfg.model, "num_query_groups", 8),
+            kv_channels=getattr(cfg.model, "kv_channels", None),
+            mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
+            swiglu=getattr(cfg.model, "gated_linear_unit", False),
+            vocab_size=padded_vocab_size,
+        )
     else:
         # Compute standard Transformer model FLOPs.
         return transformer_flops()
