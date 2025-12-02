@@ -466,7 +466,7 @@ def training_log(
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(throughput_report, iteration)
-            if mlflow_logger and throughput_report:
+            if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(throughput_report), step=iteration)
         if logger_config.log_memory_to_tensorboard:
             memory_report = report_memory(memory_keys=logger_config.memory_keys)
@@ -475,7 +475,7 @@ def training_log(
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(memory_report, iteration)
-            if mlflow_logger and memory_report:
+            if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(memory_report), step=iteration)
         if logger_config.log_runtime_to_tensorboard:
             runtime_report = report_runtime(
@@ -489,7 +489,7 @@ def training_log(
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(runtime_report, iteration)
-            if mlflow_logger and runtime_report:
+            if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(runtime_report), step=iteration)
         if logger_config.log_l2_norm_grad_to_tensorboard:
             l2_report = report_l2_norm_grad(model)
@@ -497,7 +497,7 @@ def training_log(
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(l2_report, iteration)
-            if mlflow_logger and l2_report:
+            if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(l2_report), step=iteration)
         if wandb_writer:
             wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
@@ -505,7 +505,7 @@ def training_log(
             mlflow_logger.log_metrics({"samples vs steps": train_state.consumed_train_samples}, step=iteration)
         writer.add_scalar("learning-rate", learning_rate, iteration)
         writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
-        if wandb_writer:
+        if wandb_writer and learning_rate is not None:
             wandb_writer.log({"learning-rate": learning_rate}, iteration)
         if mlflow_logger and learning_rate is not None:
             mlflow_logger.log_metrics({"learning-rate": learning_rate}, step=iteration)
@@ -531,7 +531,7 @@ def training_log(
             writer.add_scalar(key + " vs samples", loss_dict[key], global_state.train_state.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({key: loss_dict[key]}, iteration)
-        if mlflow_logger and loss_dict:
+        if mlflow_logger:
             loss_metrics = {key: float(val) for key, val in loss_dict.items()}
             mlflow_logger.log_metrics(loss_metrics, step=iteration)
         if logger_config.log_loss_scale_to_tensorboard:
