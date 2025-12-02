@@ -178,7 +178,11 @@ def main():
         else f"{args.model_recipe_name}_finetune_config"
     )
 
-    recipe = get_library_recipe(args.model_family_name, args.model_recipe_name)
+    recipe = get_library_recipe(
+        model_family_name=args.model_family_name,
+        model_recipe_name=args.model_recipe_name,
+        wandb_experiment_name=args.wandb_experiment_name,
+    )
 
     recipe = set_user_overrides(recipe, args)
 
