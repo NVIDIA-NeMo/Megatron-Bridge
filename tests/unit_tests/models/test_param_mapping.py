@@ -23,6 +23,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     DirectMapping,
     GatedMLPMapping,
+    KVMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
@@ -316,6 +317,43 @@ class TestQKVMapping:
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
 
+
+class TestKVMapping:
+    def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = KVMapping(megatron_param="kv.weight", k="k.weight", v="v.weight")
+        weights = {
+            "k": torch.randn(16, 32),
+            "v": torch.randn(16, 32),
+        }
+        megatron_module = MockModule(transformer_config, weight_shape=(32, 32))
+
+        with patch.object(mapping._tp_mapping, "hf_to_megatron") as mock_hf_to_megatron:
+            mapping.hf_to_megatron(weights, megatron_module)
+            mock_hf_to_megatron.assert_called_once()
+            merged_weight = mock_hf_to_megatron.call_args[0][0]
+            # Should match merge_kv_weights result and shape
+            expected = merge_kv_weights(transformer_config, weights["k"], weights["v"])
+            assert merged_weight.shape == (32, 32)
+            assert torch.equal(merged_weight, expected)
+
+    def test_megatron_to_hf(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = KVMapping(megatron_param="kv.weight", k="k.weight", v="v.weight")
+        # Construct packed KV via helper to guarantee split reversibility
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+        packed_kv = merge_kv_weights(transformer_config, k, v)
+        megatron_module = MockModule(transformer_config, weight_shape=(32, 32))
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"kv.weight": packed_kv}):
+            result = mapping.megatron_to_hf(packed_kv, megatron_module)
+
+        assert "k.weight" in result and "v.weight" in result
+        assert result["k.weight"].shape == (16, 32)
+        assert result["v.weight"].shape == (16, 32)
+        assert torch.equal(result["k.weight"], k)
+        assert torch.equal(result["v.weight"], v)
 
 class TestGatedMLPMapping:
     def test_hf_to_megatron_single_tp(self, mock_distributed_env, transformer_config):
