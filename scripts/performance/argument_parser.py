@@ -203,7 +203,6 @@ def parse_cli_args():
     data_args.add_argument(
         "--tokenizer_type",
         type=str,
-        default="NullTokenizer",
         choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
     )
     tokenizer_args.add_argument(
