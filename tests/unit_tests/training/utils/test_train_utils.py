@@ -16,6 +16,7 @@ import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -63,6 +64,44 @@ class MockModelChunk:
         yield self.layer_name, self.param
 
 
+def make_default_model_config():
+    """Create a SimpleNamespace with sane defaults for model attributes."""
+    return SimpleNamespace(
+        num_moe_experts=None,
+        moe_router_load_balancing_type="",
+        moe_z_loss_coeff=None,
+        moe_per_layer_logging=False,
+        num_layers=24,
+        moe_layer_freq=1,
+        mtp_num_layers=None,
+        kv_channels=128,
+        num_attention_heads=32,
+        hidden_size=4096,
+        num_query_groups=None,
+        moe_router_topk=1,
+        ffn_hidden_size=16384,
+        moe_ffn_hidden_size=None,
+        moe_shared_expert_intermediate_size=None,
+        gated_linear_unit=False,
+        activation_func=None,
+        multi_latent_attention=False,
+        q_lora_rank=None,
+        kv_lora_rank=None,
+        qk_head_dim=64,
+        qk_pos_emb_head_dim=0,
+        v_head_dim=64,
+        seq_length=2048,
+        vocab_size=51200,
+        make_vocab_size_divisible_by=128,
+        tensor_model_parallel_size=1,
+        group_query_attention=False,
+        num_moe_experts_routed_to=None,
+        moe_router_load_balancing_threshold=None,
+        moe_z_loss_scale=None,
+        is_hybrid_model=False,
+    )
+
+
 class TestTrainingLog:
     """Test suite for the training_log function."""
 
@@ -98,9 +137,8 @@ class TestTrainingLog:
         config.train.micro_batch_size = 2
         config.train.train_iters = 1000
 
-        # Model config
-        config.model.num_moe_experts = None
-        config.model.mtp_num_layers = None
+        # Model config as a simple namespace to avoid auto-mocking methods
+        config.model = make_default_model_config()
 
         # Optimizer config
         config.optimizer.decoupled_lr = None

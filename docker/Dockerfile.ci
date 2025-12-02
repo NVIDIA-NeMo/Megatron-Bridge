@@ -32,8 +32,6 @@ COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatro
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
-# Build arg to store MCore commit SHA for verification
-ARG MCORE_COMMIT_SHA=unknown
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -47,7 +45,3 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --link-mode copy --locked --all-extras --all-groups; \
     fi && \
     uv cache prune
-
-# Store MCore commit SHA for verification
-RUN echo "${MCORE_COMMIT_SHA}" > /opt/Megatron-Bridge/.mcore_commit_sha && \
-    echo "📝 Stored MCore commit SHA: ${MCORE_COMMIT_SHA}"

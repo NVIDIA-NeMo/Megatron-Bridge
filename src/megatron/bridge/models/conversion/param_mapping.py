@@ -1403,6 +1403,90 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         )
 
 
+class KVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """
+    Mapping for interleaved Key/Value projection weights.
+
+    This mapping converts between separate K and V tensors used in external
+    checkpoints and Megatron's interleaved KV format following grouped-query
+    attention semantics.
+
+    External format (HF)
+    - Separate tensors: k_proj, v_proj
+    - Shapes mirror QKV mappings but without Q
+
+    Megatron format
+    - Single interleaved tensor with order: [k1, v1, k2, v2, ...]
+      where index corresponds to query-group id
+
+    Tensor-parallel distribution is delegated to AutoMapping.
+    """
+
+    def __init__(self, megatron_param: str, k: str, v: str):
+        super().__init__(megatron_param, {"k": k, "v": v})
+        # Delegate TP sharding/broadcasting
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: Dict[str, torch.Tensor],
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Merge K and V into interleaved format and distribute across TP."""
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+
+            if hf_weights["k"].ndim == 1:
+                merged = merge_kv_biases(config, hf_weights["k"], hf_weights["v"])
+            else:
+                merged = merge_kv_weights(config, hf_weights["k"], hf_weights["v"])
+        else:
+            merged = None
+
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather KV shards and split into separate K and V tensors."""
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        # Ensure all PP ranks participate in config broadcast
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "kv_config")
+        else:
+            config = self._get_config(megatron_module)
+            config = remove_non_pickleables(config, max_depth=2)
+            config = self.broadcast_obj_from_pp_rank(config, "kv_config")
+
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not packed_dict:
+            return {}
+
+        packed_kv = next(iter(packed_dict.values()))
+
+        if packed_kv.ndim == 1:
+            k, v = split_kv_biases(config, packed_kv)
+        else:
+            k, v = split_kv_weights(config, packed_kv)
+
+        return {
+            self.hf_param["k"]: k,
+            self.hf_param["v"]: v,
+        }
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            resolved_megatron_param,
+            resolved_hf_param["k"],
+            resolved_hf_param["v"],
+        )
+
+
 class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """Mapping for Mamba input projection weights that handles z, x, B, C, dt components.
 
@@ -2294,3 +2378,71 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor)
     )
 
     return qkvz, ba
+
+
+def merge_kv_biases(config: TransformerConfig, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Merge separate K, V bias vectors into Megatron's interleaved KV format (1D)."""
+    num_query_groups = config.num_query_groups
+    head_size = config.kv_channels or (config.hidden_size // config.num_attention_heads)
+
+    k = k.view(num_query_groups, head_size)
+    v = v.view(num_query_groups, head_size)
+
+    pieces: List[torch.Tensor] = []
+    for i in range(num_query_groups):
+        pieces.append(k[i : i + 1, :])
+        pieces.append(v[i : i + 1, :])
+
+    kv = torch.cat(pieces, dim=0)
+    return kv.reshape(-1)
+
+
+def split_kv_biases(config: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split Megatron's interleaved KV bias (1D) into separate K and V biases."""
+    num_query_groups = config.num_query_groups
+    head_size = config.kv_channels or (config.hidden_size // config.num_attention_heads)
+    kv_total_dim = 2 * num_query_groups
+
+    kv_reshaped = kv.view(kv_total_dim, head_size)
+
+    k_slice = torch.arange(0, kv_total_dim, 2)
+    v_slice = torch.arange(1, kv_total_dim, 2)
+
+    k = kv_reshaped[k_slice].reshape(-1)
+    v = kv_reshaped[v_slice].reshape(-1)
+    return k, v
+
+
+def merge_kv_weights(provider: TransformerConfig, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Merge separate K, V weights into Megatron's interleaved KV format (2D)."""
+    num_query_groups = provider.num_query_groups
+    head_size = provider.kv_channels or (provider.hidden_size // provider.num_attention_heads)
+    hidden_size = provider.hidden_size
+
+    k_reshaped = k.view(num_query_groups, head_size, hidden_size)
+    v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+
+    pieces: List[torch.Tensor] = []
+    for i in range(num_query_groups):
+        pieces.append(k_reshaped[i : i + 1])
+        pieces.append(v_reshaped[i : i + 1])
+
+    kv = torch.cat(pieces, dim=0)
+    return kv.view(-1, hidden_size)
+
+
+def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split Megatron's interleaved KV weights (2D) into separate K and V matrices."""
+    num_query_groups = provider.num_query_groups
+    head_size = provider.kv_channels or (provider.hidden_size // provider.num_attention_heads)
+    hidden_size = kv.shape[-1]
+    kv_total_dim = 2 * num_query_groups
+
+    kv_reshaped = kv.view(kv_total_dim, head_size, hidden_size)
+
+    k_slice = torch.arange(0, kv_total_dim, 2)
+    v_slice = torch.arange(1, kv_total_dim, 2)
+
+    k = kv_reshaped[k_slice].reshape(-1, hidden_size)
+    v = kv_reshaped[v_slice].reshape(-1, hidden_size)
+    return k, v
