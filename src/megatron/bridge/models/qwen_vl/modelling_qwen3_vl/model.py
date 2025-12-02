@@ -25,6 +25,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_index, split_deepstack_embs
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
+from typing import Callable, List, Optional, Union, Dict
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.utils import make_tp_sharded_tensor_for_checkpoint
+from megatron.core import parallel_state
 
 class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
@@ -305,3 +309,50 @@ class Qwen3VLModel(MegatronModule):
         )
 
         return output
+
+    def sharded_state_dict(
+        self, prefix: str = '', sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+    ) -> ShardedStateDict:
+        """Sharded state dict implementation for GPTModel backward-compatibility.
+
+        Removing extra state.
+        Tie word embeddings and output layer in mtp process stage.
+
+        Args:
+            prefix (str): Module name prefix.
+            sharded_offsets (tuple): PP related offsets, expected to be empty at this module level.
+            metadata (Optional[Dict]): metadata controlling sharded state dict creation.
+
+        Returns:
+            ShardedStateDict: sharded state dict for the GPTModel
+        """
+        sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
+        if self.modality_decoupled_parallel:
+            # TODO(shifang): get the correct pp_id, tp_id, dp_id from the vision_model.
+            rank = torch.distributed.get_rank()
+            if rank == 0:
+                pp_id = 0
+                tp_id = 0
+                dp_id = parallel_state.get_data_parallel_rank(with_context_parallel=True)
+            else:
+                pp_id = 1
+                tp_id = 0
+                dp_id = parallel_state.get_data_parallel_rank(with_context_parallel=True)
+            replica_id = (
+                pp_id,
+                tp_id,
+                dp_id,
+            )
+            for name, param in self.named_parameters():
+                if name.startswith("vision_model"):
+                    print(f"for debug, in Qwen3VLModel, sharded_state_dict, name: {name}, param.shape: {param.shape if hasattr(param, 'shape') else 'N/A'}")
+                    assert name in sharded_state_dict, f"name {name} not in sharded_state_dict"
+                    del sharded_state_dict[name]
+                    sharded_state_dict[name] = make_tp_sharded_tensor_for_checkpoint(
+                        tensor=param,
+                        key=name,
+                        replica_id=replica_id,
+                        allow_shape_mismatch=True,
+                    )
+
+        return sharded_state_dict
