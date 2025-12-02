@@ -298,6 +298,7 @@ class TestHelperFunctions:
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
 
+
 class TestQKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
