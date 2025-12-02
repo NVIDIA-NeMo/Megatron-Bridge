@@ -18,10 +18,10 @@ from typing import List, Optional
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.executors import slurm_executor
 
 import nemo_run as run
@@ -64,6 +64,9 @@ def main(
     wandb_key: str,
     wandb_prj_name: str,
     wandb_exp_name: str,
+    profiling_start_step: int,
+    profiling_stop_step: int,
+    profiling_gpu_metrics: bool,
     megatron_ckpt_dir: Optional[str],
     executor: run.Executor,
 ):
@@ -101,7 +104,13 @@ def main(
         )
     )
     if enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                nsys_gpu_metrics=profiling_gpu_metrics,
+            )
+        )
 
     executor.container_mounts.extend(
         custom_mounts
@@ -151,6 +160,11 @@ logger: logging.Logger = logging.getLogger(__name__)
 if __name__ == "__main__":
     args, _ = parse_cli_args()
 
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     main(
         script_name=SCRIPT_NAME,
         model_name=args.model_name,
@@ -173,6 +187,9 @@ if __name__ == "__main__":
         wandb_key=args.wandb_key,
         wandb_prj_name=args.wandb_prj_name,
         wandb_exp_name=args.wandb_exp_name,
+        profiling_start_step=args.profiling_start_step,
+        profiling_stop_step=args.profiling_stop_step,
+        profiling_gpu_metrics=args.profiling_gpu_metrics,
         megatron_ckpt_dir=args.megatron_ckpt,
         executor=slurm_executor(
             args.gpu,
@@ -187,5 +204,6 @@ if __name__ == "__main__":
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
+            additional_slurm_params=additional_slurm_params,
         ),
     )
