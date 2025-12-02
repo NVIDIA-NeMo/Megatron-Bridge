@@ -26,8 +26,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    merge_kv_biases,
+    merge_kv_weights,
     merge_qkv_biases,
     merge_qkv_weights,
+    split_kv_biases,
+    split_kv_weights,
     split_qkv_biases,
     split_qkv_weights,
 )
@@ -281,6 +285,18 @@ class TestHelperFunctions:
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
 
+    def test_kv_merge_split(self, transformer_config):
+        # k, v each [16, hidden_size] with hidden_size=32 in fixture
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+
+        merged = merge_kv_weights(transformer_config, k, v)
+        # Expect stacked along dim 0: (16 + 16, 32)
+        assert merged.shape == (32, 32)
+
+        k_s, v_s = split_kv_weights(transformer_config, merged)
+        assert torch.equal(k, k_s)
+        assert torch.equal(v, v_s)
 
 class TestQKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
@@ -443,6 +459,19 @@ class TestMappingEdgeCases:
         # Test bias splitting
         q_split, k_split, v_split = split_qkv_biases(transformer_config, merged)
         assert torch.equal(q_bias, q_split)
+        assert torch.equal(k_bias, k_split)
+        assert torch.equal(v_bias, v_split)
+
+    def test_kv_bias_handling(self, transformer_config):
+        """Test KV helpers handle biases correctly."""
+        # num_query_groups=2, kv_channels=8 -> each bias length 16
+        k_bias = torch.randn(16)
+        v_bias = torch.randn(16)
+
+        merged = merge_kv_biases(transformer_config, k_bias, v_bias)
+        assert merged.shape == (32,)
+
+        k_split, v_split = split_kv_biases(transformer_config, merged)
         assert torch.equal(k_bias, k_split)
         assert torch.equal(v_bias, v_split)
 
