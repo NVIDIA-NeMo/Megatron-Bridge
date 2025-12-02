@@ -355,6 +355,7 @@ class TestKVMapping:
         assert torch.equal(result["k.weight"], k)
         assert torch.equal(result["v.weight"], v)
 
+
 class TestGatedMLPMapping:
     def test_hf_to_megatron_single_tp(self, mock_distributed_env, transformer_config):
         """Test gate+up merging with single TP rank."""
