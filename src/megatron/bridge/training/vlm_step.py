@@ -121,10 +121,13 @@ def get_batch(
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
         cu_seqlens, cu_seqlens_argmin, max_seqlen, visual_inputs (container of optional modalities)
     """
-    is_first = is_pp_first_stage(pg_collection.pp)
-    is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
-        return None, None, None, None, None, None, None, None, None
+    # TODO(shfiang): this is a temporary fix to fix issue with qwen3-vl with pipeline parallelism
+    # is_first = is_pp_first_stage(pg_collection.pp)
+    # is_last = is_pp_last_stage(pg_collection.pp)
+    # if (not is_first) and (not is_last):
+    #     return None, None, None, None, None, None, None, None, None
+    is_first = True
+    is_last = True
 
     batch = get_batch_from_iterator(
         data_iterator,

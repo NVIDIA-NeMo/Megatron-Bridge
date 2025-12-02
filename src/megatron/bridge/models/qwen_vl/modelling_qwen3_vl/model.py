@@ -54,6 +54,7 @@ class Qwen3VLModel(MegatronModule):
         language_transformer_config: Qwen3VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         vision_transformer_config: Qwen3VLConfigHF,
+        modality_decoupled_parallel: bool = False,
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -73,12 +74,13 @@ class Qwen3VLModel(MegatronModule):
         self.image_token_id = language_transformer_config.image_token_id
         self.video_token_id = language_transformer_config.video_token_id
         self.vision_start_token_id = language_transformer_config.vision_start_token_id
+        self.modality_decoupled_parallel = modality_decoupled_parallel
 
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
 
-        if self.pre_process:
+        if self.pre_process or self.modality_decoupled_parallel:
             # Initialize vision model with random weights from config
             self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.

@@ -143,6 +143,7 @@ def qwen3_vl_22b_active_235b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLCo
         "pipeline_parallelism": 1,
         "expert_parallelism": 8,
         "expert_tensor_parallelism": 1,
+        "modality_decoupled_parallel": True,
         "freeze_language_model": True,
         "freeze_vision_model": True,
         "freeze_vision_projection": False,
@@ -177,6 +178,7 @@ def _qwen3_vl_common(
     expert_tensor_parallelism: int = 1,
     sequence_parallelism: bool = False,
     use_megatron_fsdp: bool = False,
+    modality_decoupled_parallel: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
     global_batch_size: int = 32,
@@ -216,6 +218,7 @@ def _qwen3_vl_common(
     model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
     model_cfg.context_parallel_size = context_parallelism
     model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.modality_decoupled_parallel = modality_decoupled_parallel
     model_cfg.freeze_language_model = freeze_language_model
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection
