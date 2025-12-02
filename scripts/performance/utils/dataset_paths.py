@@ -29,6 +29,13 @@ def get_dataset_paths(cluster: str, base_paths_rp2: dict[str, str]) -> list[str]
                 f"kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_{i:02d}_text_document",
             )
         )
+    for i in range(1, 26):
+        paths.append(
+            os.path.join(
+                base_paths_rp2[cluster],
+                f"kenlm_perp_middle_gopher_linefilter_decompressed/bin_idx/nemo/middle_{i:02d}_text_document",
+            )
+        )
 
     return paths
 
