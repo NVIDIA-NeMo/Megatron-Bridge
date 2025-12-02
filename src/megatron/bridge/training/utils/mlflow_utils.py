@@ -65,3 +65,8 @@ def on_load_checkpoint_success(
         )
     except Exception as exc:
         print_rank_last(f"Failed to record loaded checkpoint information to MLFlow: {exc}")
+
+
+def _sanitize_mlflow_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize all metric names in a dictionary for MLFlow logging."""
+    return {key.replace("/", "_"): value for key, value in metrics.items()}

@@ -34,6 +34,7 @@ from megatron.bridge.training.config import ConfigContainer, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
+from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
 from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
@@ -73,11 +74,6 @@ MEMORY_KEYS: dict[str, str] = {
     "num_alloc_retries": "mem-alloc-retires",
     "allocation.all.current": "mem-allocated-count",
 }
-
-
-def _sanitize_mlflow_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Sanitize all metric names in a dictionary for MLFlow logging."""
-    return {key.replace("/", "_"): value for key, value in metrics.items()}
 
 
 def param_is_not_shared(param: nn.Parameter) -> bool:
