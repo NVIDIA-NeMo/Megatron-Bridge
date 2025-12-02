@@ -15,7 +15,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -65,6 +65,7 @@ def slurm_executor(
     network: str = None,
     custom_bash_cmds: List[str] = None,
     additional_slurm_params: Dict[str, Any] = None,
+    gres: Optional[str] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -136,6 +137,7 @@ def slurm_executor(
         tunnel=run.LocalTunnel(job_dir=os.path.join(log_dir, "experiments")),
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
+        gres=gres,
         container_image=container_image,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,
