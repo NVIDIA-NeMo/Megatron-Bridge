@@ -15,6 +15,7 @@ if HAVE_MEGATRON_BRIDGE:
         qwen3_235b_a22b_pretrain_config_gb200,
         qwen3_235b_a22b_pretrain_config_gb300,
         qwen3_235b_a22b_pretrain_config_h100,
+        qwen3_next_80b_a3b_pretrain_config_b200,
         qwen3_next_80b_a3b_pretrain_config_gb200,
         qwen3_next_80b_a3b_pretrain_config_gb300,
         qwen3_next_80b_a3b_pretrain_config_h100,
@@ -43,6 +44,8 @@ from .qwen3_workload_base_configs import (
     QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_BASE_CONFIG,
     QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG,
     QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG,
+    QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG,
+    QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG,
     QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG,
     QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX_BASE_CONFIG,
     QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG,
@@ -81,6 +84,8 @@ __all__ = [
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG",
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG",
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG",
+    "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG",
+    "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_BASE_CONFIG",
 ]
 
 if HAVE_MEGATRON_BRIDGE:
@@ -97,5 +102,6 @@ if HAVE_MEGATRON_BRIDGE:
             "qwen3_next_80b_a3b_pretrain_config_gb300",
             "qwen3_next_80b_a3b_pretrain_config_gb200",
             "qwen3_next_80b_a3b_pretrain_config_h100",
+            "qwen3_next_80b_a3b_pretrain_config_b200",
         ]
     )
