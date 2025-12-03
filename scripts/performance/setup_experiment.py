@@ -284,6 +284,8 @@ def main(
             nodes=-(num_gpus // -gpus_per_node),
             num_gpus_per_node=gpus_per_node,
             container_image=container_image,
+            wandb_key=wandb_key,
+            hf_token=hf_token,
         )
 
     plugins = []

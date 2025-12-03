@@ -164,6 +164,7 @@ def dgxc_executor(
     nodes: int,
     num_gpus_per_node: int,
     wandb_key: str = None,
+    hf_token: str = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):
@@ -204,6 +205,7 @@ def dgxc_executor(
             "NCCL_P2P_NET_CHUNKSIZE": "524288",
             "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
             "WANDB_API_KEY": wandb_key,
+            "HF_TOKEN": hf_token,
         },
         launcher="torchrun",
     )
