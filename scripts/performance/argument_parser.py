@@ -362,6 +362,58 @@ def parse_cli_args():
         required=False,
     )
 
+    # DGXCloud
+    dgxc_args = parser.add_argument_group("DGXCloud arguments")
+    dgxc_args.add_argument(
+        "--use_dgxc",
+        action="store_true",
+        help="Use DGXCloud for experiment",
+        required=False,
+        default=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_cluster",
+        type=str,
+        help="DGXCloud cluster to use for experiment",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_base_url",
+        type=str,
+        help="DGXCloud base url",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_kube_apiserver_url",
+        type=str,
+        help="DGXCloud kube apiserver url",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_app_id",
+        type=str,
+        help="DGXCloud app id",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_app_secret",
+        type=str,
+        help="DGXCloud app secret",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_project_name",
+        type=str,
+        help="DGXCloud project name",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_pvc_claim_name",
+        type=str,
+        help="DGXCloud pvc claim name",
+        required=False,
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(

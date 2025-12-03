@@ -151,3 +151,57 @@ def slurm_executor(
     )
 
     return executor
+
+
+def dgxc_executor(
+    dgxc_base_url: str,
+    dgxc_cluster: str,
+    dgxc_kube_apiserver_url: str,
+    dgxc_app_id: str,
+    dgxc_app_secret: str,
+    dgxc_project_name: str,
+    dgxc_pvc_claim_name: str,
+    nodes: int,
+    num_gpus_per_node: int,
+    container_image: str = "nvcr.io/nvidia/nemo:dev",
+):
+    """
+    DGXCloud cluster definition with appropriate cluster params and NeMo container params needed for pre-training
+    and fine-tuning experiments
+    """
+    executor = run.DGXCloudExecutor(
+        base_url=dgxc_base_url,
+        kube_apiserver_url=dgxc_kube_apiserver_url,
+        app_id=dgxc_app_id,
+        app_secret=dgxc_app_secret,
+        project_name=dgxc_project_name,
+        nodes=nodes,
+        gpus_per_node=num_gpus_per_node,
+        container_image=container_image,
+        pvc_nemo_run_dir=get_nemorun_home(),
+        launched_from_cluster=True,
+        pvcs=[
+            {
+                "name": "workspace",
+                "path": "/nemo-workspace",
+                "existingPvc": True,
+                "claimName": dgxc_pvc_claim_name,
+            }
+        ],
+        custom_spec=(
+            {
+                "annotations": [{"name": "runai.dgxc.nvidia.com/gcp-nccl", "value": "none", "exclude": False}],
+            }
+            if dgxc_cluster == "dgxcloud-gcp" and nodes == 1
+            else {}
+        ),
+        env_vars={
+            "TORCH_HOME": "/nemo-workspace/.cache",
+            "FI_EFA_USE_HUGE_PAGE": "0",
+            "NCCL_BUFFSIZE": "8388608",
+            "NCCL_P2P_NET_CHUNKSIZE": "524288",
+            "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
+        },
+        launcher="torchrun",
+    )
+    return executor

@@ -22,13 +22,13 @@ from nemo_run.config import get_nemorun_home
 
 
 try:
-    from argument_parser import parse_additional_slurm_params, parse_cli_args
+    from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import slurm_executor
+    from utils.executors import dgxc_executor, slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_additional_slurm_params, parse_cli_args
+    from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import slurm_executor
+    from .utils.executors import dgxc_executor, slurm_executor
 
 import nemo_run as run
 
@@ -206,6 +206,14 @@ def main(
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
     max_retries: int,
+    use_dgxc: bool,
+    dgxc_base_url: str,
+    dgxc_cluster: str,
+    dgxc_kube_apiserver_url: str,
+    dgxc_app_id: str,
+    dgxc_app_secret: str,
+    dgxc_project_name: str,
+    dgxc_pvc_claim_name: str,
 ):
     """Sets up the experiment and runs it."""
     if model_family_name in ["qwen3"] and model_recipe_name in [
@@ -243,23 +251,37 @@ def main(
         ]
     )
 
-    executor = slurm_executor(
-        gpu=gpu,
-        account=account,
-        partition=partition,
-        log_dir=log_dir,
-        nodes=-(num_gpus // -gpus_per_node),
-        num_gpus_per_node=gpus_per_node,
-        time_limit=time_limit,
-        container_image=container_image,
-        custom_mounts=custom_mounts,
-        custom_env_vars={},
-        custom_srun_args=custom_srun_args,
-        hf_token=hf_token,
-        nemo_home=nemo_home,
-        additional_slurm_params=additional_slurm_params,
-        wandb_key=wandb_key,
-    )
+    if not use_dgxc:
+        executor = slurm_executor(
+            gpu=gpu,
+            account=account,
+            partition=partition,
+            log_dir=log_dir,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            time_limit=time_limit,
+            container_image=container_image,
+            custom_mounts=custom_mounts,
+            custom_env_vars={},
+            custom_srun_args=custom_srun_args,
+            hf_token=hf_token,
+            nemo_home=nemo_home,
+            additional_slurm_params=additional_slurm_params,
+            wandb_key=wandb_key,
+        )
+    else:
+        executor = dgxc_executor(
+            dgxc_base_url=dgxc_base_url,
+            dgxc_cluster=dgxc_cluster,
+            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
+            dgxc_app_id=dgxc_app_id,
+            dgxc_app_secret=dgxc_app_secret,
+            dgxc_project_name=dgxc_project_name,
+            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+        )
 
     plugins = []
 
@@ -468,4 +490,12 @@ if __name__ == "__main__":
             "skip_first_percent_time": args.skip_first_percent_time,
         },
         max_retries=args.max_retries,
+        use_dgxc=args.use_dgxc,
+        dgxc_base_url=args.dgxc_base_url,
+        dgxc_cluster=args.dgxc_cluster,
+        dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
+        dgxc_app_id=args.dgxc_app_id,
+        dgxc_app_secret=args.dgxc_app_secret,
+        dgxc_project_name=args.dgxc_project_name,
+        dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
     )
