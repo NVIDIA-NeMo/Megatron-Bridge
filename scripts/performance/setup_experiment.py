@@ -214,6 +214,7 @@ def main(
     dgxc_app_secret: str,
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
+    dgxc_pvc_mount_path: str,
 ):
     """Sets up the experiment and runs it."""
     if model_family_name in ["qwen3"] and model_recipe_name in [
@@ -278,6 +279,7 @@ def main(
             dgxc_app_secret=dgxc_app_secret,
             dgxc_project_name=dgxc_project_name,
             dgxc_pvc_claim_name=dgxc_pvc_claim_name,
+            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
             nodes=-(num_gpus // -gpus_per_node),
             num_gpus_per_node=gpus_per_node,
             container_image=container_image,
@@ -498,4 +500,5 @@ if __name__ == "__main__":
         dgxc_app_secret=args.dgxc_app_secret,
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
+        dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
     )

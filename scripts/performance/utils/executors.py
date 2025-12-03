@@ -163,6 +163,7 @@ def dgxc_executor(
     dgxc_pvc_claim_name: str,
     nodes: int,
     num_gpus_per_node: int,
+    dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):
     """
@@ -183,7 +184,7 @@ def dgxc_executor(
         pvcs=[
             {
                 "name": "workspace",
-                "path": "/nemo-workspace",
+                "path": dgxc_pvc_mount_path,
                 "existingPvc": True,
                 "claimName": dgxc_pvc_claim_name,
             }

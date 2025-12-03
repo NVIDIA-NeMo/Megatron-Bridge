@@ -413,6 +413,12 @@ def parse_cli_args():
         help="DGXCloud pvc claim name",
         required=False,
     )
+    dgxc_args.add_argument(
+        "--dgxc_pvc_mount_path",
+        type=str,
+        help="DGXCloud pvc mount path",
+        required=False,
+    )
 
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
@@ -615,5 +621,3 @@ def parse_cli_args():
     )
 
     return parser
-
-    return params if params else None
