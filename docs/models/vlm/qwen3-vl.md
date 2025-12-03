@@ -89,3 +89,4 @@ Note:
 ## Hugging Face Model Cards
 - Qwen3-VL-8B: `https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct`
 - Qwen3-VL-30B-A3B (MoE): `https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct`
+- Qwen3-VL-235B-A22B (MoE): `https://huggingface.co/Qwen/Qwen3-VL-235B-A22B-Instruct`
