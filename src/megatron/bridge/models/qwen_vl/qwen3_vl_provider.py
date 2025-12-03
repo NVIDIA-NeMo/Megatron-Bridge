@@ -94,6 +94,10 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     # Override to disable scattering embeddings for vision insertion
     scatter_embedding_sequence_parallel: bool = False
 
+    # Modality-Decoupled Parallelism(MDP) for multi-modality model training,
+    # for more information, please refer to [LongCat-Flash-Omni Technical Report](https://arxiv.org/abs/2511.00279).
+    modality_decoupled_parallel: bool = False
+
     # Freeze options for fine-tuning scenarios
     # Whether to freeze language model weights
     freeze_language_model: bool = False
@@ -127,6 +131,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_vision_config,
+            modality_decoupled_parallel=self.modality_decoupled_parallel,
             pre_process=pre_process,
             post_process=post_process,
         )
@@ -235,6 +240,10 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Decoder sparse step (frequency of MoE layers)
     decoder_sparse_step: int = 1  # Every layer is MoE by default
 
+    # Modality-Decoupled Parallelism(MDP) for multi-modality model training,
+    # for more information, please refer to [LongCat-Flash-Omni Technical Report](https://arxiv.org/abs/2511.00279).
+    modality_decoupled_parallel: bool = False
+
     # Freeze options for fine-tuning scenarios
     # Whether to freeze language model weights
     freeze_language_model: bool = True
@@ -285,6 +294,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_config,
+            modality_decoupled_parallel=self.modality_decoupled_parallel,
             pre_process=pre_process,
             post_process=post_process,
         )
