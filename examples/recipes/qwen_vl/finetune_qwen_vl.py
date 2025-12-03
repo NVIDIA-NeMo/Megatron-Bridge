@@ -50,22 +50,22 @@ Examples:
         Qwen2.5-VL 7B:
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen25_vl_7b_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen25vl7b
+                --pretrained-checkpoint ./logs/checkpoints/qwen25_vl_7b
 
         Qwen3-VL 8B (dense):
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_8b_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl8b
+                --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_8b
 
         Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_3b_active_30b_moe_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe
+                --recipe qwen3_vl_30b_a3b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_30b_a3b
 
         Qwen3-VL 235B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_22b_active_235b_moe_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl235b_moe
+                --recipe qwen3_vl_235b_a22b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_235b_a22b
 
     Using a custom YAML config file:
         $  uv run python -m torch.distributed.run --nproc_per_node=8 finetune_qwen_vl.py \\
@@ -82,7 +82,8 @@ Available Recipes:
 
     Qwen3-VL:
         - qwen3_vl_8b_finetune_config: Dense 8B model
-        - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model with expert parallelism
+        - qwen3_vl_30b_a3b_finetune_config: MoE 30B model with expert parallelism
+        - qwen3_vl_235b_a22b_finetune_config: MoE 235B model with expert parallelism
 """
 
 import argparse
@@ -163,7 +164,8 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
             "  - qwen25_vl_7b_finetune_config: 7B model\n"
             "Qwen3-VL recipes:\n"
             "  - qwen3_vl_8b_finetune_config: Dense 8B model\n"
-            "  - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model"
+            "  - qwen3_vl_30b_a3b_finetune_config: MoE 30B model\n"
+            "  - qwen3_vl_235b_a22b_finetune_config: MoE 235B model"
         ),
     )
     parser.add_argument(
