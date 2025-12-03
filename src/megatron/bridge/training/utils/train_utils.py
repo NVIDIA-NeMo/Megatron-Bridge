@@ -628,7 +628,7 @@ def training_log(
                 total_loss_dict[key] = torch.tensor([0.0], dtype=torch.float, device="cuda")
         log_string += f" loss scale: {loss_scale:.1f} |"
         if grad_norm is not None:
-            log_string += f" grad norm: {grad_norm:.3f} |"
+            log_string += f" grad norm: {grad_norm:.6f} |"
         if num_zeros_in_grad is not None:
             log_string += f" num zeros: {num_zeros_in_grad} |"
         if params_norm is not None:

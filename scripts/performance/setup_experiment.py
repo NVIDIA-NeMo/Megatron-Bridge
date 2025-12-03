@@ -312,9 +312,10 @@ def main(
                 {
                     "WANDB_RUN_ID": wandb_run_id,
                     "WANDB_RESUME": "allow",
-                    "WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
                 }
             )
+            if os.environ.get("WANDB_API_KEY"):
+                executor.env_vars["WANDB_API_KEY"] = os.environ.get("WANDB_API_KEY")
 
             run.run(
                 nemorun_script,

@@ -119,7 +119,7 @@ def parse_cli_args():
         "--detach",
         help="Detach the experiment from the terminal. Disabled by default",
         type=bool_arg,
-        default=False,
+        default=True,
     )
     parser.add_argument(
         "--max_retries",
