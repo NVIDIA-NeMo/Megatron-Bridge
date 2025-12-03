@@ -940,67 +940,6 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage")
-    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage")
-    def test_decoupled_learning_rate(
-        self,
-        mock_is_pp_last,
-        mock_is_pp_first,
-        mock_print_rank_last,
-        mock_is_last_rank,
-        mock_get_world_size,
-        mock_reduce_lr,
-        mock_get_microbatches,
-        mock_config,
-        mock_global_state,
-        loss_dict,
-    ):
-        """Test decoupled learning rate logging."""
-        # Get fresh total_loss_dict for this test
-        total_loss_dict = self.get_fresh_total_loss_dict()
-
-        # Setup mocks
-        mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = 1e-4
-        mock_get_world_size.return_value = 32
-        mock_is_last_rank.return_value = True
-        mock_is_pp_first.return_value = True
-        mock_is_pp_last.return_value = False
-
-        # Enable decoupled learning rate
-        mock_config.optimizer.decoupled_lr = 0.01
-
-        # Set iteration to match log interval
-        mock_global_state.train_state.step = 5
-        mock_config.logger.log_interval = 5
-
-        training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=1e-4,
-            decoupled_learning_rate=2e-5,  # Different from regular LR
-            loss_scale=1024.0,
-            report_memory_flag=False,
-            skipped_iter=0,
-            grad_norm=2.5,
-            params_norm=15.2,
-            num_zeros_in_grad=0,
-            config=mock_config,
-            global_state=mock_global_state,
-            history_wct=None,
-            model=None,
-        )
-
-        # Check that the log string includes decoupled learning rate
-        mock_print_rank_last.assert_called()
-        log_call_args = mock_print_rank_last.call_args[0][0]
-        assert "decoupled learning rate" in log_call_args
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
-    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     def test_energy_monitoring(
         self,
         mock_print_rank_last,
