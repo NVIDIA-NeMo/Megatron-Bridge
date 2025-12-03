@@ -489,8 +489,6 @@ def training_log(
         writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
         if wandb_writer:
             wandb_writer.log({"learning-rate": learning_rate}, iteration)
-        if config.optimizer.decoupled_lr is not None:
-            writer.add_scalar("decoupled-learning-rate", decoupled_learning_rate, iteration)
         if global_state.train_state.skipped_train_samples > 0:
             writer.add_scalar("skipped-train-samples", global_state.train_state.skipped_train_samples, iteration)
             if wandb_writer:
@@ -612,13 +610,6 @@ def training_log(
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"
-        if config.optimizer.decoupled_lr is not None and (
-            is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)
-        ):
-            assert decoupled_learning_rate is not None
-            log_string += f" decoupled learning rate: {decoupled_learning_rate:.6E} |"
-        else:
-            assert decoupled_learning_rate is None
         log_string += f" global batch size: {batch_size:5d} |"
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key, nan_iters_key]:
