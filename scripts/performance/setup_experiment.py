@@ -410,9 +410,6 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    # Parse additional SLURM parameters if provided
-    additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
-
     args.model_recipe_name = (
         f"{args.model_recipe_name}_pretrain_config"
         if args.task == "pretrain"
@@ -454,7 +451,7 @@ if __name__ == "__main__":
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
-        additional_slurm_params=additional_slurm_params,
+        additional_slurm_params=args.additional_slurm_params,
         golden_values_path=args.golden_values_path,
         convergence_params={
             "correlation_threshold": args.correlation_threshold,
