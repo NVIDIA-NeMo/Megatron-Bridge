@@ -19,9 +19,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
-logging.basicConfig(level=logging.DEBUG)
-
 from nemo_run.config import get_nemorun_home
 
 
