@@ -22,6 +22,9 @@ from typing import Any, Dict, List, Optional
 from nemo_run.config import get_nemorun_home
 
 
+logging.basicConfig(level=logging.DEBUG)
+
+
 try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
