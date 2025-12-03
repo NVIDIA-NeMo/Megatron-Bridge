@@ -347,6 +347,13 @@ def parse_cli_args():
         default=[],
     )
     slurm_args.add_argument(
+        "-ce",
+        "--custom_env_vars",
+        type=list_of_strings,
+        help="Comma separated string of environment variables",
+        default=[],
+    )
+    slurm_args.add_argument(
         "-cs",
         "--custom_srun_args",
         type=list_of_strings,

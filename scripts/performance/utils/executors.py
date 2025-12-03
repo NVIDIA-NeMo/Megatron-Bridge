@@ -165,6 +165,7 @@ def dgxc_executor(
     num_gpus_per_node: int,
     wandb_key: str = None,
     hf_token: str = None,
+    custom_env_vars: List[str] = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):
@@ -172,6 +173,18 @@ def dgxc_executor(
     DGXCloud cluster definition with appropriate cluster params and NeMo container params needed for pre-training
     and fine-tuning experiments
     """
+
+    env_vars = {
+        "TORCH_HOME": "/nemo-workspace/.cache",
+        "FI_EFA_USE_HUGE_PAGE": "0",
+        "NCCL_BUFFSIZE": "8388608",
+        "NCCL_P2P_NET_CHUNKSIZE": "524288",
+        "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
+        "WANDB_API_KEY": wandb_key,
+        "HF_TOKEN": hf_token,
+    }
+    if custom_env_vars:
+        env_vars.update(custom_env_vars)
     executor = run.DGXCloudExecutor(
         base_url=dgxc_base_url,
         kube_apiserver_url=dgxc_kube_apiserver_url,
@@ -198,15 +211,7 @@ def dgxc_executor(
             if dgxc_cluster == "dgxcloud-gcp" and nodes == 1
             else {}
         ),
-        env_vars={
-            "TORCH_HOME": "/nemo-workspace/.cache",
-            "FI_EFA_USE_HUGE_PAGE": "0",
-            "NCCL_BUFFSIZE": "8388608",
-            "NCCL_P2P_NET_CHUNKSIZE": "524288",
-            "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
-            "WANDB_API_KEY": wandb_key,
-            "HF_TOKEN": hf_token,
-        },
+        env_vars=env_vars,
         launcher="torchrun",
     )
     return executor
