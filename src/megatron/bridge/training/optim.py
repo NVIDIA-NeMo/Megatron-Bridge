@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional, Union
+from typing import Union
 
-import torch.nn as nn
 from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
