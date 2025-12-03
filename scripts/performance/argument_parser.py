@@ -32,6 +32,11 @@ def list_of_strings(arg):
     return arg.split(",")
 
 
+def to_dict(arg):
+    """Split a comma-separated string into a dictionary of key-value pairs."""
+    return dict(item.split("=") for item in arg.split(","))
+
+
 def lower_str(arg):
     """Lowercase a CLI string argument with a runtime type check."""
     assert isinstance(arg, str), f"Argument {arg} is not a string"
@@ -349,7 +354,7 @@ def parse_cli_args():
     slurm_args.add_argument(
         "-ce",
         "--custom_env_vars",
-        type=list_of_strings,
+        type=to_dict,
         help="Comma separated string of environment variables",
         default=[],
     )
