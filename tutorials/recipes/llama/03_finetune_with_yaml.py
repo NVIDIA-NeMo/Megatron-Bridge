@@ -54,21 +54,14 @@ For a pure Python usage see 01_quickstart_finetune.py.
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 from typing import Tuple
-
-from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.llama import llama32_1b_finetune_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.utils.omegaconf_utils import (
-    apply_overrides,
-    create_omegaconf_dict_config,
-    parse_hydra_overrides,
-)
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 logger = logging.getLogger(__name__)
@@ -112,26 +105,11 @@ def main() -> None:
     peft_method = None if args.peft == "none" else args.peft
     config: ConfigContainer = llama32_1b_finetune_config(peft=peft_method)
 
-    # Convert to OmegaConf for merging
-    omega_conf, excluded_fields = create_omegaconf_dict_config(config)
-
-    # Apply YAML overrides if provided
-    if args.config_file:
-        config_file_path = Path(args.config_file)
-        if not config_file_path.exists():
-            logger.error(f"Config file not found: {config_file_path}")
-            sys.exit(1)
-
-        yaml_conf = OmegaConf.load(config_file_path)
-        omega_conf = OmegaConf.merge(omega_conf, yaml_conf)
-
-    # Apply command-line overrides
-    if cli_overrides:
-        omega_conf = parse_hydra_overrides(omega_conf, cli_overrides)
-
-    # Convert back to ConfigContainer
-    final_config_dict = OmegaConf.to_container(omega_conf, resolve=True)
-    apply_overrides(config, final_config_dict, excluded_fields)
+    config = process_config_with_overrides(
+        config,
+        config_filepath=args.config_file,
+        cli_overrides=cli_overrides or None,
+    )
 
     # Start finetuning
     finetune(config=config, forward_step_func=forward_step)
