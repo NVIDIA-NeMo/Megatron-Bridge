@@ -107,8 +107,8 @@ def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> C
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL 3B Active 30B MoE (Qwen3-VL-3B-Active-30B-A3B-Instruct).
+def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen/Qwen3-VL-30B-A3B-Instruct.
 
     This is a Mixture-of-Experts model with 128 experts and top-8 routing.
     Recommended to use with expert parallelism (EP) for efficient training.
@@ -131,8 +131,8 @@ def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLComm
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen3_vl_22b_active_235b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL 235B MoE with 22B Active Params (Qwen3-VL-235B-A22B-Instruct).
+def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen/Qwen3-VL-235B-A22B-Instruct.
 
     This is a Mixture-of-Experts model with 128 experts and top-8 routing.
     Recommended to use with expert parallelism (EP) for efficient training.
