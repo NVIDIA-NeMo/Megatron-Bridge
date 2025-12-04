@@ -315,7 +315,7 @@ def main(
                         "WANDB_RESUME": "allow",
                     }
                 )
-            if os.environ.get("WANDB_API_KEY"):
+            if wandb_key is not None:
                 executor.env_vars["WANDB_API_KEY"] = wandb_key
 
             run.run(
