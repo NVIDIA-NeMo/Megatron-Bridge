@@ -305,16 +305,18 @@ def main(
     wandb_run_id = None
     while n_attempts <= max_retries:
         while is_finished_experiment is False:
-            wandb_run_id = (
-                (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
-            )
-            executor.env_vars.update(
-                {
-                    "WANDB_RUN_ID": wandb_run_id,
-                    "WANDB_RESUME": "allow",
-                    "WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
-                }
-            )
+            if HAVE_WANDB:
+                wandb_run_id = (
+                    (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
+                )
+                executor.env_vars.update(
+                    {
+                        "WANDB_RUN_ID": wandb_run_id,
+                        "WANDB_RESUME": "allow",
+                    }
+                )
+            if wandb_key is not None:
+                executor.env_vars["WANDB_API_KEY"] = wandb_key
 
             run.run(
                 nemorun_script,
@@ -368,9 +370,11 @@ def main(
                 log_paths = [log_paths[-1]]
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
-            wandb_run = wandb.init(
-                project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
-            )
+            wandb_run = None
+            if HAVE_WANDB and wandb_key:
+                wandb_run = wandb.init(
+                    project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
+                )
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
@@ -385,8 +389,9 @@ def main(
                 wandb_run=wandb_run,
             )
 
-            wandb_run.finish()
-            wandb.teardown(exit_code=int(not is_testing_passed))
+            if wandb_run:
+                wandb_run.finish()
+                wandb.teardown(exit_code=int(not is_testing_passed))
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
