@@ -25,9 +25,9 @@ BASE_QWEN3_235B_A22B_CONFIG = WorkloadBaseConfig(
 
 
 BASE_QWEN3_30B_A3B_CONFIG = WorkloadBaseConfig(
-    expert_model_parallel_size=8,
+    expert_model_parallel_size=4,
     expert_tensor_parallel_size=1,
-    global_batch_size=512,
+    global_batch_size=4,
 )
 
 BASE_QWEN3_NEXT_80B_A3B_CONFIG = WorkloadBaseConfig(
@@ -172,8 +172,8 @@ QWEN3_30B_A3B_GB300_FP8_MX_BASE_CONFIG = QWEN3_30B_A3B_GB300_FP8_CS_BASE_CONFIG
 
 QWEN3_30B_A3B_GB200_BF16_BASE_CONFIG = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
-    num_gpus=8,
-    micro_batch_size=4,
+    num_gpus=4,
+    micro_batch_size=1,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
