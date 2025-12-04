@@ -78,8 +78,8 @@ class Qwen3Bridge(MegatronModelBridge):
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",  # Qwen3 specific
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",  # Qwen3 specific
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
