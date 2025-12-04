@@ -316,7 +316,7 @@ def main(
                     }
                 )
             if os.environ.get("WANDB_API_KEY"):
-                executor.env_vars["WANDB_API_KEY"] = os.environ.get("WANDB_API_KEY")
+                executor.env_vars["WANDB_API_KEY"] = wandb_key
 
             run.run(
                 nemorun_script,
