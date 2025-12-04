@@ -55,7 +55,7 @@ jobs:
       runner: linux-amd64-cpu16
       no-build-isolation: true
       submodules: recursive
-      container-options: '--gpus all --runtime=nvidia'
+      container-options: ''
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
