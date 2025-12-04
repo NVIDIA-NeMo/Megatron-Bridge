@@ -390,7 +390,7 @@ def main(
             if not is_finished_experiment:
                 break
 
-        if is_finished_experiment is True:
+        if is_finished_experiment is True and detach is False:
             log_paths = sorted(
                 list(
                     glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log_all_ranks.out")
