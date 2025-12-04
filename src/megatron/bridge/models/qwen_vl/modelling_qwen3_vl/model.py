@@ -24,7 +24,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VL
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_index, split_deepstack_embs
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-
+from typing import Optional, Dict
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.utils import make_tp_sharded_tensor_for_checkpoint
+from megatron.core import parallel_state
 
 class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
@@ -54,6 +57,7 @@ class Qwen3VLModel(MegatronModule):
         language_transformer_config: Qwen3VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         vision_transformer_config: Qwen3VLConfigHF,
+        modality_decoupled_parallel: bool = False,
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -77,8 +81,13 @@ class Qwen3VLModel(MegatronModule):
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
+        self.modality_decoupled_parallel = modality_decoupled_parallel
+        self.execute_mode = None
+        self.batch = None
+        self.vision_embeds = None
+        self.deepstack_feature_lists = None
 
-        if self.pre_process:
+        if self.pre_process or self.modality_decoupled_parallel:
             # Initialize vision model with random weights from config
             self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
@@ -128,6 +137,22 @@ class Qwen3VLModel(MegatronModule):
             self.encoder_hidden_state = input_tensor[0]
         else:
             self.language_model.set_input_tensor(input_tensor[0])
+
+    def set_execute_mode(self, execute_mode: dict[str, bool]):
+        self.execute_mode = execute_mode
+
+    def get_execute_mode(self):
+        return self.execute_mode
+
+    def set_batch(self, batch):
+        self.batch = batch
+
+    def get_batch(self):
+        return self.batch
+
+    def set_vision_model_output(self, vision_model_output: tuple[torch.Tensor, torch.Tensor]):
+        self.vision_embeds = vision_model_output["visual_embeds"]
+        self.deepstack_feature_lists = vision_model_output["deepstack_visual_embeds"]
 
     def freeze(
         self,
@@ -209,58 +234,50 @@ class Qwen3VLModel(MegatronModule):
         """
         assert pixel_values_videos is None and video_grid_thw is None, "not support video now"
         assert inference_params is None, "not support inference"
+        if self.execute_mode["execute_vision_model_forward"]:
+            if image_grid_thw is not None and image_grid_thw.shape[0] > 0:
+                image_embeds, deepstack_image_embeds = self.vision_model(
+                    hidden_states=pixel_values,
+                    grid_thw=image_grid_thw,
+                )
+            # We do not support video now, so we only use image_embes as visual_embes.
+            visual_embeds = image_embeds
+            deepstack_visual_embeds = deepstack_image_embeds
+            if not self.execute_mode["execute_language_model_forward"]:
+                output_dict = {
+                    "visual_embeds": visual_embeds,
+                    "deepstack_visual_embeds": deepstack_visual_embeds,
+                }
+                return output_dict
+        else:
+            visual_embeds = self.vision_embeds
+            deepstack_visual_embeds = self.deepstack_feature_lists
 
-        video_start_index = 0
-        vision_grid_thw = None
-        vision_data = None
         image_mask = None
-        deepstack_feature_lists = None
+        visual_pos_masks = None
         # position ids is computed within the model
         position_ids = None
-
         if self.pre_process:
+            visual_embeds = self.vision_embeds
+            deepstack_visual_embeds = self.deepstack_feature_lists
             if image_grid_thw is not None:
                 image_mask = image_input_mask
                 if image_mask is None:
                     image_mask = (input_ids == self.image_token_id).contiguous()
-                vision_grid_thw = image_grid_thw
-                vision_data = pixel_values
-                video_start_index = image_mask.sum().item()
-                assert video_start_index > 0
 
-            vision_embeds = None
-            if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                vision_embeds, deepstack_feature_lists = self.vision_model(
-                    hidden_states=vision_data,
-                    grid_thw=vision_grid_thw,
-                )
+            image_embeds = visual_embeds
+            deepstack_image_embeds = deepstack_visual_embeds
+            visual_pos_masks = image_mask
 
             combined_embeddings = self.language_model.embedding(
                 input_ids=input_ids,
                 position_ids=None,  # NOTE: disable
             ).clone()  # [text_seq_len, b, h_language]
 
-            if vision_embeds is not None:
-                if video_start_index == 0:
-                    image_embeds = None
-                    video_embeds = vision_embeds
-                elif video_start_index == vision_embeds.shape[0]:
-                    image_embeds = vision_embeds
-                    video_embeds = None
-                elif 0 < video_start_index < vision_embeds.shape[0]:
-                    image_embeds = vision_embeds[:video_start_index]
-                    video_embeds = vision_embeds[video_start_index:]
-                else:
-                    raise ValueError(
-                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
-                        f"{video_start_index}"
-                    )
-                assert video_embeds is None, "not support video now"
-
-                if image_embeds is not None:
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
-                    combined_embeddings[image_mask] = image_embeds
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+            if image_embeds is not None:
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                combined_embeddings[image_mask] = image_embeds
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
@@ -279,8 +296,6 @@ class Qwen3VLModel(MegatronModule):
                 attention_mask=attention_mask,
             )
 
-        visual_pos_masks = image_mask
-        deepstack_visual_embeds = deepstack_feature_lists
         if self.config.sequence_parallel:
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
                 visual_pos_masks,
@@ -303,3 +318,46 @@ class Qwen3VLModel(MegatronModule):
         )
 
         return output
+
+    def sharded_state_dict(
+        self, prefix: str = '', sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+    ) -> ShardedStateDict:
+        """Sharded state dict implementation for GPTModel backward-compatibility.
+        Removing extra state.
+        Tie word embeddings and output layer in mtp process stage.
+        Args:
+            prefix (str): Module name prefix.
+            sharded_offsets (tuple): PP related offsets, expected to be empty at this module level.
+            metadata (Optional[Dict]): metadata controlling sharded state dict creation.
+        Returns:
+            ShardedStateDict: sharded state dict for the GPTModel
+        """
+        sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
+        if self.modality_decoupled_parallel:
+            # TODO(shifang): get the correct pp_id, tp_id, dp_id from the vision_model.
+            rank = torch.distributed.get_rank()
+            if rank == 0:
+                pp_id = 0
+                tp_id = 0
+                dp_id = parallel_state.get_data_parallel_rank(with_context_parallel=True)
+            else:
+                pp_id = 1
+                tp_id = 0
+                dp_id = parallel_state.get_data_parallel_rank(with_context_parallel=True)
+            replica_id = (
+                pp_id,
+                tp_id,
+                dp_id,
+            )
+            for name, param in self.named_parameters():
+                if name.startswith("vision_model"):
+                    assert name in sharded_state_dict, f"name {name} not in sharded_state_dict"
+                    del sharded_state_dict[name]
+                    sharded_state_dict[name] = make_tp_sharded_tensor_for_checkpoint(
+                        tensor=param,
+                        key=name,
+                        replica_id=replica_id,
+                        allow_shape_mismatch=True,
+                    )
+
+        return sharded_state_dict

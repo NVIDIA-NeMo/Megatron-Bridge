@@ -19,7 +19,7 @@ from typing import Any, Iterable
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_attr_wrapped_model
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
@@ -121,10 +121,13 @@ def get_batch(
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
         cu_seqlens, cu_seqlens_argmin, max_seqlen, visual_inputs (container of optional modalities)
     """
-    is_first = is_pp_first_stage(pg_collection.pp)
-    is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
-        return None, None, None, None, None, None, None, None, None
+    # TODO(shfiang): this is a temporary fix, in order to training qwen3_vl with pipeline parallelism.
+    # is_first = is_pp_first_stage(pg_collection.pp)
+    # is_last = is_pp_last_stage(pg_collection.pp)
+    # if (not is_first) and (not is_last):
+    #     return None, None, None, None, None, None, None, None, None
+    is_first = True
+    is_last = True
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -225,9 +228,29 @@ def forward_step(
 
     config = get_model_config(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
-
+    get_execute_mode = get_attr_wrapped_model(model, "get_execute_mode")
+    get_saved_batch = get_attr_wrapped_model(model, "get_batch")
+    execute_mode = get_execute_mode()
+    if execute_mode is None:
+        execute_mode = {
+            "execute_get_batch": True,
+            "execute_vision_model_forward": True,
+            "execute_language_model_forward": True,
+        }
+    assert isinstance(execute_mode, dict), (
+        f"execute_mode must be a dictionary, got {type(execute_mode)}"
+    )
+    assert execute_mode.keys() == {"execute_get_batch", "execute_vision_model_forward", "execute_language_model_forward"}, (
+        "execute_mode must have keys {'execute_get_batch', 'execute_vision_model_forward', 'execute_language_model_forward'}, "
+        f"got {execute_mode.keys()}"
+    )
+    model.execute_mode = execute_mode
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
+        if execute_mode["execute_get_batch"]:
+            batch = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
+        else:
+            batch = get_saved_batch()
         (
             tokens,
             labels,
@@ -238,8 +261,14 @@ def forward_step(
             cu_seqlens_argmin,
             max_seqlen,
             visual_inputs,
-        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
+        ) = batch
     timers("batch-generator").stop()
+
+    if (
+        not execute_mode["execute_vision_model_forward"]
+        and not execute_mode["execute_language_model_forward"]
+    ):
+        return batch, None
 
     forward_args = {
         "input_ids": tokens,
@@ -276,5 +305,4 @@ def forward_step(
             output_tensor = model(**forward_args)
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
-
     return output_tensor, loss_function
