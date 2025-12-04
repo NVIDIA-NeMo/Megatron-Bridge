@@ -462,6 +462,7 @@ def save_megatron_model(
             save_optim=False,
             save_rng=False,
             ckpt_format=ckpt_format,
+            dist_ckpt_optim_fully_reshardable=True,
         ),
         dist=None,
     )

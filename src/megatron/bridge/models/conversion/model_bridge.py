@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import fnmatch
 import itertools
 import logging
 import re
@@ -415,7 +416,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return converted_weights_dict
 
     def load_weights_hf_to_megatron(
-        self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
+        self,
+        hf_pretrained: HFPreTrained,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        allowed_mismatched_params: Optional[List[str]] = None,
     ) -> List[MegatronModel]:
         """Load HuggingFace weights into Megatron models.
 
@@ -431,6 +435,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 weights to load.
             megatron_model (Union[MegatronModel, List[MegatronModel]]): Megatron model instance
                 or list of model instances (one per virtual pipeline stage).
+            allowed_mismatched_params (Optional[List[str]]): List of parameter names or patterns
+                to allow mismatch (skip instead of raise error).
 
         Returns:
             List[MegatronModel]: The input megatron_model as a list with loaded weights.
@@ -482,6 +488,22 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
                 # Check shape compatibility before copying
                 if converted_weights.shape != task.param_weight.shape:
+                    # Check whitelist
+                    is_whitelisted = False
+                    if allowed_mismatched_params:
+                        for pattern in allowed_mismatched_params:
+                            if fnmatch.fnmatch(task.mapping.megatron_param, pattern) or fnmatch.fnmatch(
+                                task.param_name, pattern
+                            ):
+                                is_whitelisted = True
+                                break
+
+                    if is_whitelisted:
+                        print_rank_0(
+                            f"WARNING: Shape mismatch for megatron param {task.mapping.megatron_param} allowed by whitelist. Skipping."
+                        )
+                        continue
+
                     raise ValueError(
                         f"Shape mismatch for megatron param {task.mapping.megatron_param}:\n"
                         f"  Expected shape: {task.param_weight.shape}\n"
@@ -625,8 +647,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         megatron_to_hf_tasks = conversion_tasks
-        model_config = unwrap_model(megatron_model)[0].config
-        embeddings_are_tied = model_config.share_embeddings_and_output_weights
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
@@ -853,6 +876,13 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         model = unwrap_model(model)
         return model.config
 
+    def _share_embeddings_and_output_weights(
+        self, model_config: TransformerConfig, model: Optional[MegatronModule]
+    ) -> bool:
+        """Fallback-aware accessor for shared embedding setting."""
+        fallback = getattr(model, "share_embeddings_and_output_weights", False) if model else False
+        return getattr(model_config, "share_embeddings_and_output_weights", fallback)
+
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
 
@@ -887,9 +917,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
+        share_embeddings = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
-        if (model_config.share_embeddings_and_output_weights and model_config.pipeline_model_parallel_size > 1) and (
+        if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
             parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
@@ -936,8 +967,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys()
 
         mapping_registry = self.mapping_registry()
-        model_config = unwrap_model(megatron_model)[0].config
-        embeddings_are_tied = model_config.share_embeddings_and_output_weights
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 

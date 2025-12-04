@@ -15,7 +15,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -43,6 +43,7 @@ PERF_ENV_VARS = {
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
+    "HF_HUB_OFFLINE": "0",
 }
 
 
@@ -63,10 +64,18 @@ def slurm_executor(
     wandb_key: str = None,
     network: str = None,
     custom_bash_cmds: List[str] = None,
+    additional_slurm_params: Dict[str, Any] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
     and fine-tuning experiments
+
+    Args:
+        additional_slurm_params: Dict[str, Any], optional
+            Additional SLURM parameters to pass to sbatch. These will be converted to #SBATCH directives.
+            Example: {"nodelist": "node001,node002", "constraint": "gpu"} will generate:
+                #SBATCH --nodelist=node001,node002
+                #SBATCH --constraint=gpu
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
     err_msgs = []
@@ -138,6 +147,7 @@ def slurm_executor(
         segment=segment,
         network=network,
         launcher=launcher,
+        additional_parameters=additional_slurm_params,
     )
 
     return executor

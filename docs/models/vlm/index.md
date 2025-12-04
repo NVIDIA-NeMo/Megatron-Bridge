@@ -8,4 +8,5 @@ This section documents Vision Language Models supported by Megatron Bridge.
 gemma3-vl.md
 nemotron-nano-v2-vl.md
 qwen2.5-vl.md
+qwen3-vl.md
 ```

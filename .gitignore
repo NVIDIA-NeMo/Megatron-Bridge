@@ -14,6 +14,8 @@ runs
 fastspeech_output
 .hydra
 .bash_history.local
+logs*
+*.jsonl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

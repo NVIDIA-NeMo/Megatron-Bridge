@@ -1,5 +1,58 @@
 # Changelog
 
+## NVIDIA Megatron-Bridge 0.2.0
+
+* Model Collection Support
+
+  * LLM
+    * HuggingFace Conversion + training recipes:
+      * GPT-oss
+      * Qwen3 Next
+      * Nemotron-H
+      * Nemotron Nano v2
+      * Moonlight
+      * OlMoE
+      * GLM 4.5
+      * Gemma 3
+    * HuggingFace conversion support:
+      * Llama Nemotron
+      * Mistral
+      * Gemma
+      * Gemma 2
+  * VLM
+    * Nemotron Nano v2 VL
+    * Qwen 3 VL
+    * Qwen2.5 VL
+    * Gemma3 VL
+
+* Performance
+  * Megatron-Bridge support for new benchmarks
+      * Benchmarks (same workloads as GB200 system) for GB300 system
+      * GPT-OSS 120B
+      * Qwen3-Next 80B_a3B
+      * Support for linear attention on Blackwell - Gated Delta Networks
+      * Pre-training with NVFP4 precision: Llama3 8B, Lama3 70B, Llama3.1 405B
+  * Megatron-Bridge support for benchmarks previously existing only for NeMo 2.0
+    * Nemotron-H 56B
+    * Fine-tuning (SFT and LoRA): Llama3 8B and Llama3 70B
+  * HybridEP: DeepSeek V3 benchmarks on GB200 and GB300 systems now use HybridEP
+  * CUDA Graphs
+    * Full-model iteration CUDA graph used for dense models- Llama3 8B, Llama3 70B, Llama3.1 405B
+    * Fine-grained Transformer component specific CUDA Graphs used for MoE models
+
+* NVIDIA Model Optimization Integration
+  * Knowledge Distillation
+  * Post training quantization export
+  * quantization aware training
+
+* Enhanced LoRA support
+  * Support for expert layers
+  * Supported merging adapters for export to HuggingFace
+
+* Finetuning dataset improvements: OpenAI messages format conversion, chat template support
+* Integration with Tensor NVIDIA-DLFW-Inspect for tensor statistic collection & monitoring
+* Support for sample-based training
+
 ## NVIDIA Megatron-Bridge 0.1.0rc4
 
 * Fix docs build

@@ -16,38 +16,50 @@ import logging
 
 import torch
 from argument_parser import parse_cli_args
-from omegaconf import OmegaConf
-from utils.helpers import get_model_recipe_with_user_overrides
+from utils.overrides import set_post_overrides, set_user_overrides
+from utils.utils import get_perf_optimized_recipe
 
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.utils.omegaconf_utils import (
-    apply_overrides,
-    create_omegaconf_dict_config,
-    parse_hydra_overrides,
-)
 
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def main():
     """Main function to run the pretraining/finetuning script."""
-    args, cli_overrides = parse_cli_args()
+    parser = parse_cli_args()
+    args, _ = parser.parse_known_args()
 
-    recipe = get_model_recipe_with_user_overrides(**vars(args))
+    args.model_recipe_name = (
+        f"{args.model_recipe_name}_pretrain_config"
+        if args.task == "pretrain"
+        else f"{args.model_recipe_name}_finetune_config"
+    )
 
-    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
-    if cli_overrides:
-        logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
-        merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
-        logger.debug("Hydra-style command-line overrides applied successfully.")
+    if args.model_recipe_name == "deepseek_v3_32nodes_pretrain_config":
+        args.model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
 
-    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
-    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
-    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
-    # Apply overrides while preserving excluded fields
-    apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
+    recipe = get_perf_optimized_recipe(
+        model_family_name=args.model_family_name,
+        model_recipe_name=args.model_recipe_name,
+        gpu=args.gpu,
+        compute_dtype=args.compute_dtype,
+        mock=args.data == "mock",
+    )
+
+    recipe = set_user_overrides(recipe, args)
+
+    recipe = set_post_overrides(
+        recipe,
+        args.model_family_name,
+        args.model_recipe_name,
+        args.gpu,
+        args.num_gpus,
+        args.compute_dtype,
+        args.task,
+        user_gbs=args.global_batch_size,
+    )
 
     pretrain(config=recipe, forward_step_func=forward_step)
 

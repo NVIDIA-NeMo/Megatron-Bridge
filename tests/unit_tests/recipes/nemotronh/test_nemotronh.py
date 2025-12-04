@@ -19,10 +19,10 @@ from unittest.mock import patch
 import pytest
 
 from megatron.bridge.models.nemotronh import (
-    NemotronHModel4BProvider,
-    NemotronHModel8BProvider,
-    NemotronHModel47BProvider,
-    NemotronHModel56BProvider,
+    NemotronHModelProvider4B,
+    NemotronHModelProvider8B,
+    NemotronHModelProvider47B,
+    NemotronHModelProvider56B,
 )
 from megatron.bridge.recipes.nemotronh import (
     nemotronh_4b_pretrain_config,
@@ -43,7 +43,7 @@ class TestNemotronH4B:
         config = nemotronh_4b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel4BProvider)
+        assert isinstance(config.model, NemotronHModelProvider4B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 1
@@ -56,7 +56,7 @@ class TestNemotronH4B:
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration (should be in mock mode)
-        assert config.dataset.sequence_length == 8192
+        assert config.dataset.seq_length == 8192
         assert config.dataset.split == "1,1,1"
 
         # Check tokenizer (default is NullTokenizer for pretraining)
@@ -113,7 +113,7 @@ class TestNemotronH8B:
         config = nemotronh_8b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel8BProvider)
+        assert isinstance(config.model, NemotronHModelProvider8B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 2
@@ -151,7 +151,7 @@ class TestNemotronH47B:
         config = nemotronh_47b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel47BProvider)
+        assert isinstance(config.model, NemotronHModelProvider47B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 8
@@ -193,7 +193,7 @@ class TestNemotronH56B:
         config = nemotronh_56b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel56BProvider)
+        assert isinstance(config.model, NemotronHModelProvider56B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 8
@@ -233,10 +233,10 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn,provider_cls",
         [
-            (nemotronh_4b_pretrain_config, NemotronHModel4BProvider),
-            (nemotronh_8b_pretrain_config, NemotronHModel8BProvider),
-            (nemotronh_47b_pretrain_config, NemotronHModel47BProvider),
-            (nemotronh_56b_pretrain_config, NemotronHModel56BProvider),
+            (nemotronh_4b_pretrain_config, NemotronHModelProvider4B),
+            (nemotronh_8b_pretrain_config, NemotronHModelProvider8B),
+            (nemotronh_47b_pretrain_config, NemotronHModelProvider47B),
+            (nemotronh_56b_pretrain_config, NemotronHModelProvider56B),
         ],
     )
     def test_config_container_structure(self, recipe_fn, provider_cls):
@@ -270,7 +270,7 @@ class TestNemotronHCommon:
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2
-        assert config.dataset.sequence_length == 4096
+        assert config.dataset.seq_length == 4096
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
 
