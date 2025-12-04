@@ -23,7 +23,9 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
+from megatron.core.optimizer import AdamOptimizerConfig as MCoreAdamOptimizerConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+from megatron.core.optimizer import SGDOptimizerConfig as MCoreSGDOptimizerConfig
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -88,6 +90,56 @@ class OptimizerConfig(MCoreOptimizerConfig):
         """Execute the deferred MCore post-init logic.
 
         This method calls the original Megatron Core OptimizerConfig.__post_init__()
+        to compute derived fields based on the current field values.
+        """
+        super().__post_init__()
+
+
+@dataclass
+class AdamOptimizerConfig(MCoreAdamOptimizerConfig):
+    """Megatron Core AdamOptimizerConfig with deferred post-init.
+
+    This class inherits from Megatron Core's AdamOptimizerConfig but defers the
+    execution of post_init() until finalize() is explicitly called. This allows
+    for field modifications after construction but before computed fields are calculated.
+    """
+
+    def __post_init__(self) -> None:
+        """Skip MCore post_init during initial construction.
+
+        The original post_init logic is deferred until finalize() is called.
+        """
+        pass
+
+    def finalize(self) -> None:
+        """Execute the deferred MCore post-init logic.
+
+        This method calls the original Megatron Core OptimizerConfig.__post_init__()
+        to compute derived fields based on the current field values.
+        """
+        super().__post_init__()
+
+
+@dataclass
+class SGDOptimizerConfig(MCoreSGDOptimizerConfig):
+    """Megatron Core SGDOptimizerConfig with deferred post-init.
+
+    This class inherits from Megatron Core's SGDOptimizerConfig but defers the
+    execution of post_init() until finalize() is explicitly called. This allows
+    for field modifications after construction but before computed fields are calculated.
+    """
+
+    def __post_init__(self) -> None:
+        """Skip MCore post_init during initial construction.
+
+        The original post_init logic is deferred until finalize() is called.
+        """
+        pass
+
+    def finalize(self) -> None:
+        """Execute the deferred MCore post-init logic.
+
+        This method calls the original Megatron Core SGDOptimizerConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
         super().__post_init__()

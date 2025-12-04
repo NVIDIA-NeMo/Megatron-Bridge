@@ -14,7 +14,7 @@
 
 from typing import Optional
 
-from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
+from megatron.bridge.training.config import AdamOptimizerConfig, SchedulerConfig
 
 
 def distributed_fused_adam_with_cosine_annealing(
@@ -28,7 +28,7 @@ def distributed_fused_adam_with_cosine_annealing(
     max_lr: float = 1e-4,
     min_lr: Optional[float] = None,
     clip_grad: float = 1.0,
-) -> tuple[OptimizerConfig, SchedulerConfig]:
+) -> tuple[AdamOptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler.
 
@@ -46,11 +46,10 @@ def distributed_fused_adam_with_cosine_annealing(
         clip_grad: Gradient clipping value
 
     Returns:
-        Tuple of (OptimizerConfig, SchedulerConfig)
+        Tuple of (AdamOptimizerConfig, SchedulerConfig)
     """
     min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
-    optimizer = OptimizerConfig(
-        optimizer="adam",
+    optimizer = AdamOptimizerConfig(
         lr=max_lr,
         min_lr=min_lr,
         weight_decay=weight_decay,
@@ -88,7 +87,7 @@ def distributed_fused_adam_with_cosine_annealing_samples(
     max_lr: float = 1e-4,
     min_lr: Optional[float] = None,
     clip_grad: float = 1.0,
-) -> tuple[OptimizerConfig, SchedulerConfig]:
+) -> tuple[AdamOptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler for sample-based training.
 
@@ -107,11 +106,10 @@ def distributed_fused_adam_with_cosine_annealing_samples(
         clip_grad: Gradient clipping value
 
     Returns:
-        A tuple of (OptimizerConfig, SchedulerConfig) configured for sample-based training
+        A tuple of (AdamOptimizerConfig, SchedulerConfig) configured for sample-based training
     """
     min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
-    optimizer = OptimizerConfig(
-        optimizer="adam",
+    optimizer = AdamOptimizerConfig(
         lr=max_lr,
         min_lr=min_lr,
         weight_decay=weight_decay,
