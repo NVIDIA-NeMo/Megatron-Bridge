@@ -117,7 +117,7 @@ def parse_cli_args():
     )
     parser.add_argument(
         "--detach",
-        help="Detach the experiment from the terminal. Disabled by default",
+        help="Detach the experiment from the terminal. Enabled by default",
         type=bool_arg,
         default=True,
     )
