@@ -4,7 +4,7 @@ Megatron Bridge provides a streamlined setup for Knowledge Distillation (KD) tra
 
 Knowledge Distillation is a technique where a pre-trained model (the "teacher") transfers its learned knowledge to a second model (the "student"), which is typically smaller and faster. This process helps the student model learn more efficiently by mimicking the behavior of the teacher. KD offers two key advantages over traditional training: faster convergence and higher final accuracy.
 
-In Megatron Bridge, KD is enabled by NVIDIA TensorRT Model Optimizer (ModelOpt) — a library to optimize deep-learning models for inference on GPUs.
+In Megatron Bridge, KD is enabled by NVIDIA Model Optimizer (ModelOpt) — a library to optimize deep-learning models for inference on GPUs.
 
 ## Knowledge Distillation Process
 
@@ -118,4 +118,4 @@ During distillation training:
 ## References
 
 For more information on the underlying implementation, see:
-* [NVIDIA TensorRT Model Optimizer](https://github.com/NVIDIA/TensorRT-Model-Optimizer)
+* [NVIDIA Model Optimizer](https://github.com/NVIDIA/Model-Optimizer)
