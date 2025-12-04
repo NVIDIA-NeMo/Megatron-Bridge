@@ -225,6 +225,8 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool | None = N
                 hf_path=model_path,
             ),
         )
+        if hasattr(config, "vision_config"):
+            return True
 
         # Check for VL model indicators in config
         model_type = getattr(config, "model_type", "").lower()
@@ -258,22 +260,23 @@ class SingleBatchIterator:
     Required by the forward_backward_func function.
 
     This class creates an iterator that yields exactly one batch containing
-    input tokens, position IDs, attention mask, and optional vision inputs,
+    input tokens, position IDs, attention mask, and optional model-specific inputs,
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None):
+    def __init__(self, input_ids, position_ids, attention_mask, inputs=None):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
         )
 
-        # Add vision inputs if provided
-        if pixel_values is not None:
-            self.batch["pixel_values"] = pixel_values
-        if image_grid_thw is not None:
-            self.batch["image_grid_thw"] = image_grid_thw
+        # Add all extra fields from inputs (excluding input_ids and attention_mask which are handled separately)
+        if inputs is not None:
+            excluded_keys = {"input_ids", "attention_mask"}
+            for key in inputs.keys():
+                if key not in excluded_keys:
+                    self.batch[key] = inputs[key]
 
         self._yielded = False
 
@@ -292,7 +295,7 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     Required by the forward_backward_func function.
 
     Extracts a batch from the data iterator and runs the model forward pass
-    with the provided input tokens, position IDs, attention mask, and vision inputs.
+    with the provided input tokens, position IDs, attention mask, and any model-specific inputs.
 
     Args:
         data_iterator: Iterator providing batches of input data
@@ -309,11 +312,11 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         "attention_mask": batch.get("attention_mask", None),
     }
 
-    # Add vision inputs if present
-    if "pixel_values" in batch:
-        forward_args["pixel_values"] = batch["pixel_values"]
-    if "image_grid_thw" in batch:
-        forward_args["image_grid_thw"] = batch["image_grid_thw"]
+    # Add all extra fields from batch (excluding tokens, position_ids, attention_mask)
+    excluded_keys = {"tokens", "position_ids", "attention_mask"}
+    for key, value in batch.items():
+        if key not in excluded_keys:
+            forward_args[key] = value
 
     def loss_func(x, **kwargs):
         return x
@@ -375,7 +378,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Tuple of (input_ids, inputs, messages) where inputs contains all model-specific fields
     """
     if is_vl_model and image_path:
         if not QWEN_VL_UTILS_AVAILABLE:
@@ -408,7 +411,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         )
 
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        return input_ids, inputs, messages
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -418,7 +421,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None, None
+        return input_ids, inputs, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -501,14 +504,13 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
+def _run_hf_inference(hf_model, input_ids, inputs, tokenizer):
     """Run HuggingFace model inference and return results.
 
     Args:
         hf_model: The HuggingFace model (may be None for non-rank-0).
         input_ids: Input token IDs.
-        pixel_values: Pixel values for vision models (optional).
-        image_grid_thw: Image grid dimensions (optional).
+        inputs: Full inputs object from processor/tokenizer containing all model-specific fields.
         tokenizer: Tokenizer for decoding.
 
     Returns:
@@ -524,10 +526,16 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             "input_ids": input_ids,
             "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
         }
-        if pixel_values is not None:
-            hf_inputs["pixel_values"] = pixel_values
-        if image_grid_thw is not None:
-            hf_inputs["image_grid_thw"] = image_grid_thw
+        # Add all extra fields from inputs (excluding input_ids and attention_mask)
+        if inputs is not None:
+            excluded_keys = {"input_ids", "attention_mask"}
+            for key in inputs.keys():
+                if key not in excluded_keys:
+                    value = inputs[key]
+                    # Convert tensor values to model dtype if they are float tensors
+                    if isinstance(value, torch.Tensor) and value.is_floating_point():
+                        value = value.to(dtype=hf_model.dtype)
+                    hf_inputs[key] = value
 
         hf_output = hf_model(**hf_inputs)
 
@@ -696,23 +704,24 @@ def compare_models_one_step(args) -> None:
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, messages = process_inputs(
+    input_ids, inputs, messages = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
     # Move to GPU
     input_ids = input_ids.cuda()
-    if pixel_values is not None:
-        pixel_values = pixel_values.cuda()
-    if image_grid_thw is not None:
-        image_grid_thw = image_grid_thw.cuda()
+    if inputs is not None:
+        inputs = inputs.to("cuda")
 
     print_rank_0(f"Input shape: {input_ids.shape}")
-    print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
+    if inputs is not None and hasattr(inputs, "pixel_values") and inputs.pixel_values is not None:
+        print_rank_0(f"Pixel values shape: {inputs.pixel_values.shape}")
+    else:
+        print_rank_0("Pixel values shape: None")
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
+        hf_model, input_ids, inputs, tokenizer
     )
 
     del hf_model
@@ -747,7 +756,7 @@ def compare_models_one_step(args) -> None:
         attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
 
         fwd_bwd_function = get_forward_backward_func()
-        iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
+        iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, inputs)
 
         megatron_output = fwd_bwd_function(
             forward_step_func=vlm_forward_step,
