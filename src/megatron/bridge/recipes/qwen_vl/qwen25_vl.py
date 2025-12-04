@@ -23,6 +23,7 @@ from megatron.bridge.data.vlm_datasets import (
     HFDatasetConversationProvider,
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
+    EnergonVLMConversationProvider,
 )
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -315,6 +316,14 @@ def _qwen25_vl_common(
             data_sharding=True,
             pin_memory=True,
             persistent_workers=False,
+        )
+    elif _dataset_choice == "energon":
+        dataset_cfg = EnergonVLMConversationProvider(
+            # seq_length=seq_length,
+            # path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
+            # hf_processor_path=_processor_model,
+            # num_workers=2,
+            # dataloader_type="single",
         )
     else:
         raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf'].")
