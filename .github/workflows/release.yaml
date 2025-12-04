@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-name: "Release Megatron-Bridge"
+name: 'Release Megatron-Bridge'
 
 on:
   workflow_dispatch:
@@ -35,7 +35,7 @@ on:
         required: true
         type: string
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: write # To read repository content
@@ -58,6 +58,7 @@ jobs:
       runner: linux-amd64-cpu16
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}
+      submodules: recursive
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
