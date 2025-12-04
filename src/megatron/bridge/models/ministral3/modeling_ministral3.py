@@ -142,6 +142,10 @@ class Ministral3Model(MegatronModule):
         if HAS_MISTRAL3 and HFMistral3Model is not None:
             self.get_image_features = types.MethodType(HFMistral3Model.get_image_features, self)
 
+        # Some config requires from HF vision tower
+        self.config.spatial_merge_size = getattr(self.config.hf_config, "spatial_merge_size", 2)
+        self.config.vision_feature_layer = getattr(self.config.hf_config, "vision_feature_layer", -1)
+
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
         self.language_model.set_input_tensor(input_tensor)
@@ -155,6 +159,7 @@ class Ministral3Model(MegatronModule):
         pixel_values: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
+        image_sizes: Optional[torch.Tensor] = None,
         *,
         loss_mask: Optional[Tensor] = None,
     ) -> Tensor:
@@ -186,7 +191,8 @@ class Ministral3Model(MegatronModule):
 
             if pixel_values is not None:
                 # Get image features using HF's method (monkey-patched)
-                image_features = self.get_image_features(pixel_values)
+                image_features = self.get_image_features(pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes)
+                image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
 
                 # Replace image tokens in text embeddings with image features
                 assert input_ids is not None
