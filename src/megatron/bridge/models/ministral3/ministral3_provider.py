@@ -29,12 +29,12 @@ Ministral 3 Key Features:
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-
+from megatron.core.transformer import ModuleSpec
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 
 
@@ -45,11 +45,18 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
+from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
+from megatron.core.extensions.transformer_engine import TEDotProductAttention as MCoreTEDotProductAttention
+from megatron.core.transformer.enums import AttnMaskType
 # =============================================================================
 # Ministral 3 Vision-Language Model Providers
 # =============================================================================
+
+def ministral_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Layer spec for Ministral 3 models."""
+    layer_spec = default_layer_spec(config)
+    layer_spec.submodules.self_attention.submodules.core_attention = MinistralTEDotProductAttention
+    return layer_spec
 
 
 @dataclass
@@ -66,6 +73,7 @@ class Ministral3ModelProvider(MistralModelProvider):
     - https://huggingface.co/mistralai/Ministral-3-14B-Base-2512
     """
 
+    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = ministral_layer_spec
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     add_bias_linear: bool = False
@@ -202,3 +210,49 @@ class Ministral3ModelProvider14B(Ministral3ModelProvider):
     ffn_hidden_size: int = 16384
     num_layers: int = 40
     rotary_base: int = 1000000000.0
+
+class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
+
+    def __init__(
+        self,
+        config,
+        layer_number: int,
+        attn_mask_type: AttnMaskType,
+        attention_type: str,
+        attention_dropout: Optional[float] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            config=config,
+            layer_number=layer_number,
+            attn_mask_type=attn_mask_type,
+            attention_type=attention_type,
+            attention_dropout=attention_dropout,
+            **kwargs,
+        )
+        
+        # Initialize Llama 4 attention scaling parameters
+        if self.config.hf_config is not None:
+            self.beta = self.config.hf_config.text_config.rope_parameters["llama_4_scaling_beta"]
+            self.max_position_embeddings = self.config.hf_config.text_config.rope_parameters["original_max_position_embeddings"]
+        else:
+            self.beta = 0  # No effect
+            self.max_position_embeddings = self.config.seq_length
+
+    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
+        scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
+        return scaling.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attention_mask: torch.Tensor,
+        attn_mask_type: AttnMaskType,
+        **kwargs,
+    ):
+        positions_ids = torch.arange(query.shape[0], device=query.device)
+        query *= self._get_llama_4_attn_scale(positions_ids, self.beta, self.max_position_embeddings).to(query.dtype)
+
+        return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
