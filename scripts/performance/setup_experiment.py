@@ -369,7 +369,7 @@ def main(
             assets_dir = os.path.join(job_dir, exp_name)
             log_assets_dirname_to_disk(assets_dir)
 
-            log_file_paths = glob.glob(f"{job_dir}/log*.out")
+            log_file_paths = list(str(Path(f"{job_dir}/log_all_ranks.out")))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
@@ -392,7 +392,9 @@ def main(
 
         if is_finished_experiment is True:
             log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
+                list(
+                    glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log_all_ranks.out")
+                )
             )
 
             if not is_long_convergence_run:
