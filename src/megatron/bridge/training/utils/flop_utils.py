@@ -82,9 +82,10 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         else:
             nheads = d_in // head_dim
         return (
+            # 2 * d_in -> 3 * d_in
             (2 * batch_size * seq_len * hidden_size * (2 * d_in + 2 * num_groups * state_dim + nheads))  # in_proj
             + (7 * batch_size * seq_len * d_in * state_dim)  # scan
-            + (2 * batch_size * seq_len * d_in * hidden_size)  # out_proj
+            + (2 * batch_size * seq_len * d_in * hidden_size)  # out_proj # TODO: hidden_size -> chunk_size (128)
         )
 
     def hybrid_flops(

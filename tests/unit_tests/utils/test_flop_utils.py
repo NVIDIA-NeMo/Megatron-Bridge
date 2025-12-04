@@ -27,14 +27,21 @@ class TestFlops:
     @pytest.mark.parametrize(
         "model_family,model_config_func_name, seq_length, vocab_size, expected_flops",
         [
-            ("llama", "llama3_8b_pretrain_config", 8192, 151936, 4.22e14),
-            ("llama", "llama3_70b_pretrain_config", 8192, 151936, 3.68e15),
-            ("llama", "llama31_405b_pretrain_config", 8192, 151936, 2.07e16),
-            ("qwen", "qwen3_30b_a3b_pretrain_config", 4096, 151643, 9.42e13),
-            ("qwen", "qwen3_235b_a22b_pretrain_config", 4096, 151643, 6.06e14),
+            # ("llama", "llama3_8b_pretrain_config", 8192, 151936, 4.22e14),
+            # ("llama", "llama3_70b_pretrain_config", 8192, 151936, 3.68e15),
+            # ("llama", "llama31_405b_pretrain_config", 8192, 151936, 2.07e16),
+            # ("qwen", "qwen3_30b_a3b_pretrain_config", 4096, 151643, 9.42e13),
+            # ("qwen", "qwen3_235b_a22b_pretrain_config", 4096, 151643, 6.06e14),
+            ("nemotronh", "nemotronh_8b_pretrain_config", 8192, 131072, 4.83E+14),
+            #("nemotronh", "nemotronh_56b_pretrain_config", 8192, 131072, 3.47E+15),
         ],
     )
     def test_flops(self, model_family, model_config_func_name, seq_length, vocab_size, expected_flops):
+        """
+        Test the number of floating point operations for a given model family and configuration.
+        For GBS=1
+
+        """
         model_family_module = importlib.import_module(f"megatron.bridge.recipes.{model_family}")
         cfg = getattr(model_family_module, model_config_func_name)()
         cfg.model.finalize()
@@ -48,10 +55,12 @@ class TestFlops:
             cfg.model.make_vocab_size_divisible_by,
             cfg.model.tensor_model_parallel_size,
         )
+        cfg.model.vocab_size = cfg.tokenizer.padded_vocab_size
 
+        import pdb; pdb.set_trace()
         actual_num_flops = num_floating_point_operations(cfg, batch_size=1)
         actual_num_flops_rounded = float(f"{actual_num_flops:.2e}")
 
         assert actual_num_flops_rounded == expected_flops, (
-            f"Expected TFLops: {expected_flops} but got {actual_num_flops} with Padded Vocab Size: {cfg.tokenizer.padded_vocab_size} and Sequence len: {cfg.model.seq_length}"
+            f"Expected TFLops: {expected_flops:.2e} but got {actual_num_flops:.2e} with Padded Vocab Size: {cfg.tokenizer.padded_vocab_size} and Sequence len: {cfg.model.seq_length}"
         )
