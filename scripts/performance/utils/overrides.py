@@ -16,6 +16,7 @@ import argparse
 import logging
 from typing import List, Optional
 
+from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -212,7 +213,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size is not None:
+    if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
         recipe.model.expert_model_parallel_size = args.expert_model_parallel_size
@@ -262,6 +263,15 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+
+    # Reconfigure the DeepSeek-V3 pipeline model parallel layout
+    # if the user has provided a custom PP and VP sizes
+    model_recipe_name = args.model_recipe_name
+    pp_size = args.pipeline_model_parallel_size
+    vp_size = args.virtual_pipeline_model_parallel_size
+    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+
     return recipe
 
 

@@ -233,8 +233,9 @@ def parse_cli_args():
     parallelism_args.add_argument(
         "-vp",
         "--virtual_pipeline_model_parallel_size",
-        type=int,
+        type=lambda x: None if x == "None" else int(x),
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
+        default=-1,
     )
     parallelism_args.add_argument(
         "-ep",
