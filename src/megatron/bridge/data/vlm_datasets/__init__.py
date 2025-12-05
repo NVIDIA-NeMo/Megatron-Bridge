@@ -40,7 +40,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
 from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
-from megatron.bridge.data.vlm_datasets.energon.energon_provider import EnergonVLMConversationProvider
+from megatron.bridge.data.vlm_datasets.energon.vlm_energon_prodvider import EnergonVLMConversationProvider
 
 
 __all__ = [
