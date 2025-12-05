@@ -503,7 +503,6 @@ if __name__ == "__main__":
             "skip_first_percent_time": args.skip_first_percent_time,
         },
         max_retries=args.max_retries,
-        dgxc_base_url=args.dgxc_base_url,
         dgxc_cluster=args.dgxc_cluster,
         dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
         dgxc_app_id=args.dgxc_app_id,
