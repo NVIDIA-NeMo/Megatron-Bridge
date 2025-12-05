@@ -231,11 +231,11 @@ def main(
 
     if use_recipes:
         script_name = ENTRYPOINT_RECIPE
-        exp_name = f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{gpu}"
+        exp_name = f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{num_gpus}gpu_{gpu}"
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
-        exp_name = f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{gpu}_{compute_dtype}"
+        exp_name = f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
