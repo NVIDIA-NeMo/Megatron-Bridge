@@ -294,4 +294,3 @@ class TestSanitizeMlflowMetrics:
             "eval_accuracy": 0.9,
             "learning_rate": 0.001,
         }
-

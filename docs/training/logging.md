@@ -168,10 +168,10 @@ When enabled, MLFlow receives:
 
 #### Enable MLFlow Logging
 
-  1) Install MLFlow (if not already available):
+  1) Install MLFlow (installed by default with Megatron Bridge):
 
   ```bash
-  pip install mlflow
+  pip install mlflow / uv add mlflow
   ```
 
   2) Configure the tracking server (Optional):

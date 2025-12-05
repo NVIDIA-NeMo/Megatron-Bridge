@@ -920,6 +920,31 @@ class LoggerConfig:
     save_config_filepath: Optional[str] = None
     """If set, save the task configuration (ConfigContainer) to this file."""
 
+    def finalize(self) -> None:
+        """Validate logger settings and optional MLFlow dependency."""
+        using_mlflow = any(
+            [
+                self.mlflow_experiment,
+                self.mlflow_run_name,
+                self.mlflow_tracking_uri,
+                self.mlflow_tags,
+            ]
+        )
+
+        if using_mlflow:
+            try:
+                import importlib
+
+                importlib.import_module("mlflow")
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "MLFlow logging is configured, but the 'mlflow' package is not installed. "
+                    "Install it via pip install mlflow or uv add mlflow"
+                ) from exc
+
+            if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
+                raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
+
 
 @dataclass(kw_only=True)
 class ProfilingConfig:
@@ -1266,6 +1291,7 @@ class ConfigContainer(Container):
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
+        self.logger.finalize()
         self.train.finalize()
         self.scheduler.finalize()
         self.checkpoint.finalize()
