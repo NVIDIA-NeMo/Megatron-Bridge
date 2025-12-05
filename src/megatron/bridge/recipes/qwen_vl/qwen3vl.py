@@ -155,6 +155,7 @@ def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)
 
+
 def _qwen3_vl_common(
     hf_path: str,
     dir: Optional[str] = None,
