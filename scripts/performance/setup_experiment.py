@@ -208,7 +208,6 @@ def main(
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
     max_retries: int,
-    use_dgxc: bool,
     dgxc_base_url: str,
     dgxc_cluster: str,
     dgxc_kube_apiserver_url: str,
@@ -254,7 +253,7 @@ def main(
         ]
     )
 
-    if not use_dgxc:
+    if not dgxc_cluster:
         executor = slurm_executor(
             gpu=gpu,
             account=account,
@@ -505,7 +504,6 @@ if __name__ == "__main__":
             "skip_first_percent_time": args.skip_first_percent_time,
         },
         max_retries=args.max_retries,
-        use_dgxc=args.use_dgxc,
         dgxc_base_url=args.dgxc_base_url,
         dgxc_cluster=args.dgxc_cluster,
         dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
