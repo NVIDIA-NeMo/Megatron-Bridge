@@ -64,7 +64,7 @@ jobs:
   #   if: |
   #     !(needs.pre-flight.outputs.docs_only == 'true'
   #     || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-  #   runs-on: self-hosted-nemo
+  #   runs-on: nemo-ci-aws-gpu-x2
   #   name: Pip - Python${{ matrix.python-version }}${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }} - AMD64/Linux - NGC PyTorch
   #   container:
   #     image: nvcr.io/nvidia/pytorch:25.05-py3
@@ -119,7 +119,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: self-hosted-nemo
+    runs-on: nemo-ci-aws-gpu-x2
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
       image: nvcr.io/nvidia/pytorch:25.05-py3
