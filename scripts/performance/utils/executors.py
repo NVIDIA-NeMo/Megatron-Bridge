@@ -86,15 +86,8 @@ def slurm_executor(
         "--no-container-mount-home",
     ]
 
-    print(f"log_dir is {log_dir}")
-    print(f"nemorun says home is {get_nemorun_home()}")
-    print(f"NEMORUN_HOME is {os.getenv('NEMORUN_HOME', '<undefined>')}")
-
     if log_dir != get_nemorun_home():
         PERF_ENV_VARS["NEMORUN_HOME"] = log_dir
-
-    print(f"now log_dir is {log_dir}")
-    print(f"NEMORUN_HOME is {get_nemorun_home()}")
 
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
