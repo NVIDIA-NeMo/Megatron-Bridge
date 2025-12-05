@@ -24,7 +24,7 @@ on:
 jobs:
   download:
     name: Download Model
-    runs-on: self-hosted-nemo
+    runs-on: nemo-ci-aws-gpu-x2
     environment: nemo-ci
     env:
       HF_HUB_OFFLINE: 0
