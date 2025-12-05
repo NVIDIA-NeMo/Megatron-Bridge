@@ -188,7 +188,7 @@ def create_base_tokenizer_config(**kwargs) -> TokenizerConfig:
 
 
 def create_base_checkpoint_config(
-    checkpoint_dir: Optional[str] = None, load_dir: Optional[str] = None, save_interval: Optional[int] = None, **kwargs
+    checkpoint_dir: Optional[str] = None, load_dir: Optional[str] = None, save_interval: Optional[int] = None, ckpt_format: str = "fsdp_dtensor", **kwargs
 ) -> CheckpointConfig:
     """Create a standardized checkpoint configuration."""
     base_config = {
@@ -202,6 +202,8 @@ def create_base_checkpoint_config(
         base_config["load"] = load_dir
     if save_interval:
         base_config["save_interval"] = save_interval
+    if ckpt_format:
+        base_config["ckpt_format"] = ckpt_format
     base_config.update(kwargs)
     return CheckpointConfig(**base_config)
 
@@ -214,6 +216,7 @@ def create_fsdp_config_container(
     save_interval: Optional[int] = None,
     tensorboard_dir: Optional[str] = None,
     overlap_param_gather: bool = True,
+    ckpt_format: str = "fsdp_dtensor",
     **overrides,
 ) -> ConfigContainer:
     """Create a complete FSDP configuration container with common defaults."""
@@ -228,7 +231,7 @@ def create_fsdp_config_container(
         logger=create_base_logger_config(tensorboard_dir, **overrides.pop("logger", {})),
         tokenizer=create_base_tokenizer_config(**overrides.pop("tokenizer", {})),
         checkpoint=create_base_checkpoint_config(
-            checkpoint_dir, load_dir, save_interval, **overrides.pop("checkpoint", {})
+            checkpoint_dir, load_dir, save_interval, ckpt_format, **overrides.pop("checkpoint", {})
         ),
         rng=RNGConfig(seed=1234, **overrides.pop("rng", {})),
     )
@@ -294,6 +297,7 @@ class TestMegatronFSDP:
                 checkpoint_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
                 save_interval=10,
+                ckpt_format="fsdp_dtensor"
             )
 
             # Run training
@@ -335,6 +339,7 @@ class TestMegatronFSDP:
                 checkpoint_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
                 save_interval=checkpoint_iters,
+                ckpt_format="fsdp_dtensor",
                 scheduler={"lr_decay_iters": total_iters},  # Override scheduler for total iterations
             )
 
@@ -356,6 +361,7 @@ class TestMegatronFSDP:
                 load_dir=checkpoint_dir,  # Resume from checkpoint
                 tensorboard_dir=tensorboard_dir,
                 save_interval=checkpoint_iters,
+                ckpt_format="fsdp_dtensor",
                 scheduler={"lr_decay_iters": total_iters},  # Override scheduler for total iterations
             )
 
