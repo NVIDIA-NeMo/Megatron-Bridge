@@ -62,12 +62,12 @@ logger:
   tensorboard_dir: ./logs/llama32_1b
   # wandb_project: my_project  # Uncomment to enable W&B logging
   # wandb_entity: my_team
-  # mlflow_experiment: llama32_1b_pretrain
-  # mlflow_run_name: llama32_1b_pretrain_run
-  # mlflow_tags:
-  #   project: llama32
-  #   phase: pretrain
-  #   variant: mlflow_example
+  mlflow_experiment: llama32_1b_pretrain
+  mlflow_run_name: llama32_1b_pretrain_run
+  mlflow_tags:
+    project: llama32
+    phase: pretrain
+    variant: mlflow_example
 
 # Random seed
 rng:
