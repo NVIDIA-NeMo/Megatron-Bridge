@@ -460,7 +460,7 @@ class TestMegatronGlobalParamNamesAllPPRanks:
     """Test suite for _megatron_global_param_names_all_pp_ranks method."""
 
     def test_global_param_names_skip_adapter(self, monkeypatch):
-        """Test that adapter parameters are skipped when for_adapter=False."""
+        """Test that adapter parameters are skipped."""
         bridge = DummyBridge()
 
         class DummyGroup:
@@ -504,7 +504,7 @@ class TestMegatronGlobalParamNamesAllPPRanks:
         assert names == ["decoder.layers.0.mlp.linear_fc1.to_wrap.weight"]
 
     def test_global_param_names_for_adapter(self, monkeypatch):
-        """Test that adapter parameters are collected when for_adapter=True."""
+        """Test that adapter parameters are collected."""
         bridge = DummyBridge()
 
         class DummyGroup:
@@ -571,7 +571,7 @@ class TestMegatronGlobalParamNamesAllPPRanks:
             lambda *_, **__: (False, 4, 4, False, False),
         )
 
-        adapter_info = bridge._megatron_global_param_names_all_pp_ranks([FakeModel()], for_adapter=True)
+        adapter_info = bridge._megatron_global_adapter_infos_all_pp_ranks([FakeModel()])
         # Should return list of tuples: (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
         assert len(adapter_info) == 1
         assert isinstance(adapter_info[0], tuple)

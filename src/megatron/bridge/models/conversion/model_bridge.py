@@ -310,14 +310,58 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return getattr(lora_module, "adapter", None), getattr(lora_module, "to_wrap", None)
 
     def _megatron_global_param_names_all_pp_ranks(
-        self, megatron_model: Union[MegatronModel, List[MegatronModel]], for_adapter: bool = False
-    ) -> List[str | tuple[str, int]]:
+        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+    ) -> List[str]:
         """Get all parameter names across all pipeline parallel ranks."""
         # Cache the result after first call
-        if for_adapter and hasattr(self, "_cached_param_objects_adapter"):
-            return self._cached_param_objects_adapter
-        elif not for_adapter and hasattr(self, "_cached_param_names"):
+        if hasattr(self, "_cached_param_names"):
             return self._cached_param_names
+
+        # Compute the result
+        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        model_config = unwrap_model(megatron_model)[0].config
+        global_param_names = []
+
+        # Ensure megatron_model is a list for consistent handling
+        models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+
+        for vp_stage, model in enumerate(models_list):
+            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
+            for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+                if "_extra_state" in local_param_name:
+                    continue
+                local_param_name = self._unwrap_name(local_param_name)
+                global_param_name = _megatron_local_name_to_global(
+                    models_list, model_config, local_param_name, vp_stage
+                )
+                if self._is_adapter_param_name(global_param_name):
+                    continue
+                global_param_names.append(global_param_name)
+
+        gathered_global_param_names = [None] * pp_group.size()
+        torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
+
+        # flatten the list, sort it and remove duplicates
+        # the order matters here, casually re-order will cause a hang.
+        # e.g. decoder.layers.0.mlp.experts.linear_fc1.weight100
+        flattened_names = list(set(sum(gathered_global_param_names, [])))
+
+        # the order cannot be changed, this sync for all ranks for conversion
+        # change this might cause a hang
+        gathered_global_param_names = sorted(flattened_names, key=extract_sort_key)
+
+        # Cache the result
+        self._cached_param_names = gathered_global_param_names
+
+        return self._cached_param_names
+
+    def _megatron_global_adapter_infos_all_pp_ranks(
+        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+    ) -> List[tuple[str, bool, bool, int, int]]:
+        """Get all adapter parameter names across all pipeline parallel ranks."""
+        # Cache the result after first call
+        if hasattr(self, "_cached_param_objects_adapter"):
+            return self._cached_param_objects_adapter
 
         # Compute the result
         pp_group = parallel_state.get_pipeline_model_parallel_group()
@@ -337,29 +381,24 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     models_list, model_config, local_param_name, vp_stage
                 )
                 is_adapter_param = self._is_adapter_param_name(global_param_name)
-                if for_adapter:
-                    # only collect linear_in.weight for deduplication
-                    if not is_adapter_param or global_param_name.endswith(".linear_out.weight"):
-                        continue
-                    base_name = local_param_name.split(".adapter.")[0]
-                    adapter, to_wrap = self._get_adapter_wrap_module(base_name, models_list, vp_stage)
-                    if isinstance(adapter, ModuleDict):
-                        adapter_name = local_param_name.removeprefix(base_name + ".adapter.").split(".")[0]
-                        adapter = adapter[adapter_name]
-                    input_is_parallel, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
-                    global_param_objects.append(
-                        (
-                            global_param_name[: -len(".linear_in.weight")],
-                            input_is_parallel,
-                            base_linear_is_parallel,
-                            adapter.alpha,
-                            adapter.dim,
-                        )
+                # only collect linear_in.weight for deduplication
+                if not is_adapter_param or global_param_name.endswith(".linear_out.weight"):
+                    continue
+                base_name = local_param_name.split(".adapter.")[0]
+                adapter, to_wrap = self._get_adapter_wrap_module(base_name, models_list, vp_stage)
+                if isinstance(adapter, ModuleDict):
+                    adapter_name = local_param_name.removeprefix(base_name + ".adapter.").split(".")[0]
+                    adapter = adapter[adapter_name]
+                input_is_parallel, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                global_param_objects.append(
+                    (
+                        global_param_name[: -len(".linear_in.weight")],
+                        input_is_parallel,
+                        base_linear_is_parallel,
+                        adapter.alpha,
+                        adapter.dim,
                     )
-                else:
-                    if is_adapter_param:
-                        continue
-                    global_param_objects.append(global_param_name)
+                )
 
         gathered_global_param_objects = [None] * pp_group.size()
         torch.distributed.all_gather_object(gathered_global_param_objects, global_param_objects, group=pp_group)
@@ -369,19 +408,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         # e.g. decoder.layers.0.mlp.experts.linear_fc1.weight100
         flattened_names = list(set(sum(gathered_global_param_objects, [])))
 
-        if for_adapter:
-            # the order cannot be changed, this sync for all ranks for conversion
-            # change this might cause a hang
-            gathered_global_param_objects = sorted(flattened_names, key=lambda x: extract_sort_key(x[0]))
+        # the order cannot be changed, this sync for all ranks for conversion
+        # change this might cause a hang
+        gathered_global_param_objects = sorted(flattened_names, key=lambda x: extract_sort_key(x[0]))
 
-            self._cached_param_objects_adapter = gathered_global_param_objects
-        else:
-            # the order cannot be changed, this sync for all ranks for conversion
-            # change this might cause a hang
-            gathered_global_param_objects = sorted(flattened_names, key=extract_sort_key)
-
-            # Cache the result
-            self._cached_param_names = gathered_global_param_objects
+        self._cached_param_objects_adapter = gathered_global_param_objects
 
         return gathered_global_param_objects
 
@@ -694,9 +725,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
-        megatron_global_adapter_info_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(
-            megatron_model, for_adapter=True
-        )
+        megatron_global_adapter_infos_all_pp_ranks = self._megatron_global_adapter_infos_all_pp_ranks(megatron_model)
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
@@ -704,10 +733,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
-            if megatron_global_adapter_info_all_pp_ranks:
+            if megatron_global_adapter_infos_all_pp_ranks:
                 # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
-                    task, megatron_model, converted_weights_dict, megatron_global_adapter_info_all_pp_ranks
+                    task, megatron_model, converted_weights_dict, megatron_global_adapter_infos_all_pp_ranks
                 )
 
             for hf_name, tensor in converted_weights_dict.items():
@@ -738,7 +767,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         task: WeightConversionTask,
         megatron_model: List[MegatronModel],
         converted_weights_dict: Dict[str, torch.Tensor],
-        megatron_global_adapter_info_all_pp_ranks: List[tuple[str, bool, bool, int, int]],
+        megatron_global_adapter_infos_all_pp_ranks: List[tuple[str, bool, bool, int, int]],
     ) -> Dict[str, torch.Tensor]:
         """Merge LoRA adapter weights back into the base tensor for HF export."""
 
@@ -748,7 +777,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         base_name = task.param_name.split(".to_wrap.weight")[0]
         # Get the LoRA adapter names
-        adapter_infos = [info for info in megatron_global_adapter_info_all_pp_ranks if info[0].startswith(base_name)]
+        adapter_infos = [info for info in megatron_global_adapter_infos_all_pp_ranks if info[0].startswith(base_name)]
 
         adapter = None
         if task.megatron_module is not None:
