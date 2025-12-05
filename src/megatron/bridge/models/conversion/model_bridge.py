@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import contextlib
 import fnmatch
 import itertools
 import logging
@@ -467,7 +468,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+        # [ModelOpt]: Hide extra parameters registered in Distillation mode
+        with contextlib.ExitStack() as stack:
+            if hasattr(megatron_model[0], "hide_teacher_model"):
+                stack.enter_context(megatron_model[0].hide_teacher_model())
+            if hasattr(megatron_model[0], "hide_loss_modules"):
+                stack.enter_context(megatron_model[0].hide_loss_modules())
+
+            hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"

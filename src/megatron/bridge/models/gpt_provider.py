@@ -346,15 +346,10 @@ class GPTDistillationProvider(GPTModelProvider):
             "criterion": kd_cfg.criterion,
             "loss_balancer": kd_cfg.loss_balancer,
         }
+        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
+        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
 
-        def _convert_hook(model: list[MCoreGPTModel]) -> list[MCoreGPTModel]:
-            kd_model = mtd.convert(model[0], mode=[("kd_loss", modelopt_cfg)])
-            mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
-            return [kd_model]
-
-        self.register_pre_wrap_hook(_convert_hook)
-
-        return student_model
+        return kd_model
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
