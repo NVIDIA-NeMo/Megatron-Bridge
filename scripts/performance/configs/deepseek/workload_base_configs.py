@@ -27,7 +27,7 @@ BASE_DEEPSEEK_V3_CONFIG = WorkloadBaseConfig(
 DEEPSEEK_V3_GB300_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
-    global_batch_size=2048,
+    global_batch_size=4096,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -45,7 +45,7 @@ DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
 DEEPSEEK_V3_GB200_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
-    global_batch_size=2048,
+    global_batch_size=4096,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
