@@ -371,6 +371,88 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     return batch
 
 
+def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for Ministral3 VL models without chat template support.
+    
+    Ministral3's processor does not have a built-in chat_template, so we manually
+    format conversations instead of using processor.apply_chat_template().
+    """
+    
+    # Ministral3 Processor (PixtralProcessor) does not have a chat template, 
+    # so we manually format conversations instead of using processor.apply_chat_template().
+    texts = []
+    for example in examples:
+        conv_text = []
+        for msg in example["conversation"]:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            
+            # Handle multimodal content (list of items)
+            if isinstance(content, list):
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                        elif item.get("type") == "image":
+                            text_parts.append("<image>")
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                content = " ".join(text_parts)
+            
+            conv_text.append(f"{role.capitalize()}: {content}")
+        texts.append("\n".join(conv_text))
+    
+    images = []
+    for example in examples:
+        ex_images = []
+        for msg in example.get("conversation", []):
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image":
+                        if "image" in item:
+                            ex_images.append(item["image"])
+                        elif "path" in item:
+                            ex_images.append(Image.open(item["path"]))
+        images.append(ex_images if ex_images else None)
+    has_images = any(img is not None and len(img) > 0 for img in images)
+    
+    if has_images:
+        batch = processor(
+            text=texts,
+            images=[img if img else [] for img in images],
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+    else:
+        batch = processor(
+            text=texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+    
+    if "input_ids" in batch:
+        labels = batch["input_ids"].clone()[:, 1:]
+        labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
+        batch["labels"] = labels
+        
+        # Create loss mask
+        loss_mask = torch.ones_like(batch["input_ids"], dtype=torch.float)
+        batch["loss_mask"] = loss_mask
+    
+    if "position_ids" not in batch and "input_ids" in batch:
+        batch_size, seq_len = batch["input_ids"].shape
+        batch["position_ids"] = (
+            torch.arange(seq_len, device=batch["input_ids"].device)
+            .unsqueeze(0).expand(batch_size, -1).clone()
+        )
+    
+    return batch
+
+
 def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """Default collate function for VLM models."""
     if not HAVE_QWEN_VL_UTILS:
@@ -425,5 +507,6 @@ COLLATE_FNS = {
     "Qwen2_5_VLProcessor": qwen2_5_collate_fn,
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
+    "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
     "default": default_collate_fn,
 }
