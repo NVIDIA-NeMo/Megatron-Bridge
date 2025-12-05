@@ -19,7 +19,6 @@ import re
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from unittest.mock import Mock
 
 
 try:
@@ -421,10 +420,6 @@ def calc_convergence_and_performance(
 
     if not HAVE_NUMPY:
         raise ImportError("numpy is required for this calculting perf and convergence metrics")
-
-    # @TODO: Remove this once we have a proper wandb run object.
-    if wandb_run is None:
-        wandb_run = Mock()
 
     current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
     current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
