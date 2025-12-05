@@ -377,6 +377,7 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     Ministral3's processor does not have a built-in chat_template, so we manually
     format conversations instead of using processor.apply_chat_template().
     """
+    skipped_tokens = extract_skipped_token_ids(processor)
     
     # Ministral3 Processor (PixtralProcessor) does not have a chat template, 
     # so we manually format conversations instead of using processor.apply_chat_template().
@@ -437,6 +438,7 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "input_ids" in batch:
         labels = batch["input_ids"].clone()[:, 1:]
         labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
+        labels[torch.isin(labels, skipped_tokens)] = -100
         batch["labels"] = labels
         
         # Create loss mask
