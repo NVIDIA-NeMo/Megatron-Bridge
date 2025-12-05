@@ -119,6 +119,8 @@ def parse_additional_slurm_params(params_str):
             # Boolean flag (no value)
             params[part] = True
 
+    return params if params else None
+
 
 def parse_cli_args():
     """
