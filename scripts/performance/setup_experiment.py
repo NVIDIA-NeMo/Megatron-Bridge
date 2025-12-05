@@ -368,7 +368,7 @@ def main(
             assets_dir = os.path.join(job_dir, exp_name)
             log_assets_dirname_to_disk(assets_dir)
 
-            log_file_paths = list(str(Path(f"{job_dir}/log_all_ranks.out")))
+            log_file_paths = [str(Path(f"{job_dir}/log_all_ranks.out"))]
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
