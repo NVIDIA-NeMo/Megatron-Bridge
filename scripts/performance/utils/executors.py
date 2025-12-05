@@ -92,7 +92,7 @@ def slurm_executor(
 
     if log_dir != get_nemorun_home():
         PERF_ENV_VARS["NEMORUN_HOME"] = log_dir
-        
+
     print(f"now log_dir is {log_dir}")
     print(f"NEMORUN_HOME is {get_nemorun_home()}")
 
