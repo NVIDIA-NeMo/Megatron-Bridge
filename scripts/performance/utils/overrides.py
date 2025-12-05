@@ -200,8 +200,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
         recipe.model.moe_router_force_load_balancing = True
     if args.wandb_key is not None:
-        recipe.logger.wandb_project = args.wandb_prj_name
-        recipe.logger.wandb_exp_name = args.wandb_exp_name
+        recipe.logger.wandb_project = args.wandb_project_name
+        recipe.logger.wandb_exp_name = args.wandb_experiment_name
+        recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
