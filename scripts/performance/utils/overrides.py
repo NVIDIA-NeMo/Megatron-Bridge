@@ -200,8 +200,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
         recipe.model.moe_router_force_load_balancing = True
     if args.wandb_key is not None:
-        recipe.logger.wandb_project = args.wandb_prj_name
-        recipe.logger.wandb_exp_name = args.wandb_exp_name
+        recipe.logger.wandb_project = args.wandb_project_name
+        recipe.logger.wandb_exp_name = args.wandb_experiment_name
+        recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
@@ -239,7 +240,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
+        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -252,13 +253,13 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=False
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=True
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
