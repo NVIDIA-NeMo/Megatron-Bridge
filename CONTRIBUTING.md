@@ -26,6 +26,57 @@ docker run --rm -it -w /workdir -v $(pwd):/opt/Megatron-Bridge \
   megatron-bridge
 ```
 
+### Local Workstation
+
+For local development without containers, install Megatron Bridge using [uv](https://docs.astral.sh/uv/):
+
+#### Prerequisites
+
+```bash
+# Install Python development headers (required for building C++ extensions)
+sudo apt-get update && sudo apt-get install -y python3-dev
+
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+#### Basic Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+cd Megatron-Bridge
+
+# Install with uv (recommended)
+uv pip install -e .
+```
+
+#### Optional Dependencies
+
+Install additional features as needed:
+
+```bash
+# For Mamba model architectures (requires building from source, ~30 minutes)
+uv pip install -e ".[mamba]"
+
+# For NeMo Run recipes
+uv pip install -e ".[recipes]"
+
+# For development tools (note: nv-grouped-gemm may fail to build, see known issues)
+uv pip install -e ".[dev]"
+```
+
+#### Known Installation Issues
+
+**nv-grouped-gemm build failure:**
+- The `nv-grouped-gemm` package (included in `[dev]` extras) may fail to build due to missing CUTLASS headers
+- This package is optional and only needed for specific optimizations
+- Issue tracker: https://github.com/fanshiqing/grouped_gemm
+
+**Long build times:**
+- Packages like `transformer-engine`, `mamba-ssm`, and `causal-conv1d` build from source
+- Expected build times: 8-15 minutes per package on systems with 16 vCPUs
+
 ## 📝 Writing tests
 
 We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and functional tests.
