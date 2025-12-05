@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
-import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
 @pytest.fixture

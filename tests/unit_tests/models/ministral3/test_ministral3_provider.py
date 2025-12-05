@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 
 from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider,

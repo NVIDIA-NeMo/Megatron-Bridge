@@ -53,7 +53,9 @@ class SingleBatchIterator:
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None, image_sizes=None):
+    def __init__(
+        self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None, image_sizes=None
+    ):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
@@ -170,7 +172,13 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             padding=True,
             return_tensors="pt",
         )
-        return inputs.input_ids, inputs.pixel_values, getattr(inputs, "image_grid_thw", None), getattr(inputs, "image_sizes", None), messages
+        return (
+            inputs.input_ids,
+            inputs.pixel_values,
+            getattr(inputs, "image_grid_thw", None),
+            getattr(inputs, "image_sizes", None),
+            messages,
+        )
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
@@ -268,7 +276,9 @@ def main(args) -> None:
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(processor, args.image_path, prompt)
+    input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(
+        processor, args.image_path, prompt
+    )
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -296,7 +306,9 @@ def main(args) -> None:
             # Keep passing vision inputs for all steps to ensure image features are available
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
-            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes)
+            iterator = SingleBatchIterator(
+                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes
+            )
 
             output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,

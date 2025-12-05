@@ -35,6 +35,7 @@ import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer import ModuleSpec
+
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 
 
@@ -45,12 +46,16 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
 from megatron.core.extensions.transformer_engine import TEDotProductAttention as MCoreTEDotProductAttention
 from megatron.core.transformer.enums import AttnMaskType
+
+from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
+
+
 # =============================================================================
 # Ministral 3 Vision-Language Model Providers
 # =============================================================================
+
 
 def ministral_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer spec for Ministral 3 models."""
@@ -211,8 +216,8 @@ class Ministral3ModelProvider14B(Ministral3ModelProvider):
     num_layers: int = 40
     rotary_base: int = 1000000000.0
 
-class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
 
+class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
     def __init__(
         self,
         config,
@@ -230,16 +235,20 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
             attention_dropout=attention_dropout,
             **kwargs,
         )
-        
+
         # Initialize Llama 4 attention scaling parameters
         if self.config.hf_config is not None:
             self.beta = self.config.hf_config.text_config.rope_parameters["llama_4_scaling_beta"]
-            self.max_position_embeddings = self.config.hf_config.text_config.rope_parameters["original_max_position_embeddings"]
+            self.max_position_embeddings = self.config.hf_config.text_config.rope_parameters[
+                "original_max_position_embeddings"
+            ]
         else:
             self.beta = 0  # No effect
             self.max_position_embeddings = self.config.seq_length
 
-    def _get_llama_4_attn_scale(self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
+    def _get_llama_4_attn_scale(
+        self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int
+    ) -> torch.Tensor:
         scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
         return scaling.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
 

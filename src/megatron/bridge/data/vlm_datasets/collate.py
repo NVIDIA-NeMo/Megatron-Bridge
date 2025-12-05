@@ -373,13 +373,13 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
 
 def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """Collate function for Ministral3 VL models without chat template support.
-    
+
     Ministral3's processor does not have a built-in chat_template, so we manually
     format conversations instead of using processor.apply_chat_template().
     """
     skipped_tokens = extract_skipped_token_ids(processor)
-    
-    # Ministral3 Processor (PixtralProcessor) does not have a chat template, 
+
+    # Ministral3 Processor (PixtralProcessor) does not have a chat template,
     # so we manually format conversations instead of using processor.apply_chat_template().
     texts = []
     for example in examples:
@@ -387,7 +387,7 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         for msg in example["conversation"]:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            
+
             # Handle multimodal content (list of items)
             if isinstance(content, list):
                 text_parts = []
@@ -400,10 +400,10 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
                     elif isinstance(item, str):
                         text_parts.append(item)
                 content = " ".join(text_parts)
-            
+
             conv_text.append(f"{role.capitalize()}: {content}")
         texts.append("\n".join(conv_text))
-    
+
     images = []
     for example in examples:
         ex_images = []
@@ -418,7 +418,7 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
                             ex_images.append(Image.open(item["path"]))
         images.append(ex_images if ex_images else None)
     has_images = any(img is not None and len(img) > 0 for img in images)
-    
+
     if has_images:
         batch = processor(
             text=texts,
@@ -434,24 +434,23 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             truncation=True,
             return_tensors="pt",
         )
-    
+
     if "input_ids" in batch:
         labels = batch["input_ids"].clone()[:, 1:]
         labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
         labels[torch.isin(labels, skipped_tokens)] = -100
         batch["labels"] = labels
-        
+
         # Create loss mask
         loss_mask = torch.ones_like(batch["input_ids"], dtype=torch.float)
         batch["loss_mask"] = loss_mask
-    
+
     if "position_ids" not in batch and "input_ids" in batch:
         batch_size, seq_len = batch["input_ids"].shape
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device)
-            .unsqueeze(0).expand(batch_size, -1).clone()
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
         )
-    
+
     return batch
 
 

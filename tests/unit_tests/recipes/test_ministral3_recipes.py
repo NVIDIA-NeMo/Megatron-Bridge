@@ -24,7 +24,6 @@ import importlib
 from typing import Callable
 
 import pytest
-import torch
 
 
 _ministral3_module = importlib.import_module("megatron.bridge.recipes.ministral3.ministral3")
@@ -456,4 +455,3 @@ def test_ministral3_peft_with_freeze_options(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.freeze_language_model is True
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_vision_projection is True
-
