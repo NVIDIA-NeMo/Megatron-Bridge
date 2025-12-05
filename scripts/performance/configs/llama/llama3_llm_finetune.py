@@ -46,15 +46,15 @@ def set_llama3_common_peft_configs(cfg: ConfigContainer) -> None:
     cfg.optimizer.use_distributed_optimizer = True
 
 
-def llama3_8b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_sft_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, SFT config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_SFT_CONFIG_GB200_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_SFT_CONFIG_GB200_FP8_CS
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA3_8B_SFT_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_finetune_config(
@@ -73,15 +73,15 @@ def llama3_8b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_8b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_sft_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, SFT config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_SFT_CONFIG_H100_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_SFT_CONFIG_H100_FP8_CS
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA3_8B_SFT_CONFIG_H100_FP8_MX
         precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_finetune_config(
@@ -96,15 +96,15 @@ def llama3_8b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_sft_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, SFT config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_SFT_CONFIG_GB200_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_SFT_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
@@ -130,15 +130,15 @@ def llama3_70b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_sft_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, SFT config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_SFT_CONFIG_H100_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_SFT_CONFIG_H100_FP8_CS
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_SFT_CONFIG_H100_FP8_MX
         precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
@@ -159,15 +159,15 @@ def llama3_70b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_lora_config_gb200(precision: str = "bf16") -> ConfigContainer:
     """GB200, LORA config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_LORA_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_LORA_CONFIG_GB200_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_LORA_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_LORA_CONFIG_GB200_FP8_CS
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_GB200_LORA_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_LORA_CONFIG_GB200_FP8_MX
         precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
@@ -188,15 +188,15 @@ def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_h100_lora_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_lora_config_h100(precision: str = "bf16") -> ConfigContainer:
     """H100, LORA config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_H100_LORA_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_LORA_CONFIG_H100_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_H100_LORA_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_LORA_CONFIG_H100_FP8_CS
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_H100_LORA_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_LORA_CONFIG_H100_FP8_MX
         precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(

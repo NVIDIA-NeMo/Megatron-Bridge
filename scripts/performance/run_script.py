@@ -31,11 +31,7 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
+    args.model_recipe_name = f"{args.model_recipe_name}_{args.task}_config"
 
     if args.model_recipe_name == "deepseek_v3_32nodes_pretrain_config":
         args.model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
