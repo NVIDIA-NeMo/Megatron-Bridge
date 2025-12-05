@@ -96,6 +96,12 @@ runs:
       shell: bash
       run: |
         az acr login --name nemoci
+    
+    - name: Install uuidgen
+      shell: bash -x -e -u -o pipefail {0}
+      run: |
+        apt-get update
+        apt-get install -y uuid-runtime
 
     - name: Start container
       shell: bash
