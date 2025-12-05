@@ -18,7 +18,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -38,6 +38,9 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
 from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
 
+
+if TYPE_CHECKING:
+    from torch.distributed.distributed_c10d import ProcessGroup as TorchProcessGroup
 
 try:
     from transformer_engine.pytorch.optimizers import multi_tensor_applier, multi_tensor_l2norm
@@ -272,7 +275,9 @@ def calc_dtensor_params_l2_norm(params):
     return total_norm_2.item() ** 0.5
 
 
-def reduce_max_stat_across_model_parallel_group(stat: Optional[float], *, group) -> Optional[float]:
+def reduce_max_stat_across_model_parallel_group(
+    stat: Optional[float], mp_group: "TorchProcessGroup"
+) -> Optional[float]:
     """Calculates the max of a stat across the model parallel group.
 
     Handles cases where some ranks might have the stat as None (e.g., grad norm
@@ -280,7 +285,7 @@ def reduce_max_stat_across_model_parallel_group(stat: Optional[float], *, group)
 
     Args:
         stat (float): The statistic value (or None) on the current rank.
-        group: The process group to reduce across (typically pg_collection.mp).
+        mp_group: The process group to reduce across (typically pg_collection.mp).
 
     Returns:
         float: The maximum value of the statistic across the model parallel group,
@@ -289,19 +294,19 @@ def reduce_max_stat_across_model_parallel_group(stat: Optional[float], *, group)
     if stat is None:
         stat = -1.0
     stat = torch.tensor([stat], dtype=torch.float32, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(stat, op=torch.distributed.ReduceOp.MAX, group=group)
+    torch.distributed.all_reduce(stat, op=torch.distributed.ReduceOp.MAX, group=mp_group)
     if stat.item() == -1.0:
         return None
     else:
         return stat.item()
 
 
-def logical_and_across_model_parallel_group(input: bool, *, group) -> bool:
+def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcessGroup") -> bool:
     """Performs a logical AND operation across the model parallel group.
 
     Args:
         input (bool): The boolean value on the current rank.
-        group: The process group to reduce across (typically pg_collection.mp).
+        mp_group: The process group to reduce across (typically pg_collection.mp).
 
     Returns:
         bool: The result of the logical AND across all ranks in the group.
@@ -311,7 +316,7 @@ def logical_and_across_model_parallel_group(input: bool, *, group) -> bool:
     else:
         input = 0
     input = torch.tensor([input], dtype=torch.int, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(input, op=torch.distributed.ReduceOp.MIN, group=group)
+    torch.distributed.all_reduce(input, op=torch.distributed.ReduceOp.MIN, group=mp_group)
     return bool(input.item())
 
 
@@ -424,7 +429,7 @@ def training_log(
     total_iterations = total_loss_dict[advanced_iters_key] + total_loss_dict[skipped_iters_key]
 
     # learning rate will be None on ranks without trainable params, so we must gather across mp ranks
-    learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate, group=pg_collection.mp)
+    learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate, mp_group=pg_collection.mp)
     # Tensorboard values.
     # Timer requires all the ranks to call.
     if logger_config.log_timers_to_tensorboard and (iteration % logger_config.tensorboard_log_interval == 0):
@@ -445,7 +450,7 @@ def training_log(
             throughput_report = report_throughput(
                 iteration=iteration,
                 train_config=train_config,
-                seq_length=config.dataset.sequence_length,
+                seq_length=config.dataset.seq_length,
                 history_wct=history_wct,
                 window_size=logger_config.throughput_window_size,
             )
@@ -464,7 +469,7 @@ def training_log(
             runtime_report = report_runtime(
                 train_state=train_state,
                 start_time=global_state.start_time,
-                seq_length=config.dataset.sequence_length,
+                seq_length=config.dataset.seq_length,
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )

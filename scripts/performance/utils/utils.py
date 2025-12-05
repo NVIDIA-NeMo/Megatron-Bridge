@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WorkloadBaseConfig:
-    """Container for workload base configs."""
+    """Container for workload base configs. This object exists because we cannot import MBridge on the headnode but need a place to store recipe overrides."""
 
     # NOTE: `num_gpus` is for representation purposes only. It is only meant to
     # communicate number of GPUs to be used for a specific workload in the file-
-    # "scripts/performance/configs/<model_name>/workload_base_configs.py".
+    # "scripts/performance/configs/<model_family_name>/workload_base_configs.py".
 
     # NOTE: You can specify number of GPUs to use for a SLURM job from command
     # line like `-ng/--num_gpus <num_gpus>` ("scripts/performance/README.md")
@@ -51,6 +51,11 @@ class WorkloadBaseConfig:
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
 
+    # MoE configuration
+    moe_flex_dispatcher_backend: Optional[str] = None
+    moe_a2a_overlap: Optional[bool] = False
+    peft: Optional[str] = None
+
     @property
     def sequence_parallel(self) -> bool:
         """Get the sequence parallel flag."""
@@ -62,40 +67,21 @@ class WorkloadBaseConfig:
         return self.global_batch_size / self.num_gpus
 
 
-def get_model_recipe(
-    model_name: str,
-    model_size: str,
-    gpu: str,
-    compute_dtype: str,
-):
-    """Get the model recipe factory by its name."""
-    recipe_name = f"{model_name}_{model_size}_{gpu}_config"
-    module_name = f"configs.{model_name}.{model_name}_llm_pretrain"
-    try:
-        module = importlib.import_module(module_name)
-        logger.debug("Imported configuration module '%s' to load recipe '%s'.", module_name, recipe_name)
-    except ModuleNotFoundError as exc:
-        raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
-
-    try:
-        recipe_builder = getattr(module, recipe_name)
-    except AttributeError as err:
-        raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
-
-    return recipe_builder(precision=compute_dtype)
-
-
 def get_workload_base_config(
-    model_name: str,
-    model_size: str,
+    model_family_name: str,
+    model_recipe_name: str,
     gpu: str,
     compute_dtype: str,
+    task: str,
 ) -> Dict[str, int]:
     """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
-    workload_base_config_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
+    if task in ["sft", "lora"]:
+        workload_base_config_name = f"{model_recipe_name}_{gpu}_{compute_dtype}"
+    else:
+        workload_base_config_name = f"{model_recipe_name}_{gpu}_{compute_dtype}"
     workload_base_config_name = workload_base_config_name.upper() + "_BASE_CONFIG"
 
-    module_name = f"configs.{model_name}.workload_base_configs"
+    module_name = f"configs.{model_family_name}"
     try:
         module = importlib.import_module(module_name)
         logger.info(f"Imported module '{module_name}'.")
@@ -106,7 +92,38 @@ def get_workload_base_config(
         workload_base_config = getattr(module, workload_base_config_name)
         logger.info(f"Loaded {workload_base_config=}")
     except AttributeError:
-        logger.error(f"Failed to get {workload_base_config_name=} from {module_name=}")
-        workload_base_config = WorkloadBaseConfig()
+        raise ValueError(f"Failed to get {workload_base_config_name=} from {module_name=}")
 
     return workload_base_config
+
+
+def get_perf_optimized_recipe(
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    mock: bool = True,
+):
+    """Get the performance optimized recipe."""
+    module_name = f"configs.{model_family_name}"
+    try:
+        module = importlib.import_module(module_name)
+        logger.debug("Imported configuration module '%s'.", module_name)
+    except ModuleNotFoundError as exc:
+        raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
+
+    recipe_name = f"{model_recipe_name}_{gpu}"
+    try:
+        recipe_builder = getattr(module, f"{model_recipe_name}_{gpu}")
+    except AttributeError as err:
+        raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
+
+    return recipe_builder(precision=compute_dtype, mock=mock)
+
+
+def get_library_recipe(model_family_name: str, model_recipe_name: str, wandb_experiment_name: str):
+    """Get the library recipe."""
+    family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
+    family_pkg = importlib.import_module(family_pkg_path)
+    recipe_builder = getattr(family_pkg, model_recipe_name)
+    return recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)

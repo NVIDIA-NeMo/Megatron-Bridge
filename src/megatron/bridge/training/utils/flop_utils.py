@@ -20,6 +20,9 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
+    # If the model provider has a custom TFLOPS calculation method, use it.
+    if hasattr(cfg.model, "_get_num_floating_point_operations"):
+        return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, and MLP layers."""

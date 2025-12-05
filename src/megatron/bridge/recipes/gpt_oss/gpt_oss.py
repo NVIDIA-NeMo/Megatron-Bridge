@@ -103,7 +103,7 @@ class GPTOSSFinetuneKwargs(TypedDict, total=False):
     virtual_pipeline_model_parallel_size: Optional[int]
     context_parallel_size: int
     expert_model_parallel_size: Optional[int]
-    sequence_parallelism: bool
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     # Finetuning specifics
     pretrained_checkpoint: Optional[str]
@@ -133,10 +133,10 @@ def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> Co
     """Return a pre-training config for GPT-OSS 20B variant."""
     recommended: GPTOSSCommonKwargs = {
         "hf_path": "openai/gpt-oss-20b",
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 2,
-        "sequence_parallelism": False,
+        "expert_model_parallel_size": 4,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
@@ -147,10 +147,10 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
     """Return a pre-training config for GPT-OSS 120B variant."""
     recommended: GPTOSSCommonKwargs = {
         "hf_path": "openai/gpt-oss-120b",
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 8,
-        "sequence_parallelism": False,
+        "expert_model_parallel_size": 16,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
@@ -255,7 +255,7 @@ def _gpt_oss_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -372,7 +372,7 @@ def _gpt_oss_finetune_common(
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
@@ -417,7 +417,7 @@ def _gpt_oss_finetune_common(
     model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
     model_cfg.context_parallel_size = context_parallel_size
     model_cfg.expert_model_parallel_size = expert_model_parallel_size
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     # Optimizer and LR scheduler
