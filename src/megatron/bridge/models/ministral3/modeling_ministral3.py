@@ -118,6 +118,31 @@ class Ministral3Model(MegatronModule):
 
             self.vision_tower = AutoModel.from_config(config.hf_config.vision_config)
 
+            # Preserve inv_freq as FP32 during dtype conversions (e.g., when wrapped by Float16Module)
+            # This is necessary because inv_freq requires FP32 precision for numerical stability
+            if hasattr(self.vision_tower, "patch_positional_embedding"):
+                pos_emb = self.vision_tower.patch_positional_embedding
+                original_apply = pos_emb._apply
+
+                def _apply_preserve_inv_freq(fn):
+                    # Save inv_freq before conversion
+                    inv_freq_backup = None
+                    if hasattr(pos_emb, "inv_freq") and pos_emb.inv_freq is not None:
+                        inv_freq_backup = pos_emb.inv_freq.data.clone()
+
+                    # Apply the transformation (e.g., bfloat16 conversion)
+                    result = original_apply(fn)
+
+                    # Restore inv_freq to FP32 (only move device, keep dtype)
+                    if inv_freq_backup is not None:
+                        # Get the new device from the transformation
+                        new_device = fn(torch.tensor([1.0])).device
+                        pos_emb.inv_freq.data = inv_freq_backup.to(device=new_device)
+
+                    return result
+
+                pos_emb._apply = _apply_preserve_inv_freq
+
             # Initialize multimodal projector from HuggingFace config
             # The projector includes: norm, linear layers
             from transformers.models.mistral3.modeling_mistral3 import Mistral3MultiModalProjector
