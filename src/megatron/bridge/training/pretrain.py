@@ -186,8 +186,11 @@ def _pretrain(
             write_to_tensorboard=not config.train.skip_train,
         )
 
+    print("Radioactive : Before _finish_train")
     _finish_train(state)
+    print("Radioactive : After _finish_train")
     _maybe_destroy_process_group(should_destroy_process_group)
+    print("Radioactive : After _maybe_destroy_process_group")
 
 
 def _maybe_destroy_process_group(should_destroy: bool) -> None:
@@ -196,6 +199,10 @@ def _maybe_destroy_process_group(should_destroy: bool) -> None:
     Args:
         should_destroy: Whether the process group should be destroyed
     """
+    import gc
+    gc.collect()
+    import torch
+    torch.cuda.empty_cache()
     if should_destroy and dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()
