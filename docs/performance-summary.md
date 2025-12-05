@@ -66,9 +66,9 @@ The performance data includes:
 | LLAMA3_70B | 64 | FP8-CS (FP8-MX) | 128 | 2 | 8192 | 1 (0) | 1 (2) | 1 (4) | 1 | 1 (5) | 1 | 1 (16) | 4312 (3617) | 1937 (1625) |
 | LLAMA3.1_405B | 128 | FP8-CS (FP8-MX) | 64 | 1 | 8192 | 1 (0) | 2 (4) | 1 (8) | 1 (2) | 1 (8) | 1 | 1 (32) | 706 (563) | 1782 (1420) |
 | DeepSeekV3 | 256 | FP8-MX | 2048 | 1 | 4096 | 0 | 1 | 4 | 1 | 4 | 64 | 32 64 | 3653 | 949 |
-| GPT OSS 120B | 64 | BF16 | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 64 | 2 | 1574 | 428 |
+| GPT OSS 120B | 64 | BF16 | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 64 | 2 | 15754 | 428 |
 | Qwen3_30B_a3B | 8 | FP8-MX | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 16 | 23766 | 547 |
-| Qwen3_235B_a22B | 64 | FP8-MX | 1024 | 1 | 4096 | 0 | 2 | 1 | 1 | 1 | 64 | 32 | 3269 | 646 |
+| Qwen3_235B_a22B | 64 | FP8-MX | 1024 | 1 | 4096 | 0 | 2 | 1 | 1 | 1 | 64 | 32 | 4366 | 646 |
 
 #### System: DGX-B200
 
@@ -88,9 +88,9 @@ The performance data includes:
 | LLAMA3_8B | 8 | FP8-CS | 128 | 1 | 8192 | 1 | 1 | 1 | 1 | n/a | 1 | 16 | 14451 | 744 |
 | LLAMA3_70B | 64 | FP8-CS | 128 | 1 | 8192 | 0 | 4 | 8 | 1 | 5 | 1 | 64 | 1602 | 719 |
 | LLAMA3.1_405B | 1024 | FP8-CS | 512 | 1 | 8192 | 0 | 8 | 8 | 2 | 8 | 1 | 64 | 292 | 737 |
-| GPT OSS 120B | 64 | BF16 | 512 | 4 | 4096 | 0 | 1 | 4 | 1 | 1 | 8 | 2 | 5630 | 223 |
+| GPT OSS 120B | 64 | BF16 | 512 | 4 | 4096 | 0 | 1 | 4 | 1 | 1 | 8 | 2 | 5630 | 153 |
 | Qwen3_30B_a3B | 16 | FP8-CS | 512 | 2 | 4096 | 0 | 1 | 2 | 1 | 24 | 8 | 32 | 5275 | 121 |
 | Qwen3_235B_a22B | 256 | FP8-CS | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 32 | 1575 | 1575 | 233 |
 
-- The numbers in normal parentheses indicate the use of different quantization granularities: In case of Gb200 and B200 systems, 32×32 for both weights and activations. For H100 system, 128×128 for weights and 1×128 for activations, which match those used in the original DeepSeekV3 pre-training. The numbers in curly paranthesis indicates BF16 training.
+- The numbers in normal parentheses indicate the use of different quantization granularities: In case of Gb200 and B200 systems, 32×32 for both weights and activations. For H100 system, 128×128 for weights and 1×128 for activations, which match those used in the original DeepSeekV3 pre-training.
 - In MoE trianing benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
