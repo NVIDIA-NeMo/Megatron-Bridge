@@ -483,6 +483,7 @@ def test_null_multimodal_tokenizer_image_token_override():
     assert ids == [3, 77, 4]
 
 
+@pytest.mark.timeout(30)
 def test_hf_tokenizer_as_local_path_object(tmp_path):
     # Cover the user case where a user has made a local path object of a WIP tokenizer and wants
     #  to use that in some megatron model at train time.
