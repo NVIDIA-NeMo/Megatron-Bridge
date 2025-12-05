@@ -78,7 +78,6 @@ def slurm_executor(
                 #SBATCH --constraint=gpu
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
-    err_msgs = []
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
@@ -88,12 +87,8 @@ def slurm_executor(
     ]
 
     if log_dir != get_nemorun_home():
-        err_msgs.append(f"\nRun `export NEMORUN_HOME={log_dir}` in your shell environment and rerun this script.")
-    if len(err_msgs) > 0:
-        print("\n".join(err_msgs))
-        sys.exit(1)
+        PERF_ENV_VARS["NEMORUN_HOME"] = log_dir
 
-    PERF_ENV_VARS["NEMORUN_HOME"] = log_dir
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
 

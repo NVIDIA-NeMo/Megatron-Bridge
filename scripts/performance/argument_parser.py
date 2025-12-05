@@ -527,7 +527,7 @@ def parse_cli_args():
         "-wdk",
         "--wandb_key",
         type=str,
-        help="wandb key. Needed for wandb logger projetion to server",
+        help="wandb key. Needed for wandb logger projection to server",
         required=False,
     )
     logging_args.add_argument(
@@ -562,7 +562,7 @@ def parse_cli_args():
         "-l",
         "--log_dir",
         type=str,
-        help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()}",
+        help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()} or NEMORUN_HOME envvar",
         required=False,
         default=get_nemorun_home(),
     )
