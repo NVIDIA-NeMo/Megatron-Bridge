@@ -377,13 +377,6 @@ def parse_cli_args():
     # DGXCloud
     dgxc_args = parser.add_argument_group("DGXCloud arguments")
     dgxc_args.add_argument(
-        "--use_dgxc",
-        action="store_true",
-        help="Use DGXCloud for experiment",
-        required=False,
-        default=False,
-    )
-    dgxc_args.add_argument(
         "--dgxc_cluster",
         type=str,
         help="DGXCloud cluster to use for experiment",
