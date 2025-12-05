@@ -366,6 +366,9 @@ def main(
                 detach=detach,
                 name=exp_name,
             )
+            if dryrun:
+                print("dryrun requested: exiting")
+                return
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
