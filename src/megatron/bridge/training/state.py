@@ -30,6 +30,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.utils.log_utils import safe_serialize
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, warn_rank_0
 
@@ -194,26 +195,6 @@ class GlobalState:
 
                 save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
 
-                # Sanitize config for WandB by doing a JSON round-trip
-                # This ensures all objects are converted to basic Python types that WandB can handle
-                def safe_serialize(obj):
-                    """Safely convert any object to a JSON-serializable type.
-
-                    Handles objects with broken __str__ or __repr__ methods that return
-                    non-string types (e.g., PipelineParallelLayerLayout returns list).
-                    """
-                    try:
-                        # Try str() first
-                        result = str(obj)
-                        # Verify it actually returns a string
-                        if not isinstance(result, str):
-                            # __str__ returned non-string type, use type name instead
-                            return f"<{type(obj).__name__}>"
-                        return result
-                    except Exception:
-                        # __str__ raised an exception, use type name as fallback
-                        return f"<{type(obj).__name__}>"
-
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
 
@@ -263,16 +244,6 @@ class GlobalState:
                 mlflow.set_experiment(logger_cfg.mlflow_experiment)
 
                 # Prepare tags and params
-                def safe_serialize(obj: Any) -> str:
-                    """Safely convert any object to a JSON-serializable string."""
-                    try:
-                        result = str(obj)
-                        if not isinstance(result, str):
-                            return f"<{type(obj).__name__}>"
-                        return result
-                    except Exception:
-                        return f"<{type(obj).__name__}>"
-
                 def _flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
                     items: dict[str, Any] = {}
                     for k, v in d.items():
