@@ -19,6 +19,7 @@ from typing import Any, Callable, Literal, Optional, Union
 
 from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -92,6 +93,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
+    pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""
