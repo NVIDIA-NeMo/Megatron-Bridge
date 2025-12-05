@@ -27,13 +27,13 @@ class TestFlops:
     @pytest.mark.parametrize(
         "model_family,model_config_func_name, seq_length, vocab_size, expected_flops",
         [
-            # ("llama", "llama3_8b_pretrain_config", 8192, 151936, 4.22e14),
-            # ("llama", "llama3_70b_pretrain_config", 8192, 151936, 3.68e15),
+            ("llama", "llama3_8b_pretrain_config", 8192, 151936, 4.22e14),
+            ("llama", "llama3_70b_pretrain_config", 8192, 151936, 3.68e15),
             # ("llama", "llama31_405b_pretrain_config", 8192, 151936, 2.07e16),
             # ("qwen", "qwen3_30b_a3b_pretrain_config", 4096, 151643, 9.42e13),
             # ("qwen", "qwen3_235b_a22b_pretrain_config", 4096, 151643, 6.06e14),
             ("nemotronh", "nemotronh_8b_pretrain_config", 8192, 131072, 4.83E+14),
-            #("nemotronh", "nemotronh_56b_pretrain_config", 8192, 131072, 3.47E+15),
+            ("nemotronh", "nemotronh_56b_pretrain_config", 8192, 131072, 3.47E+15),
         ],
     )
     def test_flops(self, model_family, model_config_func_name, seq_length, vocab_size, expected_flops):
