@@ -188,7 +188,11 @@ def create_base_tokenizer_config(**kwargs) -> TokenizerConfig:
 
 
 def create_base_checkpoint_config(
-    checkpoint_dir: Optional[str] = None, load_dir: Optional[str] = None, save_interval: Optional[int] = None, ckpt_format: str = "fsdp_dtensor", **kwargs
+    checkpoint_dir: Optional[str] = None,
+    load_dir: Optional[str] = None,
+    save_interval: Optional[int] = None,
+    ckpt_format: str = "fsdp_dtensor",
+    **kwargs,
 ) -> CheckpointConfig:
     """Create a standardized checkpoint configuration."""
     base_config = {
@@ -297,7 +301,7 @@ class TestMegatronFSDP:
                 checkpoint_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
                 save_interval=10,
-                ckpt_format="fsdp_dtensor"
+                ckpt_format="fsdp_dtensor",
             )
 
             # Run training
