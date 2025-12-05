@@ -49,33 +49,74 @@ def tokenize_dataset(
     Returns:
         np.ndarray: A NumPy array containing the tokenized data.
     """
-    if not dataset_kwargs:
-        dataset_kwargs = {}
+    # dataset = create_sft_dataset(
+    #     path=path,
+    #     tokenizer=tokenizer,
+    #     seq_length=max_seq_length,
+    #     seed=seed,
+    #     is_test=True,
+    # )
+    # return np.array([dataset[i] for i in range(len(dataset))])
+    from megatron.bridge.data.datasets.sft import GPTSFTDataset
 
-    # Handle tool_schemas - convert to JSON string if needed
-    ts = dataset_kwargs.get("tool_schemas")
-    if ts and not isinstance(ts, str):
-        dataset_kwargs["tool_schemas"] = json.dumps(ts)
+    pad_seq_length_to_mult = 16
+    cp_size = 8 # TODO(liding): hardcoded for now for debugging
 
-    # Handle chat_template - set it on tokenizer if provided
-    chat_template = dataset_kwargs.pop("chat_template", None)
-    if chat_template:
-        # This is called during packing preparation (rank 0 only).
-        # The chat template is only needed to create the packed .npy files.
-        # Once created, all ranks load the pre-tokenized .npy files.
-        if hasattr(tokenizer, "_tokenizer"):
-            tokenizer._tokenizer.chat_template = chat_template
+    if cp_size > 1:
+        pad_seq_length_to_mult = max(pad_seq_length_to_mult, cp_size * 2)
 
-    dataset = create_sft_dataset(
-        path=path,
+    dataset = GPTSFTDataset(
+        file_path=str(path),
         tokenizer=tokenizer,
-        seq_length=max_seq_length,
+        max_seq_length=max_seq_length,
+        min_seq_length=1,
+        pad_seq_length_to_mult=pad_seq_length_to_mult,
+        sep_id=None,
+        max_num_samples=None,
         seed=seed,
+        label_key="output",
+        answer_only_loss=True,
+        truncation_field="input",
+        truncation_method="right",
+        prompt_template="{input} {output}",
         is_test=True,
         **dataset_kwargs,
     )
-    return np.array([dataset[i] for i in range(len(dataset))])
 
+    max_seq_length = dataset.max_seq_length
+    pad_id = dataset.tokenizer.eos_id
+    pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
+    dataset = np.array([dataset[i] for i in range(len(dataset))])
+
+    if cp_size > 1:
+        def pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id):
+            '''
+            pad each individual data point to the length of max_length
+            '''
+            assert max_seq_length >= max_length_to_pad
+            for key, val in data.items():
+                if key in {'input_ids', 'context_ids'}:
+                    if len(val) <= max_length_to_pad:
+                        # because input_ids are truncated by 1 for inputs and labels,
+                        # we add 1 extra padding here to make sure padded inputs and labels
+                        # are is a multiple of (cp_size * 2)
+                        val = val + [pad_id] * (max_length_to_pad - len(val) + 1)
+                        data[key] = val
+                    elif len(val) > max_seq_length:
+                        logging.info(
+                            f"""The current sequence length {len(val)} for packing is
+                                        larger than the max_seq_length specified ({max_seq_length}).
+                                        The current seqquence length is truncated to the size of max_seq_length.
+                                        Please consider increase the sequence packing size"""
+                        )
+                        data[key] = val[:max_seq_length]
+            return
+        
+        ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
+        for data in dataset:
+            max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data['input_ids']), pad_seq_length_to_mult))
+            pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id)
+    return dataset
 
 def prepare_packed_sequence_data(
     input_path: Path,
