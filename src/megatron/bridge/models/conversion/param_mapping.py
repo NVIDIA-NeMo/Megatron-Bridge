@@ -852,7 +852,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=0)
 
-        if self.is_expert:
+        if self.is_expert and not ".adapter." in self.megatron_param:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
@@ -945,7 +945,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=1)
 
-        if self.is_expert:
+        if self.is_expert and not ".adapter." in self.megatron_param:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}

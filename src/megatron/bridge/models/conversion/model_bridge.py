@@ -44,7 +44,12 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+from megatron.bridge.models.conversion.param_mapping import (
+    ColumnParallelMapping,
+    MegatronParamMapping,
+    RowParallelMapping,
+    split_qkv_weights,
+)
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -52,6 +57,9 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.peft.canonical_lora import ModuleDict
+from megatron.bridge.peft.lora import LoRAMerge
+from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -136,19 +144,14 @@ def _megatron_local_name_to_global(
 
     # EP
     ep_group = parallel_state.get_expert_model_parallel_group()
-    if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1:
+    # For now adapters are not sharded across EP ranks
+    if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1 and not ".adapter." in param_name:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
         def _update_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
-            suffix = param_name.split(f".{param_type}")[-1]
-            # Check if suffix contains a valid expert number
-            # (this can be missing from PEFT adapters weight)
-            if not suffix or not suffix.isdigit():
-                # No expert number suffix, return original param_name
-                return param_name
-            local_expert_number = int(suffix)
+            local_expert_number = int(param_name.split(f".{param_type}")[-1])
             global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
             return param_name.replace(
                 f".{param_type}{local_expert_number}",
@@ -295,18 +298,31 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         """
         raise NotImplementedError("Subclass must implement mapping_registry method")
 
+    def _get_adapter_wrap_module(
+        self, base_name: str, megatron_model: Union[MegatronModel, List[MegatronModel]], vp_stage: int
+    ) -> tuple[Optional[torch.nn.Module], Optional[torch.nn.Module]]:
+        """Get the adapter and to_wrap modules from the parent name."""
+        lora_module, _ = get_module_and_param_from_name(megatron_model, base_name, vp_stage)
+        adapter = getattr(lora_module, "adapter", None)
+        if adapter is None:
+            # For CanonicalLoRA module
+            lora_module, _ = get_module_and_param_from_name(megatron_model, base_name + ".to_wrap", vp_stage)
+        return getattr(lora_module, "adapter", None), getattr(lora_module, "to_wrap", None)
+
     def _megatron_global_param_names_all_pp_ranks(
-        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
-    ) -> List[str]:
+        self, megatron_model: Union[MegatronModel, List[MegatronModel]], for_adapter: bool = False
+    ) -> List[str | tuple[str, int]]:
         """Get all parameter names across all pipeline parallel ranks."""
         # Cache the result after first call
-        if hasattr(self, "_cached_param_names"):
+        if for_adapter and hasattr(self, "_cached_param_objects_adapter"):
+            return self._cached_param_objects_adapter
+        elif not for_adapter and hasattr(self, "_cached_param_names"):
             return self._cached_param_names
 
         # Compute the result
         pp_group = parallel_state.get_pipeline_model_parallel_group()
         model_config = unwrap_model(megatron_model)[0].config
-        global_param_names = []
+        global_param_objects = []
 
         # Ensure megatron_model is a list for consistent handling
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
@@ -320,26 +336,54 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 global_param_name = _megatron_local_name_to_global(
                     models_list, model_config, local_param_name, vp_stage
                 )
-                if self._is_adapter_param_name(global_param_name):
-                    continue
-                global_param_names.append(global_param_name)
+                is_adapter_param = self._is_adapter_param_name(global_param_name)
+                if for_adapter:
+                    # only collect linear_in.weight for deduplication
+                    if not is_adapter_param or global_param_name.endswith(".linear_out.weight"):
+                        continue
+                    base_name = local_param_name.split(".adapter.")[0]
+                    adapter, to_wrap = self._get_adapter_wrap_module(base_name, models_list, vp_stage)
+                    if isinstance(adapter, ModuleDict):
+                        adapter_name = local_param_name.removeprefix(base_name + ".adapter.").split(".")[0]
+                        adapter = adapter[adapter_name]
+                    input_is_parallel, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                    global_param_objects.append(
+                        (
+                            global_param_name[: -len(".linear_in.weight")],
+                            input_is_parallel,
+                            base_linear_is_parallel,
+                            adapter.alpha,
+                            adapter.dim,
+                        )
+                    )
+                else:
+                    if is_adapter_param:
+                        continue
+                    global_param_objects.append(global_param_name)
 
-        gathered_global_param_names = [None] * pp_group.size()
-        torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
+        gathered_global_param_objects = [None] * pp_group.size()
+        torch.distributed.all_gather_object(gathered_global_param_objects, global_param_objects, group=pp_group)
 
         # flatten the list, sort it and remove duplicates
         # the order matters here, casually re-order will cause a hang.
         # e.g. decoder.layers.0.mlp.experts.linear_fc1.weight100
-        flattened_names = list(set(sum(gathered_global_param_names, [])))
+        flattened_names = list(set(sum(gathered_global_param_objects, [])))
 
-        # the order cannot be changed, this sync for all ranks for conversion
-        # change this might cause a hang
-        gathered_global_param_names = sorted(flattened_names, key=extract_sort_key)
+        if for_adapter:
+            # the order cannot be changed, this sync for all ranks for conversion
+            # change this might cause a hang
+            gathered_global_param_objects = sorted(flattened_names, key=lambda x: extract_sort_key(x[0]))
 
-        # Cache the result
-        self._cached_param_names = gathered_global_param_names
+            self._cached_param_objects_adapter = gathered_global_param_objects
+        else:
+            # the order cannot be changed, this sync for all ranks for conversion
+            # change this might cause a hang
+            gathered_global_param_objects = sorted(flattened_names, key=extract_sort_key)
 
-        return self._cached_param_names
+            # Cache the result
+            self._cached_param_names = gathered_global_param_objects
+
+        return gathered_global_param_objects
 
     def _with_progress_tracking(self, tasks, description: str, show_progress: bool = True):
         """Helper method to wrap an iterable with progress tracking.
@@ -650,6 +694,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        megatron_global_adapter_info_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(
+            megatron_model, for_adapter=True
+        )
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
@@ -657,7 +704,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
-            converted_weights_dict = self._merge_lora_adapter_weights(task, megatron_model, converted_weights_dict)
+            if megatron_global_adapter_info_all_pp_ranks:
+                # Merge LoRA adapter weights back into the base tensor for HF export
+                converted_weights_dict = self._merge_lora_adapter_weights(
+                    task, megatron_model, converted_weights_dict, megatron_global_adapter_info_all_pp_ranks
+                )
 
             for hf_name, tensor in converted_weights_dict.items():
                 final_tensor = tensor.cpu() if cpu else tensor
@@ -687,81 +738,232 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         task: WeightConversionTask,
         megatron_model: List[MegatronModel],
         converted_weights_dict: Dict[str, torch.Tensor],
+        megatron_global_adapter_info_all_pp_ranks: List[tuple[str, bool, bool, int, int]],
     ) -> Dict[str, torch.Tensor]:
         """Merge LoRA adapter weights back into the base tensor for HF export."""
 
-        if not converted_weights_dict:
+        # Make sure this is LoRA related weight
+        if not ".to_wrap.weight" in task.param_name:
             return converted_weights_dict
 
-        if not task.param_name.endswith(".to_wrap.weight") or task.megatron_module is None:
-            return converted_weights_dict
+        base_name = task.param_name.split(".to_wrap.weight")[0]
+        # Get the LoRA adapter names
+        adapter_infos = [info for info in megatron_global_adapter_info_all_pp_ranks if info[0].startswith(base_name)]
 
-        # Get the LoRALinear wrapper by navigating up from to_wrap.weight
-        parent_name = task.param_name[: -len(".to_wrap.weight")]
-        try:
-            lora_module, _ = get_module_and_param_from_name(megatron_model, parent_name, task.vp_stage)
-        except ValueError:
-            return converted_weights_dict
-
-        adapter = getattr(lora_module, "adapter", None)
-        to_wrap = getattr(lora_module, "to_wrap", None)
-        if adapter is None or to_wrap is None:
-            return converted_weights_dict
-
-        required_attrs = ("linear_in", "linear_out", "alpha", "dim")
-        if not all(hasattr(adapter, attr) for attr in required_attrs):
-            return converted_weights_dict
-
-        from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
-
-        from megatron.bridge.models.conversion.param_mapping import ColumnParallelMapping, RowParallelMapping
-        from megatron.bridge.peft.lora import LoRAMerge
-        from megatron.bridge.peft.utils import HAVE_TE, TECL, TERL
-
-        mapping_class = None
-        if to_wrap is not None:
-            # Determine which mapping to use based on the base layer's parallel type
-            if (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TECL)) or isinstance(
-                to_wrap, ColumnParallelLinear
+        adapter = None
+        if task.megatron_module is not None:
+            # Get the LoRALinear wrapper by navigating up from to_wrap.weight
+            adapter, _ = self._get_adapter_wrap_module(base_name, megatron_model, task.vp_stage)
+        # Check if this is a CanonicalLoRA split module by examining adapter structure
+        # CanonicalLoRA uses ModuleDict with specific keys:
+        # - QKV: adapter_q, adapter_k, adapter_v
+        # - FC1: adapter_up, adapter_gate
+        if len(adapter_infos) > 1:
+            adapter_keys = [info[0].split(".")[-1] for info in adapter_infos]
+            if any(
+                key in adapter_keys for key in ["adapter_q", "adapter_k", "adapter_v", "adapter_up", "adapter_gate"]
             ):
-                # Base layer is ColumnParallel, so use ColumnParallelMapping for linear_in
-                mapping_class = ColumnParallelMapping
-            elif (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TERL)) or isinstance(
-                to_wrap, RowParallelLinear
-            ):
-                # Base layer is RowParallel, so use RowParallelMapping for linear_in
-                mapping_class = RowParallelMapping
+                adapter_name_map = {
+                    ".q_proj.weight": "adapter_q",
+                    ".k_proj.weight": "adapter_k",
+                    ".v_proj.weight": "adapter_v",
+                    ".gate_proj.weight": "adapter_gate",
+                    ".up_proj.weight": "adapter_up",
+                }
+                return self._merge_canonical_adapter(
+                    adapter, converted_weights_dict, base_name, adapter_infos, adapter_name_map
+                )
+            else:
+                raise ValueError(f"Unknown adapter keys: {adapter_keys}")
 
-        # Gather LoRA adapter weights using the determined mapping class
-        if mapping_class is not None:
-            # Gather linear_in weights
-            linear_in_name = parent_name + ".adapter.linear_in.weight"
-            linear_in_mapping = mapping_class(linear_in_name, linear_in_name)
-            linear_in_dict = linear_in_mapping.megatron_to_hf(adapter.linear_in.weight, adapter.linear_in)
-            linear_in_weight = linear_in_dict.get(linear_in_name) if linear_in_dict else None
+        adapter_info = adapter_infos[0]
+        alpha, dim = adapter_info[-2:]
+
+        # Regular LoRALinear case
+        # Get adapter weights
+        linear_in_weight, linear_out_weight = self._get_adapter_weights(adapter, adapter_info)
+
+        # Check if this is a fused layer that gets split into multiple projections
+        # For fused FC1: splits into gate_proj and up_proj (2 parts)
+        # For fused QKV: splits into q_proj, k_proj, v_proj (3 parts, interleaved)
+        base_weight_shape = next(iter(converted_weights_dict.values())).shape
+        weight_names = converted_weights_dict.keys()
+        is_fused_fc1 = (
+            len(weight_names) % 2 == 0
+            and all("gate_proj" in name or "up_proj" in name for name in weight_names)
+            and linear_out_weight.shape[0] == 2 * base_weight_shape[0]
+        )
+        is_fused_qkv = len(weight_names) == 3 and all(
+            "q_proj" in name or "k_proj" in name or "v_proj" in name for name in weight_names
+        )
+
+        # For QKV, split using the same interleaving logic as the base weight
+        if is_fused_qkv:
+            # Use the same interleaving pattern as split_qkv_weights
+            q_out, k_out, v_out = split_qkv_weights(megatron_model[0].config, linear_out_weight)
+            qkv_linear_out_weights = {
+                "q_proj": q_out,
+                "k_proj": k_out,
+                "v_proj": v_out,
+            }
         else:
-            # Non-parallel case: use weights directly
-            linear_in_weight = adapter.linear_in.weight
-
-        # Always no parallel for linear_out
-        linear_out_weight = getattr(adapter.linear_out, "weight", None)
-        if linear_in_weight is None or linear_out_weight is None:
-            return converted_weights_dict
-
-        alpha = adapter.alpha
-        dim = adapter.dim
-        merger = LoRAMerge()
+            qkv_linear_out_weights = None
 
         # All ranks get the gathered weights, so we can merge on all ranks
         for hf_name, base_weight in list(converted_weights_dict.items()):
+            # For fused layers, split linear_out_weight based on which projection we're merging
+            current_linear_out_weight = linear_out_weight
+            if is_fused_fc1:
+                split_size = linear_out_weight.shape[0] // 2
+                if "gate_proj" in hf_name:
+                    # FC1: first half for gate_proj
+                    current_linear_out_weight = linear_out_weight[:split_size, :]
+                elif "up_proj" in hf_name:
+                    # FC1: second half for up_proj
+                    current_linear_out_weight = linear_out_weight[split_size:, :]
+                else:
+                    raise ValueError(f"Unknown weight name: {hf_name}")
+            elif is_fused_qkv and qkv_linear_out_weights is not None:
+                # QKV: Use properly split weights based on interleaving pattern
+                if "q_proj" in hf_name:
+                    current_linear_out_weight = qkv_linear_out_weights["q_proj"]
+                elif "k_proj" in hf_name:
+                    current_linear_out_weight = qkv_linear_out_weights["k_proj"]
+                elif "v_proj" in hf_name:
+                    current_linear_out_weight = qkv_linear_out_weights["v_proj"]
+                else:
+                    raise ValueError(f"Unknown weight name: {hf_name}")
+
             # Merge LoRA weights for each converted weight in the dict
-            base_device = base_weight.device
-            merged_weight = merger.merge(
-                base_weight,
-                linear_out_weight.to(base_device),
-                linear_in_weight.to(base_device),
-                alpha,
-                dim,
+            merged_weight = self._merge_single_adapter_weight(
+                base_weight, alpha, dim, linear_in_weight, current_linear_out_weight
+            )
+            converted_weights_dict[hf_name] = merged_weight
+
+        return converted_weights_dict
+
+    def _get_adapter_weights(
+        self,
+        adapter,
+        adapter_info: tuple[str, bool, bool, int, int],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Get and gather adapter weights (linear_in and linear_out).
+
+        Args:
+            adapter: The adapter module
+            adapter_info: Adapter information tuple (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
+
+        Returns:
+            Tuple of (linear_in_weight, linear_out_weight)
+        """
+        if adapter is None:
+            linear_in_weight = None
+            linear_out_weight = None
+        else:
+            linear_in_weight = adapter.linear_in.weight
+            linear_out_weight = adapter.linear_out.weight
+
+        adapter_name, input_is_parallel, base_linear_is_parallel, alpha, dim = adapter_info
+        linear_in_name = f"{adapter_name}.linear_in.weight"
+        linear_out_name = f"{adapter_name}.linear_out.weight"
+
+        # Process linear_in_weight through tensor parallel mapping if needed
+        if base_linear_is_parallel:
+            mapping_class = ColumnParallelMapping
+            if input_is_parallel:
+                # input is parallel, use RowParallelMapping
+                mapping_class = RowParallelMapping
+
+            linear_in_mapping = mapping_class(linear_in_name, linear_in_name)
+            linear_in_dict = linear_in_mapping.megatron_to_hf(
+                linear_in_weight, adapter.linear_in if adapter is not None else None
+            )
+            linear_in_weight = linear_in_dict.get(linear_in_name) if linear_in_dict else None
+
+        # Process linear_out_weight through tensor parallel mapping if needed
+        # linear_out is always ColumnParallelLinear, so it needs ColumnParallelMapping
+        if base_linear_is_parallel:
+            linear_out_mapping = ColumnParallelMapping(linear_out_name, linear_out_name)
+            linear_out_dict = linear_out_mapping.megatron_to_hf(
+                linear_out_weight, adapter.linear_out if adapter is not None else None
+            )
+            linear_out_weight = linear_out_dict.get(linear_out_name) if linear_out_dict else None
+
+        return linear_in_weight, linear_out_weight
+
+    def _merge_single_adapter_weight(
+        self,
+        base_weight: torch.Tensor,
+        alpha: int,
+        dim: int,
+        linear_in_weight: torch.Tensor,
+        linear_out_weight: torch.Tensor,
+    ) -> torch.Tensor:
+        """Merge a single adapter's weights with base weight.
+
+        Args:
+            base_weight: Base weight tensor to merge with
+            alpha: Alpha value for the adapter
+            dim: Dimension of the adapter
+            linear_in_weight: Gathered linear_in weight
+            linear_out_weight: linear_out weight
+
+        Returns:
+            Merged weight tensor
+        """
+        merger = LoRAMerge()
+        base_device = base_weight.device
+        return merger.merge(
+            base_weight,
+            linear_out_weight.to(base_device),
+            linear_in_weight.to(base_device),
+            alpha,
+            dim,
+        )
+
+    def _merge_canonical_adapter(
+        self,
+        lora_module,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        base_name: str,
+        adapter_infos: List[tuple[str, bool, bool, int, int]],
+        adapter_name_map: Dict[str, str],
+    ) -> Dict[str, torch.Tensor]:
+        """Merge CanonicalLoRA adapters (split QKV or FC1) back into base weights.
+
+        Args:
+            lora_module: The LoRALinearSplitQKV or LoRALinearSplitFC1UpGate module adapter
+            converted_weights_dict: Dictionary of HF weights (will be modified in-place)
+            base_name: The parent module name
+            adapter_infos: List of adapter information tuples (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
+            adapter_name_map: Mapping from HF parameter suffixes to adapter names
+                              e.g., {'.q_proj.weight': 'adapter_q', '.k_proj.weight': 'adapter_k', ...}
+
+        Returns:
+            Updated converted_weights_dict with merged LoRA weights
+        """
+        # Process each HF weight in the dict
+        for hf_name, base_weight in converted_weights_dict.items():
+            # Determine which adapter to use based on the HF parameter name
+            adapter_name = None
+            for suffix, name in adapter_name_map.items():
+                if hf_name.endswith(suffix):
+                    adapter_name = name
+                    break
+
+            if adapter_name is None:
+                raise ValueError(f"Adapter name mapping not found for {hf_name}")
+
+            adapter = getattr(lora_module, adapter_name, None)
+            adapter_info = [info for info in adapter_infos if info[0] == base_name + ".adapter." + adapter_name][0]
+            alpha, dim = adapter_info[-2:]
+
+            # Get adapter weights
+            linear_in_weight, linear_out_weight = self._get_adapter_weights(adapter, adapter_info)
+
+            # Merge this adapter's weights with the base weight
+            merged_weight = self._merge_single_adapter_weight(
+                base_weight, alpha, dim, linear_in_weight, linear_out_weight
             )
             converted_weights_dict[hf_name] = merged_weight
 
