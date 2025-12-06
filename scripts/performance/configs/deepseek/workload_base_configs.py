@@ -28,14 +28,14 @@ DEEPSEEK_V3_GB300_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
     global_batch_size=4096,
-    pipeline_model_parallel_size=4,
+    pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
+    expert_model_parallel_size=32,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
-    recompute_modules=["moe_act"],
+    recompute_modules=[],
 )
 DEEPSEEK_V3_GB300_BF16_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
 DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
