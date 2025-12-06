@@ -138,8 +138,8 @@ class TestMergeLoRAAdapterWeights:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
-        adapter_infos = [("decoder.layers.0.mlp.linear_fc1.adapter", False, False, 4, 4)]
-        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+        adapters_info = [("decoder.layers.0.mlp.linear_fc1.adapter", False, False, 4, 4)]
+        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
         # The weights should be merged (not equal to original)
         assert "hf.weight" in updated
         assert not torch.equal(updated["hf.weight"], base_weight)
@@ -167,8 +167,8 @@ class TestMergeLoRAAdapterWeights:
             megatron_module=Mock(),
         )
 
-        adapter_infos = [("decoder.layers.0.mlp.linear_fc1.adapter", False, False, 8, 4)]
-        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+        adapters_info = [("decoder.layers.0.mlp.linear_fc1.adapter", False, False, 8, 4)]
+        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
         torch.testing.assert_close(updated["hf.weight"], converted["hf.weight"])
 
     def test_merge_canonical_lora_qkv(self, monkeypatch):
@@ -206,13 +206,13 @@ class TestMergeLoRAAdapterWeights:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
-        adapter_infos = [
+        adapters_info = [
             ("decoder.layers.0.self_attention.linear_qkv.adapter.adapter_q", False, False, 8, 4),
             ("decoder.layers.0.self_attention.linear_qkv.adapter.adapter_k", False, False, 8, 4),
             ("decoder.layers.0.self_attention.linear_qkv.adapter.adapter_v", False, False, 8, 4),
         ]
 
-        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
 
         # Should merge all three projections
         assert "model.layers.0.self_attn.q_proj.weight" in updated
@@ -250,12 +250,12 @@ class TestMergeLoRAAdapterWeights:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
-        adapter_infos = [
+        adapters_info = [
             ("decoder.layers.0.mlp.linear_fc1.adapter.adapter_gate", False, False, 8, 4),
             ("decoder.layers.0.mlp.linear_fc1.adapter.adapter_up", False, False, 8, 4),
         ]
 
-        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
 
         # Should merge both projections
         assert "model.layers.0.mlp.gate_proj.weight" in updated
@@ -295,9 +295,9 @@ class TestMergeLoRAAdapterWeights:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
-        adapter_infos = [("decoder.layers.0.mlp.linear_fc1.adapter", False, False, 8, 4)]
+        adapters_info = [("decoder.layers.0.mlp.linear_fc1.adapter", False, False, 8, 4)]
 
-        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+        updated = bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
 
         # Should merge both projections
         assert "model.layers.0.mlp.gate_proj.weight" in updated
@@ -355,17 +355,17 @@ class TestMergeLoRAAdapterWeights:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
-        adapter_infos = [("decoder.layers.0.self_attention.linear_qkv.adapter", False, False, 8, 4)]
+        adapters_info = [("decoder.layers.0.self_attention.linear_qkv.adapter", False, False, 8, 4)]
 
-        updated = bridge._merge_lora_adapter_weights(task, [mock_model], converted, adapter_infos)
+        updated = bridge._merge_lora_adapter_weights(task, [mock_model], converted, adapters_info)
 
         # Should merge all three projections
         assert "model.layers.0.self_attn.q_proj.weight" in updated
         assert "model.layers.0.self_attn.k_proj.weight" in updated
         assert "model.layers.0.self_attn.v_proj.weight" in updated
 
-    def test_merge_lora_adapter_weights_empty_adapter_infos(self, monkeypatch):
-        """Test that empty adapter_infos is handled correctly."""
+    def test_merge_lora_adapter_weights_empty_adapters_info(self, monkeypatch):
+        """Test that empty adapters_info is handled correctly."""
         bridge = DummyBridge()
         converted = {"hf.weight": torch.ones(2, 2)}
         task = WeightConversionTask(
@@ -375,11 +375,11 @@ class TestMergeLoRAAdapterWeights:
             vp_stage=0,
         )
 
-        adapter_infos = []
+        adapters_info = []
 
         # The current implementation doesn't check for empty list and will crash
         with pytest.raises(IndexError):
-            bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+            bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
 
     def test_merge_lora_adapter_weights_unknown_adapter_keys(self, monkeypatch):
         """Test that unknown adapter keys raise ValueError."""
@@ -392,8 +392,8 @@ class TestMergeLoRAAdapterWeights:
             vp_stage=0,
         )
 
-        # Multiple adapter_infos but with unknown keys (not adapter_q/k/v/up/gate)
-        adapter_infos = [
+        # Multiple adapters_info but with unknown keys (not adapter_q/k/v/up/gate)
+        adapters_info = [
             ("decoder.layers.0.mlp.linear_fc1.adapter.adapter_unknown1", False, False, 8, 4),
             ("decoder.layers.0.mlp.linear_fc1.adapter.adapter_unknown2", False, False, 8, 4),
         ]
@@ -405,7 +405,7 @@ class TestMergeLoRAAdapterWeights:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
 
         with pytest.raises(ValueError, match="Unknown adapter keys"):
-            bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapter_infos)
+            bridge._merge_lora_adapter_weights(task, [Mock()], converted, adapters_info)
 
 
 class TestGetAdapterWrapModule:
@@ -571,7 +571,7 @@ class TestMegatronGlobalParamNamesAllPPRanks:
             lambda *_, **__: (False, 4, 4, False, False),
         )
 
-        adapter_info = bridge._megatron_global_adapter_infos_all_pp_ranks([FakeModel()])
+        adapter_info = bridge._megatron_global_adapters_info_all_pp_ranks([FakeModel()])
         # Should return list of tuples: (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
         assert len(adapter_info) == 1
         assert isinstance(adapter_info[0], tuple)
@@ -667,7 +667,7 @@ class TestMergeCanonicalAdapter:
         base_name = "decoder.layers.0.self_attention.linear_qkv"
         lora_module = _make_canonical_lora_qkv_module(hidden_size=hidden_size)
 
-        adapter_infos = [
+        adapters_info = [
             (f"{base_name}.adapter.adapter_q", False, False, 8, 4),
             (f"{base_name}.adapter.adapter_k", False, False, 8, 4),
             (f"{base_name}.adapter.adapter_v", False, False, 8, 4),
@@ -683,7 +683,7 @@ class TestMergeCanonicalAdapter:
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
         updated = bridge._merge_canonical_adapter(
-            lora_module.adapter, converted, base_name, adapter_infos, adapter_name_map
+            lora_module.adapter, converted, base_name, adapters_info, adapter_name_map
         )
 
         # Should merge all three projections
@@ -708,7 +708,7 @@ class TestMergeCanonicalAdapter:
         base_name = "decoder.layers.0.mlp.linear_fc1"
         lora_module = _make_canonical_lora_fc1_module(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size)
 
-        adapter_infos = [
+        adapters_info = [
             (f"{base_name}.adapter.adapter_gate", False, False, 8, 4),
             (f"{base_name}.adapter.adapter_up", False, False, 8, 4),
         ]
@@ -722,7 +722,7 @@ class TestMergeCanonicalAdapter:
         monkeypatch.setattr("megatron.bridge.peft.utils.HAVE_TE", False)
 
         updated = bridge._merge_canonical_adapter(
-            lora_module.adapter, converted, base_name, adapter_infos, adapter_name_map
+            lora_module.adapter, converted, base_name, adapters_info, adapter_name_map
         )
 
         # Should merge both projections
@@ -739,7 +739,7 @@ class TestMergeCanonicalAdapter:
         base_name = "decoder.layers.0.mlp.linear_fc1"
         lora_module = _make_canonical_lora_fc1_module()
 
-        adapter_infos = [
+        adapters_info = [
             (f"{base_name}.adapter.adapter_gate", False, False, 8, 4),
         ]
 
@@ -750,4 +750,4 @@ class TestMergeCanonicalAdapter:
         monkeypatch.setattr("megatron.bridge.models.conversion.model_bridge.print_rank_0", lambda *_, **__: None)
 
         with pytest.raises(ValueError, match="Adapter name mapping not found"):
-            bridge._merge_canonical_adapter(lora_module.adapter, converted, base_name, adapter_infos, adapter_name_map)
+            bridge._merge_canonical_adapter(lora_module.adapter, converted, base_name, adapters_info, adapter_name_map)

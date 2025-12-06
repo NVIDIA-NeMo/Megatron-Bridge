@@ -355,10 +355,12 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         return self._cached_param_names
 
-    def _megatron_global_adapter_infos_all_pp_ranks(
+    def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> List[tuple[str, bool, bool, int, int]]:
-        """Get all adapter parameter names across all pipeline parallel ranks."""
+        """Get all adapters' information tuple:
+         (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
+        across all pipeline parallel ranks."""
         # Cache the result after first call
         if hasattr(self, "_cached_param_objects_adapter"):
             return self._cached_param_objects_adapter
@@ -725,7 +727,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
-        megatron_global_adapter_infos_all_pp_ranks = self._megatron_global_adapter_infos_all_pp_ranks(megatron_model)
+        megatron_global_adapters_info_all_pp_ranks = self._megatron_global_adapters_info_all_pp_ranks(megatron_model)
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
@@ -733,10 +735,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
-            if megatron_global_adapter_infos_all_pp_ranks:
+            if megatron_global_adapters_info_all_pp_ranks:
                 # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
-                    task, megatron_model, converted_weights_dict, megatron_global_adapter_infos_all_pp_ranks
+                    task, megatron_model, converted_weights_dict, megatron_global_adapters_info_all_pp_ranks
                 )
 
             for hf_name, tensor in converted_weights_dict.items():
@@ -767,7 +769,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         task: WeightConversionTask,
         megatron_model: List[MegatronModel],
         converted_weights_dict: Dict[str, torch.Tensor],
-        megatron_global_adapter_infos_all_pp_ranks: List[tuple[str, bool, bool, int, int]],
+        megatron_global_adapters_info_all_pp_ranks: List[tuple[str, bool, bool, int, int]],
     ) -> Dict[str, torch.Tensor]:
         """Merge LoRA adapter weights back into the base tensor for HF export."""
 
@@ -777,7 +779,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         base_name = task.param_name.split(".to_wrap.weight")[0]
         # Get the LoRA adapter names
-        adapter_infos = [info for info in megatron_global_adapter_infos_all_pp_ranks if info[0].startswith(base_name)]
+        adapters_info = [info for info in megatron_global_adapters_info_all_pp_ranks if info[0].startswith(base_name)]
 
         adapter = None
         if task.megatron_module is not None:
@@ -787,8 +789,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         # CanonicalLoRA uses ModuleDict with specific keys:
         # - QKV: adapter_q, adapter_k, adapter_v
         # - FC1: adapter_up, adapter_gate
-        if len(adapter_infos) > 1:
-            adapter_keys = [info[0].split(".")[-1] for info in adapter_infos]
+        if len(adapters_info) > 1:
+            adapter_keys = [info[0].split(".")[-1] for info in adapters_info]
             if any(
                 key in adapter_keys for key in ["adapter_q", "adapter_k", "adapter_v", "adapter_up", "adapter_gate"]
             ):
@@ -800,12 +802,12 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     ".up_proj.weight": "adapter_up",
                 }
                 return self._merge_canonical_adapter(
-                    adapter, converted_weights_dict, base_name, adapter_infos, adapter_name_map
+                    adapter, converted_weights_dict, base_name, adapters_info, adapter_name_map
                 )
             else:
                 raise ValueError(f"Unknown adapter keys: {adapter_keys}")
 
-        adapter_info = adapter_infos[0]
+        adapter_info = adapters_info[0]
         alpha, dim = adapter_info[-2:]
 
         # Regular LoRALinear case
@@ -955,7 +957,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         lora_module,
         converted_weights_dict: Dict[str, torch.Tensor],
         base_name: str,
-        adapter_infos: List[tuple[str, bool, bool, int, int]],
+        adapters_info: List[tuple[str, bool, bool, int, int]],
         adapter_name_map: Dict[str, str],
     ) -> Dict[str, torch.Tensor]:
         """Merge CanonicalLoRA adapters (split QKV or FC1) back into base weights.
@@ -964,7 +966,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             lora_module: The LoRALinearSplitQKV or LoRALinearSplitFC1UpGate module adapter
             converted_weights_dict: Dictionary of HF weights (will be modified in-place)
             base_name: The parent module name
-            adapter_infos: List of adapter information tuples (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
+            adapters_info: List of adapter information tuples (base_name, input_is_parallel, base_linear_is_parallel, alpha, dim)
             adapter_name_map: Mapping from HF parameter suffixes to adapter names
                               e.g., {'.q_proj.weight': 'adapter_q', '.k_proj.weight': 'adapter_k', ...}
 
@@ -984,7 +986,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 raise ValueError(f"Adapter name mapping not found for {hf_name}")
 
             adapter = getattr(lora_module, adapter_name, None)
-            adapter_info = [info for info in adapter_infos if info[0] == base_name + ".adapter." + adapter_name][0]
+            adapter_info = [info for info in adapters_info if info[0] == base_name + ".adapter." + adapter_name][0]
             alpha, dim = adapter_info[-2:]
 
             # Get adapter weights
