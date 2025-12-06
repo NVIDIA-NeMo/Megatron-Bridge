@@ -42,6 +42,7 @@ GPT_OSS_120B_GB300_BF16_BASE_CONFIG = replace(
 GPT_OSS_120B_GB200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
+    moe_flex_dispatcher_backend="hybridep",
     micro_batch_size=1,
     recompute_modules=["layernorm", "moe_act"],
 )
