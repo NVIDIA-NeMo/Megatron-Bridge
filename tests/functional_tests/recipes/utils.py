@@ -119,6 +119,50 @@ def run_pretrain_recipe_test(
         clear_directories(tmp_path)
 
 
+def run_pretrain_recipe_perf_test(
+    config_func: Callable,
+    recipe_name: str,
+    config_overrides: Optional[dict] = None,
+):
+    """
+    Common test implementation for pretrain perf recipe configurations.
+
+    This function runs a minimal training session to verify that:
+    1. The recipe config can be loaded without errors
+    2. Training can start and run for a few iterations
+    3. No crashes occur during the process
+
+    Args:
+        config_func: The recipe's pretrain_config function
+        recipe_name: Name of the recipe for logging/debugging
+        config_overrides: Optional mapping of config attribute overrides to apply
+    """
+    initialize_distributed()
+
+    config: ConfigContainer = config_func(name=f"{recipe_name}_functional_test", mock=True)
+    # Keep runs short and consistent across tests
+    config.train.train_iters = 10
+    config.train.eval_interval = 5
+    config.train.eval_iters = 0  # Skip evaluation. TODO: Fix this.
+
+    # Standardize batch sizes for functional tests
+    config.train.micro_batch_size = 1
+    config.train.global_batch_size = 8
+    config.scheduler.lr_warmup_iters = 2
+    test_seq_length = 512
+    config.model.seq_length = test_seq_length
+    config.dataset.seq_length = test_seq_length
+    config.train.global_batch_size = 8
+
+    # Apply any model-specific overrides provided by the caller
+    if config_overrides:
+        for obj_name, overrides_dict in config_overrides.items():
+            for key, value in overrides_dict.items():
+                setattr(getattr(config, obj_name), key, value)
+
+    pretrain(config, forward_step)
+
+
 def run_pretrain_config_override_test(config_func: Callable):
     """
     Common test implementation for testing pretrain_config with CLI-style overrides *after* instantiation.

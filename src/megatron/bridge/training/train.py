@@ -514,10 +514,8 @@ def train(
         )
         if should_exit:
             break
-    # Explicitly delete the training CUDA graph because of
-    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
-    if "training" in FullCudaGraphWrapper.cuda_graph:
-        del FullCudaGraphWrapper.cuda_graph["training"]
+
+    _delete_cuda_graphs(cuda_graph_helper)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -1261,3 +1259,34 @@ def _handle_mxfp8_param_buffer_copy(
         for optim_instance in optimizer.chained_optimizers:
             if isinstance(optim_instance, DistributedOptimizer):
                 optim_instance._copy_main_params_to_param_buffer()
+
+
+def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
+    """
+    Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
+    process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
+
+    TODO: Move this method to MCore.
+
+    Args:
+        cuda_graph_helper: The TECudaGraphHelper object.
+
+    """
+
+    print_rank_0("Deleting CUDA graphs")
+
+    # Explicitly delete the training CUDA graph because of
+    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
+    if "training" in FullCudaGraphWrapper.cuda_graph:
+        del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
+    if cuda_graph_helper is not None:
+        for layers in cuda_graph_helper.callables_per_chunk:
+            for layer in layers:
+                for cuda_graph in layer.cuda_graphs:
+                    del cuda_graph
+                del layer.cuda_graphs
+
+    # Run GC to collect the freshed object
+    gc.collect()
