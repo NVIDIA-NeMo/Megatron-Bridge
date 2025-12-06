@@ -218,6 +218,20 @@ class Ministral3ModelProvider14B(Ministral3ModelProvider):
 
 
 class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
+    """
+    Implementation of the TEDotProductAttention mechanism for Ministral (Mistral) 3 models with Llama 4-style attention scaling.
+
+    This class extends MCoreTEDotProductAttention by introducing the Llama 4 attention scaling factor,
+    which is essential for robust long-context training. During the forward pass, a position-dependent scaling
+    (1 + beta * log(1 + floor(positions / max_position_embeddings))) is applied to the query vectors.
+    This approach, introduced in Llama 4, helps maintain stability and performance as context length increases,
+    enabling effective training and inference on extended sequences (e.g., up to 256k tokens).
+
+    **Key difference from MCoreTEDotProductAttention:**
+    - Applies the Llama 4 scaling factor to the queries prior to standard attention computation for improved
+      long-context capability.
+    """
+
     def __init__(
         self,
         config,

@@ -1,6 +1,6 @@
 # Ministral 3
 
-[Mistral AI's Ministral 3](https://huggingface.co/collections/mistralai/ministral-3-67766f0ef0fb17f5d2a73cf1) is a family of edge-optimized vision-language models designed for deployment across various hardware configurations. The Ministral 3 architecture combines a powerful language model with a vision encoder for multimodal understanding.
+[Mistral AI's Ministral 3](https://huggingface.co/collections/mistralai/ministral-3) is a family of edge-optimized vision-language models designed for deployment across various hardware configurations. The Ministral 3 architecture combines a powerful language model with a vision encoder for multimodal understanding.
 
 Ministral 3 models support multimodal tasks including image captioning, visual question answering, OCR, and general vision-language understanding. Despite their compact size, these models deliver strong performance for on-device and edge deployment scenarios.
 
