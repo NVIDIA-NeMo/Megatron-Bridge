@@ -133,7 +133,7 @@ def gemma3_1b_pretrain_config(**user_kwargs: Unpack[Gemma3CommonKwargs]) -> Conf
     """
     recommended_kwargs: Gemma3CommonKwargs = {
         "provider_class": Gemma3ModelProvider1B,
-        "hf_path": "google/gemma-3-1b",
+        "hf_path": "google/gemma-3-1b-pt",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "context_parallel_size": 1,
@@ -188,7 +188,7 @@ def _gemma3_common(
 
     Args:
         provider_class (type): Gemma3 model provider class (e.g., Gemma3ModelProvider1B).
-        hf_path (str | None): HuggingFace model path (e.g., "google/gemma-3-1b").
+        hf_path (str | None): HuggingFace model path (e.g., "google/gemma-3-1b-pt").
         dir (str | None): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
         data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
