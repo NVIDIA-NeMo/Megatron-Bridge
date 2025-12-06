@@ -21,6 +21,7 @@ import torch
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
@@ -89,6 +90,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
+    pg_collection: Optional[ProcessGroupCollection] = None
     """Optional HuggingFace model identifier associated with this provider."""
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
