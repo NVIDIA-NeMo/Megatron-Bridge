@@ -632,6 +632,20 @@ class ParallelLinearAdapter(nn.Module):
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
 
+        # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP).
+        if self.is_expert:
+            from megatron.core import parallel_state
+
+            ep_rank = parallel_state.get_expert_model_parallel_rank()
+            edp_rank = parallel_state.get_expert_data_parallel_rank()
+            dp_size = parallel_state.get_data_parallel_world_size()
+            rank = (ep_rank + 1) * (edp_rank + 1) - 1 if dp_size == 1 else ep_rank
+            for sd in [linear_in_sd, linear_out_sd]:
+                for v in sd.values():
+                    if hasattr(v, "replica_id"):
+                        old_rid = v.replica_id
+                        v.replica_id = (old_rid[0], rank, old_rid[2])
+
         if "linear_fc1" in self.base_linear_name:
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
