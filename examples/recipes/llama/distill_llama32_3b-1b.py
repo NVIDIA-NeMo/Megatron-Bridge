@@ -146,9 +146,9 @@ def main() -> None:
     logger.info("------------------------------------------------------------------")
 
     # Load base configurations as recipes and wrap provider for distillation mode
-    cfg: ConfigContainer = llama32_1b_pretrain_config()
+    cfg: ConfigContainer = llama32_1b_pretrain_config(load_weights=True)
     cfg.model.__class__ = GPTDistillationProvider
-    cfg.model.teacher = llama32_3b_pretrain_config().model
+    cfg.model.teacher = llama32_3b_pretrain_config(load_weights=True).model
     cfg.model.kd_config = ModelOptDistillConfig()
     logger.info("Loaded base student and teacher configurations")
 

@@ -428,6 +428,7 @@ def _llama3_common(
     hf_path: str,
     dir: str | None = None,
     name: str = "default",
+    load_weights: bool = False,
     # Dataset configuration
     data_paths: list[str] | None = None,
     data_args_path: str | None = None,
@@ -511,7 +512,7 @@ def _llama3_common(
     )
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg = bridge.to_megatron_provider(load_weights=load_weights)
     model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
     model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
     model_cfg.pipeline_dtype = pipeline_dtype
