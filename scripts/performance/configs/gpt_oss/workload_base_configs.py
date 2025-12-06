@@ -23,7 +23,7 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
     num_gpus=64,
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
-    global_batch_size=512,
+    global_batch_size=1280,
     micro_batch_size=1,
 )
 
@@ -42,7 +42,7 @@ GPT_OSS_120B_GB300_BF16_BASE_CONFIG = replace(
 GPT_OSS_120B_GB200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
-    micro_batch_size=4,
+    micro_batch_size=1,
     recompute_modules=["layernorm", "moe_act"],
 )
 

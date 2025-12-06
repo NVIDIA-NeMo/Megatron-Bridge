@@ -35,7 +35,7 @@ DEEPSEEK_V3_GB300_BASE_CONFIG = replace(
     moe_a2a_overlap=False,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=[ "moe_router", "moe_preprocess"],
-    recompute_modules=["mlp"],
+    recompute_modules=["mlp", "moe_act"],
 )
 DEEPSEEK_V3_GB300_BF16_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
 DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
