@@ -75,7 +75,7 @@ class Qwen3NextBridge(MegatronModelBridge):
             # New for Qwen3-Next
             layernorm_zero_centered_gamma=True,
             attention_output_gate=True,
-            linear_attention_type="gated_delta_net",
+            experimental_attention_variant="gated_delta_net",
             linear_attention_freq=hf_config.full_attention_interval,
             rotary_percent=hf_config.partial_rotary_factor,
             moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,

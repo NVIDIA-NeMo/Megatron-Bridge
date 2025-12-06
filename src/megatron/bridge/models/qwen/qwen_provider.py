@@ -453,7 +453,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     moe_router_load_balancing_type: str = "global_aux_loss"  # Qwen3-Next uses global aux loss for load balancing
 
     # Linear Attention specific parameters
-    linear_attention_type: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
+    experimental_attention_variant: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
     linear_attention_freq: int | list[int] = 4  # 1 gated standard attention layer per 4 layers
     linear_conv_kernel_dim: int = 4
     linear_key_head_dim: int = 128

@@ -50,7 +50,7 @@ HF_QWEN3_NEXT_TOY_MODEL_CONFIG = {
     "moe_intermediate_size": 512,
     "shared_expert_intermediate_size": 512,
     # Qwen3-Next specific
-    "full_attention_interval": 2,  # 1 standard attention layer per 4 layers
+    "full_attention_interval": 4,  # 1 standard attention layer per 4 layers
     "partial_rotary_factor": 0.25,  # RoPE only applies to first 25% of dims
     "linear_conv_kernel_dim": 4,
     "linear_key_head_dim": 32,

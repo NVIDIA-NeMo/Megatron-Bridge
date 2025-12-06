@@ -75,7 +75,7 @@ class TestQwen3NextModelProvider:
         assert provider.moe_router_dtype == "fp32"
 
         # Linear Attention specific defaults
-        assert provider.linear_attention_type == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gated_delta_net"
         assert provider.linear_attention_freq == 4
         assert provider.linear_conv_kernel_dim == 4
         assert provider.linear_key_head_dim == 128
@@ -113,7 +113,7 @@ class TestQwen3NextModelProvider:
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            linear_attention_type="gated_delta_net",
+            experimental_attention_variant="gated_delta_net",
             linear_attention_freq=2,
             linear_conv_kernel_dim=8,
             linear_key_head_dim=64,
@@ -122,7 +122,7 @@ class TestQwen3NextModelProvider:
             linear_num_value_heads=16,
         )
 
-        assert provider.linear_attention_type == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gated_delta_net"
         assert provider.linear_attention_freq == 2
         assert provider.linear_conv_kernel_dim == 8
         assert provider.linear_key_head_dim == 64
@@ -254,7 +254,7 @@ class TestQwen3NextModelProvider80B_A3B:
         assert provider.moe_router_pre_softmax is False
 
         # Check inherited Linear Attention defaults
-        assert provider.linear_attention_type == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gated_delta_net"
         assert provider.linear_attention_freq == 4
         assert provider.linear_conv_kernel_dim == 4
         assert provider.linear_key_head_dim == 128
@@ -475,7 +475,7 @@ class TestQwen3NextProviderArchitecturalFeatures:
         """Test that Qwen3 Next models have correct linear attention type (Gated Delta Net) configuration."""
         provider = Qwen3NextModelProvider80B_A3B()
 
-        assert provider.linear_attention_type == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gated_delta_net"
 
     def test_qwen3_next_linear_attention_freq(self):
         """Test that Qwen3 Next models have correct linear attention frequency configuration."""
