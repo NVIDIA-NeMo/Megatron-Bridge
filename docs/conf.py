@@ -40,10 +40,11 @@ extensions = [
     "sphinx.ext.napoleon",  # For google style docstrings
     "sphinx_copybutton",  # For copy button in code blocks
     "sphinxcontrib.mermaid",  # For mermaid diagrams
+    "sphinx_design",  # For grid layout
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", ".venv", "**/.venv"]
 
 # -- Options for MyST Parser (Markdown) --------------------------------------
 # MyST Parser settings
