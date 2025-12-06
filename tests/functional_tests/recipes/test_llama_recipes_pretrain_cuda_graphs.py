@@ -36,10 +36,9 @@ LLAMA_PRETRAIN_RECIPES = [
                 "use_te_rng_tracker": True,
             },
             "rerun_state_machine": {"check_for_nan_in_loss": False},
-            "ddp" : { "check_for_nan_in_grad" : False }
+            "ddp": {"check_for_nan_in_grad": False},
         },
     ),
-
     (
         llama32_1b_config,
         "llama32_1b",
