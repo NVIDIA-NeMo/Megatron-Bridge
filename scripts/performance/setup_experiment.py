@@ -127,12 +127,6 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     return config if config else None
 
 
-def log_assets_dirname_to_disk(assets_dir: str):
-    """Log experiment dirname to disk."""
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "NEMORUN_ASSETS_DIR.txt"), "w") as f:
-        f.write(assets_dir)
-
-
 def ensure_logs_where_written(log_file_paths: List[str]):
     """Ensure logs were written to disk."""
     if len(log_file_paths) != 1:
@@ -374,9 +368,6 @@ def main(
                 is_finished_experiment = True
                 is_testing_passed = True
                 break
-
-            assets_dir = os.path.join(job_dir, exp_name)
-            log_assets_dirname_to_disk(assets_dir)
 
             log_file_paths = [str(Path(f"{job_dir}/log-*_0.out"))]
             ensure_logs_where_written(log_file_paths)

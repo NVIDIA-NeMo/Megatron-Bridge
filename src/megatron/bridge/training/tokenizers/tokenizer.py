@@ -187,8 +187,12 @@ def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronToke
 
 
 class _HuggingFaceTokenizer(MegatronTokenizer):
-    def __init__(self, pretrained_model_name_or_path, **kwargs):
-        super().__init__(pretrained_model_name_or_path, **kwargs)
+    def __init__(self, pretrained_model_name_or_path: str | Path, **kwargs):
+        # NOTE: MegatronTokenizer needs a string, but a string vs a Path object is how HF knows if
+        #  it should load a local tokenizer file off disk or a remote tokenizer. Cast the
+        #  pretrained_model_name_or_path to a string for Megatron but later pass it through as is
+        #  to AutoTokenizer.from_pretrained(...)
+        super().__init__(str(pretrained_model_name_or_path), **kwargs)
         try:
             import transformers
         except ImportError:

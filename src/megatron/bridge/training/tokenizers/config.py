@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from pathlib import Path
+from typing import Any, Literal, Optional, Union
 
 
 @dataclass
@@ -48,8 +49,8 @@ class TokenizerConfig:
     ] = None
     """What type of tokenizer to use."""
 
-    tokenizer_model: Optional[str] = None
-    """Sentencepiece tokenizer model."""
+    tokenizer_model: Optional[Union[str, Path]] = None
+    """Sentencepiece tokenizer model or the `pretrained_model_name_or_path` for a HuggingFace tokenizer."""
 
     tiktoken_pattern: Optional[str] = None
     """Which tiktoken pattern to use. Options: [v1, v2]"""
