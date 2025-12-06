@@ -32,8 +32,8 @@ class TestFlops:
             # ("llama", "llama31_405b_pretrain_config", 8192, 151936, 2.07e16),
             # ("qwen", "qwen3_30b_a3b_pretrain_config", 4096, 151643, 9.42e13),
             # ("qwen", "qwen3_235b_a22b_pretrain_config", 4096, 151643, 6.06e14),
-            ("nemotronh", "nemotronh_8b_pretrain_config", 8192, 131072, 4.83E+14),
-            ("nemotronh", "nemotronh_56b_pretrain_config", 8192, 131072, 3.47E+15),
+            ("nemotronh", "nemotronh_8b_pretrain_config", 8192, 131072, 4.83e14),
+            ("nemotronh", "nemotronh_56b_pretrain_config", 8192, 131072, 3.47e15),
         ],
     )
     def test_flops(self, model_family, model_config_func_name, seq_length, vocab_size, expected_flops):
@@ -57,7 +57,6 @@ class TestFlops:
         )
         cfg.model.vocab_size = cfg.tokenizer.padded_vocab_size
 
-        import pdb; pdb.set_trace()
         actual_num_flops = num_floating_point_operations(cfg, batch_size=1)
         actual_num_flops_rounded = float(f"{actual_num_flops:.2e}")
 
