@@ -1273,6 +1273,8 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     """
 
+    print_rank_0("Deleting CUDA graphs")
+
     # Explicitly delete the training CUDA graph because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
@@ -1280,7 +1282,6 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
     if cuda_graph_helper is not None:
-        print("Deleting CUDA graphs")
         for layers in cuda_graph_helper.callables_per_chunk:
             for layer in layers:
                 for cuda_graph in layer.cuda_graphs:
