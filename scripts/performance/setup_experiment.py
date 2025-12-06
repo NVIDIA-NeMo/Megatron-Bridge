@@ -408,7 +408,7 @@ def main(
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
-                assets_dir=assets_dir,
+                assets_dir=os.path.join(job_dir, exp_name),
                 log_paths=log_paths,
                 loss_metric="lm loss",
                 timing_metric="elapsed time per iteration (ms)",
