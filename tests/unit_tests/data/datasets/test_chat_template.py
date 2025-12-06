@@ -476,6 +476,7 @@ class TestTokenizerSpaceSensitive:
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model="gpt2",
+            legacy_tokenizer=True,
         )
 
         tokenizer = build_tokenizer(config)
@@ -497,6 +498,7 @@ class TestTokenizerSpaceSensitive:
         config = TokenizerConfig(
             tokenizer_type="SentencePieceTokenizer",
             tokenizer_model="tokenizer.model",
+            legacy_tokenizer=True,
         )
 
         tokenizer = build_tokenizer(config)

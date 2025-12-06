@@ -95,17 +95,16 @@ def chat_tokenizer():
         print("Pre-downloaded path not found, downloading from HuggingFace")
         tokenizer_path = "meta-llama/Llama-3.1-8B-Instruct"
 
+    metadata_path = {"library": "huggingface", "chat_template": LLAMA_31_CHAT_TEMPLATE_WITH_TOOLS}
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=tokenizer_path,
+        metadata_path=metadata_path,
     )
 
     # Override with custom template that has generation tags (like NeMo does)
     # This enables proper context/answer splitting via return_assistant_tokens_mask
-    tokenizer = build_tokenizer(
-        tokenizer_config=tokenizer_config,
-        chat_template=LLAMA_31_CHAT_TEMPLATE_WITH_TOOLS,
-    )
+    tokenizer = build_tokenizer(tokenizer_config=tokenizer_config)
 
     return tokenizer
 
