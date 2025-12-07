@@ -33,7 +33,7 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
 GPT_OSS_120B_GB300_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
-    micro_batch_size=4,
+    micro_batch_size=2,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )

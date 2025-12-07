@@ -38,6 +38,8 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+
 
 
 class GPTOSSCommonKwargs(TypedDict, total=False):
