@@ -74,6 +74,7 @@ MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
 
 ADAPTER_NAME_MAP = {
+    # Map HF weight suffixes (keys) to CanonicalLoRA adapter keys (values)
     ".q_proj.weight": "adapter_q",
     ".k_proj.weight": "adapter_k",
     ".v_proj.weight": "adapter_v",
@@ -156,8 +157,8 @@ class AdapterWeight:
     adapter_key: Optional[str]  # For canonical LoRA only
     alpha: int
     dim: int
-    linear_in_weight: torch.Tensor
-    linear_out_weight: torch.Tensor
+    linear_in_weight: MegatronWeightTuple
+    linear_out_weight: MegatronWeightTuple
 
 
 def _megatron_local_name_to_global(
@@ -342,7 +343,17 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
     def _get_adapter_wrap_module(
         self, local_base_prefix: str, megatron_model: Union[MegatronModel, List[MegatronModel]], vp_stage: int
     ) -> tuple[Optional[torch.nn.Module], Optional[torch.nn.Module]]:
-        """Get the adapter and to_wrap modules from the parent name."""
+        """Locate the adapter wrapper and its underlying module.
+
+        Args:
+            local_base_prefix: Module prefix without the ``.adapter`` suffix (e.g. ``decoder.layers.0.mlp.linear_fc1``).
+            megatron_model: Single model or list of models indexed by virtual pipeline stage.
+            vp_stage: Virtual pipeline stage corresponding to the provided prefix.
+
+        Returns:
+            A tuple ``(adapter, to_wrap)`` where ``adapter`` is the LoRA wrapper (or ``None`` if absent)
+            and ``to_wrap`` is the base linear module being wrapped.
+        """
         lora_module, _ = get_module_and_param_from_name(megatron_model, local_base_prefix, vp_stage)
         adapter = getattr(lora_module, "adapter", None)
         if adapter is None:
@@ -464,6 +475,17 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return gathered_global_param_objects
 
     def _construct_adapters_names(self, prefix: str, adapter_key: Optional[str]) -> tuple[str, str]:
+        """Build linear_in/linear_out parameter names for an adapter.
+
+        Args:
+            prefix: Base module prefix without any adapter suffix (global or local, depending on caller).
+            adapter_key: Optional adapter identifier used by CanonicalLoRA (e.g. ``adapter_q``). ``None`` for
+                standard single-adapter LoRA modules.
+
+        Returns:
+            Tuple ``(linear_in_name, linear_out_name)`` containing the parameter names for the adapter's
+            input and output projection weights.
+        """
         linear_in_name, linear_out_name = prefix + ".adapter", prefix + ".adapter"
         if adapter_key is not None:
             linear_in_name += f".{adapter_key}"
@@ -576,13 +598,13 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             linear_in_dict = mapping.megatron_to_hf(
                 adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
             )
-            linear_in_weight = next(iter(linear_in_dict.values()))
+            linear_in_tensor = next(iter(linear_in_dict.values()))
 
             mapping = adapter_task.linear_out_task.mapping
             linear_out_dict = mapping.megatron_to_hf(
                 adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
             )
-            linear_out_weight = next(iter(linear_out_dict.values()))
+            linear_out_tensor = next(iter(linear_out_dict.values()))
 
             materialized.append(
                 AdapterWeight(
@@ -590,8 +612,16 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     adapter_key=adapter_task.adapter_key,
                     alpha=adapter_task.alpha,
                     dim=adapter_task.dim,
-                    linear_in_weight=linear_in_weight,
-                    linear_out_weight=linear_out_weight,
+                    linear_in_weight=MegatronWeightTuple(
+                        adapter_task.linear_in_task.param_name,
+                        linear_in_tensor,
+                        adapter_task.linear_in_task.vp_stage,
+                    ),
+                    linear_out_weight=MegatronWeightTuple(
+                        adapter_task.linear_out_task.param_name,
+                        linear_out_tensor,
+                        adapter_task.linear_out_task.vp_stage,
+                    ),
                 )
             )
 
@@ -970,7 +1000,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         adapter_weight = adapter_weights[0]
         alpha, dim = adapter_weight.alpha, adapter_weight.dim
-        linear_in_weight, linear_out_weight = adapter_weight.linear_in_weight, adapter_weight.linear_out_weight
+        linear_in_weight, linear_out_weight = (
+            adapter_weight.linear_in_weight.weight,
+            adapter_weight.linear_out_weight.weight,
+        )
 
         # Check if this is a fused layer that gets split into multiple projections
         # For fused FC1: splits into gate_proj and up_proj (2 parts)
@@ -1083,8 +1116,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 base_weight,
                 target_adapter.alpha,
                 target_adapter.dim,
-                target_adapter.linear_in_weight,
-                target_adapter.linear_out_weight,
+                target_adapter.linear_in_weight.weight,
+                target_adapter.linear_out_weight.weight,
             )
             converted_weights_dict[hf_name] = merged_weight
 
