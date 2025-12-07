@@ -85,6 +85,7 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
+    moe_flex_dispatcher_backend: str
     # Checkpointing
     pretrained_checkpoint: Optional[str]
 
@@ -199,6 +200,7 @@ def _gpt_oss_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    moe_flex_dispatcher_backend: str = None,
     # Checkpointing
     pretrained_checkpoint: Optional[str] = None,
 ) -> ConfigContainer:
@@ -231,6 +233,7 @@ def _gpt_oss_common(
     if account_for_loss_in_pipeline_split:
         model_cfg.account_for_loss_in_pipeline_split = True
     model_cfg.cp_comm_type = cp_comm_type
+    apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
