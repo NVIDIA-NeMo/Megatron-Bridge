@@ -405,7 +405,6 @@ def main(
                     project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
                 )
 
-            assets_dir = os.path.join(job_dir, exp_name)
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
