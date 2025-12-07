@@ -137,7 +137,7 @@ def set_user_overrides(config, args):
     if args.wandb_entity_name:
         config.logger.wandb_entity = args.wandb_entity_name
     if args.wandb_experiment_name:
-        config.logger.wandb_experiment_name = args.wandb_experiment_name
+        config.logger.wandb_exp_name = args.wandb_experiment_name
     if args.wandb_save_dir:
         config.logger.wandb_save_dir = args.wandb_save_dir
 
