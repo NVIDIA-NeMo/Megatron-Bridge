@@ -51,6 +51,7 @@ def gpt_oss_120b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
         precision_config=precision_config,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -70,6 +71,7 @@ def gpt_oss_120b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
         precision_config=precision_config,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
