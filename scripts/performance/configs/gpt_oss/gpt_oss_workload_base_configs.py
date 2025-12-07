@@ -30,7 +30,7 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
 
 # GPT-OSS 120B presets ---------------------------------------------------------
 
-GPT_OSS_120B_GB300_BF16_BASE_CONFIG = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
@@ -39,7 +39,7 @@ GPT_OSS_120B_GB300_BF16_BASE_CONFIG = replace(
 )
 
 
-GPT_OSS_120B_GB200_BF16_BASE_CONFIG = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
@@ -47,7 +47,7 @@ GPT_OSS_120B_GB200_BF16_BASE_CONFIG = replace(
 )
 
 
-GPT_OSS_120B_B200_BF16_BASE_CONFIG = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
@@ -55,7 +55,7 @@ GPT_OSS_120B_B200_BF16_BASE_CONFIG = replace(
 )
 
 
-GPT_OSS_120B_H100_BF16_BASE_CONFIG = replace(
+GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     pipeline_model_parallel_size=4,
     recompute_modules=["layernorm", "moe_act"],
@@ -63,8 +63,8 @@ GPT_OSS_120B_H100_BF16_BASE_CONFIG = replace(
 
 
 __all__ = [
-    "GPT_OSS_120B_GB300_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_GB200_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_B200_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_H100_BF16_BASE_CONFIG",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_BASE_CONFIG",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16_BASE_CONFIG",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_BASE_CONFIG",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_BASE_CONFIG",
 ]
