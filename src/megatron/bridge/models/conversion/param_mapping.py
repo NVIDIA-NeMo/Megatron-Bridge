@@ -2059,7 +2059,7 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
     """
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
-        hf_weights.data = hf_weights.data - 1
+        hf_weights.data = hf_weights.data
         return super().hf_to_megatron(hf_weights, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
@@ -2068,7 +2068,7 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
             f"Expected a dictionary with one element, got {hf_weights.keys()=}"
         )
         inner_hf_weight = list(hf_weights.values())[0]
-        inner_hf_weight.data = inner_hf_weight.data + 1
+        inner_hf_weight.data = inner_hf_weight.data
         return hf_weights
 
 
