@@ -22,6 +22,7 @@ from megatron.bridge.models.conversion.model_bridge import (
     AdapterWeight,
     AdapterWeightConversionTask,
     MegatronModelBridge,
+    MegatronWeightTuple,
     WeightConversionTask,
 )
 from megatron.bridge.models.conversion.param_mapping import ColumnParallelMapping, merge_qkv_weights
@@ -44,8 +45,8 @@ def test_merge_lora_adapter_weights_merges(monkeypatch):
         adapter_key=None,
         alpha=4,
         dim=4,
-        linear_in_weight=torch.eye(4),
-        linear_out_weight=torch.eye(4),
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(4), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", torch.eye(4), vp_stage=0),
     )
 
     updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
@@ -80,8 +81,8 @@ def test_merge_lora_adapter_weights_fused_fc1(monkeypatch):
         adapter_key=None,
         alpha=1,
         dim=1,
-        linear_in_weight=torch.eye(4),
-        linear_out_weight=linear_out,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(4), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", linear_out, vp_stage=0),
     )
 
     updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
@@ -115,8 +116,8 @@ def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
         adapter_key=None,
         alpha=4,
         dim=4,
-        linear_in_weight=torch.eye(4),
-        linear_out_weight=linear_out,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(4), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", linear_out, vp_stage=0),
     )
 
     updated = bridge._merge_lora_adapter_weights(megatron_model, converted, [adapter_weight])
@@ -138,24 +139,24 @@ def test_merge_canonical_adapter_from_weights(monkeypatch):
         adapter_key="adapter_q",
         alpha=1,
         dim=1,
-        linear_in_weight=torch.eye(2),
-        linear_out_weight=torch.ones(2, 2),
+        linear_in_weight=MegatronWeightTuple("in_q", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_q", torch.ones(2, 2), vp_stage=0),
     )
     adapter_k = AdapterWeight(
         global_base_prefix="decoder.layers.0.self_attn.linear_qkv",
         adapter_key="adapter_k",
         alpha=1,
         dim=1,
-        linear_in_weight=torch.eye(2),
-        linear_out_weight=2 * torch.ones(1, 2),
+        linear_in_weight=MegatronWeightTuple("in_k", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_k", 2 * torch.ones(1, 2), vp_stage=0),
     )
     adapter_v = AdapterWeight(
         global_base_prefix="decoder.layers.0.self_attn.linear_qkv",
         adapter_key="adapter_v",
         alpha=1,
         dim=1,
-        linear_in_weight=torch.eye(2),
-        linear_out_weight=3 * torch.ones(1, 2),
+        linear_in_weight=MegatronWeightTuple("in_v", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_v", 3 * torch.ones(1, 2), vp_stage=0),
     )
 
     updated = bridge._merge_canonical_adapter_from_weights(converted, [adapter_q, adapter_k, adapter_v])
@@ -370,8 +371,8 @@ def test_materialize_adapter_weights(monkeypatch):
 
     materials = bridge.materialize_adapter_weights(adapter_tasks)
     assert len(materials) == 1
-    assert torch.all(materials[0].linear_in_weight == torch.ones(2, 2))
-    assert torch.all(materials[0].linear_out_weight == 2 * torch.ones(2, 2))
+    assert torch.all(materials[0].linear_in_weight.weight == torch.ones(2, 2))
+    assert torch.all(materials[0].linear_out_weight.weight == 2 * torch.ones(2, 2))
 
 
 def test_column_parallel_mapping_skips_ep_gather_for_adapters(monkeypatch):
