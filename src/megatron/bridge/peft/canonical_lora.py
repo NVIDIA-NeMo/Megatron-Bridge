@@ -257,8 +257,9 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             if name == "linear_qkv":
                 adapter_q, adapter_k, adapter_v = None, None, None
                 kv_out_features = m.config.kv_channels * m.config.num_query_groups
+                q_out_features = m.config.kv_channels * m.config.num_attention_heads
                 if "linear_q" in canonical_submodules:
-                    adapter_q = ParallelLinearAdapter(in_features, in_features, **adapter_kwargs)
+                    adapter_q = ParallelLinearAdapter(in_features, q_out_features, **adapter_kwargs)
                 if "linear_k" in canonical_submodules:
                     adapter_k = ParallelLinearAdapter(in_features, kv_out_features, **adapter_kwargs)
                 if "linear_v" in canonical_submodules:
