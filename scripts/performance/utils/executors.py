@@ -187,6 +187,7 @@ def dgxc_executor(
         "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
         "NVTE_ASYNC_AMAX_REDUCTION": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TOKENIZERS_PARALLELISM": "False",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
