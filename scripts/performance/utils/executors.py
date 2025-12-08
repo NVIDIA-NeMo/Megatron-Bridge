@@ -189,6 +189,7 @@ def dgxc_executor(
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TOKENIZERS_PARALLELISM": "False",
         "TRANSFORMERS_OFFLINE": "1",
+        "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
