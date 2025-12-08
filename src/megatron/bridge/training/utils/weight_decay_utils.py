@@ -12,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from typing import Callable, Optional, Union
 
 import torch
 
 
 def get_no_weight_decay_cond(
-    no_weight_decay_cond_type: str, default_skip_embedding_weight_decay: bool
-) -> Callable[[str, torch.Tensor], bool]:
+    no_weight_decay_cond_type: Optional[Union[str, Callable[[str, torch.nn.Parameter], bool]]],
+    default_skip_embedding_weight_decay: bool,
+) -> Optional[Callable[[str, torch.nn.Parameter], bool]]:
     """Get the no weight decay condition function."""
-
+    no_weight_decay_cond_fn: Optional[Callable[[str, torch.nn.Parameter], bool]] = None
     # Default case: no_wd_decay_cond_type is None
-    no_weight_decay_cond_fn = None
-
     if no_weight_decay_cond_type == "qwen3_next":
         # Qwen3-Next applies weight decay to qk layernorm as a special case
         def qwen3_next_no_weight_decay_cond(name, param):
@@ -39,6 +38,8 @@ def get_no_weight_decay_cond(
             return no_wd
 
         no_weight_decay_cond_fn = qwen3_next_no_weight_decay_cond
+    elif callable(no_weight_decay_cond_type):
+        no_weight_decay_cond_fn = no_weight_decay_cond_type
     elif no_weight_decay_cond_type is not None:
         raise ValueError(f"Invalid no_weight_decay_cond_type: {no_weight_decay_cond_type}")
 
