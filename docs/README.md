@@ -178,7 +178,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 ### Subdirectories
 
-#### [models/](models.README.md)
+#### [models/](models/README.md)
 
 - **[llm/](models/llm/README.md)** - Large Language Model documentation
   - Individual model guides (Qwen, LLaMA, Mistral, etc.)
@@ -250,7 +250,6 @@ graph TD
 
 ## 📖 Additional Resources
 
-- **[Main Repository README](../README.md)** - Project overview, installation, and quickstart
 - **[Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples)** - Code examples and tutorials
 - **[Contributing Guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)** - How to contribute to the project
 - **[API Documentation](apidocs/index.rst)** - Complete API reference

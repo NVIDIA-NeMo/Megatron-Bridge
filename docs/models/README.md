@@ -236,4 +236,4 @@ Refer to the [Bridge Guide](../bridge-guide.md) for detailed conversion instruct
 - [Large Language Models (LLMs)](llm/README.md)
 - [Vision Language Models (VLMs)](vlm/README.md)
 
-Or return to the [main documentation index](../README.md).
+Or return to the [main documentation](../README.md).

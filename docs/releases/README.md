@@ -61,9 +61,8 @@ The [Known Issues](known-issues.md) document covers:
 
 ## Related Documentation
 
-- **[Main Documentation Index](../index.md)** - Return to main documentation
+- **[Main Documentation](../README.md)** - Return to main documentation
 - **[Documentation Guide](../documentation.md)** - Contributing to documentation
-- **[Development Guides](../index.md#development)** - Development resources
 
 ## Staying Up to Date
 
@@ -76,4 +75,4 @@ To stay informed about releases:
 
 ---
 
-**Need version information?** Check [Software Versions](software-versions.md) or return to the [main documentation index](../index.md).
+**Need version information?** Check [Software Versions](software-versions.md) or return to the [main documentation](../README.md).

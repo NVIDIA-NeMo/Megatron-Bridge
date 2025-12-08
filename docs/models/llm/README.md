@@ -33,7 +33,7 @@ Megatron Bridge supports the following LLM families:
 → Each model page includes conversion examples for Hugging Face ↔ Megatron Bridge
 
 **🚀 Get started with training**
-→ See [Training Documentation](../../training/index.md) for training guides
+→ See [Training Documentation](../../training/README.md) for training guides
 
 **📚 Understand model architecture**
 → Each model page documents architecture-specific features and configurations
@@ -43,9 +43,9 @@ Megatron Bridge supports the following LLM families:
 
 ## Related Documentation
 
-- **[Models Overview](../index.md)** - Return to main models documentation
-- **[Vision Language Models](../vlm/index.md)** - VLM model documentation
-- **[Training Guides](../../training/index.md)** - Training and customization guides
+- **[Models Overview](../README.md)** - Return to main models documentation
+- **[Vision Language Models](../vlm/README.md)** - VLM model documentation
+- **[Training Documentation](../../training/README.md)** - Training and customization guides
 - **[Bridge Guide](../../bridge-guide.md)** - Working with Hugging Face models
 - **[Adding New Models](../../adding-new-models.md)** - Extending model support
 
@@ -61,4 +61,4 @@ Each model documentation page typically includes:
 
 ---
 
-**Ready to explore?** Choose a model from the list above or return to the [main documentation index](../../index.md).
+**Ready to explore?** Choose a model from the list above or return to the [main documentation](../../README.md).

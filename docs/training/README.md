@@ -19,7 +19,7 @@ This directory contains comprehensive documentation for training and customizing
 → Read [Checkpointing](checkpointing.md) for saving and resuming training
 
 **⚡ Optimize performance**
-→ Explore [Performance Guides](../../performance-guide.md) and [Performance Summary](../../performance-summary.md)
+→ Explore [Performance Guide](../performance-guide.md) and [Performance Summary](../performance-summary.md)
 
 **🔧 Customize training**
 → See [PEFT](peft.md), [Distillation](distillation.md), and [Entry Points](entry-points.md)
@@ -116,4 +116,4 @@ A typical training workflow involves:
 
 ---
 
-**Ready to start training?** Begin with [Configuration Container Overview](config-container-overview.md) or return to the [main documentation index](../index.md).
+**Ready to start training?** Begin with [Configuration Container Overview](config-container-overview.md) or return to the [main documentation](../README.md).
