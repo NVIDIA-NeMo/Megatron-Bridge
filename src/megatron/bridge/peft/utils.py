@@ -632,13 +632,17 @@ class ParallelLinearAdapter(nn.Module):
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
 
-        # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP).
+        # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP),
+        # but it will cause errors as mentioned in https://github.com/volcengine/verl/issues/4303,
+        # since adapter weights are not EP sharded and it assumes that it will
+        # replicate along DP modulo EP (sharded by EP)
         if self.is_expert:
             from megatron.core import parallel_state
 
             ep_rank = parallel_state.get_expert_model_parallel_rank()
             edp_rank = parallel_state.get_expert_data_parallel_rank()
             dp_size = parallel_state.get_data_parallel_world_size()
+            # TODO: This modification logic is in question and needs further verification.
             rank = (ep_rank + 1) * (edp_rank + 1) - 1 if dp_size == 1 else ep_rank
             for sd in [linear_in_sd, linear_out_sd]:
                 for v in sd.values():
