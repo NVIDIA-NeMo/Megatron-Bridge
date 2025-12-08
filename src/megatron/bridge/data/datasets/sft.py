@@ -958,9 +958,11 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             cu_seqlens_unpadded = self._collate_item(
                 cu_seqlens_unpadded, max_length=max(len(length) for length in cu_seqlens_unpadded) + 1, pad_id=-1
             )
-            # Pre-generate `cu_seqlens_argmin` as CPU tensor to avoid device-to-host copies.
+            # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
             cu_seqlens = torch.IntTensor(cu_seqlens)
             cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
+            seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+            max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
             cu_seqlens_unpadded = torch.IntTensor(cu_seqlens_unpadded)
             cu_seqlens_unpadded_argmin = torch.argmin(cu_seqlens_unpadded, dim=1, keepdim=True)
 
@@ -976,21 +978,8 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 safe_max_seqlen = max(dataset_max_seqlen, padding_gap)
                 max_seqlen = torch.IntTensor([safe_max_seqlen] * len(cu_seqlens))
             else:
-                # Compute max_seqlen excluding the padding segment (marked by -1 padding in cu_seqlens).
-                # The padding segment is added when the packed sequence doesn't fill max_length,
-                # and including it in max_seqlen can cause NaN in attention kernels.
-                max_seqlen_list = []
-                for i in range(len(cu_seqlens)):
-                    # Find the valid entries (before -1 padding)
-                    valid_idx = cu_seqlens_argmin[i].item()
-                    valid_cu_seqlens = cu_seqlens[i, :valid_idx]
-                    if len(valid_cu_seqlens) > 1:
-                        seqlens_i = valid_cu_seqlens[1:] - valid_cu_seqlens[:-1]
-                        max_seqlen_list.append(seqlens_i.max().item())
-                    else:
-                        # Fallback: use max_length if no valid sequences
-                        max_seqlen_list.append(max_length)
-                max_seqlen = torch.IntTensor(max_seqlen_list).unsqueeze(1)
+                seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+                max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
             processed_batch.update(
                 {
                     "attention_mask": torch.LongTensor(
