@@ -127,7 +127,7 @@ def set_user_overrides(config, args):
         config.model.expert_tensor_model_parallel_size = args.expert_tensor_parallel_size
 
     # Logging configuration
-    config.logger.log_timers_to_tensorboard = False
+    config.logger.log_timers_to_tensorboard = True
     if args.save_config_filepath:
         config.logger.save_config_filepath = args.save_config_filepath
 
