@@ -12,7 +12,7 @@ This directory contains release information, version history, and known issues f
 
 ## Quick Navigation
 
-### I want to...
+### I want to
 
 **📋 Check current versions**
 → See [Software Versions](software-versions.md) for current versions and dependencies
@@ -32,14 +32,18 @@ This directory contains release information, version history, and known issues f
 ## Release Information Overview
 
 ### Software Versions
+
 The [Software Versions](software-versions.md) document provides:
+
 - Current Megatron Bridge version
 - Required dependency versions
 - Compatible software versions
 - Version compatibility matrix
 
 ### Changelog
+
 The [Changelog](changelog.md) includes:
+
 - Release dates and version numbers
 - New features and enhancements
 - Bug fixes and improvements
@@ -47,7 +51,9 @@ The [Changelog](changelog.md) includes:
 - Deprecations and removals
 
 ### Known Issues
+
 The [Known Issues](known-issues.md) document covers:
+
 - Known bugs and their status
 - Limitations and constraints
 - Workarounds and solutions
@@ -71,4 +77,3 @@ To stay informed about releases:
 ---
 
 **Need version information?** Check [Software Versions](software-versions.md) or return to the [main documentation index](../index.md).
-

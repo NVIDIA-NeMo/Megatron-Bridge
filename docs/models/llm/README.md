@@ -24,7 +24,7 @@ Megatron Bridge supports the following LLM families:
 
 ## Quick Navigation
 
-### I want to...
+### I want to
 
 **🔍 Find a specific model**
 → Browse the model list above or use the [index page](index.md)
@@ -62,4 +62,3 @@ Each model documentation page typically includes:
 ---
 
 **Ready to explore?** Choose a model from the list above or return to the [main documentation index](../../index.md).
-

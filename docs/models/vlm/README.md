@@ -15,7 +15,7 @@ Megatron Bridge supports the following VLM families:
 
 ## Quick Navigation
 
-### I want to...
+### I want to
 
 **🔍 Find a specific VLM model**
 → Browse the model list above or use the [index page](index.md)
@@ -52,4 +52,3 @@ VLMs typically support:
 ---
 
 **Ready to explore?** Choose a model from the list above or return to the [main documentation index](../../index.md).
-

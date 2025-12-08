@@ -4,7 +4,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 
 ## 🚀 Quick Start Paths
 
-### I want to...
+### I want to
 
 **🏃‍♂️ Get started with model conversion**
 → Start with [Bridge Guide](bridge-guide.md) for Hugging Face ↔ Megatron conversion
@@ -35,21 +35,25 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 ## 👥 Documentation by Role
 
 ### For ML Engineers & Researchers
+
 - **Start here:** [Bridge Guide](bridge-guide.md) → [Training Documentation](training/README.md)
 - **Deep dive:** [Performance Guide](performance-guide.md) → [Training Optimization Guides](training/README.md#optimization-and-performance)
 - **Model support:** [Supported Models](models/llm/index.md) → [Adding New Models](adding-new-models.md)
 
 ### For Training Engineers
+
 - **Start here:** [Training Documentation](training/README.md) → [Configuration Container Overview](training/config-container-overview.md)
 - **Performance:** [Performance Guide](performance-guide.md) → [Performance Summary](performance-summary.md)
 - **Parallelisms:** [Parallelisms Guide](parallelisms.md) → [Training Optimization](training/README.md#optimization-and-performance)
 
 ### For Model Developers
+
 - **Start here:** [Bridge Guide](bridge-guide.md) → [Bridge Tech Details](bridge-tech-details.md)
 - **Model support:** [Adding New Models](adding-new-models.md) → [Model Documentation](models/llm/index.md)
 - **Integration:** [Bridge RL Integration](bridge-rl-integration.md)
 
 ### For DevOps & Platform Teams
+
 - **Start here:** [Releases Documentation](releases/README.md) → [Software Versions](releases/software-versions.md)
 - **Troubleshooting:** [Known Issues](releases/known-issues.md)
 - **API Reference:** [API Documentation](apidocs/index.rst)
@@ -118,12 +122,14 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 ## 🗺️ Common Reading Paths
 
 ### 🆕 First-Time Users
+
 1. [Bridge Guide](bridge-guide.md) *(10 min - understand conversion)*
 2. [Parallelisms Guide](parallelisms.md) *(15 min - understand distributed training)*
 3. [Training Documentation](training/README.md) *(choose your training path)*
 4. [Recipe Usage](recipe-usage.md) *(5 min - use pre-configured recipes)*
 
 ### 🔧 Setting Up Training
+
 1. [Training Documentation](training/README.md) *(overview of training system)*
 2. [Configuration Container Overview](training/config-container-overview.md) *(understand configuration)*
 3. [Entry Points](training/entry-points.md) *(how training starts)*
@@ -131,6 +137,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 5. [Logging](training/logging.md) *(set up monitoring)*
 
 ### ⚡ Performance Optimization
+
 1. [Performance Guide](performance-guide.md) *(comprehensive optimization strategies)*
 2. [Performance Summary](performance-summary.md) *(quick reference)*
 3. [Mixed Precision](training/mixed-precision.md) *(reduce memory usage)*
@@ -139,12 +146,14 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 6. [Profiling](training/profiling.md) *(identify bottlenecks)*
 
 ### 🔄 Model Conversion Workflow
+
 1. [Bridge Guide](bridge-guide.md) *(conversion basics)*
 2. [Bridge Tech Details](bridge-tech-details.md) *(technical details)*
 3. [Supported Models](models/llm/index.md) or [Vision Language Models](models/vlm/index.md) *(model-specific guides)*
 4. [Adding New Models](adding-new-models.md) *(extend support)*
 
 ### 🔧 Customization and Extension
+
 1. [Training Documentation](training/README.md) *(training customization)*
 2. [PEFT](training/peft.md) *(parameter-efficient fine-tuning)*
 3. [Distillation](training/distillation.md) *(knowledge distillation)*
@@ -152,6 +161,7 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 5. [Bridge RL Integration](bridge-rl-integration.md) *(RL workflows)*
 
 ### 📦 Migration Paths
+
 1. [NeMo 2 Migration Guide](nemo2-migration-guide.md) *(from NeMo 2)*
 2. [Megatron-LM Migration Guide](megatron-lm-to-megatron-bridge.md) *(from Megatron-LM)*
 3. [Training Documentation](training/README.md) *(new training system)*
@@ -161,28 +171,32 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 ## 📁 Directory Structure
 
 ### Main Documentation
+
 - **Guides** - Core guides for parallelisms, performance, recipes, and migration
 - **Bridge Documentation** - Hugging Face ↔ Megatron conversion guides
 - **Model Documentation** - Supported model families and architectures
 
 ### Subdirectories
 
-#### [models/](models/)
-- **[llm/](models/llm/)** - Large Language Model documentation
+#### [models/](models.README.md)
+
+- **[llm/](models/llm/README.md)** - Large Language Model documentation
   - Individual model guides (Qwen, LLaMA, Mistral, etc.)
   - Conversion examples and training recipes
-- **[vlm/](models/vlm/)** - Vision Language Model documentation
+- **[vlm/](models/vlm/README.md)** - Vision Language Model documentation
   - VLM model guides (Qwen VL, Gemma VL, etc.)
   - Multimodal model support
 
-#### [training/](training/)
+#### [training/](training/README.md)
+
 - **Configuration** - ConfigContainer, entry points, training loop settings
 - **Optimization** - Optimizer, scheduler, mixed precision, communication overlap
 - **Performance** - Attention optimizations, activation recomputation, CPU offloading
 - **Monitoring** - Logging, profiling, checkpointing, resiliency
 - **Advanced** - PEFT, packed sequences, distillation
 
-#### [releases/](releases/)
+#### [releases/](releases/README.md)
+
 - **Software Versions** - Current versions and dependencies
 - **Changelog** - Release history and changes
 - **Known Issues** - Bugs, limitations, and workarounds
@@ -244,4 +258,3 @@ graph TD
 ---
 
 **Ready to get started?** Choose your path above or dive into the [Bridge Guide](bridge-guide.md) for model conversion! 🚀
-

@@ -4,7 +4,7 @@ This directory contains comprehensive documentation for training and customizing
 
 ## Quick Navigation
 
-### I want to...
+### I want to
 
 **🚀 Get started with training**
 → Start with [Configuration Container Overview](config-container-overview.md) to understand the training setup
@@ -87,12 +87,14 @@ A typical training workflow involves:
 ## Common Training Scenarios
 
 ### 🆕 First-Time Training Setup
+
 1. [Configuration Container Overview](config-container-overview.md) - Understand the configuration system
 2. [Entry Points](entry-points.md) - Learn how to start training
 3. [Training Loop Settings](training-loop-settings.md) - Configure basic training parameters
 4. [Logging](logging.md) - Set up monitoring
 
 ### ⚡ Performance Optimization
+
 1. [Performance Guide](../performance-guide.md) - Comprehensive optimization strategies
 2. [Mixed Precision](mixed-precision.md) - Enable mixed precision training
 3. [Communication Overlap](communication-overlap.md) - Optimize distributed training
@@ -100,12 +102,14 @@ A typical training workflow involves:
 5. [Profiling](profiling.md) - Identify bottlenecks
 
 ### 💾 Production Training
+
 1. [Checkpointing](checkpointing.md) - Reliable checkpoint management
 2. [Resiliency](resiliency.md) - Handle failures gracefully
 3. [Logging](logging.md) - Comprehensive monitoring
 4. [Profiling](profiling.md) - Performance analysis
 
 ### 🔧 Customization
+
 1. [PEFT](peft.md) - Parameter-efficient fine-tuning
 2. [Distillation](distillation.md) - Knowledge distillation
 3. [Entry Points](entry-points.md) - Custom training workflows
@@ -113,4 +117,3 @@ A typical training workflow involves:
 ---
 
 **Ready to start training?** Begin with [Configuration Container Overview](config-container-overview.md) or return to the [main documentation index](../index.md).
-

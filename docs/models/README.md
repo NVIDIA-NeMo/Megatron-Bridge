@@ -15,6 +15,7 @@ Text-only models for language understanding and generation tasks.
 | **Large Language Models** | 13 models | [LLM Documentation](llm/README.md) |
 
 **Supported LLM Families:**
+
 - DeepSeek (V2, V3)
 - Gemma (2, 3)
 - GLM-4.5
@@ -35,6 +36,7 @@ Multimodal models that combine vision and language capabilities.
 | **Vision Language Models** | 4 models | [VLM Documentation](vlm/README.md) |
 
 **Supported VLM Families:**
+
 - Gemma 3 VL
 - Nemotron Nano V2 VL
 - Qwen (2.5 VL, 3 VL)
@@ -43,7 +45,7 @@ Multimodal models that combine vision and language capabilities.
 
 ## Quick Navigation
 
-### I want to...
+### I want to
 
 **🔍 Find a specific LLM model**
 → Browse [Large Language Models](llm/README.md) documentation
@@ -85,17 +87,20 @@ Each model documentation page typically includes:
 ### For LLM Models
 
 **Training:**
+
 - Pretraining on large corpora
 - Supervised fine-tuning (SFT)
 - Parameter-efficient fine-tuning (PEFT/LoRA)
 - Preference optimization (DPO)
 
 **Deployment:**
+
 - Export to Hugging Face format
 - Integration with inference engines
 - Model serving and deployment
 
 **Use Cases:**
+
 - Text generation
 - Question answering
 - Conversational AI
@@ -104,15 +109,18 @@ Each model documentation page typically includes:
 ### For VLM Models
 
 **Training:**
+
 - Multimodal pretraining
 - Vision-language alignment
 - Fine-tuning on visual tasks
 
 **Deployment:**
+
 - Export to Hugging Face format
 - Multimodal inference
 
 **Use Cases:**
+
 - Image captioning
 - Visual question answering
 - Document understanding
@@ -123,17 +131,20 @@ Each model documentation page typically includes:
 ## Related Documentation
 
 ### Getting Started
+
 - **[Main Documentation](../README.md)** - Return to main documentation
 - **[Bridge Guide](../bridge-guide.md)** - Hugging Face ↔ Megatron conversion
 - **[Bridge Tech Details](../bridge-tech-details.md)** - Technical details of the bridge system
 
 ### Training Resources
+
 - **[Training Documentation](../training/README.md)** - Comprehensive training guides
 - **[Configuration Container](../training/config-container-overview.md)** - Training configuration
 - **[Parallelisms Guide](../parallelisms.md)** - Data and model parallelism strategies
 - **[Performance Guide](../performance-guide.md)** - Performance optimization
 
 ### Advanced Topics
+
 - **[Adding New Models](../adding-new-models.md)** - Extending model support
 - **[Recipe Usage](../recipe-usage.md)** - Using pre-configured training recipes
 - **[Bridge RL Integration](../bridge-rl-integration.md)** - Reinforcement learning integration
@@ -146,6 +157,7 @@ Each model documentation page typically includes:
 ### By Architecture Type
 
 **Decoder-Only (Autoregressive):**
+
 - GPT-style models (GPT-OSS)
 - LLaMA family (LLaMA 3, LLaMA Nemotron)
 - Qwen family (Qwen 2, 2.5, 3, 3-Next)
@@ -154,11 +166,13 @@ Each model documentation page typically includes:
 - Mistral, Moonlight, Nemotron-H, GLM-4.5
 
 **Mixture-of-Experts (MoE):**
+
 - Qwen 3 MoE, Qwen 3-Next
 - DeepSeek V2, V3
 - OLMoE
 
 **Vision-Language (Multimodal):**
+
 - Gemma 3 VL
 - Qwen 2.5 VL, Qwen 3 VL
 - Nemotron Nano V2 VL
@@ -166,25 +180,31 @@ Each model documentation page typically includes:
 ### By Provider
 
 **Meta/LLaMA:**
+
 - LLaMA 3
 
 **NVIDIA:**
+
 - LLaMA Nemotron
 - Nemotron-H
 - Nemotron Nano V2 VL
 
 **Alibaba Cloud:**
+
 - Qwen (2, 2.5, 3, 3 MoE, 3-Next)
 - Qwen VL (2.5, 3)
 
 **Google:**
+
 - Gemma (2, 3)
 - Gemma 3 VL
 
 **DeepSeek:**
+
 - DeepSeek (V2, V3)
 
 **Other:**
+
 - Mistral AI (Mistral)
 - GLM-4.5
 - GPT-OSS
@@ -201,6 +221,7 @@ All models support bidirectional conversion:
 - **Megatron Bridge → Hugging Face**: Export trained models for deployment
 
 Conversion features:
+
 - Automatic architecture detection
 - Parallelism-aware conversion (TP/PP/VPP/CP/EP)
 - Streaming and memory-efficient transfers
@@ -211,8 +232,8 @@ Refer to the [Bridge Guide](../bridge-guide.md) for detailed conversion instruct
 ---
 
 **Ready to explore?** Choose a model category:
+
 - [Large Language Models (LLMs)](llm/README.md)
 - [Vision Language Models (VLMs)](vlm/README.md)
 
 Or return to the [main documentation index](../README.md).
-
