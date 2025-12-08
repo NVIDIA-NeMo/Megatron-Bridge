@@ -1763,6 +1763,7 @@ dependencies = [
     { name = "httpx" },
     { name = "packaging" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "shellingham" },
     { name = "tqdm" },
     { name = "typer-slim" },
