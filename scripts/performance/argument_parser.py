@@ -32,6 +32,11 @@ def list_of_strings(arg):
     return arg.split(",")
 
 
+def to_dict(arg):
+    """Split a comma-separated string into a dictionary of key-value pairs."""
+    return dict(item.split("=") for item in arg.split(";"))
+
+
 def lower_str(arg):
     """Lowercase a CLI string argument with a runtime type check."""
     assert isinstance(arg, str), f"Argument {arg} is not a string"
@@ -66,6 +71,55 @@ def is_cuda_graph_scope_valid(arg):
             f"Invalid value for cuda_graph_scope: {arg}. Valid options are: {VALID_CUDA_GRAPH_SCOPES}. "
             "Comma separated list of scopes is allowed."
         )
+
+
+def parse_additional_slurm_params(params_str):
+    """
+    Parse additional SLURM parameters from a string of key=value pairs.
+    This function handles different separator formats:
+    1. Semicolon-separated: "key1=value1;key2=value2" (recommended for multiple parameters)
+    2. Space-separated: "key1=value1 key2=value2"
+    3. Single parameter: "key1=value1,value2" (no separators = single parameter)
+    Args:
+        params_str (str): String with parameters
+    Returns:
+        dict: Dictionary of parameters, or None if params_str is None/empty
+    Example:
+        parse_additional_slurm_params("nodelist=node001,node002")
+        returns {"nodelist": "node001,node002"}
+        parse_additional_slurm_params("nodelist=node001,node002;constraint=gpu")
+        returns {"nodelist": "node001,node002", "constraint": "gpu"}
+        parse_additional_slurm_params("reservation=my_res;constraint=gpu")
+        returns {"reservation": "my_res", "constraint": "gpu"}
+    """
+    if not params_str:
+        return None
+
+    params = {}
+
+    # Try semicolon separation first (most reliable for complex values)
+    if ";" in params_str:
+        parts = params_str.split(";")
+    # Try space separation next
+    elif " " in params_str:
+        parts = params_str.split()
+    # No separators found - treat as single parameter
+    else:
+        parts = [params_str]
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        if "=" in part:
+            key, value = part.split("=", 1)
+            params[key.strip()] = value.strip()
+        else:
+            # Boolean flag (no value)
+            params[part] = True
+
+    return params if params else None
 
 
 def parse_cli_args():
@@ -117,9 +171,9 @@ def parse_cli_args():
     )
     parser.add_argument(
         "--detach",
-        help="Detach the experiment from the terminal. Disabled by default",
+        help="Detach the experiment from the terminal. Enabled by default",
         type=bool_arg,
-        default=False,
+        default=True,
     )
     parser.add_argument(
         "--max_retries",
@@ -300,6 +354,13 @@ def parse_cli_args():
         default=[],
     )
     slurm_args.add_argument(
+        "-ce",
+        "--custom_env_vars",
+        type=to_dict,
+        help="Comma separated string of environment variables",
+        default=[],
+    )
+    slurm_args.add_argument(
         "-cs",
         "--custom_srun_args",
         type=list_of_strings,
@@ -308,10 +369,61 @@ def parse_cli_args():
     )
     slurm_args.add_argument(
         "--additional_slurm_params",
-        type=str,
+        type=parse_additional_slurm_params,
         help="Additional SLURM parameters as key=value pairs. "
         "Use semicolons (;) to separate parameters when values contain commas. "
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
+        required=False,
+    )
+
+    # DGXCloud
+    dgxc_args = parser.add_argument_group("DGXCloud arguments")
+    dgxc_args.add_argument(
+        "--dgxc_cluster",
+        type=str,
+        help="DGXCloud cluster to use for experiment",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_base_url",
+        type=str,
+        help="DGXCloud base url",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_kube_apiserver_url",
+        type=str,
+        help="DGXCloud kube apiserver url",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_app_id",
+        type=str,
+        help="DGXCloud app id",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_app_secret",
+        type=str,
+        help="DGXCloud app secret",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_project_name",
+        type=str,
+        help="DGXCloud project name",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_pvc_claim_name",
+        type=str,
+        help="DGXCloud pvc claim name",
+        required=False,
+    )
+    dgxc_args.add_argument(
+        "--dgxc_pvc_mount_path",
+        type=str,
+        help="DGXCloud pvc mount path",
         required=False,
     )
 
@@ -516,52 +628,3 @@ def parse_cli_args():
     )
 
     return parser
-
-
-def parse_additional_slurm_params(params_str):
-    """
-    Parse additional SLURM parameters from a string of key=value pairs.
-    This function handles different separator formats:
-    1. Semicolon-separated: "key1=value1;key2=value2" (recommended for multiple parameters)
-    2. Space-separated: "key1=value1 key2=value2"
-    3. Single parameter: "key1=value1,value2" (no separators = single parameter)
-    Args:
-        params_str (str): String with parameters
-    Returns:
-        dict: Dictionary of parameters, or None if params_str is None/empty
-    Example:
-        parse_additional_slurm_params("nodelist=node001,node002")
-        returns {"nodelist": "node001,node002"}
-        parse_additional_slurm_params("nodelist=node001,node002;constraint=gpu")
-        returns {"nodelist": "node001,node002", "constraint": "gpu"}
-        parse_additional_slurm_params("reservation=my_res;constraint=gpu")
-        returns {"reservation": "my_res", "constraint": "gpu"}
-    """
-    if not params_str:
-        return None
-
-    params = {}
-
-    # Try semicolon separation first (most reliable for complex values)
-    if ";" in params_str:
-        parts = params_str.split(";")
-    # Try space separation next
-    elif " " in params_str:
-        parts = params_str.split()
-    # No separators found - treat as single parameter
-    else:
-        parts = [params_str]
-
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-
-        if "=" in part:
-            key, value = part.split("=", 1)
-            params[key.strip()] = value.strip()
-        else:
-            # Boolean flag (no value)
-            params[part] = True
-
-    return params if params else None
