@@ -2062,10 +2062,12 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
         return super().hf_to_megatron(hf_weights - 1, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
-        hf_weights = super().megatron_to_hf(megatron_weights + 1, megatron_module)
+        hf_weights = super().megatron_to_hf(megatron_weights, megatron_module)
         assert isinstance(hf_weights, dict) and len(hf_weights) == 1, (
             f"Expected a dictionary with one element, got {hf_weights.keys()=}"
         )
+        hf_key = list(hf_weights.keys())[0]
+        hf_weights[hf_key] = hf_weights[hf_key] + 1
         return hf_weights
 
 
