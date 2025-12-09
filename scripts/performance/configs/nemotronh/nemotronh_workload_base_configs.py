@@ -28,36 +28,36 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
 
 # NemotronH 56B presets ---------------------------------------------------------
 
-NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
     cuda_graph_scope=["mamba", "attn"],
 )
 
 
-NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
     cuda_graph_scope=["mamba", "attn"],
 )
 
 
-NEMOTRONH_56B_B200_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
     cuda_graph_scope=["mamba", "attn"],
 )
 
 
-NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=8,
     cuda_graph_scope=["mamba"],
 )
 
 __all__ = [
-    "NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG",
-    "NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG",
-    "NEMOTRONH_56B_B200_FP8_CS_BASE_CONFIG",
-    "NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_BASE_CONFIG",
 ]

@@ -10,6 +10,7 @@ deepseek-v3.md
 gemma2.md
 gemma3.md
 glm45.md
+gpt-oss.md
 llama3.md
 llama-nemotron.md
 mistral.md

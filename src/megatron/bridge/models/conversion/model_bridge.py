@@ -647,8 +647,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         megatron_to_hf_tasks = conversion_tasks
-        model_config = unwrap_model(megatron_model)[0].config
-        embeddings_are_tied = model_config.share_embeddings_and_output_weights
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
@@ -875,6 +876,13 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         model = unwrap_model(model)
         return model.config
 
+    def _share_embeddings_and_output_weights(
+        self, model_config: TransformerConfig, model: Optional[MegatronModule]
+    ) -> bool:
+        """Fallback-aware accessor for shared embedding setting."""
+        fallback = getattr(model, "share_embeddings_and_output_weights", False) if model else False
+        return getattr(model_config, "share_embeddings_and_output_weights", fallback)
+
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
 
@@ -909,9 +917,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
+        share_embeddings = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
-        if (model_config.share_embeddings_and_output_weights and model_config.pipeline_model_parallel_size > 1) and (
+        if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
             parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
@@ -958,8 +967,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys()
 
         mapping_registry = self.mapping_registry()
-        model_config = unwrap_model(megatron_model)[0].config
-        embeddings_are_tied = model_config.share_embeddings_and_output_weights
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 

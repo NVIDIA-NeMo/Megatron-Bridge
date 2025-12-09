@@ -133,10 +133,10 @@ def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> Co
     """Return a pre-training config for GPT-OSS 20B variant."""
     recommended: GPTOSSCommonKwargs = {
         "hf_path": "openai/gpt-oss-20b",
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 2,
-        "sequence_parallel": False,
+        "expert_model_parallel_size": 4,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
@@ -147,10 +147,10 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
     """Return a pre-training config for GPT-OSS 120B variant."""
     recommended: GPTOSSCommonKwargs = {
         "hf_path": "openai/gpt-oss-120b",
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 8,
-        "sequence_parallel": False,
+        "expert_model_parallel_size": 16,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
