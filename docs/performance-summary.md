@@ -21,6 +21,7 @@ This page provides performance benchmarks for large language models using Megatr
 ## Performance Metrics
 
 Performance is measured using:
+
 - **Tokens/sec/GPU**: Throughput per GPU
 - **Model TFLOP/sec/GPU**: Model floating-point operations per second per GPU
 
@@ -50,25 +51,26 @@ The performance data includes:
 | Model | #-GPUs | Precision | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | GA | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |-------|--------|-----------|-----|-----|-----------------|------|----|----|----|----|----|----|-----------------------|-------------------------|
 | LLAMA3_8B | 8 | FP8-CS (FP8-MX) | 128 | 2 | 8192 | 0 | 1 | 1 | 1 | n/a | 1 | 8 | 37556 (36108) | 1933 (1858) |
-| LLAMA3_70B | 64 | FP8-CS (FP8-MX) | 128 | 2 | 8192 | 1 (0) | 1 (2) | 1 (4) | 1 | 1 (5) | 1 | 1 (16) | 4440 (4346) | 1995 (1952) |
-| LLAMA3.1_405B | 128 | FP8-CS (FP8-MX) | 64 | 1 | 8192 | 1 (0) | 2 (4) | 1 (8) | 1 (2) | 1 (8) | 1 | 1 (32) | 850 (638) | 2145 (1610) |
-| DeepSeekV3 | 256 | FP8-MX | 2048 | 1 | 4096 | 0 | 1 | 8 | 1 | 2 | 64 | 64 | 3943 | 1026 |
-| GPT OSS 120B | 64 | BF16 | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 64 | 2 | 18618 | 506 |
+| LLAMA3_70B | 64 | FP8-CS | 256 | 2 | 8192 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 4520 | 2030 |
+| LLAMA3.1_405B | 256 | FP8-CS | 1536 | 1 | 8192 | 0 | 2 | 8 | 2 | 4 | 1 | 192 | 999 | 2522 |
+| DeepSeekV3 (w/o MTP) | 256 | BF16 | 4096 | 1 | 4096 | 0 | 1 | 2 | 1 | 4 | 32 | 32 | 3848 | 961 |
+| DeepSeekV3 (w/o MTP)| 256 | FP8-MX | 4096 | 1 | 4096 | 0 | 1 | 2 | 1 | 4 | 32 | 32 | 4357 | 1088 |
+| GPT OSS 120B | 64 | BF16 | 1280 | 2 | 8192 | 0 | 1 | 1 | 1 | 1 | 64 | 10 | 18347 | 565 |
 | Qwen3_30B_a3B | 8 | FP8-MX | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 16 | 28934 | 666 |
-| Qwen3_235B_a22B | 64 | FP8-MX | 1024 | 1 | 4096 | 0 | 2 | 1 | 1 | 1 | 64 | 32 | 5350 | 792 |
-
+| Qwen3_235B_a22B | 256 | BF16 | 8192 | 2 | 4096 | 0 | 1 | 4 | 1 | 12 | 16 | 32 | 6131 | 907 |
 
 #### System: DGX-GB200
 
 | Model | #-GPUs | Precision | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | GA | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |-------|--------|-----------|-----|-----|-----------------|------|----|----|----|----|----|----|-----------------------|-------------------------|
 | LLAMA3_8B | 8 | FP8-CS (FP8-MX) | 128 | 2 | 8192 | 0 | 1 | 1 | 1 | n/a | 1 | 8 | 31508 (29789) | 1622 (1533) |
-| LLAMA3_70B | 64 | FP8-CS (FP8-MX) | 128 | 2 | 8192 | 1 (0) | 1 (2) | 1 (4) | 1 | 1 (5) | 1 | 1 (16) | 4312 (3617) | 1937 (1625) |
-| LLAMA3.1_405B | 128 | FP8-CS (FP8-MX) | 64 | 1 | 8192 | 1 (0) | 2 (4) | 1 (8) | 1 (2) | 1 (8) | 1 | 1 (32) | 706 (563) | 1782 (1420) |
-| DeepSeekV3 | 256 | FP8-MX | 2048 | 1 | 4096 | 0 | 1 | 4 | 1 | 4 | 64 | 32 64 | 3653 | 949 |
-| GPT OSS 120B | 64 | BF16 | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 64 | 2 | 15754 | 428 |
+| LLAMA3_70B | 64 | FP8-CS | 256 | 2 | 8192 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 4312 | 1937 |
+| LLAMA3.1_405B | 256 | FP8-CS | 1536 | 1 | 8192 | 0 | 4 | 16 | 1 | 4 | 1 | 384 | 813 | 2053 |
+| DeepSeekV3 (w/o MTP) | 256 | BF16 | 4096 | 1 | 4096 | 0 | 1 | 4 | 1 | 4 | 64 | 64 | 3139 | 782 |
+| DeepSeekV3 (w/o MTP) | 256 | FP8-MX | 4096 | 1 | 4096 | 0 | 1 | 8 | 1 | 4 | 32 | 128 | 4018 | 1003 |
+| GPT OSS 120B | 64 | BF16 | 1280 | 1 | 8192 | 0 | 1 | 1 | 1 | 1 | 64 | 20 | 15876 | 488 |
 | Qwen3_30B_a3B | 8 | FP8-MX | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 16 | 23766 | 547 |
-| Qwen3_235B_a22B | 64 | FP8-MX | 1024 | 1 | 4096 | 0 | 2 | 1 | 1 | 1 | 64 | 32 | 4366 | 646 |
+| Qwen3_235B_a22B | 256 | BF16 | 8192 | 1 | 4096 | 0 | 1 | 8 | 1 | 3 | 32 | 256 | 4916 | 728 |
 
 #### System: DGX-B200
 
@@ -76,7 +78,7 @@ The performance data includes:
 |-------|--------|-----------|-----|-----|-----------------|------|----|----|----|----|----|----|-----------------------|-------------------------|
 | LLAMA3_8B | 8 | FP8-CS (FP8-MX) | 128 | 2 | 8192 | 0 | 1 | 1 | 1 | n/a | 1 | 8 | 30624 (29521) | 1576 (1519) |
 | LLAMA3.1_405B | 128 | FP8-CS (FP8-MX) | 64 | 1 | 8192 | 0 | 4 | 8 | 2 | 8 | 1 | 32 | 661 (624) | 1667 (1576) |
-| DeepSeekV3 | 256 | FP8-MX | 2048 | 1 | 4096 | 0 | 1 | 16 | 1 | 1 | 8 | 128 | 2139 | 557 |
+| DeepSeekV3 (w/ MTP) | 256 | FP8-MX | 2048 | 1 | 4096 | 0 | 1 | 16 | 1 | 1 | 8 | 128 | 2139 | 557 |
 | GPT OSS 120B | 64 | BF16 |  512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 2 | 8213 | 223 |
 | Qwen3_30B_a3B | 8 | FP8-MX | 512 | 1 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 64 | 9299 | 214 |
 | Qwen3_235B_a22B | 64 | FP8-MX | 1024 | 1 | 4096 | 0 | 1 | 8 | 1 | 2 | 8 | 128 | 3269 | 484 |
@@ -92,9 +94,8 @@ The performance data includes:
 | Qwen3_30B_a3B | 16 | FP8-CS | 512 | 2 | 4096 | 0 | 1 | 2 | 1 | 24 | 8 | 32 | 5275 | 121 |
 | Qwen3_235B_a22B | 256 | FP8-CS | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 32 | 1575 | 1575 | 233 |
 
-- The numbers in normal parentheses indicate the use of different quantization granularities: In case of Gb200 and B200 systems, 32×32 for both weights and activations. For H100 system, 128×128 for weights and 1×128 for activations, which match those used in the original DeepSeekV3 pre-training.
-- In MoE trianing benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
-
+- The numbers in normal parentheses indicate the use of different quantization granularities: In case of GB200 and B200 systems, 32×32 for both weights and activations. For H100 system, 128×128 for weights and 1×128 for activations, which match those used in the original DeepSeekV3 pre-training.
+- In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
 ## 25.09 NeMo Container
 
