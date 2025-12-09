@@ -19,6 +19,7 @@ from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
+from megatron.training.datasets.fim_dataset import GPTFIMDataset
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
@@ -28,6 +29,7 @@ from megatron.bridge.training.config import (
     DatasetProvider,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
+    GPTFIMDatasetConfig,
     MockGPTDatasetConfig,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -66,6 +68,8 @@ def pretrain_train_valid_test_datasets_provider(
 
     if dataset_config.mock:
         dataset_type = MockGPTDataset
+    elif hasattr(dataset_config, "fim_rate") and dataset_config.fim_rate:
+        dataset_type = GPTFIMDataset
     else:
         dataset_type = GPTDataset
 
@@ -157,6 +161,7 @@ def finetuning_train_valid_test_datasets_provider(
 
 _REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig]], Callable] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
+    GPTFIMDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     HFDatasetConfig: hf_train_valid_test_datasets_provider,
     FinetuningDatasetConfig: finetuning_train_valid_test_datasets_provider,
