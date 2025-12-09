@@ -54,7 +54,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
-        g = gqa_groups if gqa else num_heads
+        # gqa is not used as gqa_groups is already set accordingly.
+        # gqa is being built based on args in MLM and is not part of the model config and hence ignoring it.
+        g = gqa_groups
         return (
             4
             * batch_size
