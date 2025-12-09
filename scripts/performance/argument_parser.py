@@ -375,7 +375,6 @@ def parse_cli_args():
         required=False,
         default=None,
     )
-
     slurm_args.add_argument(
         "--additional_slurm_params",
         type=parse_additional_slurm_params,
