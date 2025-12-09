@@ -137,6 +137,9 @@ def evaluate(
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
             )
+            # Synchronize the full_iteration cuda graph to avoid race conditions
+            if state.cfg.model.cuda_graph_impl == "local" and "full_iteration" in state.cfg.model.cuda_graph_scope:
+                torch.cuda.synchronize()
             fault_tolerance.on_eval_step_end(state)
             config.timers = state.timers
 
