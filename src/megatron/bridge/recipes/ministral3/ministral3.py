@@ -107,7 +107,7 @@ def ministral3_3b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwargs
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: Ministral3FinetuneKwargs = {
-        "hf_path": "mistralai/Ministral-3-3B-Base-2512",
+        "hf_path": "mistralai/Ministral-3-3B-Instruct-2512",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "peft": peft_value,
@@ -131,7 +131,7 @@ def ministral3_8b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwargs
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: Ministral3FinetuneKwargs = {
-        "hf_path": "mistralai/Ministral-3-8B-Base-2512",
+        "hf_path": "mistralai/Ministral-3-8B-Instruct-2512",
         "tensor_model_parallel_size": 2 if is_full_sft else 1,
         "pipeline_model_parallel_size": 1,
         "peft": peft_value,
@@ -155,7 +155,7 @@ def ministral3_14b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwarg
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: Ministral3FinetuneKwargs = {
-        "hf_path": "mistralai/Ministral-3-14B-Base-2512",
+        "hf_path": "mistralai/Ministral-3-14B-Instruct-2512",
         "tensor_model_parallel_size": 4 if is_full_sft else 2,
         "pipeline_model_parallel_size": 1,
         "peft": peft_value,
