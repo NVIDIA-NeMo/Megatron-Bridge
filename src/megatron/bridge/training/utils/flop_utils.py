@@ -320,12 +320,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     if getattr(cfg.model, "is_hybrid_model", False):
         # Calculate the number of each type of layer.
         num_attn_layers, num_mamba_layers, num_mlp_layers = calculate_layer_counts()
-        padded_vocab_size = calculate_padded_vocab_size(
-            cfg.model.vocab_size,
-            cfg.model.make_vocab_size_divisible_by,
-            cfg.model.tensor_model_parallel_size,
-            logging_enabled=False,
-        )
 
         # Compute hybrid model FLOPs.
         return hybrid_flops(
@@ -345,7 +339,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             kv_channels=getattr(cfg.model, "kv_channels", None),
             mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
             swiglu=getattr(cfg.model, "gated_linear_unit", False),
-            vocab_size=padded_vocab_size,
+            vocab_size=cfg.model.vocab_size,
         )
     else:
         # Compute standard Transformer model FLOPs.
