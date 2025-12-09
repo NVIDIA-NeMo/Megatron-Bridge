@@ -48,14 +48,11 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         seq_len,
         hidden_size,
         num_heads,
-        gqa=True,
         gqa_groups=8,
         kv_channels=None,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
-        # gqa is not used as gqa_groups is already set accordingly.
-        # gqa is being built based on args in MLM and is not part of the model config and hence ignoring it.
         g = gqa_groups
         return (
             4
@@ -101,7 +98,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         mamba_num_groups=8,
         mamba_num_heads=128,
         num_attn_heads=32,
-        gqa=True,
         gqa_groups=8,
         kv_channels=None,
         mlp_expansion=4.0,
@@ -116,7 +112,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 seq_len,
                 hidden_size,
                 num_attn_heads,
-                gqa,
                 gqa_groups,
                 kv_channels,
             )
@@ -331,6 +326,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             cfg.model.tensor_model_parallel_size,
             logging_enabled=False,
         )
+        num_query_groups = (
+            cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
+        )
 
         # Compute hybrid model FLOPs.
         return hybrid_flops(
@@ -345,8 +343,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             mamba_num_groups=getattr(cfg.model, "mamba_num_groups", 8),
             mamba_num_heads=getattr(cfg.model, "mamba_num_heads", 128),
             num_attn_heads=cfg.model.num_attention_heads,
-            gqa=getattr(cfg.model, "group_query_attention", False),
-            gqa_groups=getattr(cfg.model, "num_query_groups", 8),
+            gqa_groups=num_query_groups,
             kv_channels=getattr(cfg.model, "kv_channels", None),
             mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
             swiglu=getattr(cfg.model, "gated_linear_unit", False),
