@@ -98,6 +98,40 @@ def llama3_8b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
+def llama3_70b_gb300_sft_config(precision: str = "bf16") -> ConfigContainer:
+    """GB300, SFT config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.LLAMA3_70B_GB300_SFT_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.LLAMA3_70B_GB300_SFT_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.LLAMA3_70B_GB300_SFT_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = llama3_70b_finetune_config(
+        peft="none",
+        precision_config=precision_config,
+        packed_sequence=False,
+        seq_length=4096,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+        defer_embedding_wgrad_compute=True,
+        wgrad_deferral_limit=22,
+    )
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
+    return cfg
+
+
 def llama3_70b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, SFT config."""
     if precision == "bf16":
@@ -157,6 +191,35 @@ def llama3_70b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
         defer_embedding_wgrad_compute=True,
         wgrad_deferral_limit=22,
     )
+
+    return cfg
+
+
+def llama3_70b_gb300_lora_config(precision: str = "bf16") -> ConfigContainer:
+    """GB300, LORA config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.LLAMA3_70B_GB300_LORA_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.LLAMA3_70B_GB300_LORA_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.LLAMA3_70B_GB300_LORA_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = llama3_70b_finetune_config(
+        peft="lora",
+        precision_config=precision_config,
+        packed_sequence=False,
+        seq_length=2048,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
+            cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
