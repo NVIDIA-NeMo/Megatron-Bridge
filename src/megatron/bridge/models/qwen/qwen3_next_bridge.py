@@ -21,7 +21,7 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
-    GDNLinearMapping,
+    GDNConv1dComponentMapping,
     QKVMapping,
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
@@ -110,9 +110,10 @@ class Qwen3NextBridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             # Linear attention
-            "decoder.layers.*.self_attention.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.qkvz_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.qkvz_proj.weight": "model.layers.*.linear_attn.in_proj_qkvz.weight",
+            "decoder.layers.*.self_attention.ba_proj.weight": "model.layers.*.linear_attn.in_proj_ba.weight",
             "decoder.layers.*.self_attention.out_proj.weight": "model.layers.*.linear_attn.out_proj.weight",
-            "decoder.layers.*.self_attention.conv1d.weight": "model.layers.*.linear_attn.conv1d.weight",
             "decoder.layers.*.self_attention.A_log": "model.layers.*.linear_attn.A_log",
             "decoder.layers.*.self_attention.dt_bias": "model.layers.*.linear_attn.dt_bias",
             # MTP projection and norms
@@ -155,12 +156,28 @@ class Qwen3NextBridge(MegatronModelBridge):
                     k="mtp.layers.*.self_attn.k_proj.weight",
                     v="mtp.layers.*.self_attn.v_proj.weight",
                 ),
-                # GDNLinear: Combine separate QKVZ_proj and BA_proj into single in_proj for GDN
-                # Note: Qwen3-Next does NOT have bias in the input linear projections
-                GDNLinearMapping(
-                    megatron_param="decoder.layers.*.self_attention.in_proj.weight",
-                    qkvz="model.layers.*.linear_attn.in_proj_qkvz.weight",
-                    ba="model.layers.*.linear_attn.in_proj_ba.weight",
+                # BA projection layernorm - replicated from input_layernorm
+                # (qkvz_proj and ba_proj share the same input layernorm weights)
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.self_attention.ba_proj.layer_norm_weight",
+                    hf_param="model.layers.*.input_layernorm.weight",
+                ),
+                # GDN Conv1d: HF stores one combined [Q|K|V], Megatron uses 3 separate
+                # Each component mapping extracts its part from the same HF tensor
+                GDNConv1dComponentMapping(
+                    megatron_param="decoder.layers.*.self_attention.q_conv1d.weight",
+                    hf_param="model.layers.*.linear_attn.conv1d.weight",
+                    component="q",
+                ),
+                GDNConv1dComponentMapping(
+                    megatron_param="decoder.layers.*.self_attention.k_conv1d.weight",
+                    hf_param="model.layers.*.linear_attn.conv1d.weight",
+                    component="k",
+                ),
+                GDNConv1dComponentMapping(
+                    megatron_param="decoder.layers.*.self_attention.v_conv1d.weight",
+                    hf_param="model.layers.*.linear_attn.conv1d.weight",
+                    component="v",
                 ),
                 # Gated MLP of experts
                 GatedMLPMapping(

@@ -1696,88 +1696,6 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         return {self.hf_param: torch.cat(full_weights, dim=0)}
 
 
-class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
-    """
-    TODO: Add comments
-    """
-
-    def __init__(self, megatron_param: str, qkvz: str, ba: str):
-        """Initialize GDN input linear projection mapping.
-        Args:
-            megatron_param (str): Megatron inut projection parameter name pattern.
-            qkvz (str): QKVZ weight name pattern.
-            ba (str): BA weight name pattern.
-        """
-        super().__init__(megatron_param, {"qkvz": qkvz, "ba": ba})
-        # Delegate all tensor-parallel logic to the smart TP-aware mapping so we
-        # do not hard-code the assumption that input projections are column-parallel.
-        # This keeps the format-handling (merge/split) concerns separate from
-        # TP/PP distribution mechanics.
-        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
-
-    def hf_to_megatron(
-        self,
-        hf_weights: Dict[str, torch.Tensor],
-        megatron_module: nn.Module,
-    ) -> torch.Tensor:
-        """Merge QKVZ, BA."""
-        if self.tp_rank == 0:
-            config = self._get_config(megatron_module)
-            merged = merge_gdn_linear_weights(config, hf_weights["qkvz"], hf_weights["ba"])
-        else:
-            merged = None
-
-        # Delegate the actual sharding/broadcasting to the TP-aware mapping.
-        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
-
-    def megatron_to_hf(
-        self,
-        megatron_weights: Optional[torch.Tensor],
-        megatron_module: Optional[nn.Module],
-    ) -> Dict[str, torch.Tensor]:
-        """Gather QKVZBA shards and split into QKVZ and BA."""
-        # Dequantize if needed
-        if megatron_weights is not None:
-            megatron_weights = self.maybe_dequantize(megatron_weights)
-
-        # ------------------------------------------------------------------
-        # Broadcast / retrieve the transformer configuration so that every PP
-        # rank (also the ones that will early-return) participates in the
-        # collective communication.
-        # ------------------------------------------------------------------
-        if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
-        else:
-            config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=3
-            config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
-
-        # Delegate TP/PP gathering.
-        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
-
-        if not packed_dict:
-            return {}
-
-        packed_qkvzba = next(iter(packed_dict.values()))
-        qkvz, ba = split_gdn_linear_weights(config, packed_qkvzba)
-
-        return {
-            self.hf_param["qkvz"]: qkvz,
-            self.hf_param["ba"]: ba,
-        }
-
-    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
-        """Return a new *resolved* GDNLinearMapping instance."""
-        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
-
-        return type(self)(
-            resolved_megatron_param,
-            resolved_hf_param["qkvz"],
-            resolved_hf_param["ba"],
-        )
-
-
 class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
     Mapping for interleaved Query/Key/Value attention projection weights.
@@ -2071,6 +1989,102 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
         return hf_weights
 
 
+class GDNConv1dComponentMapping(MegatronParamMapping[torch.Tensor]):
+    """
+    Mapping for one component (q, k, or v) of GDN conv1d.
+
+    HF stores one combined conv1d weight: [Q_all | K_all | V_all]
+    Megatron uses 3 separate conv1d: q_conv1d, k_conv1d, v_conv1d
+
+    Each instance of this mapping extracts one component.
+    """
+
+    def __init__(self, megatron_param: str, hf_param: str, component: str):
+        """
+        Args:
+            megatron_param: Megatron parameter name (e.g., "...q_conv1d.weight")
+            hf_param: HF parameter name (e.g., "...conv1d.weight")
+            component: Which component to extract ("q", "k", or "v")
+        """
+        super().__init__(megatron_param, hf_param)
+        assert component in ("q", "k", "v"), f"component must be 'q', 'k', or 'v', got '{component}'"
+        self.component = component
+        self._col_mapping = ColumnParallelMapping(megatron_param, hf_param)
+
+    def _extract_component(self, hf_weights: torch.Tensor, config) -> torch.Tensor:
+        """Extract q, k, or v component from combined conv1d weight."""
+        qk_dim = config.linear_key_head_dim * config.linear_num_key_heads
+        v_dim = config.linear_value_head_dim * config.linear_num_value_heads
+
+        q, k, v = torch.split(hf_weights, [qk_dim, qk_dim, v_dim], dim=0)
+
+        if self.component == "q":
+            return q
+        elif self.component == "k":
+            return k
+        else:
+            return v
+
+    def hf_to_megatron(
+        self,
+        hf_weights: torch.Tensor,
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Extract component and distribute to TP ranks."""
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            component_weights = self._extract_component(hf_weights, config)
+        else:
+            component_weights = None
+
+        # Delegate to ColumnParallelMapping for TP distribution
+        # Need to update the internal mapping's groups
+        self._col_mapping._tp_group = self._tp_group
+        self._col_mapping._etp_group = self._etp_group
+        self._col_mapping.pp_group = self.pp_group
+        self._col_mapping.ep_group = self.ep_group
+
+        return self._col_mapping.hf_to_megatron(component_weights, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Gather component from TP ranks.
+
+        Note: This returns just this component. The caller (or a separate
+        aggregation step) must combine q, k, v back into the full HF tensor.
+        For now, we return with a component-specific key that can be
+        post-processed.
+        """
+        # Handle cross-PP broadcast
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.megatron_param))
+
+        if megatron_weights is None:
+            return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        if self.tp_size == 1:
+            full_weights = megatron_weights
+        else:
+            # Gather from all TP ranks
+            gathered = self.gather_from_tp_ranks(megatron_weights)
+            full_weights = torch.cat(gathered, dim=0)
+
+        # Return with component suffix for later aggregation
+        # The export pipeline should aggregate these into the single HF param
+        return {f"{self.hf_param}.__{self.component}__": full_weights}
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        """Create resolved mapping preserving component."""
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.component)
+
+
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Merge separate Q, K, V bias vectors into Megatron's interleaved QKV format.
 
@@ -2298,85 +2312,6 @@ def split_qkv_weights(
         v = v.reshape(-1, hidden_size)
 
     return q, k, v
-
-
-def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba: torch.Tensor) -> torch.Tensor:
-    """merge gdn linear weights"""
-    hidden_size = provider.hidden_size
-    qk_head_dim = provider.linear_key_head_dim
-    v_head_dim = provider.linear_value_head_dim
-    num_qk_heads = provider.linear_num_key_heads
-    num_v_heads = provider.linear_num_value_heads
-    qk_dim = qk_head_dim * num_qk_heads
-    v_dim = v_head_dim * num_v_heads
-
-    # Reshape to expose head dimension
-    qkvz_reshaped = qkvz.reshape(num_qk_heads, (qk_dim * 2 + v_dim * 2) // num_qk_heads, hidden_size)
-    ba_reshaped = ba.reshape(num_qk_heads, 2 * num_v_heads // num_qk_heads, hidden_size)
-    q, k, v, z = torch.split(
-        qkvz_reshaped,
-        [
-            qk_head_dim,
-            qk_head_dim,
-            num_v_heads // num_qk_heads * v_head_dim,
-            num_v_heads // num_qk_heads * v_head_dim,
-        ],
-        dim=1,
-    )
-    b, a = torch.split(
-        ba_reshaped,
-        [
-            num_v_heads // num_qk_heads,
-            num_v_heads // num_qk_heads,
-        ],
-        dim=1,
-    )
-
-    q, k, v, z, b, a = [weight.reshape(-1, hidden_size) for weight in [q, k, v, z, b, a]]
-    in_proj = torch.cat([q, k, v, z, b, a], dim=0)
-
-    assert in_proj.numel() == qkvz.numel() + ba.numel(), (
-        f"QKVZBA weights are not correctly merged, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
-    )
-
-    return in_proj
-
-
-def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor) -> torch.Tensor:
-    """TODO: add comments"""
-    hidden_size = provider.hidden_size
-    qk_head_dim = provider.linear_key_head_dim
-    v_head_dim = provider.linear_value_head_dim
-    num_qk_heads = provider.linear_num_key_heads
-    num_v_heads = provider.linear_num_value_heads
-    qk_dim = qk_head_dim * num_qk_heads
-    v_dim = v_head_dim * num_v_heads
-
-    q, k, v, z, b, a = torch.split(
-        in_proj,
-        [
-            qk_dim,
-            qk_dim,
-            v_dim,
-            v_dim,
-            num_v_heads,
-            num_v_heads,
-        ],
-        dim=0,
-    )
-
-    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
-    qkvz = torch.cat([q, k, v, z], dim=1)
-    ba = torch.cat([b, a], dim=1)
-
-    qkvz = qkvz.reshape(-1, hidden_size)
-    ba = ba.reshape(-1, hidden_size)
-
-    assert qkvz.numel() + ba.numel() == in_proj.numel(), (
-        f"QKVZBA weights are not correctly split, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
-    )
-
-    return qkvz, ba
 
 
 def merge_kv_biases(config: TransformerConfig, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
