@@ -441,6 +441,8 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
         loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
+        # Unmask the last token (EOS) so the model learns when to stop generating
+        loss_mask_t[:, -1] = 1
         # Shift loss mask to align with next-token labels timeline
         loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
         # Enforce label masking to match shifted loss_mask
