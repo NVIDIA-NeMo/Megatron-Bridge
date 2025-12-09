@@ -370,7 +370,9 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     batch["loss_mask"] = loss_mask_t
     return batch
 
+
 def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for Ministral 3 VL model."""
     skipped_tokens = extract_skipped_token_ids(processor)
 
     if processor.chat_template is not None:
@@ -433,9 +435,17 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         labels[torch.isin(labels, skipped_tokens)] = -100
         batch["labels"] = labels
 
-        # Create loss mask
-        loss_mask = torch.ones_like(batch["input_ids"], dtype=torch.float)
-        batch["loss_mask"] = loss_mask
+        # Create loss mask using search-based masking for assistant turns
+        loss_masks = [
+            create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
+            for example, input_ids in zip(examples, batch["input_ids"])
+        ]
+        loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
+        # Shift loss mask to align with next-token labels timeline
+        loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
+        # Enforce label masking to match shifted loss_mask
+        batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
+        batch["loss_mask"] = loss_mask_t
 
     if "position_ids" not in batch and "input_ids" in batch:
         batch_size, seq_len = batch["input_ids"].shape
