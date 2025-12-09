@@ -127,12 +127,6 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     return config if config else None
 
 
-def log_assets_dirname_to_disk(assets_dir: str):
-    """Log experiment dirname to disk."""
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "NEMORUN_ASSETS_DIR.txt"), "w") as f:
-        f.write(assets_dir)
-
-
 def ensure_logs_where_written(log_file_paths: List[str]):
     """Ensure logs were written to disk."""
     if len(log_file_paths) != 1:
@@ -274,6 +268,7 @@ def main(
             custom_mounts=custom_mounts,
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
+            gres=args.gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
@@ -375,9 +370,6 @@ def main(
                 is_testing_passed = True
                 break
 
-            assets_dir = os.path.join(job_dir, exp_name)
-            log_assets_dirname_to_disk(assets_dir)
-
             log_file_paths = [str(Path(f"{job_dir}/log-*_0.out"))]
             ensure_logs_where_written(log_file_paths)
 
@@ -417,7 +409,7 @@ def main(
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
-                assets_dir=assets_dir,
+                assets_dir=os.path.join(job_dir, exp_name),
                 log_paths=log_paths,
                 loss_metric="lm loss",
                 timing_metric="elapsed time per iteration (ms)",

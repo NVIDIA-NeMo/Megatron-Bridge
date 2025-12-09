@@ -15,7 +15,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -65,6 +65,7 @@ def slurm_executor(
     network: str = None,
     custom_bash_cmds: List[str] = None,
     additional_slurm_params: Dict[str, Any] = None,
+    gres: Optional[str] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -136,6 +137,7 @@ def slurm_executor(
         tunnel=run.LocalTunnel(job_dir=os.path.join(log_dir, "experiments")),
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
+        gres=gres,
         container_image=container_image,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,
@@ -182,6 +184,14 @@ def dgxc_executor(
         "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
         "WANDB_API_KEY": wandb_key,
         "HF_TOKEN": hf_token,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+        "NCCL_NVLS_ENABLE": "0",
+        "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
+        "NVTE_ASYNC_AMAX_REDUCTION": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TOKENIZERS_PARALLELISM": "False",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
