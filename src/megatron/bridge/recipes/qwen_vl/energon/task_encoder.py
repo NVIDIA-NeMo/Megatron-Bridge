@@ -14,9 +14,9 @@
 
 import dataclasses
 import json
+import logging
 import pickle
 import re
-import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List
@@ -27,6 +27,7 @@ from megatron.energon import Batch, DefaultTaskEncoder
 from megatron.energon.flavors.base_dataset import Sample
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 from PIL import Image
+
 
 # Local replacements for former nemo dependencies
 # Constants for internal multimodal token placeholders and label ignore
@@ -103,7 +104,7 @@ def find_pattern_indices(sequence: np.ndarray, pattern, start: int = 0):
     return -1, -1
 
 
-def process_vision(processor, images, videos, fps=None, model_version: str = "qwen2-vl"):
+def process_vision(processor, images, videos, fps=None, model_version: str = "qwen-vl"):
     """Minimal vision preprocessing wrapper using the provided processor (e.g., HF AutoProcessor)."""
     if images is not None:
         image_inputs = processor(images=images, videos=None, return_tensors='pt')
@@ -155,8 +156,8 @@ class ChatMLSample(Sample):
 
 
 @dataclass
-class Qwen2VLTaskSample:
-    """Encoded Sample Format For Qwen2VL"""
+class QwenVLTaskSample:
+    """Encoded Sample Format For QwenVL"""
 
     __key__: str
     __subflavors__: Dict
@@ -173,8 +174,8 @@ class Qwen2VLTaskSample:
 
 
 @dataclass
-class Qwen2VLTaskBatch(Batch):
-    """Encoded Batch Format For Qwen2VL"""
+class QwenVLTaskBatch(Batch):
+    """Encoded Batch Format For QwenVL"""
 
     __keys__: List[str]
     __subflavors__: List[Dict]
@@ -194,7 +195,7 @@ class Qwen2VLTaskBatch(Batch):
     loss_mask: torch.Tensor
 
 
-def convert_to_qwen2vl_content(user_input: str, image_pattern: str = '<image>', video_pattern: str = '<video>'):
+def convert_to_qwenvl_content(user_input: str, image_pattern: str = '<image>', video_pattern: str = '<video>'):
     """Split user input into format Qwen2VL tokenizer accepts."""
 
     pattern = r"({image}|{video})".format(image=image_pattern, video=video_pattern)
@@ -260,7 +261,7 @@ def cook_chatml_sample(sample: dict) -> ChatMLSample:
     return chat_sample
 
 
-class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwen2VLTaskBatch, dict]):
+class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenVLTaskBatch, dict]):
     """A simple task encoder for captioning."""
 
     cookers = [
@@ -340,7 +341,11 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
 
                 if role == 'human':
                     role = 'user'
-                    content = convert_to_qwen2vl_content(content)
+                    content = convert_to_qwenvl_content(content)
+                    # Reorder media first to align with PreloadedVLMConversationProvider
+                    media_content = [c for c in content if c.get('type') in ('image', 'video')]
+                    text_content = [c for c in content if c.get('type') == 'text']
+                    content = media_content + text_content
                 elif role == 'gpt':
                     role = 'assistant'
 
@@ -357,7 +362,11 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
                 content = turn[content_key]
 
                 if role == 'user':
-                    content = convert_to_qwen2vl_content(content)
+                    content = convert_to_qwenvl_content(content)
+                    # Reorder media first to align with PreloadedVLMConversationProvider
+                    media_content = [c for c in content if c.get('type') in ('image', 'video')]
+                    text_content = [c for c in content if c.get('type') == 'text']
+                    content = media_content + text_content
 
                 converted_conversation.append({'role': role, 'content': content})
         conversation = converted_conversation
@@ -369,7 +378,7 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
         search_start_index = 0
         for turn_idx, turn in enumerate(conversation[1:]):
             if turn['role'] == 'assistant':
-                answer = turn['content'] + "<|im_end|>" + "\n"
+                answer = turn['content']
                 answer_tokens = self.hf_tokenizer.encode(answer, add_special_tokens=False)
                 answer_start, answer_end = find_pattern_indices(input_ids, answer_tokens, search_start_index)
                 assert answer_start > 0, "Not found valid answer in conversation."
@@ -460,7 +469,7 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
         image_input_mask = torch.from_numpy(final_input_ids == image_token_id)
         video_input_mask = torch.from_numpy(final_input_ids == video_token_id)
         # collect data
-        return Qwen2VLTaskSample(
+        return QwenVLTaskSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
             imgs=flattened_imgs['pixel_values'] if flattened_imgs else [],
@@ -473,7 +482,7 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
             target=torch.from_numpy(target),
         )
 
-    def batch(self, samples: List[Qwen2VLTaskSample]) -> Qwen2VLTaskBatch:
+    def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:
         """
         Put encoded sample into Batch, do padding, add labels and visual input masks
 
@@ -548,7 +557,7 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
 
         loss_mask[labels < 0] = 0.0
 
-        batch = Qwen2VLTaskBatch(
+        batch = QwenVLTaskBatch(
             __keys__=[s.__key__ for s in samples],
             __subflavors__=[s.__subflavors__ for s in samples],
             pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
@@ -566,7 +575,7 @@ class Qwen2VLTaskEncoder(DefaultTaskEncoder[ChatMLSample, Qwen2VLTaskSample, Qwe
         )
         return batch
 
-    def encode_batch(self, batch: Qwen2VLTaskBatch) -> dict:
+    def encode_batch(self, batch: QwenVLTaskBatch) -> dict:
         """Encode batch in dict"""
 
         raw = dataclasses.asdict(batch)

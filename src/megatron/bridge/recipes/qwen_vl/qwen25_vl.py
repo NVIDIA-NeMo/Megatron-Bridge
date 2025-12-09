@@ -16,20 +16,21 @@ import os
 from typing import List, Optional, Union
 
 import torch
+from transformers import AutoTokenizer, Qwen2VLImageProcessor
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import (
+    EnergonVLMConversationProvider,
     HFDatasetConversationProvider,
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
-    EnergonVLMConversationProvider,
 )
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.qwen_vl.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.recipes.qwen_vl.energon.task_encoder import Qwen2VLTaskEncoder
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -42,9 +43,6 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-
-from transformers import AutoTokenizer
-from transformers import Qwen2VLImageProcessor
 
 
 class Qwen25VLCommonKwargs(TypedDict, total=False):
@@ -323,7 +321,10 @@ def _qwen25_vl_common(
         )
     elif _dataset_choice == "energon":
         tokenizer = AutoTokenizer.from_pretrained(_processor_model)
-        image_processor = Qwen2VLImageProcessor()
+        image_processor = Qwen2VLImageProcessor(
+            min_pixels=200704,  # 256*28*28, matching Preloaded/Qwen2.5-VL default in this repo
+            max_pixels=1003520,  # 1280*28*28
+        )
 
         dataset_cfg = EnergonVLMConversationProvider(
             seq_length=seq_length,
@@ -336,27 +337,12 @@ def _qwen25_vl_common(
             global_batch_size=global_batch_size,
             num_workers=2,
             dataloader_type="external",
-            task_encoder=Qwen2VLTaskEncoder(
+            task_encoder=QwenVLTaskEncoder(
                 tokenizer=tokenizer,
                 image_processor=image_processor,
                 max_padding_length=seq_length,
             ),
         )
-        # data = EnergonMultiModalDataModule(
-        #     path=args.data_path,
-        #     tokenizer=tokenizer,
-        #     image_processor=image_processor,
-        #     seq_length=max_sequence_length,
-        #     micro_batch_size=mbs,
-        #     global_batch_size=gbs,
-        #     num_workers=1,
-        #     task_encoder=Qwen2VLTaskEncoder(
-        #         tokenizer=tokenizer,
-        #         image_processor=image_processor,
-        #         max_padding_length=int(max_sequence_length * 0.9),
-        #     ),
-        #     packing_buffer_size=200 if use_packed_sequence else None,
-        # )
     else:
         raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf', 'energon'].")
 
