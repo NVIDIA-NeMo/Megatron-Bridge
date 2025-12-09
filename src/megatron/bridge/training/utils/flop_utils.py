@@ -143,13 +143,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         num_query_groups = (
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
-        # group_query_attention = getattr(cfg.model, "group_query_attention", False)
-        # if not group_query_attention:
-        #     num_query_groups = cfg.model.num_attention_heads
-        # else:
-        #     num_query_groups = (
-        #         cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
-        #     )
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.
