@@ -145,6 +145,10 @@ def main(
         f"_vp{vp_size}_ep{ep_size}_mbs{mbs}_gbs{gbs}"
     )
 
+    # Ensure all environment variables (including those added above) are propagated to the container
+    current_container_env = set(executor.container_env) if executor.container_env else set()
+    executor.container_env = list(current_container_env | set(executor.env_vars))
+
     logger.debug(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
