@@ -445,4 +445,5 @@ def _timers_write_to_mlflow(
             logger.log_metrics(metrics, step=iteration)
         except Exception:
             import warnings
+
             warnings.warn("Failed to log timer metrics to MLFlow; continuing without timer metrics.")
