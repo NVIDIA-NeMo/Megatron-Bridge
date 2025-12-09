@@ -147,7 +147,7 @@ def run_pretrain_recipe_perf_test(
     config.scheduler.lr_warmup_iters = 2
     test_seq_length = 512
     config.model.seq_length = test_seq_length
-    config.dataset.seq_length = test_seq_length
+    config.dataset.sequence_length = test_seq_length
     config.train.global_batch_size = 8
 
     # Apply any model-specific overrides provided by the caller
