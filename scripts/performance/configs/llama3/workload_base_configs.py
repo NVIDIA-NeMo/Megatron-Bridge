@@ -58,7 +58,7 @@ LLAMA3_70B_GB300_NVFP4_BASE_CONFIG = replace(
     BASE_LLAMA3_70B_CONFIG,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=5,
-    cuda_graph_impl="local",
+    cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
 )
 
@@ -87,10 +87,11 @@ LLAMA3_70B_GB200_FP8_MX_BASE_CONFIG = replace(
 
 LLAMA3_70B_GB200_NVFP4_BASE_CONFIG = replace(
     BASE_LLAMA3_70B_CONFIG,
+    tensor_model_parallel_size=2,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=5,
-    context_parallel_size=2,
-    cuda_graph_impl="local",
+    context_parallel_size=1,
+    cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
 )
 
@@ -122,7 +123,8 @@ LLAMA3_70B_B200_FP8_MX_BASE_CONFIG = replace(
 
 LLAMA3_70B_B200_NVFP4_BASE_CONFIG = replace(
     BASE_LLAMA3_70B_CONFIG,
-    context_parallel_size=2,
+    tensor_model_parallel_size=2,
+    context_parallel_size=1,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=5,
 )
@@ -191,7 +193,7 @@ LLAMA3_8B_GB200_FP8_MX_BASE_CONFIG = LLAMA3_8B_GB200_FP8_CS_BASE_CONFIG
 LLAMA3_8B_GB200_NVFP4_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=4,
-    cuda_graph_impl="local",
+    cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
 )
 
@@ -264,6 +266,24 @@ LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG = replace(
 )
 
 
+LLAMA3_70B_GB300_SFT_BASE_CONFIG = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    num_gpus=32,
+    peft="none",
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=5,
+    micro_batch_size=1,
+    global_batch_size=32,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
+)
+
+LLAMA3_70B_GB300_SFT_BF16_BASE_CONFIG = LLAMA3_70B_GB300_SFT_BASE_CONFIG
+LLAMA3_70B_GB300_SFT_FP8_CS_BASE_CONFIG = LLAMA3_70B_GB300_SFT_BASE_CONFIG
+LLAMA3_70B_GB300_SFT_FP8_MX_BASE_CONFIG = LLAMA3_70B_GB300_SFT_BASE_CONFIG
+
+
 LLAMA3_70B_GB200_SFT_BASE_CONFIG = replace(
     BASE_LLAMA3_70B_CONFIG,
     num_gpus=32,
@@ -295,6 +315,23 @@ LLAMA3_70B_H100_SFT_BASE_CONFIG = replace(
 
 LLAMA3_70B_H100_SFT_BF16_BASE_CONFIG = LLAMA3_70B_H100_SFT_BASE_CONFIG
 LLAMA3_70B_H100_SFT_FP8_CS_BASE_CONFIG = LLAMA3_70B_H100_SFT_BASE_CONFIG
+
+
+LLAMA3_70B_GB300_LORA_BASE_CONFIG = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    num_gpus=8,
+    peft="lora",
+    # pipeline_model_parallel_size=4,
+    # virtual_pipeline_model_parallel_size=20,
+    micro_batch_size=1,
+    global_batch_size=64,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
+)
+
+LLAMA3_70B_GB300_LORA_BF16_BASE_CONFIG = LLAMA3_70B_GB300_LORA_BASE_CONFIG
+LLAMA3_70B_GB300_LORA_FP8_CS_BASE_CONFIG = LLAMA3_70B_GB300_LORA_BASE_CONFIG
+LLAMA3_70B_GB300_LORA_FP8_MX_BASE_CONFIG = LLAMA3_70B_GB300_LORA_FP8_CS_BASE_CONFIG
 
 
 LLAMA3_70B_GB200_LORA_BASE_CONFIG = replace(
@@ -367,11 +404,17 @@ __all__ = [
     "LLAMA3_8B_H100_SFT_BF16_BASE_CONFIG",
     "LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG",
     "LLAMA3_8B_H100_SFT_FP8_MX_BASE_CONFIG",
+    "LLAMA3_70B_GB300_SFT_BF16_BASE_CONFIG",
+    "LLAMA3_70B_GB300_SFT_FP8_CS_BASE_CONFIG",
+    "LLAMA3_70B_GB300_SFT_FP8_MX_BASE_CONFIG",
     "LLAMA3_70B_GB200_SFT_BF16_BASE_CONFIG",
     "LLAMA3_70B_GB200_SFT_FP8_CS_BASE_CONFIG",
     "LLAMA3_70B_GB200_SFT_FP8_MX_BASE_CONFIG",
     "LLAMA3_70B_H100_SFT_BF16_BASE_CONFIG",
     "LLAMA3_70B_H100_SFT_FP8_CS_BASE_CONFIG",
+    "LLAMA3_70B_GB300_LORA_BF16_BASE_CONFIG",
+    "LLAMA3_70B_GB300_LORA_FP8_CS_BASE_CONFIG",
+    "LLAMA3_70B_GB300_LORA_FP8_MX_BASE_CONFIG",
     "LLAMA3_70B_GB200_LORA_BF16_BASE_CONFIG",
     "LLAMA3_70B_GB200_LORA_FP8_CS_BASE_CONFIG",
     "LLAMA3_70B_GB200_LORA_FP8_MX_BASE_CONFIG",
