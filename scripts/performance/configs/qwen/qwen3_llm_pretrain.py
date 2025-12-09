@@ -92,6 +92,9 @@ def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True
 
+    if cfg.model.recompute_modules is not None:
+        cfg.model.recompute_granularity = "selective"
+
 
 def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
