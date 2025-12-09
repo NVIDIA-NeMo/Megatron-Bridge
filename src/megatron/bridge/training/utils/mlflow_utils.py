@@ -15,6 +15,7 @@
 from pathlib import Path
 from typing import Any, Optional
 
+from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
 from megatron.bridge.utils.common_utils import print_rank_last
 
 
@@ -42,7 +43,8 @@ def on_save_checkpoint_success(
     try:
         checkpoint_path = str(Path(checkpoint_path).resolve())
         base_name = Path(save_dir).name or "checkpoints"
-        artifact_subdir = f"{base_name}/iter_{iteration:07d}"
+        expected_ckpt_path = get_checkpoint_name(save_dir, iteration)
+        artifact_subdir = f"{base_name}/{Path(expected_ckpt_path).name}"
         mlflow_logger.log_artifacts(checkpoint_path, artifact_path=artifact_subdir)
     except Exception as exc:
         # continue training

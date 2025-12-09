@@ -32,7 +32,7 @@ from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManage
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import safe_serialize
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
-from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, warn_rank_0
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
 
 
 @dataclass
@@ -444,5 +444,5 @@ def _timers_write_to_mlflow(
         try:
             logger.log_metrics(metrics, step=iteration)
         except Exception:
-            # continue training
-            warn_rank_0("Failed to log timer metrics to MLFlow; continuing without timer metrics.")
+            import warnings
+            warnings.warn("Failed to log timer metrics to MLFlow; continuing without timer metrics.")
