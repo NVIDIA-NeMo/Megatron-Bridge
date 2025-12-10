@@ -156,7 +156,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Benchmark the Hugging Face ↔ Megatron round-trip import/export times."
     )
-    parser.add_argument("--hf-model-id", type=str, default=HF_MODEL_ID, help="Hugging Face model ID to benchmark.")
+    parser.add_argument("--hf-model-id", type=str, required=True, help="Hugging Face model ID to benchmark.")
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size.")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size.")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size.")
