@@ -20,9 +20,11 @@ from typing import List, Optional
 try:
     from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.executors import slurm_executor
+    from utils.utils import get_workload_base_config
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.executors import slurm_executor
+    from .utils.utils import get_workload_base_config
 
 import nemo_run as run
 
@@ -73,6 +75,10 @@ def main(
     profiling_stop_step: int,
     profiling_gpu_metrics: bool,
     megatron_ckpt_dir: Optional[str],
+    checkpoint_save: Optional[bool],
+    checkpoint_interval: Optional[int],
+    checkpoint_dir: Optional[str],
+    checkpoint_load_path: Optional[str],
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
@@ -138,11 +144,33 @@ def main(
         executor.container_mounts.extend([f"{megatron_ckpt_dir}:/mnt/megatron_ckpt"])
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    vp_size = vp_size if vp_size != -1 else None
+    # Load workload base config to get default values if not explicitly provided
+    workload_base_config = get_workload_base_config(
+        model_name, model_size, gpu, compute_dtype, domain, task
+    )
+    
+    # Use provided values if available, otherwise fall back to workload defaults
+    tp_size_final = tp_size if tp_size is not None else workload_base_config.tensor_model_parallel_size
+    pp_size_final = pp_size if pp_size is not None else workload_base_config.pipeline_model_parallel_size
+    cp_size_final = cp_size if cp_size is not None else workload_base_config.context_parallel_size
+    vp_size_final = vp_size if vp_size not in (None, -1) else workload_base_config.virtual_pipeline_model_parallel_size
+    ep_size_final = ep_size if ep_size is not None else workload_base_config.expert_model_parallel_size
+    mbs_final = mbs if mbs is not None else workload_base_config.micro_batch_size
+    
+    # Handle global batch size with scaling
+    if gbs is not None:
+        gbs_final = gbs
+    else:
+        # Scale GBS based on number of GPUs if different from default
+        if num_gpus != workload_base_config.num_gpus:
+            gbs_final = int(workload_base_config.gbs_scaling_factor * num_gpus)
+        else:
+            gbs_final = workload_base_config.global_batch_size
+    
     exp_name = (
         f"{task}_{model_name}_{model_size}_{compute_dtype}"
-        f"_gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}"
-        f"_vp{vp_size}_ep{ep_size}_mbs{mbs}_gbs{gbs}"
+        f"_gpus{num_gpus}_tp{tp_size_final}_pp{pp_size_final}_cp{cp_size_final}"
+        f"_vp{vp_size_final}_ep{ep_size_final}_mbs{mbs_final}_gbs{gbs_final}"
     )
 
     logger.debug(
@@ -215,6 +243,10 @@ if __name__ == "__main__":
         profiling_stop_step=args.profiling_stop_step,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         megatron_ckpt_dir=args.megatron_ckpt,
+        checkpoint_save=args.checkpoint_save,
+        checkpoint_interval=args.checkpoint_interval,
+        checkpoint_dir=args.checkpoint_dir,
+        checkpoint_load_path=args.checkpoint_load_path,
         executor=slurm_executor(
             args.gpu,
             args.account,
@@ -231,3 +263,5 @@ if __name__ == "__main__":
             additional_slurm_params=additional_slurm_params,
         ),
     )
+
+
