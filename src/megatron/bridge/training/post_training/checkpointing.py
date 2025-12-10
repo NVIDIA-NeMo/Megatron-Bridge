@@ -87,7 +87,7 @@ def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = False) -> b
     if not os.path.isdir(modelopt_state_path):
         return False
     elif ignore_kd_state:
-        return _has_only_kd_state(modelopt_state_path)
+        return not _has_only_kd_state(modelopt_state_path)
     else:
         return True
 
