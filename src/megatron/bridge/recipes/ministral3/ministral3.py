@@ -254,7 +254,7 @@ def _ministral3_finetune_common(
 
     if _dataset_choice == "mock":
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
-            seq_length=seq_length,
+            sequence_length=seq_length,
             hf_processor_path=_processor_model,
             prompt="Describe this image.",
             num_workers=1,
@@ -267,7 +267,7 @@ def _ministral3_finetune_common(
         )
     elif _dataset_choice == "preloaded":
         dataset_cfg = PreloadedVLMConversationProvider(
-            seq_length=seq_length,
+            sequence_length=seq_length,
             hf_processor_path=_processor_model,
             train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
             valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,
@@ -281,7 +281,7 @@ def _ministral3_finetune_common(
         )
     elif _dataset_choice == "hf":
         dataset_cfg = HFDatasetConversationProvider(
-            seq_length=seq_length,
+            sequence_length=seq_length,
             hf_processor_path=_processor_model,
             maker_name="make_cord_v2_dataset",
             num_workers=2,
