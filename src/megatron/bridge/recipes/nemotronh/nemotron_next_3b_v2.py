@@ -19,7 +19,9 @@ import torch
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.nemotronh import NemotronNanoNext3Bv2Provider
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
@@ -259,7 +261,7 @@ def _nemotron_next_3b_v2_common(
             mmap_bin_files=False,
         ),
         logger=LoggerConfig(
-            log_interval=50,
+            log_interval=10,
             tensorboard_dir=tensorboard_dir,
         ),
         #TODO(liding): what is the correct tokenizer for Nemotron Next 3B v2
@@ -273,6 +275,227 @@ def _nemotron_next_3b_v2_common(
             ckpt_assume_constant_structure=True,
         ),
         rng=RNGConfig(seed=1234),
+        comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
+    )
+
+    if cfg.comm_overlap is None:
+        cfg.comm_overlap = CommOverlapConfig(
+            tp_comm_bootstrap_backend="nccl",
+            tp_comm_overlap=True,
+        )
+
+    return cfg
+
+
+class NemotronNext3Bv2FinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by Nemotron Next 3B v2 finetune recipe helpers."""
+
+    # Core identifiers
+    model_provider: NemotronNanoNext3Bv2Provider
+    dir: Optional[str]
+    name: str
+    # Model parallelism
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_parallelism_dtype: Optional[torch.dtype]
+    virtual_pipeline_parallelism: Optional[int]
+    context_parallelism: int
+    sequence_parallelism: bool
+    expert_tensor_parallelism: int
+    expert_model_parallelism: int
+    # Finetuning specifics
+    pretrained_checkpoint: Optional[str]
+    peft: Optional[Union[str, PEFT]]
+    packed_sequence: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: Optional[int]
+    micro_batch_size: int
+    seq_length: int
+    finetune_lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    eval_interval: int
+    save_interval: int
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+    # MoE
+    enable_deepep: bool
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
+
+
+def nemotron_next_3b_v2_finetune_config(**user_kwargs: Unpack[NemotronNext3Bv2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Nemotron Next 3B v2.
+
+    Default configuration:
+    - LoRA/DoRA: TP=1, PP=1, EP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: NemotronNext3Bv2FinetuneKwargs = {
+        "model_provider": NemotronNanoNext3Bv2Provider,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "pipeline_parallelism_dtype": torch.bfloat16,
+        "context_parallelism": 1,
+        "sequence_parallelism": False,
+        "expert_tensor_parallelism": 1,
+        "expert_model_parallelism": 8 if is_full_sft else 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+        "enable_deepep": True,
+        "precision_config": "bf16_mixed",
+    }
+    combined_kwargs: NemotronNext3Bv2FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _nemotron_next_3b_v2_finetune_common(**combined_kwargs)
+
+
+def _nemotron_next_3b_v2_finetune_common(
+    model_provider: type[NemotronNanoNext3Bv2Provider],
+    dir: Optional[str] = None,
+    name: str = "default",
+    # Model configuration
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_parallelism: Optional[int] = None,
+    context_parallelism: int = 1,
+    sequence_parallelism: bool = False,
+    expert_tensor_parallelism: int = 1,
+    expert_model_parallelism: int = 1,
+    # Finetuning-specific params
+    pretrained_checkpoint: Optional[str] = None,
+    peft: Optional[Union[str, PEFT]] = "lora",
+    packed_sequence: bool = False,
+    # Training params
+    train_iters: int = 1000,
+    global_batch_size: int = 128,
+    micro_batch_size: int = 1,
+    seq_length: int = 2048,
+    eval_interval: int = 50,
+    save_interval: int = 20,
+    # Optimizer
+    finetune_lr: float = 1e-4,
+    min_lr: float = 0.0,
+    lr_warmup_iters: int = 50,
+    lr_decay_iters: Optional[int] = None,
+    # Precision / overlap
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    # MoE
+    enable_deepep: bool = True,
+    # W&B
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
+) -> ConfigContainer:
+    """Common finetuning configuration for Nemotron Next 3B v2 models."""
+
+    # Setup directories
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    assert not packed_sequence, "Packed sequence is not supported for Nemotron Next 3B v2 finetuning"
+
+    # Configure the model
+    model_cfg = model_provider(
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_parallelism_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
+        context_parallel_size=context_parallelism,
+        sequence_parallel=sequence_parallelism,
+        expert_tensor_parallel_size=expert_tensor_parallelism,
+        expert_model_parallel_size=expert_model_parallelism,
+        apply_rope_fusion=False,
+        async_tensor_model_parallel_allreduce=True,
+        attention_backend="fused",
+        gradient_accumulation_fusion=True,
+        init_method_std=0.0173,
+        use_fused_weighted_squared_relu=True,
+    )
+
+    if enable_deepep:
+        model_cfg.moe_token_dispatcher_type = "flex"
+        model_cfg.moe_shared_expert_overlap = False
+        model_cfg.moe_flex_dispatcher_backend = "deepep"
+
+    # Optimizer and LR scheduler
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters,
+        adam_beta1=0.9,
+        adam_beta2=0.95,
+        adam_eps=1e-8,
+        weight_decay=0.1,
+        max_lr=finetune_lr,
+        min_lr=min_lr,
+        start_weight_decay=0.1,
+        end_weight_decay=0.1,
+        lr_decay_style="cosine",
+    )
+
+    # PEFT config
+    mamba_target_modules = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
+    peft_config = default_peft_config(peft, target_modules=mamba_target_modules)
+
+    # Logger
+    logger_cfg = LoggerConfig(
+        log_interval=1,
+        tensorboard_dir=tensorboard_dir,
+        log_timers_to_tensorboard=True,
+        wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
+        wandb_exp_name=wandb_exp_name,
+    )
+
+    # Config Container
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=eval_interval,
+            eval_iters=32,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            use_distributed_optimizer=True,
+        ),
+        dataset=default_squad_config(seq_length, packed_sequence),
+        logger=logger_cfg,
+        # Using the same tokenizer as pretrain
+        tokenizer=TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model="/lustre/fsw/portfolios/llmservice/projects/llmservice_nlp_fm/data-quality/tokenizers/multiMixV8.gpt4o_nc_sd.500000.128k.vocab.json"),
+        checkpoint=CheckpointConfig(
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=pretrained_checkpoint,
+            ckpt_format="torch_dist",
+            dist_ckpt_strictness="log_all",
+            ckpt_assume_constant_structure=True,
+        ),
+        rng=RNGConfig(seed=1234),
+        peft=peft_config,
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
