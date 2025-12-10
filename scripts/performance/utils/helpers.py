@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from utils.utils import WorkloadBaseConfig, get_model_recipe, get_workload_base_config
 
+from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
@@ -241,7 +242,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         recipe.model.pipeline_model_parallel_size = kwargs.get("pipeline_model_parallel_size")
     if kwargs.get("context_parallel_size") is not None:
         recipe.model.context_parallel_size = kwargs.get("context_parallel_size")
-    if kwargs.get("virtual_pipeline_model_parallel_size") is not None:
+    if kwargs.get("virtual_pipeline_model_parallel_size") != -1:
         recipe.model.virtual_pipeline_model_parallel_size = kwargs.get("virtual_pipeline_model_parallel_size")
     if kwargs.get("expert_model_parallel_size") is not None:
         recipe.model.expert_model_parallel_size = kwargs.get("expert_model_parallel_size")
@@ -269,6 +270,14 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+
+    # Reconfigure the DeepSeek-V3 pipeline model parallel layout
+    # if the user has provided a custom PP and VP sizes
+    model_recipe_name = kwargs.get("model_recipe_name")
+    pp_size = kwargs.get("pipeline_model_parallel_size")
+    vp_size = kwargs.get("virtual_pipeline_model_parallel_size")
+    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
