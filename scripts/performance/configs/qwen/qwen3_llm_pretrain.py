@@ -79,7 +79,6 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
     """Set common performance configurations for all Qwen3 next configs."""
     cfg.model.bias_activation_fusion = True
-    cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.moe_router_fusion = True
@@ -91,9 +90,6 @@ def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
-
-    if cfg.model.recompute_modules is not None:
-        cfg.model.recompute_granularity = "selective"
 
 
 def qwen3_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
