@@ -137,8 +137,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_basic_logging_without_skip(
         self,
+        mock_num_floating_point_operations,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -153,6 +155,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -200,8 +203,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_skipped_iterations(
         self,
+        mock_num_floating_point_operations,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -216,6 +221,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -260,8 +266,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_nan_detection(
         self,
+        mock_num_floating_point_operations,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -275,6 +283,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -317,8 +326,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_tensorboard_logging_interval(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -343,6 +354,7 @@ class TestTrainingLog:
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
         mock_is_last_rank.return_value = True
+        mock_num_floating_point_operations.return_value = 1e12
 
         # Set iteration to match tensorboard logging interval
         mock_global_state.train_state.step = 100  # Should trigger tensorboard logging (100 % 10 == 0)
@@ -376,10 +388,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     @mock.patch("torch.distributed.get_rank")
     def test_memory_reporting(
         self,
         mock_get_rank,
+        mock_num_floating_point_operations,
         mock_report_theoretical,
         mock_report_memory,
         mock_print_rank_last,
@@ -396,6 +410,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -440,8 +455,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_moe_logging(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -460,6 +477,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -509,8 +527,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_moe_logging_seq_aux_loss(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -528,6 +548,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -581,8 +602,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_moe_logging_global_aux_loss(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -600,6 +623,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -653,8 +677,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_moe_logging_combined_aux_losses(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -672,6 +698,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -726,8 +753,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_moe_logging_with_z_loss_only(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -745,6 +774,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -798,8 +828,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_moe_logging_without_z_loss(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -817,6 +849,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -868,8 +901,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_mtp_logging(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -888,6 +923,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -925,12 +961,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     @mock.patch("megatron.core.parallel_state.is_pipeline_first_stage")
     @mock.patch("megatron.core.parallel_state.is_pipeline_last_stage")
     def test_decoupled_learning_rate(
         self,
         mock_is_pipeline_last,
         mock_is_pipeline_first,
+        mock_num_floating_point_operations,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -945,6 +983,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -986,8 +1025,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_energy_monitoring(
         self,
+        mock_num_floating_point_operations,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -1002,6 +1043,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -1061,8 +1103,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_profiling_memory_snapshot(
         self,
+        mock_num_floating_point_operations,
         mock_report_runtime,
         mock_report_throughput,
         mock_report_l2_norm_grad,
@@ -1083,6 +1127,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -1134,8 +1179,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_wandb_specific_logging(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -1153,6 +1200,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -1199,8 +1247,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_no_loggers_present(
         self,
+        mock_num_floating_point_operations,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -1215,6 +1265,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -1261,8 +1312,10 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     @mock.patch("torch.cuda.memory_stats")
+    @mock.patch("megatron.bridge.training.utils.train_utils.num_floating_point_operations")
     def test_memory_tensorboard_logging(
         self,
+        mock_num_floating_point_operations,
         mock_report_l2_norm_grad,
         mock_report_throughput,
         mock_report_runtime,
@@ -1282,6 +1335,7 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_num_floating_point_operations.return_value = 1e12
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
