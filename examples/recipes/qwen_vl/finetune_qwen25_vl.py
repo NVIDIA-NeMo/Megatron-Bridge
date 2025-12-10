@@ -97,10 +97,10 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--dataset-type",
         type=str,
-        choices=["mock", "preloaded", "hf", "energon"],
+        choices=["mock", "preloaded", "hf"],
         default=None,
         help=(
-            "Dataset type to use: 'mock', 'preloaded', 'hf', or 'energon'. "
+            "Dataset type to use: 'mock', 'preloaded', or 'hf'. "
             "If not set, auto-detects based on --data-path/--use-preloaded."
         ),
     )
@@ -177,13 +177,6 @@ def main() -> None:
     if get_rank_safe() == 0:
         cfg.print_yaml()
 
-    # Workaround for OmegaConf not supporting Qwen2VLTaskEncoder object (or other complex objects in dataset)
-    # We temporarily remove it from the config before OmegaConf conversion and restore it later
-    saved_task_encoder = None
-    if hasattr(cfg.dataset, "task_encoder"):
-        saved_task_encoder = cfg.dataset.task_encoder
-        cfg.dataset.task_encoder = None
-
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
 
     if args.config_file:
@@ -199,16 +192,6 @@ def main() -> None:
         merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
 
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
-
-    # Restore the task_encoder to the config object
-    if saved_task_encoder is not None:
-        cfg.dataset.task_encoder = saved_task_encoder
-
-        # Only remove if it is None (meaning it came from our stub, not an external override)
-        if "dataset" in final_overrides_as_dict and isinstance(final_overrides_as_dict["dataset"], dict):
-            if final_overrides_as_dict["dataset"].get("task_encoder") is None:
-                del final_overrides_as_dict["dataset"]["task_encoder"]
-
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
     if get_rank_safe() == 0:

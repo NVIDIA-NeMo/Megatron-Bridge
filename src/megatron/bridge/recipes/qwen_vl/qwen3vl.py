@@ -265,10 +265,6 @@ def _qwen3_vl_common(
         dataset_cfg = EnergonVLMConversationProvider(
             seq_length=seq_length,
             path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
-            # DEBUGGING
-            # no need to pass tokenizer and image_processor
-            # tokenizer=tokenizer,
-            # image_processor=image_processor,
             micro_batch_size=micro_batch_size,
             global_batch_size=global_batch_size,
             num_workers=2,
