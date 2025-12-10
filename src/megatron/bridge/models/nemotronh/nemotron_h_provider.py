@@ -149,6 +149,7 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
 class NemotronNanoNext3Bv2Provider(NemotronHModelProvider):
     """Configuration for a 3B parameter Nemotron Nano Next v2 model."""
 
+    num_query_groups: int = 2
     hybrid_override_pattern: str = "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
     num_layers: int = 52
     hidden_size: int = 2688
