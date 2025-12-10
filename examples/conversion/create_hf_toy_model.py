@@ -39,9 +39,7 @@ from transformers import (
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Create a reduced HuggingFace Causal LM checkpoint for tests."
-    )
+    parser = argparse.ArgumentParser(description="Create a reduced HuggingFace Causal LM checkpoint for tests.")
     parser.add_argument(
         "--hf-model-id",
         default="Qwen/Qwen3-30B-A3B",
@@ -136,6 +134,7 @@ def _save_tokenizer(output_dir: Path, tokenizer_id: str, *, trust_remote_code: b
 
 
 def main() -> None:
+    """Main entry point."""
     args = _parse_args()
 
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -175,4 +174,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
