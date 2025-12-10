@@ -88,6 +88,8 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
 
+    # Checkpoint save is disabled by default for performance benchmarks
+    # Users can enable it via command-line arguments
     recipe.checkpoint.save = None
 
     recipe.logger.log_interval = 1
@@ -256,6 +258,29 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     if kwargs.get("megatron_ckpt") is not None:
         recipe.checkpoint.pretrained_checkpoint = "/mnt/megatron_ckpt"
+
+    # Handle checkpoint configuration
+    checkpoint_dir = kwargs.get("checkpoint_dir")
+    checkpoint_interval = kwargs.get("checkpoint_interval")
+    checkpoint_save = kwargs.get("checkpoint_save")
+    
+    if checkpoint_dir is not None:
+        recipe.checkpoint.save = checkpoint_dir
+        logger.info(f"Checkpoint save directory set to: {checkpoint_dir}")
+    elif checkpoint_save:
+        # If checkpoint_save is enabled but no directory specified, use default under nemo_experiments
+        # This will be under: <experiment_dir>/code/nemo_experiments/default/checkpoints
+        recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
+        logger.info("Checkpoint save enabled with default directory: /nemo_run/code/nemo_experiments/default/checkpoints")
+    
+    if checkpoint_interval is not None:
+        recipe.checkpoint.save_interval = checkpoint_interval
+        logger.info(f"Checkpoint save interval set to: {checkpoint_interval} iterations")
+    
+    checkpoint_load_path = kwargs.get("checkpoint_load_path")
+    if checkpoint_load_path is not None:
+        recipe.checkpoint.load = checkpoint_load_path
+        logger.info(f"Checkpoint load path set to: {checkpoint_load_path}")
 
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size

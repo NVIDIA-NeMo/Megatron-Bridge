@@ -73,6 +73,10 @@ def main(
     profiling_stop_step: int,
     profiling_gpu_metrics: bool,
     megatron_ckpt_dir: Optional[str],
+    checkpoint_save: Optional[bool],
+    checkpoint_interval: Optional[int],
+    checkpoint_dir: Optional[str],
+    checkpoint_load_path: Optional[str],
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
@@ -215,6 +219,10 @@ if __name__ == "__main__":
         profiling_stop_step=args.profiling_stop_step,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         megatron_ckpt_dir=args.megatron_ckpt,
+        checkpoint_save=args.checkpoint_save,
+        checkpoint_interval=args.checkpoint_interval,
+        checkpoint_dir=args.checkpoint_dir,
+        checkpoint_load_path=args.checkpoint_load_path,
         executor=slurm_executor(
             args.gpu,
             args.account,
