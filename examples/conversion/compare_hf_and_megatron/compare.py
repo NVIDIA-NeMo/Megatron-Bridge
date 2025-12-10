@@ -607,7 +607,6 @@ def _load_megatron_model(args):
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     model_components = [m.eval() for m in megatron_model]
@@ -716,8 +715,8 @@ def compare_models_one_step(args) -> None:
     )
 
     del hf_model
-    # Load Megatron model
-    megatron_model = _load_megatron_model(args)
+    # Reload Megatron model to ensure a fresh instance before comparison
+    megatron_model, _ = _load_megatron_model(args)
 
     # Broadcast HF results to all ranks after Megatron initialization
     # (following the pattern from generate_from_hf.py)
