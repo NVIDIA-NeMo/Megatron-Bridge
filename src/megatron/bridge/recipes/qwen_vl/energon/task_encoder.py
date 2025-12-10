@@ -28,6 +28,8 @@ from megatron.energon.flavors.base_dataset import Sample
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 from PIL import Image
 
+from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+
 
 # Local replacements for former nemo dependencies
 # Constants for internal multimodal token placeholders and label ignore
@@ -580,4 +582,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         raw = dataclasses.asdict(batch)
         del raw["__subflavors__"]
+
+        raw["visual_inputs"] = Qwen2_5_VLVisualInputs(
+            pixel_values=batch.pixel_values,
+            image_grid_thw=batch.image_grid_thw,
+        )
+
         return raw
