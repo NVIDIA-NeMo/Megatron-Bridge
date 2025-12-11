@@ -16,6 +16,7 @@ import argparse
 import logging
 from typing import List, Optional
 
+from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -131,6 +132,7 @@ def _set_recompute_overrides(
         recipe.model.recompute_num_layers = recompute_num_layers
     if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
+        recipe.model.recompute_granularity = "selective"
 
     return recipe
 
@@ -200,8 +202,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
         recipe.model.moe_router_force_load_balancing = True
     if args.wandb_key is not None:
-        recipe.logger.wandb_project = args.wandb_prj_name
-        recipe.logger.wandb_exp_name = args.wandb_exp_name
+        recipe.logger.wandb_project = args.wandb_project_name
+        recipe.logger.wandb_exp_name = args.wandb_experiment_name
+        recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
@@ -212,7 +215,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size is not None:
+    if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
         recipe.model.expert_model_parallel_size = args.expert_model_parallel_size
@@ -239,7 +242,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
+        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -252,16 +255,25 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=False
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=True
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+
+    # Reconfigure the DeepSeek-V3 pipeline model parallel layout
+    # if the user has provided a custom PP and VP sizes
+    model_recipe_name = args.model_recipe_name
+    pp_size = args.pipeline_model_parallel_size
+    vp_size = args.virtual_pipeline_model_parallel_size
+    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+
     return recipe
 
 

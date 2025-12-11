@@ -444,6 +444,8 @@ class ModelParallelKwargs(TypedDict, total=False):
 
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
+    num_layers_in_first_pipeline_stage: int | None
+    num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
