@@ -41,4 +41,4 @@ export MOE_GROUPED_GEMM=true
 #   model.hidden_size=512 model.moe_router_topk=2
 
 # Launch tests
-A2A_OVERLAP=1 TP=2 PP=8 VPP=4 EP=32 NNODES=32 GBS=2048 bash ${MBRIDGE_PATH}/scripts/moe_model_zoo/sbatch_benchmarking.sh model.recompute_granularity=selective model.recompute_modules=moe_act,layernorm model.moe_router_force_load_balancing=true 
+A2A_OVERLAP=1 TP=2 PP=8 CP=1 VPP=4 EP=32 NNODES=32 GBS=2048 bash ${MBRIDGE_PATH}/scripts/moe_model_zoo/sbatch_benchmarking.sh model.recompute_granularity=selective model.recompute_modules=moe_act,layernorm model.moe_router_force_load_balancing=true 
