@@ -19,6 +19,7 @@ import torch
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -33,7 +34,31 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+def set_deepseek_v3_pipeline_model_parallel_layout(
+    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+) -> None:
+    """Set the DeepSeek-V3 pipeline model parallel layout."""
+    mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
+    last_layer = ["mtp"] * mtp_layers + ["loss"]
+    pp_size = model_cfg.pipeline_model_parallel_size or 1
+    vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    if layout is not None:
+        model_cfg.pipeline_model_parallel_layout = layout
+    elif (pp_size, vp_size) in layout_map:
+        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
 
 class DeepSeekV3CommonKwargs(TypedDict, total=False):
@@ -52,13 +77,13 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    expert_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    expert_model_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
     # Recompute configuration
@@ -84,7 +109,7 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
-    enable_deepep: bool
+    moe_flex_dispatcher_backend: str
     apply_rope_fusion: bool
     layout: Optional[Union[str, List[List[str]]]]
 
@@ -96,10 +121,10 @@ def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V3",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 16,
-        "expert_parallelism": 64,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 16,
+        "expert_model_parallel_size": 64,
+        "pipeline_dtype": torch.bfloat16,
         # Old recipe-compatible defaults passed via wrapper
         "recompute_granularity": "selective",
         "precision_config": MixedPrecisionConfig(
@@ -123,9 +148,9 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V3",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 8,
-        "expert_parallelism": 32,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 8,
+        "expert_model_parallel_size": 32,
         # Maintain old recipe defaults via wrapper overrides
         "precision_config": MixedPrecisionConfig(
             bf16=True,
@@ -155,13 +180,13 @@ def _deepseek_v3_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 16,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 64,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 16,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 64,
+    sequence_parallel: bool = True,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
@@ -187,7 +212,7 @@ def _deepseek_v3_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
-    enable_deepep: bool = False,
+    moe_flex_dispatcher_backend: str = None,
     apply_rope_fusion: bool = False,
     layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> ConfigContainer:
@@ -205,13 +230,13 @@ def _deepseek_v3_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.expert_model_parallel_size = expert_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.expert_model_parallel_size = expert_model_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     model_cfg.expert_tensor_parallel_size = 1
@@ -229,24 +254,7 @@ def _deepseek_v3_common(
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
 
-    mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
-    last_layer = ["mtp"] * mtp_layers + ["loss"]
-    layout_map = {
-        (1, 1): None,
-        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
-        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
-    if layout is not None:
-        # Allow overriding the automatically selected layout
-        model_cfg.pipeline_model_parallel_layout = layout
-    elif (pp_size, vp_size) in layout_map:
-        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
+    set_deepseek_v3_pipeline_model_parallel_layout(model_cfg, layout)
 
     # Pipeline split for asymmetric stages are specified with map_pp_vp_to_layout below
     model_cfg.account_for_embedding_in_pipeline_split = False
@@ -256,10 +264,7 @@ def _deepseek_v3_common(
 
     # Performance optimization knobs
     model_cfg.moe_permute_fusion = True
-    if enable_deepep:
-        model_cfg.moe_token_dispatcher_type = "flex"
-        model_cfg.moe_enable_deepep = True
-        model_cfg.moe_shared_expert_overlap = False
+    apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -314,7 +319,7 @@ def _deepseek_v3_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,

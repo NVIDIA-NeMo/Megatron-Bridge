@@ -60,13 +60,6 @@ def _make_batch(device="cpu"):
 
 
 def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
-    # Avoid requiring distributed/parallel initialization in unit test
-    monkeypatch.setattr(
-        "megatron.core.parallel_state.is_pipeline_last_stage",
-        lambda: False,
-        raising=True,
-    )
-
     # Simulate Training on CPU-only env by making .cuda a no-op that returns the same tensor
     class _NoCudaTensor(torch.Tensor):
         def cuda(self, non_blocking=False):  # type: ignore[override]
@@ -84,7 +77,13 @@ def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
     vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
 
     it = _Iterator(batch)
-    out = get_batch_from_iterator(it, use_mtp=False, skip_getting_attention_mask_from_dataset=True)
+    out = get_batch_from_iterator(
+        it,
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=True,
+        is_last_pp_stage=True,
+    )
 
     assert "visual_inputs" in out
     out_vi = out["visual_inputs"]
@@ -95,8 +94,8 @@ def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
 
 def test_get_batch_padding_paths(monkeypatch):
     # Simulate both first and last pipeline stages so tensors are returned
-    monkeypatch.setattr("megatron.core.parallel_state.is_pipeline_first_stage", lambda: True, raising=True)
-    monkeypatch.setattr("megatron.core.parallel_state.is_pipeline_last_stage", lambda: True, raising=True)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
 
     # Disable context parallel slicing effects
     monkeypatch.setattr(
@@ -135,7 +134,14 @@ def test_get_batch_padding_paths(monkeypatch):
 
     # Iterator
     it = _Iterator(batch)
-    tokens, labels, loss_mask, attention_mask, position_ids, *_ = get_batch(it, cfg, use_mtp=False)
+
+    class _PG:
+        def __init__(self):
+            self.pp = object()
+
+    tokens, labels, loss_mask, attention_mask, position_ids, *_ = get_batch(
+        it, cfg, use_mtp=False, pg_collection=_PG()
+    )
     # Length padded up to min(seq_cap, ceil_to_128(4)) == 32
     assert tokens.shape[1] == 32
     assert labels.shape[1] == 32
@@ -145,8 +151,8 @@ def test_get_batch_padding_paths(monkeypatch):
 
 def test_forward_step_schedule_plan(monkeypatch):
     # Configure pipeline last/first to enable labels & loss_mask path
-    monkeypatch.setattr("megatron.core.parallel_state.is_pipeline_first_stage", lambda: True, raising=True)
-    monkeypatch.setattr("megatron.core.parallel_state.is_pipeline_last_stage", lambda: True, raising=True)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
 
     # No-op CUDA and CP functions
     monkeypatch.setattr("megatron.core.utils.get_batch_on_this_cp_rank", lambda x: x, raising=True)
@@ -155,6 +161,7 @@ def test_forward_step_schedule_plan(monkeypatch):
     class _Model:
         def __init__(self):
             self.config = type("C", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
+            self.pg_collection = type("PG", (), {"pp": object()})()
 
         def build_schedule_plan(self, tokens, position_ids, attention_mask, labels=None, loss_mask=None):  # noqa: ARG002
             return torch.tensor(1)

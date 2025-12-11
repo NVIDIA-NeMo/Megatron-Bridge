@@ -16,6 +16,7 @@ import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -63,8 +64,61 @@ class MockModelChunk:
         yield self.layer_name, self.param
 
 
+def make_default_model_config():
+    """Create a SimpleNamespace with sane defaults for model attributes."""
+    return SimpleNamespace(
+        num_moe_experts=None,
+        moe_router_load_balancing_type="",
+        moe_z_loss_coeff=None,
+        moe_per_layer_logging=False,
+        num_layers=24,
+        moe_layer_freq=1,
+        mtp_num_layers=None,
+        kv_channels=128,
+        num_attention_heads=32,
+        hidden_size=4096,
+        num_query_groups=None,
+        moe_router_topk=1,
+        ffn_hidden_size=16384,
+        moe_ffn_hidden_size=None,
+        moe_shared_expert_intermediate_size=None,
+        gated_linear_unit=False,
+        activation_func=None,
+        multi_latent_attention=False,
+        q_lora_rank=None,
+        kv_lora_rank=None,
+        qk_head_dim=64,
+        qk_pos_emb_head_dim=0,
+        v_head_dim=64,
+        seq_length=2048,
+        vocab_size=51200,
+        make_vocab_size_divisible_by=128,
+        tensor_model_parallel_size=1,
+        group_query_attention=False,
+        num_moe_experts_routed_to=None,
+        moe_router_load_balancing_threshold=None,
+        moe_z_loss_scale=None,
+        is_hybrid_model=False,
+    )
+
+
 class TestTrainingLog:
     """Test suite for the training_log function."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_pg_collection(self, monkeypatch):
+        class _PG:
+            def __init__(self):
+                self.dp = object()
+                self.dp_cp = object()
+                self.mp = object()
+                self.pp = object()
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: _PG(),
+            raising=True,
+        )
 
     @pytest.fixture(scope="function")
     def mock_config(self):
@@ -83,9 +137,8 @@ class TestTrainingLog:
         config.train.micro_batch_size = 2
         config.train.train_iters = 1000
 
-        # Model config
-        config.model.num_moe_experts = None
-        config.model.mtp_num_layers = None
+        # Model config as a simple namespace to avoid auto-mocking methods
+        config.model = make_default_model_config()
 
         # Optimizer config
         config.optimizer.decoupled_lr = None
@@ -925,12 +978,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.core.parallel_state.is_pipeline_first_stage")
-    @mock.patch("megatron.core.parallel_state.is_pipeline_last_stage")
+    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage")
+    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage")
     def test_decoupled_learning_rate(
         self,
-        mock_is_pipeline_last,
-        mock_is_pipeline_first,
+        mock_is_pp_last,
+        mock_is_pp_first,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -949,8 +1002,8 @@ class TestTrainingLog:
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
         mock_is_last_rank.return_value = True
-        mock_is_pipeline_first.return_value = True
-        mock_is_pipeline_last.return_value = False
+        mock_is_pp_first.return_value = True
+        mock_is_pp_last.return_value = False
 
         # Enable decoupled learning rate
         mock_config.optimizer.decoupled_lr = 0.01
@@ -1384,6 +1437,74 @@ class TestTrainingLog:
         assert throughput_report["throughput/micro_batch_size"] == 4
         assert throughput_report["throughput/device/samples_per_sec"] == 51.2
 
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    def test_report_throughput_zero_elapsed_wct(self, mock_print_rank_0):
+        """Test throughput metrics when elapsed_wct is zero (identical timestamps).
+
+        This can happen during checkpoint resumption when history_wct is reinitialized
+        and the first few iterations have identical timestamps.
+        """
+        global_batch_size = 64
+        micro_batch_size = 4
+        iteration = 100
+        seq_length = 4096
+        # All timestamps are identical - elapsed_wct will be 0
+        history_wct = [1.5, 1.5, 1.5, 1.5, 1.5]
+        window_size = len(history_wct)
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+
+        throughput_report = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        # Should return empty dict when elapsed_wct is 0
+        assert throughput_report == {}
+
+        # Verify warning was printed
+        mock_print_rank_0.assert_called_once()
+        warning_message = mock_print_rank_0.call_args[0][0]
+        assert "Warning: elapsed_wct is 0" in warning_message
+        assert "skipping throughput calculation" in warning_message
+        assert f"iteration {iteration}" in warning_message
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    def test_report_throughput_negative_elapsed_wct(self, mock_print_rank_0):
+        """Test throughput metrics when elapsed_wct is negative.
+
+        This shouldn't happen in normal operation, but the code guards against it
+        to prevent division by zero or negative throughput values.
+        """
+        global_batch_size = 64
+        micro_batch_size = 4
+        iteration = 100
+        seq_length = 4096
+        # Timestamps go backwards - elapsed_wct will be negative
+        history_wct = [5.9, 4.2, 2.9, 1.7, 0.9]
+        window_size = len(history_wct)
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+
+        throughput_report = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        # Should return empty dict when elapsed_wct is negative
+        assert throughput_report == {}
+
+        # Verify warning was printed with negative value
+        mock_print_rank_0.assert_called_once()
+        warning_message = mock_print_rank_0.call_args[0][0]
+        assert "Warning: elapsed_wct is -5.0" in warning_message
+        assert "skipping throughput calculation" in warning_message
+        assert f"iteration {iteration}" in warning_message
+
     def test_l2_norm_grad(self):
         """Test l2 norm grad metrics."""
         num_chunks = 10
@@ -1781,6 +1902,29 @@ class TestParamIsNotShared:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for this test")
 class TestCalcParamsL2Norm:
     """Test suite for the calc_params_l2_norm function."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_pg_collection(self, monkeypatch):
+        class _PG:
+            def __init__(self):
+                # Minimal set of groups used by calc_params_l2_norm
+                self.dp_cp = object()
+                self.mp = object()
+                self.tp_ep_pp = object()
+                self.pp = object()
+
+                # Provide dp with size() to satisfy any incidental calls
+                class _DP:
+                    def size(self_inner):
+                        return 1
+
+                self.dp = _DP()
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: _PG(),
+            raising=True,
+        )
 
     @pytest.fixture
     def simple_model(self):

@@ -472,9 +472,9 @@ class MegatronBridgeAdapter:
                         num_floating_point_operations_so_far=self.state.train_state.floating_point_operations_so_far,
                         checkpointing_context=self.ckpt_ctx)
 
-    def export_hf(self, out_dir: str):
+    def export_hf(self, out_dir: str, trust_remote_code: bool = False):
         from megatron.bridge import AutoBridge
-        bridge = AutoBridge.from_hf_pretrained(self.rl_cfg["model_name"], trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(self.rl_cfg["model_name"], trust_remote_code=trust_remote_code)
         # Stream weights directly using AutoBridge.export_hf_weights; consume (save/IPC) as needed
         for name, tensor in bridge.export_hf_weights([self.model], show_progress=False):
             # process_or_save(name, tensor, out_dir)  # implement your consumer (e.g., safetensors or IPC)

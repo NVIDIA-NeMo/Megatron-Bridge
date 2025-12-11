@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 
 from megatron.bridge.models.nemotronh import (
-    NemotronNano9Bv2Provider,
-    NemotronNano12Bv2Provider,
+    NemotronNanoModelProvider9Bv2,
+    NemotronNanoModelProvider12Bv2,
 )
 from megatron.bridge.recipes.nemotronh import (
     nemotron_nano_9b_v2_pretrain_config,
@@ -39,7 +39,7 @@ class TestNemotronNano9Bv2:
         config = nemotron_nano_9b_v2_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronNano9Bv2Provider)
+        assert isinstance(config.model, NemotronNanoModelProvider9Bv2)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 2
@@ -52,7 +52,7 @@ class TestNemotronNano9Bv2:
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration (should be in mock mode)
-        assert config.dataset.sequence_length == 8192
+        assert config.dataset.seq_length == 8192
         assert config.dataset.split == "1,1,1"
 
         # Check tokenizer (default is NullTokenizer for pretraining)
@@ -69,10 +69,10 @@ class TestNemotronNano9Bv2:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotron_nano_9b_v2_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            context_parallelism=8,
-            sequence_parallelism=False,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=8,
+            sequence_parallel=False,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -111,7 +111,7 @@ class TestNemotronNano12Bv2:
         config = nemotron_nano_12b_v2_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronNano12Bv2Provider)
+        assert isinstance(config.model, NemotronNanoModelProvider12Bv2)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 4
@@ -134,8 +134,8 @@ class TestNemotronNano12Bv2:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotron_nano_12b_v2_pretrain_config(
-            tensor_parallelism=2,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 2
@@ -156,8 +156,8 @@ class TestNemotronNanoV2Common:
     @pytest.mark.parametrize(
         "recipe_fn,provider_cls",
         [
-            (nemotron_nano_9b_v2_pretrain_config, NemotronNano9Bv2Provider),
-            (nemotron_nano_12b_v2_pretrain_config, NemotronNano12Bv2Provider),
+            (nemotron_nano_9b_v2_pretrain_config, NemotronNanoModelProvider9Bv2),
+            (nemotron_nano_12b_v2_pretrain_config, NemotronNanoModelProvider12Bv2),
         ],
     )
     def test_config_container_structure(self, recipe_fn, provider_cls):
@@ -189,7 +189,7 @@ class TestNemotronNanoV2Common:
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2
-        assert config.dataset.sequence_length == 4096
+        assert config.dataset.seq_length == 4096
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
 

@@ -29,6 +29,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
     get_checkpoint_run_config_filename,
     get_checkpoint_train_state_filename,
+    get_hf_model_id_from_checkpoint,
     read_run_config,
     read_train_state,
 )
@@ -116,6 +117,51 @@ class TestCheckpointUtils:
         result = get_checkpoint_run_config_filename(checkpoint_dir)
         assert result == expected_path
 
+    def test_get_hf_model_id_from_checkpoint_root_directory(self, tmp_path):
+        """Test inferring HF model id when run_config.yaml lives at root."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        run_config_file = checkpoint_dir / CONFIG_FILE
+        run_config_file.write_text(yaml.dump({"model": {"hf_model_id": "meta-llama/Meta-Llama-3-8B"}}))
+
+        result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
+        assert result == "meta-llama/Meta-Llama-3-8B"
+
+    def test_get_hf_model_id_from_checkpoint_latest_iteration(self, tmp_path):
+        """Test inferring HF model id selects latest iteration when multiple exist."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        older_iter = checkpoint_dir / "iter_0000001"
+        newer_iter = checkpoint_dir / "iter_0000005"
+        older_iter.mkdir()
+        newer_iter.mkdir()
+
+        (older_iter / CONFIG_FILE).write_text(yaml.dump({"model": {"hf_model_id": "older/model"}}))
+        (newer_iter / CONFIG_FILE).write_text(yaml.dump({"model": {"hf_model_id": "newer/model"}}))
+
+        result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
+        assert result == "newer/model"
+
+    def test_get_hf_model_id_from_checkpoint_missing_run_config(self, tmp_path):
+        """Test inferring HF model id returns None when no run_config.yaml is present."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
+        assert result is None
+
+    def test_get_hf_model_id_from_checkpoint_invalid_path(self, tmp_path):
+        """Test inferring HF model id handles invalid paths."""
+        with pytest.raises(FileNotFoundError):
+            get_hf_model_id_from_checkpoint(tmp_path / "does_not_exist")
+
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("not a directory")
+        with pytest.raises(NotADirectoryError):
+            get_hf_model_id_from_checkpoint(file_path)
+
     def test_get_checkpoint_train_state_filename_without_prefix(self, tmp_path):
         """Test get_checkpoint_train_state_filename without prefix."""
         checkpoint_dir = str(tmp_path / "checkpoints")
@@ -202,6 +248,31 @@ class TestCheckpointUtils:
         with patch("builtins.open", mock_open(read_data=invalid_yaml)):
             with pytest.raises(RuntimeError, match="Unable to load config file"):
                 read_run_config("invalid.yaml")
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0)
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False)
+    def test_read_run_config_sanitizes_runtime_only_targets(self, mock_is_initialized, mock_get_rank):
+        """Run config should drop runtime-only objects such as timers."""
+        raw_config = {
+            "model": {
+                "timers": {"_target_": "megatron.core.timers.Timers"},
+                "keep": {"_target_": "some.other.Component", "value": 1},
+                "nested": [
+                    {"timers": {"_target_": "megatron.core.timers.Timers"}},
+                    {"other": {"_target_": "another.Component", "value": 2}},
+                ],
+            },
+            "tokenizer": {"type": "sentencepiece"},
+        }
+        config_yaml = yaml.dump(raw_config)
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            result = read_run_config("config_with_timers.yaml")
+
+        assert result["model"]["timers"] is None
+        assert result["model"]["nested"][0]["timers"] is None
+        assert result["model"]["keep"]["_target_"] == "some.other.Component"
+        assert result["model"]["nested"][1]["other"]["_target_"] == "another.Component"
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
     @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
