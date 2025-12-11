@@ -478,5 +478,5 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     ffn_hidden_size: int = 5120
     moe_ffn_hidden_size: int = 512
     moe_shared_expert_intermediate_size: int = 512
-    mtp_num_layers: Optional[int] = 0
+    mtp_num_layers: Optional[int] = None
     mtp_loss_scaling_factor: Optional[float] = None
