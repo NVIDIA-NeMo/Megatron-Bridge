@@ -13,7 +13,7 @@ export CLUSTER_CONF_PATH=
 # Env config
 export MBRIDGE_PATH=
 export MEGATRON_PATH=
-export PYTHONPATH=
+export PYTHONPATH=${MBRIDGE_PATH}/src/:${MEGATRON_PATH}:${PYTHONPATH:-}
 
 # WanDB and log config
 export WANDB_PROJECT=
@@ -22,9 +22,9 @@ export MBRIDGE_RELEASE_VERSION=
 export COMMENT=
 
 # Model config
-export MODEL=
-export DATASET=
-export PRETRAIN=
+export MODEL=Qwen3-235B-A22B
+export DATASET=Slimpajama
+export PRETRAIN=0
 
 # HuggingFace config
 export HF_TOKEN=
