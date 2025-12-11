@@ -110,6 +110,9 @@ def _adjust_config(
     if hasattr(config, "max_window_layers"):
         config.max_window_layers = min(config.max_window_layers, num_hidden_layers)
 
+    if hasattr(config, "layer_types"):
+        config.layer_types = config.layer_types[:num_hidden_layers]
+
     mlp_only_layers = getattr(config, "mlp_only_layers", [])
     if isinstance(mlp_only_layers, (list, tuple)):
         config.mlp_only_layers = [layer for layer in mlp_only_layers if layer < num_hidden_layers]
