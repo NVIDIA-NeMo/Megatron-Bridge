@@ -21,6 +21,7 @@ import webdataset as wds
 from tqdm import tqdm
 from webdataset.writer import add_handlers, default_handlers
 
+
 os.environ["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
 import numpy as np
 from qwen_vl_utils import fetch_image, fetch_video
