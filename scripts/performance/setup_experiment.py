@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -268,6 +270,7 @@ def main(
             custom_mounts=custom_mounts,
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
+            gres=args.gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
@@ -358,6 +361,9 @@ def main(
                 detach=detach,
                 name=exp_name,
             )
+            if dryrun:
+                logger.info("dryrun requested: exiting")
+                return
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
@@ -442,7 +448,12 @@ def main(
 
 if __name__ == "__main__":
     parser = parse_cli_args()
-    args, _ = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args()
+
+    # probably better to use parser.parse_args() and make unknowns an error,
+    # but for now we'll just issue a warning.
+    if unknown_args:
+        logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
     args.model_recipe_name = (
         f"{args.model_recipe_name}_pretrain_config"
