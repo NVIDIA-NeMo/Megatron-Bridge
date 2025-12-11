@@ -22,12 +22,14 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import (
-    nemotron_next_3b_v2_pretrain_config as pretrain_config,
+from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
+from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_nano_finetune_config as finetune_config,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -41,13 +43,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
-        description="Pretrain Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
+        description="Finetune Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--config-file",
         type=str,
-        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
+        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml", # TODO: update yaml file name
     )
 
     # Parse known args for the script, remaining will be treated as overrides
@@ -57,13 +59,16 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 def main() -> None:
     """
-    Entry point for the Mamba 8B pretraining script.
-    """
+    Entry point for the Mamba 8B finetuning script.
+    """ 
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = pretrain_config(
-        per_split_data_args_path="/lustre/fsw/portfolios/llmservice/users/jupinderp/data_blends/1T-phase1var-moresft-full.json",
-    )
+    seq_length = 2048
+    cfg: ConfigContainer = finetune_config(seq_length=seq_length,enable_deepep=False, peft="lora")
+    cfg.model.seq_length = seq_length
+
+    tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16" 
+    cfg.tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
@@ -91,8 +96,8 @@ def main() -> None:
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
     # Start training
-    logger.debug("Starting pretraining...")
-    pretrain(config=cfg, forward_step_func=forward_step)
+    logger.debug("Starting finetuning...")
+    finetune(config=cfg, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()

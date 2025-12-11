@@ -146,7 +146,7 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronNano12Bv2Provider,
     NemotronNanoModelProvider9Bv2,
     NemotronNanoModelProvider12Bv2,
-    NemotronNanoNext3Bv2Provider,
+    Nemotron3NanoProvider,
 )
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
@@ -293,7 +293,7 @@ __all__ = [
     "NemotronHModel56BProvider",
     "NemotronNano9Bv2Provider",
     "NemotronNano12Bv2Provider",
-    "NemotronNanoNext3Bv2Provider",
+    "Nemotron3NanoProvider",
     "MambaModelProvider",
     "MambaModelProvider1P3B",
     "MambaModelProvider2P7B",

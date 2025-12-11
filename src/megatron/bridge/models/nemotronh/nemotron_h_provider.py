@@ -146,8 +146,8 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronNanoNext3Bv2Provider(NemotronHModelProvider):
-    """Configuration for a 3B parameter Nemotron Nano Next v2 model."""
+class Nemotron3NanoProvider(NemotronHModelProvider):
+    """Configuration for a 3B parameter Nemotron 3 Nano model."""
 
     hybrid_override_pattern: str = "MEMEM*EMEM*EMEM*EMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEME"
     num_layers: int = 54
