@@ -117,9 +117,12 @@ def get_batch(
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
     )
+    packed_seq_metadata_keys = {"cu_seqlens", "cu_seqlens_argmin", "max_seqlen"}
+    packed_metadata = {k: batch.pop(k) for k in packed_seq_metadata_keys if k in batch}
 
-    # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)
+
+    batch.update(packed_metadata)
 
     return (
         batch["tokens"],
