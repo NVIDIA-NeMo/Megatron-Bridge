@@ -32,6 +32,7 @@ from megatron.core.num_microbatches_calculator import (
 )
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
@@ -324,7 +325,16 @@ def train(
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
-        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
+        (
+            loss_dict,
+            skipped_iter,
+            should_checkpoint,
+            should_exit,
+            exit_code,
+            grad_norm,
+            num_zeros_in_grad,
+            log_max_attention_logit,
+        ) = train_step(
             wrapped_forward_step_func,
             train_data_iterator,
             model,
@@ -334,6 +344,7 @@ def train(
             pg_collection,
             forward_backward_func,
         )
+
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -429,6 +440,7 @@ def train(
             global_state,
             history_wct,
             model,
+            log_max_attention_logit,
         )
 
         if (
@@ -587,6 +599,7 @@ def train_step(
         - exit_code: Exit code if should_exit is True
         - grad_norm: Gradient norm if available, None otherwise
         - num_zeros_in_grad: Number of zeros in gradient if available, None otherwise
+        - max_attention_logit: Maximum attention logit if available, None otherwise
     """
     cfg: ConfigContainer = global_state.cfg
     timers = global_state.timers
@@ -652,7 +665,7 @@ def train_step(
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
-        return {}, True, should_checkpoint, should_exit, exit_code, None, None
+        return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:
@@ -661,6 +674,13 @@ def train_step(
     # Update parameters.
     timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+
+    # get max attention logit for logging and run clip_qk()
+    # Part of MuonClip Optimizer step
+    log_max_attention_logit = None
+    if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
+        log_max_attention_logit = clip_qk(model)
+
     timers("optimizer").stop()
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
@@ -711,8 +731,18 @@ def train_step(
             exit_code,
             grad_norm,
             num_zeros_in_grad,
+            log_max_attention_logit,
         )
-    return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
+    return (
+        {},
+        skipped_iter,
+        should_checkpoint,
+        should_exit,
+        exit_code,
+        grad_norm,
+        num_zeros_in_grad,
+        log_max_attention_logit,
+    )
 
 
 def maybe_synchronize_training_step(train_sync_interval: Optional[int], iteration: int) -> None:
