@@ -129,6 +129,9 @@ def _nemotron_next_3b_v2_common(
     global_batch_size: int = 3072,
     micro_batch_size: int = 2,
     seq_length: int = 8192,
+    eval_interval: int = 1000,
+    save_interval: int = 200,
+    # Optimizer
     lr: float = 1.6e-3,
     min_lr: float = 1.6e-5,
     lr_warmup_iters: int = 333,
@@ -138,6 +141,10 @@ def _nemotron_next_3b_v2_common(
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     # MoE
     enable_deepep: bool = True,
+    # W&B
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Nemotron Next 3B v2 model.
@@ -228,8 +235,8 @@ def _nemotron_next_3b_v2_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=1000,
-            eval_iters=14,
+            eval_interval=eval_interval,
+            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
         ),
@@ -263,11 +270,14 @@ def _nemotron_next_3b_v2_common(
         logger=LoggerConfig(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
         ),
         #TODO(liding): what is the correct tokenizer for Nemotron Next 3B v2
         tokenizer=TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model="/lustre/fsw/portfolios/llmservice/projects/llmservice_nlp_fm/data-quality/tokenizers/multiMixV8.gpt4o_nc_sd.500000.128k.vocab.json"),
         checkpoint=CheckpointConfig(
-            save_interval=2000,
+            save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",
@@ -368,7 +378,7 @@ def _nemotron_next_3b_v2_finetune_common(
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallelism: bool = True,
     expert_tensor_parallelism: int = 1,
     expert_model_parallelism: int = 1,
     # Finetuning-specific params
@@ -380,8 +390,8 @@ def _nemotron_next_3b_v2_finetune_common(
     global_batch_size: int = 128,
     micro_batch_size: int = 1,
     seq_length: int = 2048,
-    eval_interval: int = 50,
-    save_interval: int = 20,
+    eval_interval: int = 500,
+    save_interval: int = 200,
     # Optimizer
     finetune_lr: float = 1e-4,
     min_lr: float = 0.0,
@@ -451,9 +461,8 @@ def _nemotron_next_3b_v2_finetune_common(
 
     # Logger
     logger_cfg = LoggerConfig(
-        log_interval=1,
+        log_interval=10,
         tensorboard_dir=tensorboard_dir,
-        log_timers_to_tensorboard=True,
         wandb_project=wandb_project,
         wandb_entity=wandb_entity,
         wandb_exp_name=wandb_exp_name,
@@ -468,9 +477,6 @@ def _nemotron_next_3b_v2_finetune_common(
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
