@@ -59,7 +59,7 @@ class NemotronHBridge(MegatronModelBridge):
             add_bias_linear=hf_config.use_bias,
             num_attention_heads=hf_config.num_attention_heads,
             num_query_groups=hf_config.num_key_value_heads,
-            kv_channels=getattr(hf_config, "head_dim", None),
+            kv_channels=getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None),
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.layer_norm_epsilon,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),

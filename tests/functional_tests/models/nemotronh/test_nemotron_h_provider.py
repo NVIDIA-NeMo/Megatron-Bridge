@@ -34,6 +34,12 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     "nvidia/NVIDIA-Nemotron-Nano-12B-v2": NemotronNano12Bv2Provider,
 }
 
+# Model-specific fields to skip during configuration comparison
+# These are fields where the predefined config intentionally differs from the HF config
+MODEL_SPECIFIC_SKIP_FIELDS = {
+    "nvidia/Nemotron-H-56B-Base-8K": {"attention_backend"},  # 56B uses auto instead of flash
+}
+
 
 class TestNemotronHModelProviderMapping:
     """Test that bridge provider configs are equivalent to predefined provider configs."""
@@ -50,5 +56,8 @@ class TestNemotronHModelProviderMapping:
         predefined_provider = provider_class()
         predefined_provider.finalize()
 
+        # Get model-specific fields to skip (if any)
+        skip_fields = MODEL_SPECIFIC_SKIP_FIELDS.get(hf_model_id, set())
+
         # Compare configs
-        compare_provider_configs(converted_provider, predefined_provider, hf_model_id)
+        compare_provider_configs(converted_provider, predefined_provider, hf_model_id, skip_fields=skip_fields)

@@ -177,6 +177,7 @@ def set_recompute_overrides(
         recipe.model.recompute_num_layers = recompute_num_layers
     if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
+        recipe.model.recompute_granularity = "selective"
 
 
 def set_moe_a2a_overlap_overrides(recipe: ConfigContainer) -> None:

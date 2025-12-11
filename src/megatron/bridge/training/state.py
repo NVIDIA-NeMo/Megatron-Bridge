@@ -216,6 +216,10 @@ class GlobalState:
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
 
+                # Strip whitespace from WANDB_API_KEY if it exists in environment
+                if "WANDB_API_KEY" in os.environ:
+                    os.environ["WANDB_API_KEY"] = os.environ["WANDB_API_KEY"].strip()
+
                 wandb_kwargs = {
                     "dir": save_dir,
                     "name": self.cfg.logger.wandb_exp_name,

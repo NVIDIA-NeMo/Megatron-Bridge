@@ -21,7 +21,7 @@ import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
@@ -609,7 +609,11 @@ class ParallelLinearAdapter(nn.Module):
         return x
 
     def sharded_state_dict(
-        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+        self,
+        prefix: str = "",
+        sharded_offsets: Tuple = (),
+        metadata: Optional[Dict] = None,
+        mamba_dim_info: Optional[Dict] = None,
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 
@@ -632,6 +636,35 @@ class ParallelLinearAdapter(nn.Module):
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
                     linear_out_sd[k] = apply_swiglu_sharded_factory(v, sharded_offsets)
+
+        # Special handling for Mamba in_proj layer which needs to be split into 5 tensors
+        if mamba_dim_info is not None:
+            from megatron.core.ssm.mamba_mixer import _split_tensor_factory
+
+            # Split linear_out.weight into 5 parts: z, x, B, C, dt
+            # The in_proj output dimension is: d_inner * 2 + 2 * ngroups * d_state + nheads
+            # After TP sharding: d_inner_local_tp * 2 + 2 * ngroups_local_tp * d_state + nheads_local_tp
+            for k, v in linear_out_sd.items():
+                if k == f"{prefix}linear_out.weight" and isinstance(v, ShardedTensor):
+                    in_proj_dim_local = (
+                        mamba_dim_info["d_inner_local_tp"] * 2
+                        + 2 * mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"]
+                        + mamba_dim_info["nheads_local_tp"]
+                    )
+                    # Verify the dimension matches
+                    if v.data.size(0) == in_proj_dim_local:
+                        linear_out_sd[k] = _split_tensor_factory(
+                            v,
+                            [
+                                mamba_dim_info["d_inner_local_tp"],  # z
+                                mamba_dim_info["d_inner_local_tp"],  # x
+                                mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"],  # B
+                                mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"],  # C
+                                mamba_dim_info["nheads_local_tp"],  # dt
+                            ],
+                            ["z", "x", "B", "C", "dt"],
+                            0,  # split along dimension 0
+                        )
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)

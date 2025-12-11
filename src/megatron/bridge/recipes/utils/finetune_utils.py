@@ -22,7 +22,7 @@ from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
 
 
-def default_peft_config(peft_scheme: str | PEFT | None) -> PEFT | None:
+def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None:
     """Create default PEFT configuration matching NeMo2 exactly.
 
     Args:
@@ -38,10 +38,12 @@ def default_peft_config(peft_scheme: str | PEFT | None) -> PEFT | None:
         return peft_scheme  # User provided custom PEFT
 
     if isinstance(peft_scheme, str):
+        if peft_scheme.lower() == "none":
+            return None
         if peft_scheme.lower() == "lora":
-            return LoRA()
+            return LoRA(**kwargs)
         elif peft_scheme.lower() == "dora":
-            return DoRA()
+            return DoRA(**kwargs)
         else:
             raise ValueError(f"Unknown PEFT scheme: {peft_scheme}. Supported: 'lora', 'dora', or None")
 

@@ -63,6 +63,9 @@ def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True
 
+    if cfg.model.recompute_modules is not None:
+        cfg.model.recompute_granularity = "selective"
+
 
 def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
@@ -296,6 +299,26 @@ def qwen3_next_80b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_H100_FP8_CS_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = qwen3_next_80b_a3b_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_next_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def qwen3_next_80b_a3b_b200_config(precision: str = "bf16") -> ConfigContainer:
+    """B200, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_B200_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_B200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_next_80b_a3b_pretrain_config(
