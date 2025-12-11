@@ -679,11 +679,14 @@ def _ddp_wrap(
     else:
         DP = DistributedDataParallel
 
+    # Extract config once before wrapping
+    config = get_model_config(model[0])
+
     # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
     with torch.cuda.stream(torch.cuda.Stream()):
         model = [
             DP(
-                config=get_model_config(model_chunk),
+                config=config,
                 ddp_config=ddp_config,
                 module=model_chunk,
                 # Turn off bucketing for model_chunk 2 onwards, since communication for these
