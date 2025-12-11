@@ -34,9 +34,6 @@ from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 # Local replacements for former nemo dependencies
 # Constants for internal multimodal token placeholders and label ignore
 IGNORE_INDEX = -100
-IMAGE_TOKEN_INDEX = -200
-VIDEO_TOKEN_INDEX = -300
-
 
 def get_ltor_masks_and_position_ids(
     data: torch.Tensor,
@@ -198,7 +195,7 @@ class QwenVLTaskBatch(Batch):
 
 
 def convert_to_qwenvl_content(user_input: str, image_pattern: str = '<image>', video_pattern: str = '<video>'):
-    """Split user input into format Qwen2VL tokenizer accepts."""
+    """Split user input into format QwenVL tokenizer accepts."""
 
     pattern = r"({image}|{video})".format(image=image_pattern, video=video_pattern)
     contents = []
@@ -281,8 +278,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
     ):
         super().__init__()
 
-        # DEBUGGING nemo <-> mbridge
-        # self.hf_tokenizer = tokenizer.tokenizer
         self.hf_tokenizer = tokenizer
         self.image_processor = image_processor
         self.seq_length = max_padding_length
@@ -538,12 +533,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             target_mat[i, :target_len] = np.array(s.target)[:target_len]
 
         tokens = torch.from_numpy(text_mat)
-        # replace image/video token in tokenizer to representation in NeMo
-        # 151655 -> -200
-        # 151656 -> -300
-        # DEBUGGING nemo <-> megatron-bridge
-        # tokens[tokens == self.image_token_id] = IMAGE_TOKEN_INDEX
-        # tokens[tokens == self.video_token_id] = VIDEO_TOKEN_INDEX
         tokens[tokens == self.hf_tokenizer.pad_token_id] = 0
 
         labels = torch.from_numpy(target_mat)
@@ -569,7 +558,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             image_input_mask=torch.from_numpy(image_input_masks),
             video_input_mask=torch.from_numpy(video_input_masks),
             input_ids=tokens,
-            # DEBUGGING nemo <-> megatron-bridge
             attention_mask=attention_mask,
             position_ids=position_ids,
             labels=labels,

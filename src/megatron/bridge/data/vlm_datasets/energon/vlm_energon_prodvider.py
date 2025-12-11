@@ -16,12 +16,13 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, Any
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
-from transformers import AutoProcessor
+from typing import Any, Optional
+
 from torch import int_repr
 
 from megatron.bridge.data.datasets.base_energon_datamodule import EnergonMultiModalDataModule
+from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
+
 
 @dataclass(kw_only=True)
 class EnergonVLMConversationProvider(DatasetProvider):
