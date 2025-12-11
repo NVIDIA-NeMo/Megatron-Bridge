@@ -19,7 +19,7 @@ prerelease-mode = "allow"
 
 [manifest]
 overrides = [
-    { name = "nvidia-modelopt", extras = ["torch"], specifier = ">=0.37.0" },
+    { name = "nvidia-modelopt", extras = ["torch"], git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0a4f0a8b933121f7af080261a0a5a7717f2c5d49" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
     { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/NVIDIA/TransformerEngine.git?rev=release_v2.9" },
@@ -1237,7 +1237,7 @@ wheels = [
 [[package]]
 name = "emerging-optimizers"
 version = "0.1.0"
-source = { git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=cf9909b777ffac18e05b67a6708282cadc000942#cf9909b777ffac18e05b67a6708282cadc000942" }
+source = { git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.1.0#d5363b4a418128cd8111983b191c4b8869a9766b" }
 dependencies = [
     { name = "absl-py" },
     { name = "torch", marker = "sys_platform == 'never'" },
@@ -2364,6 +2364,7 @@ dev = [
     { name = "causal-conv1d" },
     { name = "einops" },
     { name = "emerging-optimizers" },
+    { name = "fastapi" },
     { name = "flash-linear-attention" },
     { name = "flashinfer-python" },
     { name = "mamba-ssm" },
@@ -2376,7 +2377,6 @@ dev = [
     { name = "onnxscript", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "onnxscript", version = "0.5.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "opentelemetry-api" },
-    { name = "setuptools" },
     { name = "tensorstore", version = "0.1.74", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "tensorstore", version = "0.1.78", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "tqdm" },
@@ -2393,42 +2393,49 @@ mlm = [
 
 [package.metadata]
 requires-dist = [
-    { name = "av", marker = "extra == 'dev'", specifier = "<16.0.0" },
+    { name = "av", marker = "extra == 'dev'" },
+    { name = "av", marker = "extra == 'lts'" },
     { name = "causal-conv1d", marker = "extra == 'dev'", specifier = "~=1.5" },
+    { name = "causal-conv1d", marker = "extra == 'lts'", specifier = "~=1.5" },
     { name = "einops", marker = "extra == 'dev'", specifier = "~=0.8" },
-    { name = "einops", marker = "extra == 'lts'" },
-    { name = "emerging-optimizers", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=cf9909b777ffac18e05b67a6708282cadc000942" },
+    { name = "einops", marker = "extra == 'lts'", specifier = "~=0.8" },
+    { name = "emerging-optimizers", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.1.0" },
+    { name = "fastapi", marker = "extra == 'dev'", specifier = "~=0.50" },
+    { name = "fastapi", marker = "extra == 'lts'", specifier = "~=0.50" },
     { name = "flash-linear-attention", marker = "extra == 'dev'", specifier = "~=0.3.2" },
     { name = "flashinfer-python", marker = "extra == 'dev'" },
+    { name = "flashinfer-python", marker = "extra == 'lts'" },
     { name = "flask-restful", marker = "extra == 'mlm'" },
     { name = "mamba-ssm", marker = "extra == 'dev'", specifier = "~=2.2" },
+    { name = "mamba-ssm", marker = "extra == 'lts'", specifier = "~=2.2" },
     { name = "megatron-energon", extras = ["av-decode"], marker = "extra == 'dev'", specifier = "~=6.0" },
+    { name = "megatron-energon", extras = ["av-decode"], marker = "extra == 'lts'", specifier = "~=6.0" },
     { name = "multi-storage-client", marker = "extra == 'dev'", specifier = "~=0.27" },
-    { name = "numpy", specifier = "<2.0.0" },
+    { name = "multi-storage-client", marker = "extra == 'lts'", specifier = "~=0.27" },
+    { name = "numpy" },
     { name = "nv-grouped-gemm", marker = "extra == 'dev'", specifier = "~=1.1" },
-    { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin' and extra == 'dev'", specifier = ">=0.33.0a0,<0.34.0" },
-    { name = "nvidia-resiliency-ext", marker = "extra == 'dev'", specifier = ">=0.4.0a0,<0.5.0" },
+    { name = "nv-grouped-gemm", marker = "extra == 'lts'", specifier = "~=1.1" },
+    { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin' and extra == 'dev'" },
+    { name = "nvidia-resiliency-ext", marker = "extra == 'dev'" },
     { name = "nvtx", marker = "extra == 'dev'", specifier = "~=0.2" },
-    { name = "nvtx", marker = "extra == 'lts'" },
+    { name = "nvtx", marker = "extra == 'lts'", specifier = "~=0.2" },
     { name = "onnxscript", marker = "extra == 'dev'" },
+    { name = "onnxscript", marker = "extra == 'lts'" },
     { name = "opentelemetry-api", marker = "extra == 'dev'", specifier = "~=1.33.1" },
+    { name = "opentelemetry-api", marker = "extra == 'lts'", specifier = "~=1.33.1" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "sentencepiece", marker = "extra == 'mlm'" },
-    { name = "setuptools", marker = "extra == 'dev'", specifier = "<80.0.0" },
-    { name = "setuptools", marker = "extra == 'lts'", specifier = "<80.0.0" },
     { name = "tensorstore", marker = "extra == 'dev'", specifier = "~=0.1,!=0.1.46,!=0.1.72" },
-    { name = "tensorstore", marker = "extra == 'lts'", specifier = "!=0.1.46,!=0.1.72" },
+    { name = "tensorstore", marker = "extra == 'lts'", specifier = "~=0.1,!=0.1.46,!=0.1.72" },
     { name = "tiktoken", marker = "extra == 'mlm'" },
     { name = "torch" },
     { name = "tqdm", marker = "extra == 'dev'" },
     { name = "tqdm", marker = "extra == 'lts'" },
-    { name = "transformer-engine", extras = ["pytorch"], marker = "extra == 'dev'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=release_v2.9" },
-    { name = "transformers", marker = "extra == 'lts'" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'dev'", specifier = ">=2.9.0a0,<2.10.0" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "wandb", marker = "extra == 'mlm'" },
     { name = "wget", marker = "extra == 'dev'" },
     { name = "wget", marker = "extra == 'lts'" },
-    { name = "zarr", marker = "extra == 'lts'" },
 ]
 provides-extras = ["mlm", "dev", "lts"]
 
@@ -2455,13 +2462,16 @@ docs = [
     { name = "sphinx-autodoc2" },
     { name = "sphinx-copybutton" },
 ]
-flash-mla = [{ name = "flash-mla", git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19" }]
 linting = [
     { name = "black", specifier = "==24.4.2" },
     { name = "flake8", specifier = "==7.1.0" },
     { name = "isort", specifier = "==5.13.2" },
     { name = "pylint", specifier = "==3.2.6" },
     { name = "ruff", specifier = "~=0.9.0" },
+]
+no-pypi-wheels = [
+    { name = "emerging-optimizers", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.1.0" },
+    { name = "flash-mla", git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19" },
 ]
 test = [
     { name = "coverage" },
@@ -3134,8 +3144,8 @@ wheels = [
 
 [[package]]
 name = "nvidia-modelopt"
-version = "0.37.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.40.0.dev90+g0a4f0a8b9"
+source = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0a4f0a8b933121f7af080261a0a5a7717f2c5d49#0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }
 dependencies = [
     { name = "ninja" },
     { name = "numpy" },
@@ -3151,9 +3161,6 @@ dependencies = [
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchprofile" },
     { name = "tqdm" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/a8/85034a33753a56ef120b931dda1183d98efef1010e379c54d3c3214a5048/nvidia_modelopt-0.37.0-py3-none-any.whl", hash = "sha256:3490b6d6aea3541aa5d475d81230fee627e2c16ff47bbab1cba4b80a1eb119a2", size = 831271, upload-time = "2025-10-08T18:37:03.951Z" },
 ]
 
 [[package]]
