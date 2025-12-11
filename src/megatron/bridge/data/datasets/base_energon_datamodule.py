@@ -357,6 +357,15 @@ class EnergonDataloader:
 
 
 def cyclic_iter(iter):
+    """
+    Create a cyclic iterator that loops over the given iterable indefinitely.
+
+    Args:
+        iter (iterable): The input iterable to cycle through.
+
+    Yields:
+        Any: The next item from the iterable, looping back to the start when exhausted.
+    """
     while True:
         for x in iter:
             yield x
