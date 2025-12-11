@@ -26,6 +26,8 @@ from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 @dataclass(kw_only=True)
 class EnergonVLMConversationProvider(DatasetProvider):
+    """Energon VLM Conversation Provider."""
+
     path: str
     tokenizer: Optional[Any] = None
     image_processor: Optional[Any] = None

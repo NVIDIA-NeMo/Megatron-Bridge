@@ -276,7 +276,9 @@ def _qwen3_vl_common(
             ),
         )
     else:
-        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf', 'energon'].")
+        raise ValueError(
+            f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf', 'energon']."
+        )
 
     cfg = ConfigContainer(
         model=model_cfg,
