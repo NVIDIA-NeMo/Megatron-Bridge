@@ -146,8 +146,8 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronNanoNext3Bv2Provider(NemotronHModelProvider):
-    """Configuration for a 3B parameter Nemotron Nano Next v2 model."""
+class Nemotron3NanoProvider(NemotronHModelProvider):
+    """Configuration for a 3B parameter Nemotron 3 Nano model."""
 
     num_query_groups: int = 2
     hybrid_override_pattern: str = "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"

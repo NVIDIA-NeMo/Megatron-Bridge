@@ -18,7 +18,7 @@ from typing import Optional, Union
 import torch
 from typing_extensions import TypedDict, Unpack
 
-from megatron.bridge.models.nemotronh import NemotronNanoNext3Bv2Provider
+from megatron.bridge.models.nemotronh import Nemotron3NanoProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
@@ -37,11 +37,11 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-class NemotronNext3Bv2CommonKwargs(TypedDict, total=False):
+class Nemotron3NanoCommonKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron Next 3B v2 recipe helper functions."""
 
     # Core identifiers
-    model_provider: NemotronNanoNext3Bv2Provider
+    model_provider: Nemotron3NanoProvider
     dir: Optional[str]
     name: str
     # Dataset configuration
@@ -78,16 +78,16 @@ class NemotronNext3Bv2CommonKwargs(TypedDict, total=False):
     enable_deepep: bool
 
 
-def nemotron_next_3b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNext3Bv2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Nemotron Next 3B v2.
+def nemotron_3_nano_pretrain_config(**user_kwargs: Unpack[Nemotron3NanoCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Nemotron 3 Nano.
 
     This recipe is designed for multi-node training.
     Default parallelism: TP=4, PP=1, SP=True, with DeepEP enabled.
 
-    See `_nemotron_next_3b_v2_common` for the full list of parameters.
+    See `_nemotron_3_nano_common` for the full list of parameters.
     """
-    recommended_kwargs: NemotronNext3Bv2CommonKwargs = {
-        "model_provider": NemotronNanoNext3Bv2Provider,
+    recommended_kwargs: Nemotron3NanoCommonKwargs = {
+        "model_provider": Nemotron3NanoProvider,
         "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
@@ -98,12 +98,12 @@ def nemotron_next_3b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNext3Bv2Co
         "expert_model_parallelism": 8,
         "precision_config": "bf16_mixed",
     }
-    combined_kwargs: NemotronNext3Bv2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotron_next_3b_v2_common(**combined_kwargs)
+    combined_kwargs: Nemotron3NanoCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _nemotron_3_nano_common(**combined_kwargs)
 
 
-def _nemotron_next_3b_v2_common(
-    model_provider: type[NemotronNanoNext3Bv2Provider],
+def _nemotron_3_nano_common(
+    model_provider: type[Nemotron3NanoProvider],
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -298,11 +298,11 @@ def _nemotron_next_3b_v2_common(
     return cfg
 
 
-class NemotronNext3Bv2FinetuneKwargs(TypedDict, total=False):
+class Nemotron3NanoFinetuneKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron Next 3B v2 finetune recipe helpers."""
 
     # Core identifiers
-    model_provider: NemotronNanoNext3Bv2Provider
+    model_provider: Nemotron3NanoProvider
     dir: Optional[str]
     name: str
     # Model parallelism
@@ -340,8 +340,8 @@ class NemotronNext3Bv2FinetuneKwargs(TypedDict, total=False):
     wandb_exp_name: Optional[str]
 
 
-def nemotron_next_3b_v2_finetune_config(**user_kwargs: Unpack[NemotronNext3Bv2FinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for Nemotron Next 3B v2.
+def nemotron_3_nano_finetune_config(**user_kwargs: Unpack[Nemotron3NanoFinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Nemotron 3 Nano.
 
     Default configuration:
     - LoRA/DoRA: TP=1, PP=1, EP=1, LR=1e-4
@@ -350,8 +350,8 @@ def nemotron_next_3b_v2_finetune_config(**user_kwargs: Unpack[NemotronNext3Bv2Fi
     peft_value = user_kwargs.get("peft", "lora")
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
-    recommended_kwargs: NemotronNext3Bv2FinetuneKwargs = {
-        "model_provider": NemotronNanoNext3Bv2Provider,
+    recommended_kwargs: Nemotron3NanoFinetuneKwargs = {
+        "model_provider": Nemotron3NanoProvider,
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
@@ -364,12 +364,12 @@ def nemotron_next_3b_v2_finetune_config(**user_kwargs: Unpack[NemotronNext3Bv2Fi
         "enable_deepep": True,
         "precision_config": "bf16_mixed",
     }
-    combined_kwargs: NemotronNext3Bv2FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotron_next_3b_v2_finetune_common(**combined_kwargs)
+    combined_kwargs: Nemotron3NanoFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _nemotron_3_nano_finetune_common(**combined_kwargs)
 
 
-def _nemotron_next_3b_v2_finetune_common(
-    model_provider: type[NemotronNanoNext3Bv2Provider],
+def _nemotron_3_nano_finetune_common(
+    model_provider: type[Nemotron3NanoProvider],
     dir: Optional[str] = None,
     name: str = "default",
     # Model configuration

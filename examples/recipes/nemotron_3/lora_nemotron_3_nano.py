@@ -24,9 +24,8 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors import process_squad_example
-from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import (
-    nemotron_next_3b_v2_pretrain_config as pretrain_config,
+from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_nano_finetune_config as finetune_config,
 )
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.finetune import finetune
@@ -64,34 +63,11 @@ def main() -> None:
     """ 
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = pretrain_config(micro_batch_size=1,enable_deepep=False)
-
-
-    # TODO: hardcode dataset config w/ packed sequences here for now
-    seq_length = 8192 # NOTE: need to change model seq length as well
-    packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_cu_seqlens=False)
-    #
-
-    dataset_config = HFDatasetConfig(
-        dataset_name="squad",
-        process_example_fn=process_squad_example,
-        seq_length=seq_length,
-        seed=1234,
-        dataloader_type="single",
-        num_workers=1,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,
-        delete_raw=False,
-        dataset_kwargs = {"pad_to_max_length": True},
-        do_validation=False,
-        do_test=False,
-    )
-    cfg.dataset = dataset_config
+    seq_length = 2048
+    cfg: ConfigContainer = finetune_config(seq_length=seq_length,enable_deepep=False, peft="lora")
     cfg.model.seq_length = seq_length
 
-    # tokenizer_model = "/lustre/fs1/portfolios/coreai/users/bobchen/ckpt/nm6-hybrid-3b-new-666000"
-    tokenizer_model = "nvidia/Nemotron-H-8B-Reasoning-128K" 
-    # "/lustre/fsw/portfolios/llmservice/users/soumyes/nano-v3/nano-v3-sft-tokenizer"
+    tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16" 
     cfg.tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging

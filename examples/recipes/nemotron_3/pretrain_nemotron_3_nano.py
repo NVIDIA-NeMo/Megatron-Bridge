@@ -22,8 +22,8 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import (
-    nemotron_next_3b_v2_pretrain_config as pretrain_config,
+from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_nano_pretrain_config as pretrain_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step

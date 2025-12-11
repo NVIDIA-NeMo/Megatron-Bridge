@@ -16,16 +16,16 @@
 
 import pytest
 
-from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import (
-    nemotron_next_3b_v2_pretrain_config as nemotron_next_3b_v2_config,
+from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_nano_pretrain_config as nemotron_3_nano_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
 
 
-def patched_nemotron_next_3b_v2_config(*args, **kwargs):
+def patched_nemotron_3_nano_config(*args, **kwargs):
     """Wrapper function that patches the hidden size to 672 for testing."""
     # Call the original config function
-    cfg = nemotron_next_3b_v2_config(*args, **kwargs)
+    cfg = nemotron_3_nano_config(*args, **kwargs)
     
     # to fit the test environment with 2 GPUs:
     cfg.model.hidden_size = 672
@@ -39,7 +39,7 @@ def patched_nemotron_next_3b_v2_config(*args, **kwargs):
 
 
 NEMOTRON_PRETRAIN_RECIPES = [
-    (patched_nemotron_next_3b_v2_config, "nemotron_next_3b_v2"),
+    (patched_nemotron_3_nano_config, "nemotron_3_nano"),
 ]
 
 
