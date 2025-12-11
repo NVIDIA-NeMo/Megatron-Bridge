@@ -13,8 +13,6 @@ export MBRIDGE_RELEASE_VERSION=${MBRIDGE_RELEASE_VERSION:-"your_megatron_bridge_
 
 # Load common configurations
 source "${WORKSPACE}/runtime_configs/common.conf"
-# Load model-specific configurations
-source "${WORKSPACE}/runtime_configs/runtime.conf"
 
 # Initialize training parameters
 TRAINING_PARAMS=${TRAINING_PARAMS:-""}

@@ -106,5 +106,16 @@ if [[ ${DRY_RUN:-0} -eq 1 ]]; then
     echo "${PROFILE_CMD} python ${TRAINING_SCRIPT_PATH} ${TRAINING_PARAMS}"
     echo "=== End of DRY RUN ==="
 else
-    ${PROFILE_CMD} python ${TRAINING_SCRIPT_PATH} ${TRAINING_PARAMS}
+    GPUS_PER_NODE=${GPUS_PER_NODE:-8}
+    NUM_NODES=${NUM_NODES:-1}
+    MASTER_ADDR=${MASTER_ADDR:-localhost}
+    MASTER_PORT=${MASTER_PORT:-6000}
+    DISTRIBUTED_ARGS=(
+        --nproc_per_node $GPUS_PER_NODE
+        --nnodes $NUM_NODES
+        --master_addr $MASTER_ADDR
+        --master_port $MASTER_PORT
+    )
+
+    ${PROFILE_CMD} torchrun ${DISTRIBUTED_ARGS[@]} ${TRAINING_SCRIPT_PATH} ${TRAINING_PARAMS}
 fi

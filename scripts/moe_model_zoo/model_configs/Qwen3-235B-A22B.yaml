@@ -10,6 +10,7 @@ ENV_VARS:
 
 
 model:
+  # config_logger_dir: ${OUTPUT_PATH}
   # ModelParallelConfig
   attention_backend: AttnBackend.flash
   add_bias_linear: false
@@ -122,6 +123,8 @@ checkpoint:
   load_optim: false
 
 logger:
+  throughput_window_size: 100
+  log_throughput_to_tensorboard: true
   log_timers_to_tensorboard: true
   log_memory_to_tensorboard: true
   log_params_norm: true

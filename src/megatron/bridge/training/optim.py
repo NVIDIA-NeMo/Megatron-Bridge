@@ -48,9 +48,9 @@ def setup_optimizer(
     optimizer = get_megatron_optimizer(
         optimizer_config,
         model,
-        no_weight_decay_cond,
-        scale_lr_cond,
-        lr_mult,
+        no_weight_decay_cond=no_weight_decay_cond,
+        scale_lr_cond=scale_lr_cond,
+        lr_mult=lr_mult,
         use_gloo_process_groups=use_gloo_process_groups,
     )
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
