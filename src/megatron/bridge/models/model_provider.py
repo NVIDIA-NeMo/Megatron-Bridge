@@ -680,7 +680,8 @@ def _ddp_wrap(
         DP = DistributedDataParallel
 
     # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
-    with torch.cuda.stream(torch.cuda.Stream()):
+    stream = torch.cuda.Stream()
+    with torch.cuda.stream(stream):
         model = [
             DP(
                 config=get_model_config(model_chunk),
@@ -692,6 +693,8 @@ def _ddp_wrap(
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
+    # Critical: ensure side-stream work completes before touching params on default stream
+    torch.cuda.current_stream().wait_stream(stream)
 
     # Broadcast params from data parallel src rank to other data parallel ranks.
     if data_parallel_random_init:
