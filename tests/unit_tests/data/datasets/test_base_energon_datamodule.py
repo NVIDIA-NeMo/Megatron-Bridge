@@ -26,11 +26,14 @@ from megatron.bridge.data.datasets.base_energon_datamodule import (
 class TestEnergonMultiModalDataModule:
     @pytest.fixture
     def mock_dependencies(self):
-        with patch("megatron.bridge.data.datasets.base_energon_datamodule.parallel_state") as mock_parallel_state, \
-             patch("megatron.bridge.data.datasets.base_energon_datamodule.get_train_dataset") as mock_get_train_dataset, \
-             patch("megatron.bridge.data.datasets.base_energon_datamodule.get_savable_loader") as mock_get_savable_loader, \
-             patch("megatron.bridge.data.datasets.base_energon_datamodule.WorkerConfig") as mock_worker_config:
-            
+        with (
+            patch("megatron.bridge.data.datasets.base_energon_datamodule.parallel_state") as mock_parallel_state,
+            patch("megatron.bridge.data.datasets.base_energon_datamodule.get_train_dataset") as mock_get_train_dataset,
+            patch(
+                "megatron.bridge.data.datasets.base_energon_datamodule.get_savable_loader"
+            ) as mock_get_savable_loader,
+            patch("megatron.bridge.data.datasets.base_energon_datamodule.WorkerConfig") as mock_worker_config,
+        ):
             mock_parallel_state.is_initialized.return_value = True
             mock_parallel_state.get_data_parallel_rank.return_value = 0
             mock_parallel_state.get_data_parallel_world_size.return_value = 1
@@ -108,7 +111,7 @@ class TestEnergonMultiModalDataModule:
         mock_dependencies["WorkerConfig"].return_value = MagicMock()
 
         dataloader = datamodule.train_dataloader()
-        
+
         assert isinstance(dataloader, EnergonDataloader)
         assert datamodule.train_dataloader_object is not None
         mock_dependencies["WorkerConfig"].assert_called()
@@ -124,7 +127,7 @@ class TestEnergonMultiModalDataModule:
         mock_dependencies["get_savable_loader"].return_value = MagicMock()
 
         datamodule.train_dataloader()
-        
+
         mock_dependencies["WorkerConfig"].default_worker_config.assert_called_with(datamodule.num_workers)
 
     def test_val_dataloader(self, datamodule, mock_dependencies):

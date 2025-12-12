@@ -75,7 +75,7 @@ class TestEnergonVLMConversationProvider:
 
         # Check dataloader calls
         mock_dataset_instance.train_dataloader.assert_called_once()
-        assert mock_dataset_instance.val_dataloader.call_count == 2 
+        assert mock_dataset_instance.val_dataloader.call_count == 2
 
         # Verify returned iterators
         assert list(train_iter) == [1, 2]

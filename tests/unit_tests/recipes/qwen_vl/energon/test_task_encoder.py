@@ -1,4 +1,3 @@
-
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +15,7 @@
 import json
 import pickle
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -153,9 +152,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         # It creates input_ids with placeholders for images/videos
         # <image> is 151655
         self.tokenizer.apply_chat_template.return_value = [
-            np.array(
-                [10, 11, 151655, 12, 13]
-            )  # dummy tokens with image placeholder
+            np.array([10, 11, 151655, 12, 13])  # dummy tokens with image placeholder
         ]
         
         # Mock encode for finding answer
@@ -223,7 +220,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
         batch = self.encoder.batch([s1, s2])
         self.assertIsInstance(batch, QwenVLTaskBatch)
-        self.assertEqual(batch.input_ids.shape, (2, 5)) # padded to max length
+        self.assertEqual(batch.input_ids.shape, (2, 5))  # padded to max length
         self.assertEqual(batch.labels.shape, (2, 5))
 
     def test_encode_batch(self):
@@ -250,6 +247,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.assertIn("input_ids", encoded_dict)
         # Ensure __subflavors__ is removed
         self.assertNotIn("__subflavors__", encoded_dict)
+
 
 if __name__ == "__main__":
     unittest.main()
