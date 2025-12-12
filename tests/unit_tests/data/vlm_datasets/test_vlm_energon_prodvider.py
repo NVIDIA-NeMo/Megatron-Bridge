@@ -24,19 +24,19 @@ class TestEnergonVLMConversationProvider:
         # Setup mock instance
         mock_dataset_instance = MagicMock()
         mock_datamodule_cls.return_value = mock_dataset_instance
-        
+
         # Setup mock return values for dataloaders
         # Making them iterable
         mock_dataset_instance.train_dataloader.return_value = iter([1, 2])
         # Since val_dataloader is called twice and returns an iterator, we need to be careful.
         # However, calling iter() on an iterator is fine.
-        # But if the method returns a list, iter() works. 
+        # But if the method returns a list, iter() works.
         # If it returns an iterator, and we iterate it once, the second time it will be empty if it's the SAME iterator.
         # The implementation calls `iter(self.dataset.val_dataloader())`.
-        # So `val_dataloader()` is called twice. 
+        # So `val_dataloader()` is called twice.
         # We should make sure it returns a new iterable/iterator each time.
         mock_dataset_instance.val_dataloader.side_effect = lambda: iter([3, 4])
-        
+
         mock_dataset_instance.seq_length = 2048
 
         # Define params
@@ -65,7 +65,7 @@ class TestEnergonVLMConversationProvider:
             global_batch_size=params["global_batch_size"],
             num_workers=params["num_workers"],
         )
-        
+
         # Check sequence_length property
         assert provider.sequence_length == 2048
 
@@ -81,4 +81,3 @@ class TestEnergonVLMConversationProvider:
         assert list(train_iter) == [1, 2]
         assert list(val_iter) == [3, 4]
         assert list(test_iter) == [3, 4]
-

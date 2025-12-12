@@ -38,7 +38,7 @@ class TestEnergonMultiModalDataModule:
             mock_parallel_state.get_data_parallel_rank.return_value = 0
             mock_parallel_state.get_data_parallel_world_size.return_value = 1
             mock_parallel_state.get_data_parallel_group.return_value = MagicMock()
-            
+
             yield {
                 "parallel_state": mock_parallel_state,
                 "get_train_dataset": mock_get_train_dataset,
@@ -245,4 +245,3 @@ class TestCyclicIter:
         assert next(it) == 2
         assert next(it) == 1
         assert next(it) == 2
-

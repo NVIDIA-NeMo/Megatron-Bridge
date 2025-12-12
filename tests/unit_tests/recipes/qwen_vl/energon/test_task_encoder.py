@@ -154,7 +154,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.tokenizer.apply_chat_template.return_value = [
             np.array([10, 11, 151655, 12, 13])  # dummy tokens with image placeholder
         ]
-        
+
         # Mock encode for finding answer
         self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
 
@@ -185,7 +185,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         # Logic: size = image_thw_grids[idx].prod() // merge_length
         # 1*28*28 = 784. merge_length = 2**2 = 4. size = 196.
         # So the single token 151655 should be replaced by 196 tokens.
-        
+
         # Verify length expansion
         original_len = 5
         expanded_len = original_len - 1 + 196
@@ -240,7 +240,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
             labels=torch.randn(1, 5),
             loss_mask=torch.randn(1, 5),
         )
-        
+
         encoded_dict = self.encoder.encode_batch(batch)
         self.assertIsInstance(encoded_dict, dict)
         self.assertIn("visual_inputs", encoded_dict)
@@ -251,4 +251,3 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

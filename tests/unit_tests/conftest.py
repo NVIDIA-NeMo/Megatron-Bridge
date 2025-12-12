@@ -29,18 +29,14 @@ logger = logging.getLogger(__name__)
 def cleanup_local_folder():
     """Cleanup local experiments folder"""
     # Asserts in fixture are not recommended, but I'd rather stop users from deleting expensive training runs
-    # assert not Path("./NeMo_experiments").exists()
-    # assert not Path("./nemo_experiments").exists()
-    
-    # Check if they exist before yielding
-    exists_nemo = Path("./nemo_experiments").exists()
-    exists_NeMo = Path("./NeMo_experiments").exists()
+    assert not Path("./NeMo_experiments").exists()
+    assert not Path("./nemo_experiments").exists()
 
     yield
 
-    if Path("./NeMo_experiments").exists() and not exists_NeMo:
+    if Path("./NeMo_experiments").exists():
         rmtree("./NeMo_experiments", ignore_errors=True)
-    if Path("./nemo_experiments").exists() and not exists_nemo:
+    if Path("./nemo_experiments").exists():
         rmtree("./nemo_experiments", ignore_errors=True)
 
 
