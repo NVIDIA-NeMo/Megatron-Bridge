@@ -143,6 +143,24 @@ runs:
         SMB_PATH=$(echo $HTTP_ENDPOINT | cut -c7-${#HTTP_ENDPOINT})$FILE_SHARE_NAME
         STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP_NAME --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" --output tsv | tr -d '"')
         sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks
+
+        # Wait for mount to be fully available (Azure SMB can be slow to populate)
+        echo "Waiting for Azure file share to be fully mounted..."
+        MAX_RETRIES=30
+        RETRY_DELAY=2
+        for i in $(seq 1 $MAX_RETRIES); do
+          if mountpoint -q "$MNT_PATH" && [ -d "$MNT_PATH/TestData" ] && [ "$(ls -A $MNT_PATH/TestData 2>/dev/null)" ]; then
+            echo "Mount is ready after $i attempt(s)"
+            break
+          fi
+          if [ $i -eq $MAX_RETRIES ]; then
+            echo "ERROR: Mount did not become ready after $MAX_RETRIES attempts"
+            exit 1
+          fi
+          echo "Attempt $i/$MAX_RETRIES: Mount not ready yet, waiting ${RETRY_DELAY}s..."
+          sleep $RETRY_DELAY
+        done
+
         ls -al $MNT_PATH/TestData
 
     - name: Start container
@@ -152,7 +170,6 @@ runs:
         MOUNT_FS: ${{ inputs.is_unit_test == 'false' }}
       run: |
         echo "::group::Start test container"
-        ls /mnt/datadrive/TestData/nemo-fw
         if [[ "$MOUNT_FS" == "true" ]]; then
           VOLUME_ARGS="--volume $MNT_PATH/TestData:/home/TestData"
         else
