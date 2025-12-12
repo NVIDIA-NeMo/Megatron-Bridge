@@ -128,6 +128,7 @@ runs:
           --env TRANSFORMERS_OFFLINE=0 \
           --cpus=40 \
           --env HYDRA_FULL_ERROR=1 \
+          --env HF_HUB_OFFLINE=1 \
           --env HF_HUB_CACHE=/home/TestData/HF_HOME/hub \
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
