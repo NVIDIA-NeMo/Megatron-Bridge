@@ -24,9 +24,8 @@ from omegaconf import OmegaConf
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors import process_squad_example
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
-    nemotron_3_nano_pretrain_config as pretrain_config,
+    nemotron_3_nano_finetune_config as finetune_config,
 )
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.finetune import finetune
@@ -52,6 +51,9 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         type=str,
         help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml", # TODO: update yaml file name
     )
+    parser.add_argument("--peft", type=str, help="Type of PEFT to use")
+    parser.add_argument("--packed-sequence", action="store_true", help="Whether to use sequence packing")
+    parser.add_argument("--seq-length", type=int, default=2048,help="Sequence length")
 
     # Parse known args for the script, remaining will be treated as overrides
     args, cli_dotlist_overrides = parser.parse_known_args()
@@ -64,35 +66,8 @@ def main() -> None:
     """ 
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = pretrain_config(micro_batch_size=1,enable_deepep=False)
-
-
-    # TODO: hardcode dataset config w/ packed sequences here for now
-    seq_length = 8192 # NOTE: need to change model seq length as well
-    packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_cu_seqlens=False)
-    #
-
-    dataset_config = HFDatasetConfig(
-        dataset_name="squad",
-        process_example_fn=process_squad_example,
-        seq_length=seq_length,
-        seed=1234,
-        dataloader_type="single",
-        num_workers=1,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,
-        delete_raw=False,
-        dataset_kwargs = {"pad_to_max_length": True},
-        do_validation=False,
-        do_test=False,
-    )
-    cfg.dataset = dataset_config
-    cfg.model.seq_length = seq_length
-
-    # tokenizer_model = "/lustre/fs1/portfolios/coreai/users/bobchen/ckpt/nm6-hybrid-3b-new-666000"
-    tokenizer_model = "nvidia/Nemotron-H-8B-Reasoning-128K" 
-    # "/lustre/fsw/portfolios/llmservice/users/soumyes/nano-v3/nano-v3-sft-tokenizer"
-    cfg.tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
+    cfg: ConfigContainer = finetune_config(seq_length=args.seq_length,peft=args.peft, packed_sequence=args.packed_sequence)
+    cfg.model.seq_length = args.seq_length
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)

@@ -356,9 +356,9 @@ def nemotron_3_nano_finetune_config(**user_kwargs: Unpack[Nemotron3NanoFinetuneK
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
         "context_parallelism": 1,
-        "sequence_parallelism": False,
+        "sequence_parallelism": True,
         "expert_tensor_parallelism": 1,
-        "expert_model_parallelism": 8 if is_full_sft else 1,
+        "expert_model_parallelism": 8,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
         "enable_deepep": True,
@@ -414,8 +414,6 @@ def _nemotron_3_nano_finetune_common(
     run_output_dir = os.path.join(base_output_dir, name)
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-
-    assert not packed_sequence, "Packed sequence is not supported for Nemotron Next 3B v2 finetuning"
 
     # Configure the model
     model_cfg = model_provider(
@@ -489,9 +487,8 @@ def _nemotron_3_nano_finetune_common(
         ),
         dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
-        # Using the same tokenizer as pretrain
-        tokenizer=TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model="/lustre/fsw/portfolios/llmservice/projects/llmservice_nlp_fm/data-quality/tokenizers/multiMixV8.gpt4o_nc_sd.500000.128k.vocab.json"),
-        checkpoint=CheckpointConfig(
+        tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer",tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"),
+        checkpoint = CheckpointConfig(
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
