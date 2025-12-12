@@ -135,7 +135,7 @@ class TestEnergonMultiModalDataModule:
         mock_dependencies["WorkerConfig"].return_value = MagicMock()
 
         dataloader = datamodule.val_dataloader()
-        
+
         assert isinstance(dataloader, EnergonDataloader)
         assert datamodule.val_dataloader_object is not None
         mock_dependencies["WorkerConfig"].assert_called()
@@ -156,11 +156,11 @@ class TestEnergonMultiModalDataModule:
         mock_dependencies["parallel_state"].get_pipeline_model_parallel_rank.return_value = 0
         mock_dependencies["parallel_state"].get_tensor_model_parallel_rank.return_value = 0
         mock_dependencies["parallel_state"].get_expert_model_parallel_rank.return_value = 0
-        
+
         mock_trainer.train_dataloader.save_state_global.return_value = ["state"]
 
         state_dict = datamodule.state_dict()
-        
+
         assert state_dict["consumed_samples"] == 500
         assert state_dict["dataloader_state"] == ["state"]
 
@@ -173,7 +173,7 @@ class TestEnergonMultiModalDataModule:
         mock_trainer.datamodule.train_dataloader.return_value = MagicMock()
         datamodule.trainer = mock_trainer
         datamodule.data_sampler = MagicMock()
-        
+
         state_dict = {"dataloader_state": ["state"], "consumed_samples": 500}
 
         # Patch megatron.core.num_microbatches_calculator module so that when it's imported
@@ -181,10 +181,10 @@ class TestEnergonMultiModalDataModule:
         mock_module = MagicMock()
         mock_update = MagicMock()
         mock_module.update_num_microbatches = mock_update
-        
+
         with patch.dict("sys.modules", {"megatron.core.num_microbatches_calculator": mock_module}):
             datamodule.load_state_dict(state_dict)
-            
+
             mock_trainer.datamodule.train_dataloader().restore_state_global.assert_called_with(["state"])
             assert datamodule.data_sampler.init_consumed_samples == 500
             mock_update.assert_called_with(consumed_samples=500, consistency_check=False)
@@ -192,12 +192,12 @@ class TestEnergonMultiModalDataModule:
     def test_load_state_dict_missing_key(self, datamodule):
         datamodule.load_state_dict({})
         # Should log warning and return, no error raised
-    
+
     def test_load_state_dict_no_trainer(self, datamodule):
         datamodule.trainer = None
         datamodule.data_sampler = MagicMock()
         state_dict = {"dataloader_state": ["state"], "consumed_samples": 500}
-        
+
         # Patch megatron.core.num_microbatches_calculator module to avoid side effects
         mock_module = MagicMock()
         mock_update = MagicMock()
@@ -206,7 +206,7 @@ class TestEnergonMultiModalDataModule:
         with patch.dict("sys.modules", {"megatron.core.num_microbatches_calculator": mock_module}):
             # Should raise ValueError inside the try block, caught and logged as warning
             datamodule.load_state_dict(state_dict)
-            
+
             # Verify update_num_microbatches was still called because the exception is caught
             mock_update.assert_called_with(consumed_samples=500, consistency_check=False)
 
@@ -215,12 +215,12 @@ class TestEnergonDataloader:
     def test_init(self):
         mock_loader = MagicMock()
         mock_loader.__iter__.side_effect = lambda: iter([1, 2, 3])
-        
+
         dataloader = EnergonDataloader(mock_loader)
-        
+
         assert dataloader._dataloader == mock_loader
         # EnergonDataloader makes it cyclic
-        
+
         # Test iteration
         it = iter(dataloader)
         assert next(it) == 1
@@ -231,7 +231,7 @@ class TestEnergonDataloader:
     def test_save_state(self):
         mock_loader = MagicMock()
         dataloader = EnergonDataloader(mock_loader)
-        
+
         dataloader.save_state()
         mock_loader.save_state_rank.assert_called_once()
 
@@ -240,7 +240,7 @@ class TestCyclicIter:
     def test_cyclic_iter(self):
         data = [1, 2]
         it = cyclic_iter(data)
-        
+
         assert next(it) == 1
         assert next(it) == 2
         assert next(it) == 1
