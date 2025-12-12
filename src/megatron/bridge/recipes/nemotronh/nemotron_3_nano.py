@@ -356,7 +356,7 @@ def nemotron_3_nano_finetune_config(**user_kwargs: Unpack[Nemotron3NanoFinetuneK
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
         "context_parallelism": 1,
-        "sequence_parallelism": True,
+        "sequence_parallelism": False,
         "expert_tensor_parallelism": 1,
         "expert_model_parallelism": 8,
         "peft": peft_value,
