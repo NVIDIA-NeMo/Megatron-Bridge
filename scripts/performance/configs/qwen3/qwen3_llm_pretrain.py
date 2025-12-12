@@ -46,7 +46,7 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
-    cfg.comm_overlap.tp_comm_bootstrap_backend = "nccl"
+    cfg.comm_overlap.tp_comm_bootstrap_backend = "mpi"
 
 
 def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
