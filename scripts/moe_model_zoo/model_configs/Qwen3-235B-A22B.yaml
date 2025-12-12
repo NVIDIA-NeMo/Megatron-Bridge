@@ -28,6 +28,10 @@ model:
   cross_entropy_loss_fusion: true
   cross_entropy_fusion_impl: te
   sequence_parallel: true
+  bias_activation_fusion: true
+  persist_layer_norm: true
+  bias_dropout_fusion: true
+  apply_rope_fusion: true
   # Transformer Engine args
   transformer_impl: transformer_engine
   # RoPE args
@@ -72,6 +76,7 @@ dist:
 
 ddp:
   use_distributed_optimizer: true
+  data_parallel_sharding_strategy: no_shard
 
 train:
   micro_batch_size: ${MBS}
