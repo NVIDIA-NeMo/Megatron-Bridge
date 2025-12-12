@@ -211,7 +211,7 @@ def main() -> None:
     if get_rank_safe() == 0:
         cfg.print_yaml()
 
-    # Workaround for OmegaConf not supporting Qwen2VLTaskEncoder object (or other complex objects in dataset)
+    # Workaround for OmegaConf not supporting QwenVLTaskEncoder object (or other complex objects in dataset)
     # We temporarily remove it from the config before OmegaConf conversion and restore it later
     saved_task_encoder = None
     if hasattr(cfg.dataset, "task_encoder"):
