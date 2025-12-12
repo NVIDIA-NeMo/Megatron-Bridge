@@ -29,7 +29,7 @@ from megatron.bridge.data.vlm_datasets.collate import (
     qwen2_5_collate_fn,
 )
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
-from megatron.bridge.data.vlm_datasets.energon.vlm_energon_prodvider import EnergonVLMConversationProvider
+from megatron.bridge.data.vlm_datasets.vlm_energon_prodvider import EnergonVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_cord_v2_dataset,
     make_cv17_dataset,
