@@ -23,6 +23,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -35,7 +36,6 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-
 
 class Nemotron3NanoCommonKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron Next 3B v2 recipe helper functions."""
@@ -136,6 +136,8 @@ def _nemotron_3_nano_common(
     min_lr: float = 1.6e-5,
     lr_warmup_iters: int = 333,
     lr_decay_iters: Optional[int] = None,
+    # Tokenizer
+    tokenizer_model: Optional[str] = None,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
@@ -229,6 +231,11 @@ def _nemotron_3_nano_common(
         end_weight_decay=0.1,
         lr_decay_style="cosine",
     )
+    #FIXME: HF tokenizer or TikTokenizer?
+    if tokenizer_model is not None:
+        tokenizer_config = TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model=tokenizer_model)
+    else:
+        tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE)
 
     # Config Container
     cfg = ConfigContainer(
@@ -274,8 +281,7 @@ def _nemotron_3_nano_common(
             wandb_entity=wandb_entity,
             wandb_exp_name=wandb_exp_name,
         ),
-        #TODO(liding): what is the correct tokenizer for Nemotron Next 3B v2
-        tokenizer=TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model="/lustre/fsw/portfolios/llmservice/projects/llmservice_nlp_fm/data-quality/tokenizers/multiMixV8.gpt4o_nc_sd.500000.128k.vocab.json"),
+        tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
             save_interval=save_interval,
             save=checkpoint_dir,
