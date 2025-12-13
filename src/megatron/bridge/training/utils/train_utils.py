@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import torch
 import torch.nn as nn
 from megatron.core.num_microbatches_calculator import get_num_microbatches
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
@@ -665,13 +664,6 @@ def training_log(
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"
-        if config.optimizer.decoupled_lr is not None and (
-            is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)
-        ):
-            assert decoupled_learning_rate is not None
-            log_string += f" decoupled learning rate: {decoupled_learning_rate:.6E} |"
-        else:
-            assert decoupled_learning_rate is None
         log_string += f" global batch size: {batch_size:5d} |"
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key, nan_iters_key]:

@@ -70,3 +70,15 @@ releases/software-versions.md
 releases/changelog.md
 releases/known-issues.md
 ```
+
+```{toctree}
+:caption: Directory Readme Files
+:hidden:
+
+README.md
+models/README.md
+models/llm/README.md
+models/vlm/README.md
+releases/README.md
+training/README.md
+```
