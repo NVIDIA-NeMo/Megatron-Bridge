@@ -124,11 +124,13 @@ jobs:
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_mamba
+          - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization
           - script: L2_Launch_quantization_aware_training
           - script: L2_Launch_quantization_export
+          - script: L2_Launch_recipes_llama_cuda_graphs
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
