@@ -20,7 +20,6 @@ override system while maintaining compatibility with Megatron Core's post_init b
 
 from dataclasses import dataclass
 
-from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
     HeterogeneousTransformerConfig as MCoreHeterogeneousTransformerConfig,
 )
@@ -66,14 +65,6 @@ class TransformerConfig(MCoreTransformerConfig):
         """
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
-        if isinstance(self.attention_backend, str):
-            if "." in self.attention_backend:
-                _, backend_name = self.attention_backend.split(".")
-                self.attention_backend = getattr(AttnBackend, backend_name)
-            else:
-                self.attention_backend = getattr(AttnBackend, self.attention_backend)
-        if isinstance(self.recompute_modules, str):
-            self.recompute_modules = self.recompute_modules.split(",")
         MCoreTransformerConfig.__post_init__(self)
 
 

@@ -12,7 +12,7 @@ ENV_VARS:
 model:
   # config_logger_dir: ${OUTPUT_PATH}/config/
   # ModelParallelConfig
-  attention_backend: AttnBackend.flash
+  attention_backend: flash
   add_bias_linear: false
   share_embeddings_and_output_weights: false
   seq_len_interpolation_factor: 1

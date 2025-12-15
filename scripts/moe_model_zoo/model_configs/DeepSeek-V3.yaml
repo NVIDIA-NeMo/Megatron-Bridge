@@ -1,0 +1,165 @@
+ENV_VARS:
+  TORCH_NCCL_AVOID_RECORD_STREAMS: 0
+  NVTE_ALLOW_NONDETERMINISTIC_ALGO: 1
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  NCCL_NVLS_ENABLE: 0
+  NVTE_FUSED_ATTN: 1
+  NVTE_NORM_FWD_USE_CUDNN: 1
+  NVTE_NORM_BWD_USE_CUDNN: 1
+  PYTHONWARNINGS: ignore
+  NCCL_DEBUG: VERSION
+  NCCL_GRAPH_REGISTER: 0
+
+
+model:
+  # ModelParallelConfig
+  tensor_model_parallel_size: ${TP}
+  pipeline_model_parallel_size: ${PP}
+  expert_model_parallel_size: ${EP}
+  context_parallel_size: ${CP}
+  virtual_pipeline_model_parallel_size: ${VPP}
+  expert_tensor_parallel_size: 1
+  # Transformer implementation
+  transformer_impl: transformer_engine
+  sequence_parallel: true
+  attention_backend: auto
+  add_bias_linear: false
+  share_embeddings_and_output_weights: false
+  cross_entropy_loss_fusion: true
+  cross_entropy_fusion_impl: te
+  # Architecture
+  num_layers: 61
+  hidden_size: 7168
+  ffn_hidden_size: 18432
+  num_attention_heads: 128
+  kv_channels: 128
+  seq_length: ${SEQ_LEN}
+  make_vocab_size_divisible_by: 3232
+  # RoPE args
+  position_embedding_type: rope
+  rotary_base: 10000
+  rotary_percent: 1.0
+  rotary_scaling_factor: 40
+  # Normalization
+  normalization: RMSNorm
+  layernorm_epsilon: 1e-6
+  qk_layernorm: true
+  # Activation
+  gated_linear_unit: true  # swiglu
+  # Regularization
+  attention_dropout: 0.0
+  hidden_dropout: 0.0
+  # MLA (Multi-Latent Attention) args
+  multi_latent_attention: true
+  q_lora_rank: 1536
+  kv_lora_rank: 512
+  qk_head_dim: 128
+  qk_pos_emb_head_dim: 64
+  v_head_dim: 128
+  mscale: 1.0
+  mscale_all_dim: 1.0
+  # MoE args
+  num_moe_experts: 256
+  moe_layer_freq: "[0]*3+[1]*58"
+  moe_ffn_hidden_size: 2048
+  moe_shared_expert_intermediate_size: 2048
+  moe_router_load_balancing_type: seq_aux_loss
+  moe_router_topk: 8
+  moe_grouped_gemm: true
+  moe_aux_loss_coeff: 1e-4
+  moe_router_group_topk: 4
+  moe_router_num_groups: 8
+  moe_router_topk_scaling_factor: 2.5
+  moe_router_score_function: sigmoid
+  moe_router_enable_expert_bias: true
+  moe_router_bias_update_rate: 1e-3
+  moe_router_dtype: fp32
+  moe_permute_fusion: true
+  moe_router_fusion: true
+  moe_shared_expert_overlap: false
+  # MTP (Multi-Token Prediction) args
+  # mtp_num_layers: 1
+  # mtp_loss_scaling_factor: 0.1
+  # Pipeline model parallel layout
+  # pipeline_model_parallel_layout: Et|(tt|)*30mL
+  # Initialization
+  init_method_std: 0.02
+  # Mixed precision
+  bf16: true
+  # EA: Add 1F1B overlapping - enable via launch command
+  # delay_wgrad_compute: true
+  # overlap_moe_expert_parallel_comm: true
+
+dist:
+  distributed_timeout_minutes: 60
+  enable_megatron_core_experimental: true
+
+ddp:
+  use_distributed_optimizer: true
+  overlap_grad_reduce: true
+  overlap_param_gather: true
+  average_in_collective: true
+  grad_reduce_in_fp32: false
+  check_for_nan_in_grad: false
+
+train:
+  micro_batch_size: ${MBS}
+  global_batch_size: ${GBS}
+  train_samples: 585937500
+  exit_duration_in_mins: 220
+  manual_gc: true
+  manual_gc_interval: 10
+  # Validation args
+  eval_iters: 32
+  eval_interval: 200
+
+tokenizer:
+  tokenizer_type: HuggingFaceTokenizer
+  tokenizer_model: unsloth/DeepSeek-V3
+
+dataset:
+  seq_length: ${SEQ_LEN}
+  split: 99,1,0
+  num_workers: 6
+  skip_getting_attention_mask_from_dataset: true
+  path_to_cache: ${WORKSPACE}/data_cache
+  # Note: data_path should be set via environment variable ${DATA_PATH}
+
+optimizer:
+  clip_grad: 1.0
+  weight_decay: 0.1
+  # Learning rate scaled down from 7.3e-6 (DeepSeek-V3 technical report, GBS=15360) to 3.9e-6 (GBS=8192)
+  lr: 3.9e-6
+  min_lr: 3.9e-7
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  log_num_zeros_in_grad: false
+
+scheduler:
+  lr_decay_style: cosine
+  lr_decay_samples: 584765624
+  lr_warmup_samples: 1536000
+  lr_warmup_init: 3.9e-7
+
+checkpoint:
+  auto_detect_ckpt_format: true
+  load: ${LOAD_PATH}
+  save: ${OUTPUT_PATH}/checkpoints
+  save_interval: 500
+  save_optim: false
+  load_optim: false
+  load_rng: false
+  finetune: false
+  dist_ckpt_strictness: log_all
+
+logger:
+  log_interval: 1
+  logging_level: 40
+  tensorboard_dir: ${OUTPUT_PATH}/tensorboard
+  log_timers_to_tensorboard: true
+  log_memory_to_tensorboard: true
+  log_params_norm: false
+  log_validation_ppl_to_tensorboard: true
+  log_throughput: true
+  wandb_project: ${WANDB_PROJECT}
+  wandb_exp_name: DeepSeek-V3-TP${TP}PP${PP}EP${EP}CP${CP}VPP${VPP}-MBS${MBS}GBS${GBS}-${COMMENT}
