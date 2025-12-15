@@ -18,6 +18,10 @@ source "${WORKSPACE}/runtime_configs/common.conf"
 if [[ -n "${CLUSTER_CONF_PATH:-}" ]]; then
     source "${CLUSTER_CONF_PATH}/benchmarking/${CLUSTER}.conf"
 fi
+# If LOAD_PATH is false, set to empty string
+if [[ ${LOAD_PATH} == "false" ]]; then
+    LOAD_PATH=""
+fi
 
 # Initialize training parameters
 TRAINING_PARAMS=${TRAINING_PARAMS:-""}
