@@ -13,6 +13,7 @@ llama3.md
 llama-nemotron.md
 mistral.md
 moonlight.md
+nemotronh.md
 olmoe.md
 qwen.md
 ```
