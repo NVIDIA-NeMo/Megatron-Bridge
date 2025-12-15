@@ -100,7 +100,7 @@ class TestMambaModelProvider:
         )
 
         # Provide a minimal pg_collection attribute expected by provider
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
         # Mock dependencies
         with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
@@ -125,7 +125,7 @@ class TestMambaModelProvider:
             should_pad_vocab=True,  # Enable padding
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
         with patch(
             "megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=50176
         ) as mock_calc_vocab:
@@ -153,7 +153,7 @@ class TestMambaModelProvider:
             should_pad_vocab=False,  # Disable padding
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
         with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size") as mock_calc_vocab:
             with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
                 mock_instance = Mock()
@@ -180,7 +180,7 @@ class TestMambaModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
         with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
             with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
                 mock_instance = Mock()
@@ -205,7 +205,7 @@ class TestMambaModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
         with patch(
             "megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=2048
         ) as mock_calc:
@@ -255,7 +255,7 @@ class TestMambaModelProvider:
             mamba_stack_spec=custom_stack_spec,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
         with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
             with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
                 mock_instance = Mock()

@@ -72,7 +72,7 @@ class GemmaModelProvider(GPTModelProvider):
         # Apply Embedding Scaling for Gemma: sqrt(hidden_size)
         if is_vp_first_stage(
             vp_stage=vp_stage, vp_size=self.virtual_pipeline_model_parallel_size
-        ) and is_pp_first_stage(self.pg_collection.pp):
+        ) and is_pp_first_stage(self._pg_collection.pp):
             from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin, extend_instance
 
             extend_instance(model.embedding, EmbeddingScalingMixin)

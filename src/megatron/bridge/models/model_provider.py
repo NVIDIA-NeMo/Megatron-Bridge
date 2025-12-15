@@ -239,6 +239,15 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             model_parallel_cuda_manual_seed(seed, **(seed_kwargs or {}))
 
     @property
+    def pg_collection(self) -> ProcessGroupCollection | None:
+        """Backward compatible accessor for the provider process group collection."""
+        return getattr(self, "_pg_collection", None)
+
+    @pg_collection.setter
+    def pg_collection(self, value: ProcessGroupCollection | None) -> None:
+        self._pg_collection = value
+
+    @property
     def meta_model(self) -> list[ModelT]:
         """Returns the model instantiated on the meta device for inspection.
 

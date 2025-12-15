@@ -93,7 +93,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
-    pg_collection: Optional[ProcessGroupCollection] = None
+    _pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""
@@ -141,9 +141,9 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
             position_embedding_type=self.position_embedding_type,
             rotary_percent=self.rotary_percent,
             seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process or is_pp_first_stage(self.pg_collection.pp),
-            post_process=post_process or is_pp_last_stage(self.pg_collection.pp),
-            pg_collection=self.pg_collection,
+            pre_process=pre_process or is_pp_first_stage(self._pg_collection.pp),
+            post_process=post_process or is_pp_last_stage(self._pg_collection.pp),
+            pg_collection=self._pg_collection,
         )
 
         return model

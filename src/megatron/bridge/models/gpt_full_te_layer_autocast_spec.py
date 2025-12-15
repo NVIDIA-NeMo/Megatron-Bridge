@@ -266,7 +266,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
 
     def _get_layer_offset(self):
         # Derive pipeline/virtual pipeline indices from provided pg_collection/config
-        pp_group = getattr(self.config, "pg_collection", None).pp if hasattr(self.config, "pg_collection") else None
+        pp_group = getattr(self.config, "_pg_collection", None).pp if hasattr(self.config, "_pg_collection") else None
         pipeline_rank = pp_group.rank() if pp_group is not None else 0
 
         num_layers_per_pipeline_rank = self.config.num_layers // self.config.pipeline_model_parallel_size

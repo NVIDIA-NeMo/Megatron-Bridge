@@ -385,12 +385,12 @@ class Gemma2ModelProvider(GPTModelProvider):
         # Apply Embedding Scaling for Gemma2: sqrt(hidden_size)
         if is_vp_first_stage(
             vp_stage=vp_stage, vp_size=self.virtual_pipeline_model_parallel_size
-        ) and is_pp_first_stage(self.pg_collection.pp):
+        ) and is_pp_first_stage(self._pg_collection.pp):
             extend_instance(model.embedding, EmbeddingScalingMixin)
 
         # Prevents final logits from growing excessively by scaling them to a fixed range
         if is_vp_last_stage(vp_stage=vp_stage, vp_size=self.virtual_pipeline_model_parallel_size) and is_pp_last_stage(
-            self.pg_collection.pp
+            self._pg_collection.pp
         ):
             extend_instance(model.output_layer, Gemma2OutputLayer)
 

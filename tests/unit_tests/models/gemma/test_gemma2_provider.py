@@ -80,7 +80,7 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
@@ -111,7 +111,7 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             # Use vp_stage=0 to satisfy vp_size None assertion in helpers
@@ -142,7 +142,7 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)

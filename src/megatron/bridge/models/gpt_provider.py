@@ -192,7 +192,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
     restore_modelopt_state: bool = False
 
-    pg_collection: Optional[ProcessGroupCollection] = None
+    _pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
@@ -263,11 +263,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         # Determine pre/post flags if not provided using vp + pp stage
         if pre_process is None:
             pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
-                self.pg_collection.pp
+                self._pg_collection.pp
             )
         if post_process is None:
             post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
-                self.pg_collection.pp
+                self._pg_collection.pp
             )
         # Expose vp stage on config for downstream modules (e.g., TE layers)
         # so they can compute correct offsets without legacy globals.
@@ -288,7 +288,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 pre_process=pre_process,
                 post_process=post_process,
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
-                pg_collection=self.pg_collection,
+                pg_collection=self._pg_collection,
                 vp_stage=vp_stage,
                 **kwargs,
             )
@@ -300,21 +300,21 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.use_transformer_engine_full_layer_spec:
             # Copied from:
             # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
-            if self.pg_collection.tp.size() > 1:
+            if self._pg_collection.tp.size() > 1:
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_tensor_parallel_group"):
-                        tp_group = self.pg_collection.tp
+                        tp_group = self._pg_collection.tp
                         child.set_tensor_parallel_group(tp_group)
 
-            if self.pg_collection.cp.size() > 1:
+            if self._pg_collection.cp.size() > 1:
                 cp_stream = torch.cuda.Stream()
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_context_parallel_group"):
-                        cp_group = self.pg_collection.cp
+                        cp_group = self._pg_collection.cp
                         cp_global_ranks = torch.distributed.get_process_group_ranks(cp_group)
                         child.set_context_parallel_group(cp_group, cp_global_ranks, cp_stream)
 

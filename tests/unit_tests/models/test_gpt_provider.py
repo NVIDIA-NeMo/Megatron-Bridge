@@ -75,7 +75,7 @@ class TestGPTModelProvider:
         )
 
         # Provide minimal pg_collection for provider
-        provider.pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
         # Mock dependencies
         with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
@@ -100,7 +100,7 @@ class TestGPTModelProvider:
             should_pad_vocab=True,  # Enable padding
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
         with patch(
             "megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=50176
@@ -129,7 +129,7 @@ class TestGPTModelProvider:
             should_pad_vocab=False,  # Disable padding
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
         with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size") as mock_calc_vocab:
             with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
@@ -155,7 +155,7 @@ class TestGPTModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        provider.pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
         with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
             with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_gpt:
@@ -550,8 +550,8 @@ class TestGPTDistillationProvider:
 
         # Attach minimal pg_collection needed by provider.provide
         pg = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
-        teacher.pg_collection = pg
-        student.pg_collection = pg
+        teacher._pg_collection = pg
+        student._pg_collection = pg
 
         # Mock the provide method calls and modelopt functions
         mock_student_model = Mock()

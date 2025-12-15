@@ -729,7 +729,7 @@ class TestCanonicalLoRAMegatronIntegration:
 
         from megatron.core.process_groups_config import ProcessGroupCollection
 
-        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create CanonicalLoRA instance targeting linear layers
         lora = CanonicalLoRA(

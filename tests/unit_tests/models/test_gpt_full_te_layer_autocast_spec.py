@@ -228,7 +228,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 0
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
@@ -246,7 +246,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 0
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         # Ensure external_cuda_graph is False so we get tuple return
         mock_config.cuda_graph_impl = "none"
@@ -283,7 +283,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 1
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
@@ -302,7 +302,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 0
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "local"
         mock_config.cuda_graph_scope = []  # Empty list means layerwise graph
 
@@ -329,7 +329,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 0
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "local"
         mock_config.cuda_graph_scope = ["full_iteration"]  # Full iteration graph
 
@@ -350,7 +350,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 0
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "transformer_engine"
         mock_config.cuda_graph_scope = ["attn", "mlp"]  # TE supports multi-scope
 
@@ -377,7 +377,7 @@ class TestTETransformerLayerAutocast:
             def rank(self):
                 return 0
 
-        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch(

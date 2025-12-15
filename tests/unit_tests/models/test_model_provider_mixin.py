@@ -66,7 +66,7 @@ def test_provide_distributed_model_with_hooks_as_args(
     post_hook = Mock(return_value=mock_model)
 
     # Attach minimal pg_collection required by provider.provide
-    provider.pg_collection = type(
+    provider._pg_collection = type(
         "PG",
         (),
         {"pp": object(), "tp": object(), "cp": object(), "dp": object(), "dp_cp": object(), "expt_dp": object()},
