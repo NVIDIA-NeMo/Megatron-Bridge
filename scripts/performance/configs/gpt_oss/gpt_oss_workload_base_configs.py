@@ -51,7 +51,8 @@ GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16 = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
-    recompute_modules=["layernorm", "moe_act"],
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 
 
