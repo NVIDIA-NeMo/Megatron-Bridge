@@ -441,7 +441,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300"],
+        choices=["h100", "b200", "gb200", "gb300", "b300"],
         help="Target gpu type.",
         required=False,
     )

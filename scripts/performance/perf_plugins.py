@@ -384,7 +384,7 @@ class PerfEnvPlugin(Plugin):
             cp_size,
             moe_a2a_overlap=moe_a2a_overlap,
             moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
-            gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
+            gpu_sm100_or_newer=self.gpu in ["b300", "b200", "gb200", "gb300"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
