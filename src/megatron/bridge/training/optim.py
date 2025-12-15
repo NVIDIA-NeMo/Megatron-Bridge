@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional, Union
+from typing import Union
 
-import torch.nn as nn
 from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
@@ -27,9 +26,6 @@ def setup_optimizer(
     scheduler_config: SchedulerConfig,
     model: Union[MegatronModule, list[MegatronModule]],
     use_gloo_process_groups: bool = False,
-    no_weight_decay_cond: Optional[Callable[[str, nn.Parameter], bool]] = None,
-    scale_lr_cond: Optional[Callable[[str, nn.Parameter], bool]] = None,
-    lr_mult: float = 1.0,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -38,9 +34,6 @@ def setup_optimizer(
         scheduler_config: Configuration for the scheduler
         model: The model to optimize
         use_gloo_process_groups: Whether to use Gloo process groups
-        no_weight_decay_cond: Condition for parameters to exclude from weight decay
-        scale_lr_cond: Condition for parameters to scale learning rate
-        lr_mult: Learning rate multiplier
 
     Returns:
         tuple containing the optimizer and scheduler
@@ -48,9 +41,6 @@ def setup_optimizer(
     optimizer = get_megatron_optimizer(
         optimizer_config,
         model,
-        no_weight_decay_cond=no_weight_decay_cond,
-        scale_lr_cond=scale_lr_cond,
-        lr_mult=lr_mult,
         use_gloo_process_groups=use_gloo_process_groups,
     )
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
