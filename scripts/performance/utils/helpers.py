@@ -265,7 +265,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     checkpoint_save = kwargs.get("checkpoint_save")
     
     if checkpoint_save:
-    	if checkpoint_dir is not None:
+	if checkpoint_dir is not None:
             recipe.checkpoint.save = checkpoint_dir
             logger.info(f"Checkpoint save directory set to: {checkpoint_dir}")
         # If checkpoint_save is enabled but no directory specified, use default under nemo_experiments
