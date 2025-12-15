@@ -157,7 +157,7 @@ class _ConfigContainerBase:
         Returns:
             The converted value
         """
-        if isinstance(value, _ConfigContainerBase):
+        if isinstance(value, _ConfigContainerBase) or hasattr(value, "to_dict"):
             return value.to_dict()
         elif is_dataclass(value) and not isinstance(value, type):
             # Handle regular dataclasses

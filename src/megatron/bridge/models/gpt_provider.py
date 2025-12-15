@@ -15,7 +15,7 @@
 import contextlib
 import inspect
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
@@ -353,8 +353,8 @@ class GPTDistillationProvider(GPTModelProvider):
         for attr in shared_attrs:
             if getattr(self, attr) != getattr(self.teacher, attr):
                 raise ValueError(f"Student and teacher providers must have the same {attr}.")
-        # Hack to dynamically subclass other providers and use their provide() method
-        self._super_provide = super().provide
+        # Hack to dynamically subclass other providers and still use their methods
+        self._super_class = self.__class__.__bases__[0]
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
@@ -370,7 +370,7 @@ class GPTDistillationProvider(GPTModelProvider):
         if vp_stage is not None:
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
 
-        student_model = self._super_provide(pre_process, post_process, vp_stage)
+        student_model = self._super_class.provide(self, pre_process, post_process, vp_stage)
         # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
         teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
 
@@ -384,6 +384,17 @@ class GPTDistillationProvider(GPTModelProvider):
         mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
 
         return kd_model
+
+    def to_dict(self) -> dict[str, Any]:
+        """Override to save equivalent to the original provider class."""
+        from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+
+        result = {"_target_": f"{self._super_class.__module__}.{self._super_class.__qualname__}"}
+        for field in fields(self):
+            if field.name.startswith("_") or field.name in ["teacher", "kd_config"]:
+                continue
+            result[field.name] = _ConfigContainerBase._convert_value_to_dict(getattr(self, field.name))
+        return result
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -401,8 +412,7 @@ def convert_to_distillation_provider(
     assert isinstance(student_provider, GPTModelProvider), "Student provider must be a subclass of GPTModelProvider."
     assert isinstance(teacher_provider, GPTModelProvider), "Teacher provider must be a subclass of GPTModelProvider."
 
-    student_provider._super_provide = student_provider.provide
-    student_provider.__bases__ = (type(student_provider),)
+    GPTDistillationProvider.__bases__ = (type(student_provider),)
     student_provider.__class__ = GPTDistillationProvider
 
     student_provider.teacher = teacher_provider
