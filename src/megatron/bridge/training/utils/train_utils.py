@@ -335,7 +335,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
-    log_max_attention_logit: float,
+    log_max_attention_logit: Optional[float] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -358,7 +358,7 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
-        log_max_attention_logit (float): Maximum attention logit if available, None otherwise.
+        log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
     """
