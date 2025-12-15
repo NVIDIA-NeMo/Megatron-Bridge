@@ -441,7 +441,7 @@ def parse_cli_args():
         "-cpd",
         "--checkpoint_dir",
         type=str,
-        help="Directory where checkpoints will be saved. If not specified, checkpoints will not be saved.",
+        help="Directory where checkpoints will be saved. If not specified, checkpoints will be saved into default location under experiment folder (/nemo_run/code/nemo_experiments/default/checkpoints).",
         required=False,
         default=None,
     )

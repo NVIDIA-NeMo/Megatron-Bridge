@@ -264,14 +264,15 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     checkpoint_interval = kwargs.get("checkpoint_interval")
     checkpoint_save = kwargs.get("checkpoint_save")
     
-    if checkpoint_dir is not None:
-        recipe.checkpoint.save = checkpoint_dir
-        logger.info(f"Checkpoint save directory set to: {checkpoint_dir}")
-    elif checkpoint_save:
+    if checkpoint_save:
+    	if checkpoint_dir is not None:
+            recipe.checkpoint.save = checkpoint_dir
+            logger.info(f"Checkpoint save directory set to: {checkpoint_dir}")
         # If checkpoint_save is enabled but no directory specified, use default under nemo_experiments
         # This will be under: <experiment_dir>/code/nemo_experiments/default/checkpoints
-        recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
-        logger.info("Checkpoint save enabled with default directory: /nemo_run/code/nemo_experiments/default/checkpoints")
+	else:
+            recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
+            logger.info("Checkpoint save enabled with default directory: /nemo_run/code/nemo_experiments/default/checkpoints")
     
     if checkpoint_interval is not None:
         recipe.checkpoint.save_interval = checkpoint_interval
