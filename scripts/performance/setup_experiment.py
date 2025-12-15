@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +18,7 @@ import glob
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -212,10 +215,15 @@ def main(
     dgxc_pvc_mount_path: str,
 ):
     """Sets up the experiment and runs it."""
-    if model_family_name in ["qwen3"] and model_recipe_name in [
-        "qwen3_30b_a3b_pretrain_config",
-        "qwen3_235b_a22b_pretrain_config",
-    ]:
+    if (
+        model_family_name in ["qwen3"]
+        and model_recipe_name
+        in [
+            "qwen3_30b_a3b",
+            "qwen3_235b_a22b",
+        ]
+        and task == "pretrain"
+    ):
         assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
 
     if wandb_key is not None:
@@ -228,7 +236,7 @@ def main(
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
-            else f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{num_gpus}gpu_{gpu}"
+            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
         )
 
     else:
@@ -236,7 +244,7 @@ def main(
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
-            else f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
+            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
         )
 
     if pretrained_checkpoint is not None:
@@ -268,6 +276,7 @@ def main(
             custom_mounts=custom_mounts,
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
+            gres=args.gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
@@ -305,7 +314,7 @@ def main(
                 model_recipe_name=model_recipe_name,
                 gpu=gpu,
                 compute_dtype=compute_dtype,
-                task=task,
+                train_task=task,
             )
         )
 
@@ -358,6 +367,9 @@ def main(
                 detach=detach,
                 name=exp_name,
             )
+            if dryrun:
+                logger.info("dryrun requested: exiting")
+                return
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
@@ -405,10 +417,13 @@ def main(
                     project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
                 )
 
+            logger.info("Waiting 10 seconds for I/O to settle")
+            time.sleep(10)
+
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
-                assets_dir=assets_dir,
+                assets_dir=os.path.join(job_dir, exp_name),
                 log_paths=log_paths,
                 loss_metric="lm loss",
                 timing_metric="elapsed time per iteration (ms)",
@@ -442,13 +457,12 @@ def main(
 
 if __name__ == "__main__":
     parser = parse_cli_args()
-    args, _ = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args()
 
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
+    # probably better to use parser.parse_args() and make unknowns an error,
+    # but for now we'll just issue a warning.
+    if unknown_args:
+        logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
     main(
         use_recipes=args.use_recipes,
