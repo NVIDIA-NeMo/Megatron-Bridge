@@ -6,12 +6,17 @@ export WORKSPACE=$(dirname "$(readlink -f "$0")")
 
 # Benchmarking configurations (must be set)
 export MODEL=${MODEL:-"your_own_model"}
+export CLUSTER=${CLUSTER:-"your_own_cluster"}
 export MBRIDGE_PATH=${MBRIDGE_PATH:-"your_own_megatron_bridge_path"}
 export WANDB_API_KEY=${WANDB_API_KEY:-"your_own_wandb_api_key"}
 export MBRIDGE_RELEASE_VERSION=${MBRIDGE_RELEASE_VERSION:-"your_megatron_bridge_version"}
 
 # Load common configurations
 source "${WORKSPACE}/runtime_configs/common.conf"
+# Check if CLUSTER_CONF_PATH is set and non-empty
+if [[ -n "${CLUSTER_CONF_PATH:-}" ]]; then
+    source "${CLUSTER_CONF_PATH}/benchmarking/${CLUSTER}.conf"
+fi
 
 # Initialize training parameters
 TRAINING_PARAMS=${TRAINING_PARAMS:-""}

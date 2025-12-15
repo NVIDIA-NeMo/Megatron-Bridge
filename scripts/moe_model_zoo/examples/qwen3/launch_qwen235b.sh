@@ -9,6 +9,7 @@ export CONTAINER_MOUNTS=
 # Cluster config
 export CLUSTER=
 export CLUSTER_CONF_PATH=
+export PRETRAIN=1
 
 # Env config
 export MBRIDGE_PATH=
@@ -24,7 +25,6 @@ export COMMENT=
 # Model config
 export MODEL=Qwen3-235B-A22B
 export DATASET=Slimpajama
-export PRETRAIN=0
 
 # HuggingFace config
 export HF_TOKEN=
@@ -36,7 +36,7 @@ export SEQ_LEN=4096
 export MOE_GROUPED_GEMM=true
 
 # Interacitve mode
-# TP=1 PP=1 CP=1 VPP=null EP=2 GBS=2048 /lustre/fsw/coreai_devtech_all/pingtianl/mbridge/megatron-bridge/scripts/moe_model_zoo/interactive_benchmarking.sh \
+# TP=1 PP=1 CP=1 VPP=null EP=2 GBS=2048 ${MBRIDGE_PATH}/scripts/moe_model_zoo/interactive_benchmarking.sh \
 #   model.moe_router_force_load_balancing=true model.sequence_parallel=false model.num_layers=1 model.num_moe_experts=4 \
 #   model.hidden_size=512 model.moe_router_topk=2
 

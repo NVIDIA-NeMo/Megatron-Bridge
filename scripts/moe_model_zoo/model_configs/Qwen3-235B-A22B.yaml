@@ -10,7 +10,7 @@ ENV_VARS:
 
 
 model:
-  # config_logger_dir: ${OUTPUT_PATH}
+  # config_logger_dir: ${OUTPUT_PATH}/config/
   # ModelParallelConfig
   attention_backend: AttnBackend.flash
   add_bias_linear: false
@@ -69,6 +69,8 @@ model:
   init_method_std: 0.02
   # Add mixed precision args
   bf16: true
+  async_tensor_model_parallel_allreduce: true
+  wgrad_deferral_limit: 0
 
 dist:
   distributed_timeout_minutes: 220
@@ -77,6 +79,9 @@ dist:
 ddp:
   use_distributed_optimizer: true
   data_parallel_sharding_strategy: no_shard
+  overlap_grad_reduce: false
+  overlap_param_gather: false
+  average_in_collective: false
 
 train:
   micro_batch_size: ${MBS}
