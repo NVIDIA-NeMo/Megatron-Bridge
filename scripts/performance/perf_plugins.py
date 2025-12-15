@@ -201,7 +201,7 @@ class PerfEnvPlugin(Plugin):
     model_recipe_name: str
     gpu: str
     compute_dtype: str
-    task: str
+    train_task: str
 
     def _set_num_cuda_device_max_connections(
         self,
@@ -244,27 +244,29 @@ class PerfEnvPlugin(Plugin):
         model_recipe_name: str,
         gpu: str,
         compute_dtype: str,
+        train_task: str,
     ):
         """Set model-specific environment variables"""
         if (
             model_family_name in ["llama31"]
-            and model_recipe_name in ["llama31_405b_pretrain_config"]
+            and model_recipe_name in ["llama31_405b"]
+            and train_task == "pretrain"
             and gpu in ["gb200"]
         ):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         del_cudnn_ln = True
         if gpu in ["h100"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_8b_pretrain_config":
+            if model_family_name == "llama3" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_70b_pretrain_config":
+            if model_family_name == "llama3" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_family_name == "llama31" and model_recipe_name == "llama31_405b_pretrain_config":
+            if model_family_name == "llama31" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
@@ -362,7 +364,7 @@ class PerfEnvPlugin(Plugin):
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
-            self.model_family_name, self.model_recipe_name, self.gpu, self.compute_dtype, self.task
+            self.model_family_name, self.model_recipe_name, self.gpu, self.compute_dtype, self.train_task
         )
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
@@ -397,7 +399,7 @@ class PerfEnvPlugin(Plugin):
         # Set the chunk size of P2P communications
         nccl_pp_comm_chunksize = (
             2097152
-            if self.model_recipe_name in ["llama3_70b_pretrain_config", "llama31_405b_pretrain_config"]
+            if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
             else None
         )
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
@@ -416,4 +418,5 @@ class PerfEnvPlugin(Plugin):
             self.model_recipe_name,
             self.gpu,
             self.compute_dtype,
+            self.train_task,
         )

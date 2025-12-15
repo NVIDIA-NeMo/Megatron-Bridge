@@ -90,7 +90,10 @@ def run_distill_recipe_test(
     try:
         # Load student config and wrap it with GPTDistillationProvider
         config: ConfigContainer = student_config_func(
-            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", mock=True
+            dir=str(shared_base_dir),
+            name=f"{recipe_name}_functional_test",
+            mock=True,
+            load_weights=True,
         )
         config.model.__class__ = GPTDistillationProvider
 

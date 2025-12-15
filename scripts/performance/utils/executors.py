@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import nemo_run as run
-from nemo_run.config import get_nemorun_home
+from nemo_run.config import get_nemorun_home, set_nemorun_home
 from nemo_run.core.execution.launcher import SlurmTemplate
 
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
+logger = logging.getLogger(__name__)
 
 # NOTE: If you update this template,
 # PLEASE test it by submitting a job to GPU/node/cluster and verifying the sbatch and bash scripts.
@@ -79,7 +80,6 @@ def slurm_executor(
                 #SBATCH --constraint=gpu
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
-    err_msgs = []
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
@@ -88,13 +88,14 @@ def slurm_executor(
         "--no-container-mount-home",
     ]
 
-    if log_dir != get_nemorun_home():
-        err_msgs.append(f"\nRun `export NEMORUN_HOME={log_dir}` in your shell environment and rerun this script.")
-    if len(err_msgs) > 0:
-        print("\n".join(err_msgs))
-        sys.exit(1)
+    if log_dir is not None:
+        set_nemorun_home(log_dir)
+    else:
+        if os.environ.get("NEMORUN_HOME") is None:
+            logger.warning(
+                f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
+            )
 
-    PERF_ENV_VARS["NEMORUN_HOME"] = log_dir
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
 
@@ -134,7 +135,7 @@ def slurm_executor(
     executor = run.SlurmExecutor(
         account=account,
         partition=partition,
-        tunnel=run.LocalTunnel(job_dir=os.path.join(log_dir, "experiments")),
+        tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
         gres=gres,

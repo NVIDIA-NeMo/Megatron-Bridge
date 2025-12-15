@@ -31,18 +31,10 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
-
-    if args.model_recipe_name == "deepseek_v3_32nodes_pretrain_config":
-        args.model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
-
     recipe = get_perf_optimized_recipe(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
+        train_task=args.task,
         gpu=args.gpu,
         compute_dtype=args.compute_dtype,
         mock=args.data == "mock",
