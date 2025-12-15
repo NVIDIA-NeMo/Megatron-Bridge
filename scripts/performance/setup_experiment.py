@@ -149,7 +149,7 @@ def main(
     tp_size_final = tp_size if tp_size is not None else workload_base_config.tensor_model_parallel_size
     pp_size_final = pp_size if pp_size is not None else workload_base_config.pipeline_model_parallel_size
     cp_size_final = cp_size if cp_size is not None else workload_base_config.context_parallel_size
-    vp_size_final = vp_size if vp_size !=  -1 else workload_base_config.virtual_pipeline_model_parallel_size
+    vp_size_final = vp_size if vp_size is not None else workload_base_config.virtual_pipeline_model_parallel_size
     ep_size_final = ep_size if ep_size is not None else workload_base_config.expert_model_parallel_size
     mbs_final = mbs if mbs is not None else workload_base_config.micro_batch_size
     
