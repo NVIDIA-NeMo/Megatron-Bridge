@@ -30,7 +30,7 @@ LLAMA31_405B_GB300_BF16_BASE_CONFIG = replace(
     tensor_model_parallel_size=2,
     global_batch_size=64,
     use_megatron_fsdp=True,
-    cpu_offloading_num_layers=60,
+    cpu_offloading_num_layers=40,
 )
 
 
