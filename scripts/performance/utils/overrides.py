@@ -189,6 +189,8 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     if not cli_overrides:
         return recipe
 
+    # OmegaConf can't serialize problematic callable objects (functions/methods/partials, etc.),
+    # so those fields are "excluded_fields" in the temporary OmegaConf conversion and then restored after overrides
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
     merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
@@ -196,7 +198,7 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     # Apply the final merged OmegaConf configuration back to the original ConfigContainer
     logger.debug("Applying final merged configuration back to Python ConfigContainer...")
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
-    # Apply overrides while preserving excluded fields
+    # Apply overrides while preserving "excluded_fields"
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
 
     return recipe
