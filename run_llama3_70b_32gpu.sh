@@ -26,7 +26,7 @@ python scripts/performance/setup_experiment.py \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
-    -wdj "llama3-70b-pretrain-32gpu-deterministic-fused" \
+    -wdj "llama3-70b-pretrain-32gpu-deterministic-fused-log-fixed" \
     --task pretrain \
     model.tensor_model_parallel_size=4 \
     model.pipeline_model_parallel_size=4 \
@@ -35,5 +35,13 @@ python scripts/performance/setup_experiment.py \
     comm_overlap.tp_comm_overlap=false \
     model.deterministic_mode=true \
     model.cross_entropy_loss_fusion=false \
-    model.attention_backend=local   # or fused
+    model.attention_backend=local \
+    model.cross_entropy_loss_fusion=false \
+    logger.tensorboard_dir=/nemo_run/tensorboard \
+    logger.log_interval=1 \
+    logger.log_throughput=true \
+    logger.log_throughput_to_tensorboard=true \
+    logger.log_memory_to_tensorboard=true \
+    logger.throughput_window_size=1 \
+    logger.tensorboard_log_interval=1
 
