@@ -1717,8 +1717,8 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
     def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
         """Get shard indices for the given config."""
-        d_inner = (config.mamba_num_heads * config.mamba_head_dim)
-        d_tot_ssm = (config.mamba_state_dim * config.mamba_num_groups)
+        d_inner = config.mamba_num_heads * config.mamba_head_dim
+        d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
         if local_tp:
             d_inner = d_inner // self.tp_size
             d_tot_ssm = d_tot_ssm // self.tp_size
@@ -2387,11 +2387,7 @@ def merge_gdn_linear_weights(
     return in_proj
 
 
-def split_gdn_linear_weights(
-    provider: TransformerConfig,
-    in_proj: torch.Tensor,
-    tp_size: int = 1
-) -> torch.Tensor:
+def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor, tp_size: int = 1) -> torch.Tensor:
     """Split GDN linear weights into QKVZ and BA."""
 
     assert tp_size >= 1, f"tp_size must be greater than 0, but got {tp_size=}"
