@@ -353,7 +353,8 @@ class GPTDistillationProvider(GPTModelProvider):
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
 
         student_model = super().provide(pre_process, post_process, vp_stage)
-        teacher_model = self.teacher.provide(pre_process, post_process, vp_stage)
+        # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
+        teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
 
         kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
         modelopt_cfg = {

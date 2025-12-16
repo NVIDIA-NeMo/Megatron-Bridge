@@ -16,6 +16,7 @@ import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -63,6 +64,44 @@ class MockModelChunk:
         yield self.layer_name, self.param
 
 
+def make_default_model_config():
+    """Create a SimpleNamespace with sane defaults for model attributes."""
+    return SimpleNamespace(
+        num_moe_experts=None,
+        moe_router_load_balancing_type="",
+        moe_z_loss_coeff=None,
+        moe_per_layer_logging=False,
+        num_layers=24,
+        moe_layer_freq=1,
+        mtp_num_layers=None,
+        kv_channels=128,
+        num_attention_heads=32,
+        hidden_size=4096,
+        num_query_groups=None,
+        moe_router_topk=1,
+        ffn_hidden_size=16384,
+        moe_ffn_hidden_size=None,
+        moe_shared_expert_intermediate_size=None,
+        gated_linear_unit=False,
+        activation_func=None,
+        multi_latent_attention=False,
+        q_lora_rank=None,
+        kv_lora_rank=None,
+        qk_head_dim=64,
+        qk_pos_emb_head_dim=0,
+        v_head_dim=64,
+        seq_length=2048,
+        vocab_size=51200,
+        make_vocab_size_divisible_by=128,
+        tensor_model_parallel_size=1,
+        group_query_attention=False,
+        num_moe_experts_routed_to=None,
+        moe_router_load_balancing_threshold=None,
+        moe_z_loss_scale=None,
+        is_hybrid_model=False,
+    )
+
+
 class TestTrainingLog:
     """Test suite for the training_log function."""
 
@@ -98,9 +137,8 @@ class TestTrainingLog:
         config.train.micro_batch_size = 2
         config.train.train_iters = 1000
 
-        # Model config
-        config.model.num_moe_experts = None
-        config.model.mtp_num_layers = None
+        # Model config as a simple namespace to avoid auto-mocking methods
+        config.model = make_default_model_config()
 
         # Optimizer config
         config.optimizer.decoupled_lr = None
@@ -934,67 +972,6 @@ class TestTrainingLog:
 
         # Verify MTP tracking was called
         mock_mtp_helper.track_mtp_metrics.assert_called_once()
-
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
-    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
-    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
-    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
-    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage")
-    @mock.patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage")
-    def test_decoupled_learning_rate(
-        self,
-        mock_is_pp_last,
-        mock_is_pp_first,
-        mock_print_rank_last,
-        mock_is_last_rank,
-        mock_get_world_size,
-        mock_reduce_lr,
-        mock_get_microbatches,
-        mock_config,
-        mock_global_state,
-        loss_dict,
-    ):
-        """Test decoupled learning rate logging."""
-        # Get fresh total_loss_dict for this test
-        total_loss_dict = self.get_fresh_total_loss_dict()
-
-        # Setup mocks
-        mock_get_microbatches.return_value = 8
-        mock_reduce_lr.return_value = 1e-4
-        mock_get_world_size.return_value = 32
-        mock_is_last_rank.return_value = True
-        mock_is_pp_first.return_value = True
-        mock_is_pp_last.return_value = False
-
-        # Enable decoupled learning rate
-        mock_config.optimizer.decoupled_lr = 0.01
-
-        # Set iteration to match log interval
-        mock_global_state.train_state.step = 5
-        mock_config.logger.log_interval = 5
-
-        training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=1e-4,
-            decoupled_learning_rate=2e-5,  # Different from regular LR
-            loss_scale=1024.0,
-            report_memory_flag=False,
-            skipped_iter=0,
-            grad_norm=2.5,
-            params_norm=15.2,
-            num_zeros_in_grad=0,
-            config=mock_config,
-            global_state=mock_global_state,
-            history_wct=None,
-            model=None,
-        )
-
-        # Check that the log string includes decoupled learning rate
-        mock_print_rank_last.assert_called()
-        log_call_args = mock_print_rank_last.call_args[0][0]
-        assert "decoupled learning rate" in log_call_args
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")

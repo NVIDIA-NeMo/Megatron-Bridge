@@ -489,8 +489,6 @@ def training_log(
         writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
         if wandb_writer:
             wandb_writer.log({"learning-rate": learning_rate}, iteration)
-        if config.optimizer.decoupled_lr is not None:
-            writer.add_scalar("decoupled-learning-rate", decoupled_learning_rate, iteration)
         if global_state.train_state.skipped_train_samples > 0:
             writer.add_scalar("skipped-train-samples", global_state.train_state.skipped_train_samples, iteration)
             if wandb_writer:

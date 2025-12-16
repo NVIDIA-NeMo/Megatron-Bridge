@@ -561,16 +561,18 @@ class TestGPTDistillationProvider:
         # Avoid ProjectionLayer being created here
         mock_student_model.config.hidden_size = mock_teacher_model.config.hidden_size = 4096
         mock_kd_model = Mock()
+        # Ensure that .parameters() callable returns an empty iterator
+        mock_teacher_model.parameters.return_value = iter(())
+        mock_kd_model.parameters.return_value = iter(())
 
         # Set the side effects for the model provider - student first, then teacher
         mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]
-
         with patch("megatron.bridge.models.gpt_provider.mtd.convert", return_value=mock_kd_model):
-            result = student.provide()
+            result = student.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)
 
         # Verify that both student and teacher models were created
         assert mock_mcore_gpt.call_count == 2
-        assert result is mock_kd_model
+        assert result[0] is mock_kd_model
 
     def test_setattr_mirrors_to_teacher(self):
         """Test __setattr__ mirrors attributes to teacher when teacher has that attribute."""

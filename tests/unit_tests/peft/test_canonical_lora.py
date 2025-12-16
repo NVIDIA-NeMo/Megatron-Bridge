@@ -61,6 +61,7 @@ class MockMegatronLinear(nn.Module):
             def __init__(self):
                 self.kv_channels = kv_channels or 64
                 self.num_query_groups = num_query_groups or 8
+                self.num_attention_heads = self.num_query_groups
                 self.sequence_parallel = False
 
         self.config = MockConfig()

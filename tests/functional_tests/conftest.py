@@ -152,8 +152,15 @@ def reset_env_vars():
 @pytest.fixture(autouse=True)
 def reset_te_debug_state():
     """Ensure Transformer Engine debug state is reset after each test."""
-    from transformer_engine.debug.pytorch.debug_state import TEDebugState
+    try:
+        from transformer_engine.debug.pytorch.debug_state import TEDebugState
+    except (ImportError, ModuleNotFoundError):
+        yield
+        return
 
     yield
 
-    TEDebugState._reset()
+    try:
+        TEDebugState._reset()
+    except (ImportError, ModuleNotFoundError):
+        pass

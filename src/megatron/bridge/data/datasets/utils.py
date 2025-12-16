@@ -29,10 +29,10 @@ from typing import Any, Callable, Optional, Pattern, Type
 import numpy as np
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.core.tokenizers import MegatronTokenizer
 from megatron.core.process_groups_config import ProcessGroupCollection
 from torch.utils.data import Dataset
 
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
@@ -345,7 +345,7 @@ class _TextMemMapDataset(Dataset):
         """Allows child-classes to modify the parsing of raw text, prior to tokenization"""
         # tokenize text if tokenizer is given
         if self.tokenizer is not None:
-            data = self.tokenizer.text_to_ids(text)
+            data = _tokenize(self.tokenizer, text)
         else:
             data = text
 
@@ -933,10 +933,13 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     else:
         tools = tool_schemas
 
-    # assistant mask only works if chat template has generation keyword
-    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer._tokenizer.chat_template) is not None
+    if getattr(tokenizer, "legacy", False):
+        tokenizer = tokenizer._tokenizer
 
-    tokenized_chat = tokenizer._tokenizer.apply_chat_template(
+    # assistant mask only works if chat template has generation keyword
+    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
+
+    tokenized_chat = tokenizer.apply_chat_template(
         chat,
         tools=tools,
         tokenize=True,
@@ -990,9 +993,9 @@ def _preprocess(
     """
     header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(source, special_tokens)
     # tokenize conversations
-    input_ids = tokenizer.text_to_ids(conversation)
+    input_ids = _tokenize(tokenizer, conversation)
     target = copy.deepcopy(input_ids)
-    header_tokens = tokenizer.text_to_ids(header)
+    header_tokens = _tokenize(tokenizer, header)
     header_len = len(header_tokens)
 
     ids = []
@@ -1004,8 +1007,8 @@ def _preprocess(
         )
     for s in source["conversations"]:
         # hack to remove the extra empty token in front
-        id1 = tokenizer.text_to_ids(PREFIX_STR + s["value"])
-        id2 = tokenizer.text_to_ids(PREFIX_STR)
+        id1 = _tokenize(tokenizer, PREFIX_STR + s["value"])
+        id2 = _tokenize(tokenizer, PREFIX_STR)
         tokenized_sentence = id1[len(id2) :]
         ids.append(torch.tensor(tokenized_sentence))
         tokenized_lens.append(len(tokenized_sentence))
@@ -1083,8 +1086,8 @@ def _mask_targets(
     tgt_len = target.shape[0]
     for i, (tokenized_len, speaker, s_id) in enumerate(zip(tokenized_lens, speakers, s_ids)):
         # note, sentence piece will add extra empty token in front. has to compute the diff
-        id1 = tokenizer.text_to_ids(PREFIX_STR)
-        id2 = tokenizer.text_to_ids(PREFIX_STR + TURN_TOKEN + speaker + END_NAME_SIGNAL)
+        id1 = _tokenize(tokenizer, PREFIX_STR)
+        id2 = _tokenize(tokenizer, PREFIX_STR + TURN_TOKEN + speaker + END_NAME_SIGNAL)
         skip_name_len = len(id2) - len(
             id1
         )  # s_ids[:skip_name_len] is the name part of the prompt 'TURN_TOKEN + speaker + END_NAME_SIGNAL'
@@ -1338,3 +1341,15 @@ def _deallocate_indexed_dataset_memory(indexed_dataset):
     """Deallocate memory of an IndexedDataset."""
     indexed_dataset.sizes = None
     indexed_dataset.doc_idx = None
+
+
+def _tokenize(tokenizer, text):
+    """
+    Returns tokenized text depending on the type of tokenizer (legacy or new).
+    """
+    if getattr(tokenizer, "legacy", False):
+        # legacy tokenizer system
+        return tokenizer.text_to_ids(text)
+    else:
+        # new tokenizer system
+        return tokenizer.tokenize(text)

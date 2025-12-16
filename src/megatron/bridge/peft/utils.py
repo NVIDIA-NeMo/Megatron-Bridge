@@ -21,7 +21,7 @@ import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
@@ -609,7 +609,11 @@ class ParallelLinearAdapter(nn.Module):
         return x
 
     def sharded_state_dict(
-        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+        self,
+        prefix: str = "",
+        sharded_offsets: Tuple = (),
+        metadata: Optional[Dict] = None,
+        mamba_dim_info: Optional[Dict] = None,
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 
@@ -628,10 +632,57 @@ class ParallelLinearAdapter(nn.Module):
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
 
+        # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP),
+        # but it will cause errors as mentioned in https://github.com/volcengine/verl/issues/4303,
+        # since adapter weights are not EP sharded and it assumes that it will
+        # replicate along DP modulo EP (sharded by EP)
+        if self.is_expert:
+            from megatron.core import parallel_state
+
+            ep_rank = parallel_state.get_expert_model_parallel_rank()
+            edp_rank = parallel_state.get_expert_data_parallel_rank()
+            dp_size = parallel_state.get_data_parallel_world_size()
+            # TODO: This modification logic is in question and needs further verification.
+            rank = (ep_rank + 1) * (edp_rank + 1) - 1 if dp_size == 1 else ep_rank
+            for sd in [linear_in_sd, linear_out_sd]:
+                for v in sd.values():
+                    if hasattr(v, "replica_id"):
+                        old_rid = v.replica_id
+                        v.replica_id = (old_rid[0], rank, old_rid[2])
+
         if "linear_fc1" in self.base_linear_name:
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
                     linear_out_sd[k] = apply_swiglu_sharded_factory(v, sharded_offsets)
+
+        # Special handling for Mamba in_proj layer which needs to be split into 5 tensors
+        if mamba_dim_info is not None:
+            from megatron.core.ssm.mamba_mixer import _split_tensor_factory
+
+            # Split linear_out.weight into 5 parts: z, x, B, C, dt
+            # The in_proj output dimension is: d_inner * 2 + 2 * ngroups * d_state + nheads
+            # After TP sharding: d_inner_local_tp * 2 + 2 * ngroups_local_tp * d_state + nheads_local_tp
+            for k, v in linear_out_sd.items():
+                if k == f"{prefix}linear_out.weight" and isinstance(v, ShardedTensor):
+                    in_proj_dim_local = (
+                        mamba_dim_info["d_inner_local_tp"] * 2
+                        + 2 * mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"]
+                        + mamba_dim_info["nheads_local_tp"]
+                    )
+                    # Verify the dimension matches
+                    if v.data.size(0) == in_proj_dim_local:
+                        linear_out_sd[k] = _split_tensor_factory(
+                            v,
+                            [
+                                mamba_dim_info["d_inner_local_tp"],  # z
+                                mamba_dim_info["d_inner_local_tp"],  # x
+                                mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"],  # B
+                                mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"],  # C
+                                mamba_dim_info["nheads_local_tp"],  # dt
+                            ],
+                            ["z", "x", "B", "C", "dt"],
+                            0,  # split along dimension 0
+                        )
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)

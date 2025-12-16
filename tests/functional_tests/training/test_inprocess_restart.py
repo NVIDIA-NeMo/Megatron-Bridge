@@ -135,7 +135,7 @@ def build_test_config(
         ),
         tokenizer=TokenizerConfig(
             tokenizer_type="NullTokenizer",
-            vocab_size=10000,
+            vocab_size=131072,
         ),
         checkpoint=CheckpointConfig(
             save=save_dir,
