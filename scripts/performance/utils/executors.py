@@ -48,6 +48,23 @@ PERF_ENV_VARS = {
 }
 
 
+def get_numa_cmd(gpu: str) -> str:
+    """Get the NUMA command for the given GPU."""
+    numa_divisor = 4
+    if gpu.lower() == "gb200":
+        numa_divisor = 2
+    elif gpu.lower() == "b300":
+        numa_cmd = f"""if [ $SLURM_LOCALID -lt 4 ]; then
+CPUSET=0,128,16,129,32,160,48,176,64,192,80,208,96,224,112,240
+else
+CPUSET=1,129,17,145,33,161,49,177,65,193,81,209,96,225,113,241
+fi
+numactl --physcpubind=$CPUSET --membind=$((SLURM_LOCALID/{numa_divisor}))"""
+        return numa_cmd
+
+    return f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
+
+
 def slurm_executor(
     gpu: str,
     account: str,
@@ -123,8 +140,7 @@ def slurm_executor(
                     segment = segment_candidate
                     break
 
-    numa_divisor = 2 if gpu.lower() == "gb200" else 4
-    numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
+    numa_cmd = get_numa_cmd(gpu)
     custom_bash_cmds.append(numa_cmd)
 
     launcher = SlurmTemplate(
