@@ -68,27 +68,27 @@ def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
     return checkpoint_path  # No iteration dirs, use root
 
 
-def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = False) -> bool:
-    """Check if modelopt_state folder exists inside the checkpoint path.
+def has_modelopt_state(checkpoint_path: str) -> bool:
+    """Check if ModelOpt state exists inside the checkpoint path.
 
     Checks for modelopt_state in iteration directories (iter_*) or root directory.
+    NOTE: Ignores distillation state which is deprecated and unused.
 
     Args:
         checkpoint_path: Path to the checkpoint directory
-        ignore_kd_state: If True, ignore the distillation state, as it is a placeholder
 
     Returns:
-        When ignore_kd_state is False: True if modelopt_state folder exists, False otherwise.
-        When ignore_kd_state is True: True if modelopt_state exists with non-kd states,
-        False if only kd_loss state exists or no modelopt_state exists.
+        True if modelopt_state folder exists and contains nontrivial state, else False.
     """
     modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path)
     modelopt_state_path = os.path.join(modelopt_checkpoint_path, "modelopt_state")
     if not os.path.isdir(modelopt_state_path):
         return False
+
     modelopt_state = torch.load(modelopt_state_path + "/" + COMMON_STATE_FNAME, weights_only=False)
     modes = modelopt_state["modelopt_state_dict"]
-    if ignore_kd_state and len(modes) == 1 and modes[0][0] == "kd_loss":
+    if len(modes) == 1 and modes[0][0] == "kd_loss":
+        # Ignore KD state
         modes.pop()
 
     return len(modes) > 0
