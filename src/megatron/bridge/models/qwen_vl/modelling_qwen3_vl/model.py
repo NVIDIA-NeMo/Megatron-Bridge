@@ -249,6 +249,8 @@ class Qwen3VLModel(MegatronModule):
         video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        inference_context=None,
+        runtime_gather_output=None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.

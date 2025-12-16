@@ -21,7 +21,11 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
+
+
+if TYPE_CHECKING:
+    from megatron.core.transformer import ModuleSpec
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -30,6 +34,32 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLM
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+
+def default_language_layer_spec(config: "Qwen3VLModelProvider") -> "ModuleSpec":
+    """Determine the most appropriate language layer specification for VLM models.
+
+    If restore_modelopt_state is True, use quantization_layer_spec
+    Otherwise, use the default TE layer spec
+
+    Args:
+        config: The VLM model provider configuration
+
+    Returns:
+        ModuleSpec for the language model transformer layers
+    """
+    if config.restore_modelopt_state:
+        from megatron.bridge.models.gpt_provider import quantization_layer_spec
+
+        return quantization_layer_spec(config)
+    else:
+        return get_gpt_layer_with_transformer_engine_spec(
+            num_experts=getattr(config, "num_moe_experts", None),
+            moe_grouped_gemm=getattr(config, "moe_grouped_gemm", False),
+            qk_layernorm=config.qk_layernorm,
+            normalization="RMSNorm",
+            fp8=False,
+        )
 
 
 @dataclass
@@ -101,6 +131,8 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
     bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
 
+    language_transformer_layer_spec: Callable[["Qwen3VLModelProvider"], "ModuleSpec"] = default_language_layer_spec
+
     use_hf_vision_model: bool = False
 
     vision_dp_when_cp: bool = False
@@ -117,6 +149,8 @@ class Qwen3VLModelProvider(GPTModelProvider):
             qk_layernorm=self.qk_layernorm,
             fp8=False,
         )
+        # language_transformer_layer_spec = self.language_transformer_layer_spec(self)
+
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -250,6 +284,8 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
 
+    language_transformer_layer_spec: Callable[["Qwen3VLMoEModelProvider"], "ModuleSpec"] = default_language_layer_spec
+
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
@@ -266,6 +302,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
             qk_layernorm=self.qk_layernorm,
             fp8=False,
         )
+        # language_transformer_layer_spec = self.language_transformer_layer_spec(self)
 
         # Reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
         model = Qwen3VLModel(
