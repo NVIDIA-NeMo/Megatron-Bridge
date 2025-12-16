@@ -177,7 +177,4 @@ class ModuleMatcher:
 
         unmatched = sorted(alias for alias, matches in self._alias_matches.items() if len(matches) == 0)
         if unmatched:
-            raise ValueError(
-                "No modules matched the requested target_modules entries: "
-                + ", ".join(unmatched)
-            )
+            raise ValueError("No modules matched the requested target_modules entries: " + ", ".join(unmatched))
