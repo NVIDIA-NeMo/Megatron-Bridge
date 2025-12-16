@@ -385,8 +385,16 @@ class GPTDistillationProvider(GPTModelProvider):
 
         return kd_model
 
-    def to_dict(self) -> dict[str, Any]:
-        """Override to save equivalent to the original provider class."""
+    def to_cfg_dict(self) -> dict[str, Any]:
+        """Custom method to save equivalent to the original provider class.
+
+        Used by `_ConfigContainerBase` to serialize the main `ConfigContainer` to YAML.
+        There is no need to restore a `GPTDistillationProvider` from the run config file, as
+        it can always be re-converted using the original student provider.
+
+        Returns:
+            Dictionary representation of this provider class
+        """
         from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
 
         result = {"_target_": f"{self._super_class.__module__}.{self._super_class.__qualname__}"}
