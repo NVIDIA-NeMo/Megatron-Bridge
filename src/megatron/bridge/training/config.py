@@ -746,11 +746,6 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
-    dist_ckpt_save_pre_mcore_014: bool = False
-    """Revert checkpointing simplifications introduced in Megatron-Core v0.14.
-    This option affects only checkpoint saving format and will be removed soon
-    (checkpoint load format is determined based on checkpoint metadata)."""
-
     dist_ckpt_optim_fully_reshardable: bool = False
     """Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability."""
 
