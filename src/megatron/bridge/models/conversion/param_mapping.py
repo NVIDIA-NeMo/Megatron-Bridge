@@ -1708,7 +1708,7 @@ class GDNConv1dMapping(ChunkedMapping):
         return [q_shard_idx, k_shard_idx, v_shard_idx]
 
 
-class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+class MambaConv1dMapping(ChunkedMapping):
     """Mapping for Mamba 1D convolution weights that handles x, B, C components.
 
     Converts between HuggingFace's concatenated conv1d format and Megatron's
