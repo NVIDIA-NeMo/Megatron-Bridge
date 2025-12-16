@@ -295,6 +295,8 @@ class PerfEnvPlugin(Plugin):
     ):
         if moe_flex_dispatcher_backend == "hybridep" and gpu in ["gb200", "gb300"]:
             executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
+            executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = "8"
+            executor.env_vars["USE_MNNVL"] = "1"
 
     def _set_nccl_pp_comm_chunksize(
         self,

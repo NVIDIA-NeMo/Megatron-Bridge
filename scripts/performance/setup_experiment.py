@@ -18,6 +18,7 @@ import glob
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -415,6 +416,9 @@ def main(
                 wandb_run = wandb.init(
                     project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
                 )
+
+            logger.info("Waiting 10 seconds for I/O to settle")
+            time.sleep(10)
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
