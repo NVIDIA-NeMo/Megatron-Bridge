@@ -108,9 +108,11 @@ def slurm_executor(
     PERF_ENV_VARS.update(custom_env_vars)
     mounts.extend(custom_mounts)
 
-    # add --segment flag to sbatch if job uses GB200 and goes beyond one rack.
+    # add --segment flag to sbatch if job uses GB200.
     segment = None
-    if num_gpus_per_node == 4 and nodes > 18:
+    if additional_slurm_params is not None and "segment" in additional_slurm_params:
+        segment = additional_slurm_params.pop("segment")
+    elif num_gpus_per_node == 4:
         for segment_candidate in range(18, 0, -1):
             if nodes % segment_candidate == 0:
                 segment = segment_candidate
