@@ -96,6 +96,35 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB200_NVFP4 = replace(
 )
 
 
+LLAMA3_70B_PRETRAIN_CONFIG_B300_BF16 = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    micro_batch_size=1,
+    use_megatron_fsdp=True,
+)
+
+
+LLAMA3_70B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    micro_batch_size=1,
+    use_megatron_fsdp=True,
+)
+
+
+LLAMA3_70B_PRETRAIN_CONFIG_B300_FP8_MX = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=5,
+)
+
+LLAMA3_70B_PRETRAIN_CONFIG_B300_NVFP4 = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=5,
+    cuda_graph_impl="none",
+    cuda_graph_scope="full_iteration",
+)
+
+
 LLAMA3_70B_PRETRAIN_CONFIG_B200_BF16 = replace(
     BASE_LLAMA3_70B_CONFIG,
     tensor_model_parallel_size=2,
@@ -195,6 +224,30 @@ LLAMA3_8B_PRETRAIN_CONFIG_GB200_NVFP4 = replace(
     micro_batch_size=4,
     cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
+)
+
+
+LLAMA3_8B_PRETRAIN_CONFIG_B300_BF16 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+
+LLAMA3_8B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+
+LLAMA3_8B_PRETRAIN_CONFIG_B300_FP8_MX = LLAMA3_8B_PRETRAIN_CONFIG_B300_FP8_CS
+
+LLAMA3_8B_PRETRAIN_CONFIG_B300_NVFP4 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    micro_batch_size=4,
 )
 
 
@@ -381,6 +434,10 @@ __all__ = [
     "LLAMA3_70B_PRETRAIN_CONFIG_GB200_FP8_CS",
     "LLAMA3_70B_PRETRAIN_CONFIG_GB200_FP8_MX",
     "LLAMA3_70B_PRETRAIN_CONFIG_GB200_NVFP4",
+    "LLAMA3_70B_PRETRAIN_CONFIG_B300_BF16",
+    "LLAMA3_70B_PRETRAIN_CONFIG_B300_FP8_CS",
+    "LLAMA3_70B_PRETRAIN_CONFIG_B300_FP8_MX",
+    "LLAMA3_70B_PRETRAIN_CONFIG_B300_NVFP4",
     "LLAMA3_70B_PRETRAIN_CONFIG_B200_BF16",
     "LLAMA3_70B_PRETRAIN_CONFIG_B200_FP8_CS",
     "LLAMA3_70B_PRETRAIN_CONFIG_B200_FP8_MX",
@@ -395,6 +452,10 @@ __all__ = [
     "LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_CS",
     "LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_MX",
     "LLAMA3_8B_PRETRAIN_CONFIG_GB200_NVFP4",
+    "LLAMA3_8B_PRETRAIN_CONFIG_B300_BF16",
+    "LLAMA3_8B_PRETRAIN_CONFIG_B300_FP8_CS",
+    "LLAMA3_8B_PRETRAIN_CONFIG_B300_FP8_MX",
+    "LLAMA3_8B_PRETRAIN_CONFIG_B300_NVFP4",
     "LLAMA3_8B_PRETRAIN_CONFIG_B200_BF16",
     "LLAMA3_8B_PRETRAIN_CONFIG_B200_FP8_CS",
     "LLAMA3_8B_PRETRAIN_CONFIG_B200_FP8_MX",

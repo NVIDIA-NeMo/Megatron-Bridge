@@ -8,6 +8,7 @@ except ModuleNotFoundError:
 if HAVE_MEGATRON_BRIDGE:
     from .deepseek_llm_pretrain import (
         deepseek_v3_pretrain_config_b200,
+        deepseek_v3_pretrain_config_b300,
         deepseek_v3_pretrain_config_gb200,
         deepseek_v3_pretrain_config_gb300,
         deepseek_v3_pretrain_config_h100,
@@ -17,6 +18,9 @@ from .deepseek_workload_base_configs import (
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16,
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS,
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX,
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16,
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS,
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX,
@@ -31,6 +35,9 @@ from .deepseek_workload_base_configs import (
 
 
 __all__ = [
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX",
@@ -51,6 +58,7 @@ if HAVE_MEGATRON_BRIDGE:
         [
             "deepseek_v3_pretrain_config_gb300",
             "deepseek_v3_pretrain_config_gb200",
+            "deepseek_v3_pretrain_config_b300",
             "deepseek_v3_pretrain_config_b200",
             "deepseek_v3_pretrain_config_h100",
         ]

@@ -22,6 +22,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 from .gpt_oss_workload_base_configs import (
     GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16,
+    GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16,
     GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16,
     GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16,
     GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16,
@@ -66,6 +67,25 @@ def gpt_oss_120b_pretrain_config_gb200(precision: str = "bf16", mock: bool = Tru
         precision_config = get_precision_config(precision)
     # else:
     #     base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX
+    #     precision_config = get_precision_config(precision)
+
+    cfg = gpt_oss_120b_pretrain_config(
+        mock=mock,
+        precision_config=precision_config,
+    )
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def gpt_oss_120b_pretrain_config_b300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """B300, baseline config."""
+    if precision == "bf16":
+        base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16
+        precision_config = get_precision_config(precision)
+    # else:
+    #     base_cfg = GPT_OSS_120B_PRETRAIN_CONFIG_B300_FP8_MX
     #     precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(

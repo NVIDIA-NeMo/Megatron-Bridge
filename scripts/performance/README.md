@@ -49,7 +49,7 @@ The following line shows an example of how you can launch a pre-training benchma
   
 #### Mandatory arguments
 
-- `-a/--account`, `-p/--partition`, `-g/--gpu` (choose `h100`, `b200`, `gb200`, or `gb300`), `-m/--model_family_name`, `-s/--model_recipe_name`, and `-ng/--num_gpus`.
+- `-a/--account`, `-p/--partition`, `-g/--gpu` (choose `h100`, `b200`, `b300`, `gb200`, or `gb300`), `-m/--model_family_name`, `-s/--model_recipe_name`, and `-ng/--num_gpus`.
 
 #### Optional arguments
 
