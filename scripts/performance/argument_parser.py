@@ -422,6 +422,38 @@ def parse_cli_args():
         action="store_true",
     )
     parser.add_argument(
+        "-cps",
+        "--checkpoint_save",
+        type=bool_arg,
+        help="When enabled will trigger checkpoint save operation at the end of training",
+        required=False,
+        default=None, 
+    )
+    parser.add_argument(
+        "-cpi",
+        "--checkpoint_interval",
+        type=int,
+        help="Number of iterations between checkpoint saves. Defaults to 500. Set to smaller value for shorter runs.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-cpd",
+        "--checkpoint_dir",
+        type=str,
+        help="Directory where checkpoints will be saved. If not specified, checkpoints will be saved into default location under experiment folder (/nemo_run/code/nemo_experiments/default/checkpoints).",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-cpl", 
+        "--checkpoint_load_path",
+        type=str,
+        help="Path to checkpoint to load prior to training start",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--additional_slurm_params",
         type=str,
         help="Additional SLURM parameters as key=value pairs. "
