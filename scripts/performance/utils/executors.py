@@ -45,6 +45,7 @@ PERF_ENV_VARS = {
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",
+    "MBRIDGE_NUMA_DEBUG": "1",
 }
 
 
@@ -55,11 +56,12 @@ def get_numa_cmd(gpu: str) -> str:
         numa_divisor = 2
     elif gpu.lower() == "b300":
         numa_cmd = f"""if [ $SLURM_LOCALID -lt 4 ]; then
-CPUSET=0,128,16,129,32,160,48,176,64,192,80,208,96,224,112,240
-else
-CPUSET=1,129,17,145,33,161,49,177,65,193,81,209,96,225,113,241
-fi
-numactl --physcpubind=$CPUSET --membind=$((SLURM_LOCALID/{numa_divisor}))"""
+        CPUSET=0,1,16,17,32,33,48,49
+        else
+        CPUSET=64,65,80,81,96,97,112,113
+        fi
+        echo "DEBUG_NUMA: SLURM_LOCALID=$SLURM_LOCALID CPUSET=$CPUSET NUMA_DIVISOR={numa_divisor} MEMBIND=$((SLURM_LOCALID/{numa_divisor}))"
+        numactl --physcpubind=$CPUSET --membind=$((SLURM_LOCALID/{numa_divisor}))"""
         return numa_cmd
 
     return f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
