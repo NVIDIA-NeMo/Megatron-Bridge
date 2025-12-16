@@ -1,0 +1,50 @@
+# Example YAML overrides for Qwen3 MoE 30B-A3B pretraining.
+# These values will be merged on top of the base recipe configuration.
+# You can modify any nested field using the same structure.
+
+model:
+  tensor_model_parallel_size: 4
+  pipeline_model_parallel_size: 2
+  # Set sequence length used by the model
+  seq_length: 4096
+  # Enable sequence parallel if desired
+  sequence_parallel: true
+  # Example MoE knobs (match your cluster/resources)
+  expert_model_parallel_size: 4
+  expert_tensor_parallel_size: 1
+
+train:
+  train_iters: 100000
+  global_batch_size: 256
+  micro_batch_size: 2
+  eval_interval: 1000
+
+optimizer:
+  lr: 0.0003
+
+scheduler:
+  min_lr: 0.00003
+  lr_warmup_iters: 1000
+
+logger:
+  log_interval: 10
+
+checkpoint:
+  save_interval: 1000
+  # Optional: override paths; otherwise recipe sets them based on dir/name
+  # save: nemo_experiments/qwen3_moe_30b_a3b/checkpoints
+  # load: nemo_experiments/qwen3_moe_30b_a3b/checkpoints
+
+tokenizer:
+  # Use HF tokenizer from the underlying HuggingFace model path
+  tokenizer_type: HuggingFaceTokenizer
+
+ddp:
+  # Keep grad reduce in fp32 for stability
+  grad_reduce_in_fp32: true
+
+mixed_precision:
+  # Use bf16 mixed precision by default
+  dtype: bf16
+
+

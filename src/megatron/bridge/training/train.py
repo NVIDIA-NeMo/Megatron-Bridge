@@ -34,7 +34,8 @@ from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
-from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -44,7 +45,6 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
-from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -247,7 +247,10 @@ def train(
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
 
     # Wrap forward_backward_func for Full iteration CUDA graph
-    forward_backward_func = get_forward_backward_func()
+    forward_backward_func = get_forward_backward_func(
+        pp_size=pg_collection.pp.size(),
+        vp_size=config.model.virtual_pipeline_model_parallel_size,
+    )
     if config.model.cuda_graph_impl == "local" and "full_iteration" in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
@@ -632,13 +635,16 @@ def train_step(
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-            model,
-            seq_length=model_config.seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
-        )
+        # adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+        #     model,
+        #     seq_length=model_config.seq_length,
+        #     micro_batch_size=train_config.micro_batch_size,
+        #     decoder_seq_length=model_config.seq_length,
+        # )
+        adjust_tensor_shapes_fn = None
 
+        # Forward pass.
+        p2p_comm = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -649,6 +655,8 @@ def train_step(
             decoder_seq_length=seq_length,
             forward_only=False,
             adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            p2p_communicator=p2p_comm,
+            pg_collection=pg_collection,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
@@ -684,7 +692,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if pg_collection.pp.rank() == pg_collection.pp.size() - 1:
+    if is_pp_last_stage(pg_collection.pp):
         # Average loss across microbatches.
         loss_reduced = {}
 

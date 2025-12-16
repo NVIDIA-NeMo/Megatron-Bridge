@@ -16,8 +16,8 @@ import json
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 import torch
-from megatron.core import mpu
 from megatron.core.datasets.utils import get_blend_from_list
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
@@ -158,7 +158,10 @@ def build_train_valid_test_datasets(
 
 
 def build_train_valid_test_data_loaders(
-    cfg: ConfigContainer, train_state: TrainState, build_train_valid_test_datasets_provider: Callable
+    cfg: ConfigContainer,
+    train_state: TrainState,
+    build_train_valid_test_datasets_provider: Callable,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build train, validation, and test data loaders.
 
@@ -190,6 +193,10 @@ def build_train_valid_test_data_loaders(
 
     maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
 
+    # Resolve DP rank/size from provided process group collection
+    dp_rank = torch.distributed.get_rank(group=pg_collection.dp)
+    dp_size = torch.distributed.get_world_size(group=pg_collection.dp)
+
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
         train_ds,
@@ -202,8 +209,8 @@ def build_train_valid_test_data_loaders(
         collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
-        data_parallel_rank=mpu.get_data_parallel_rank(),
-        data_parallel_size=mpu.get_data_parallel_world_size(),
+        data_parallel_rank=dp_rank,
+        data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
     )
     if cfg.train.skip_train and cfg.train.eval_iters > 0:
@@ -218,8 +225,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=mpu.get_data_parallel_rank(),
-            data_parallel_size=mpu.get_data_parallel_world_size(),
+            data_parallel_rank=dp_rank,
+            data_parallel_size=dp_size,
             global_batch_size=cfg.train.global_batch_size,
         )
     elif cfg.train.eval_iters > 0:
@@ -235,8 +242,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=mpu.get_data_parallel_rank(),
-            data_parallel_size=mpu.get_data_parallel_world_size(),
+            data_parallel_rank=dp_rank,
+            data_parallel_size=dp_size,
             global_batch_size=cfg.train.global_batch_size,
         )
 
@@ -252,8 +259,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=mpu.get_data_parallel_rank(),
-            data_parallel_size=mpu.get_data_parallel_world_size(),
+            data_parallel_rank=dp_rank,
+            data_parallel_size=dp_size,
             global_batch_size=cfg.train.global_batch_size,
         )
 
@@ -273,7 +280,10 @@ def build_train_valid_test_data_loaders(
 
 
 def build_train_valid_test_data_iterators(
-    cfg: ConfigContainer, train_state: TrainState, build_train_valid_test_datasets_provider: Callable
+    cfg: ConfigContainer,
+    train_state: TrainState,
+    build_train_valid_test_datasets_provider: Callable,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
     """Build train, validation, and test data iterators.
 
@@ -294,6 +304,7 @@ def build_train_valid_test_data_iterators(
         cfg=cfg,
         train_state=train_state,
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
+        pg_collection=pg_collection,
     )
 
     # Build iterators.
@@ -340,6 +351,7 @@ def setup_data_iterators(
     train_state: TrainState,
     model_length: int,
     train_valid_test_datasets_provider: Callable,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -371,6 +383,7 @@ def setup_data_iterators(
                 cfg=cfg,
                 train_state=train_state,
                 build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+                pg_collection=pg_collection,
             )
             train_data_iterator.append(iterators[0])
             valid_data_iterator.append(iterators[1])
@@ -380,6 +393,7 @@ def setup_data_iterators(
             cfg=cfg,
             train_state=train_state,
             build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+            pg_collection=pg_collection,
         )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator

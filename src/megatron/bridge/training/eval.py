@@ -94,10 +94,17 @@ def evaluate(
 
         if state.cfg.model.cuda_graph_impl == "local" and "full_iteration" in state.cfg.model.cuda_graph_scope:
             forward_backward_func = FullCudaGraphWrapper(
-                get_forward_backward_func(), cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps
+                get_forward_backward_func(
+                    pp_size=pg_collection.pp.size(),
+                    vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
+                ),
+                cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps,
             )
         else:
-            forward_backward_func = get_forward_backward_func()
+            forward_backward_func = get_forward_backward_func(
+                pp_size=pg_collection.pp.size(),
+                vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
+            )
 
         iteration = 0
         while iteration < state.cfg.train.eval_iters:

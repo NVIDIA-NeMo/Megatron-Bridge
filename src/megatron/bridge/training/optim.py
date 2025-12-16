@@ -26,6 +26,7 @@ def setup_optimizer(
     scheduler_config: SchedulerConfig,
     model: Union[MegatronModule, list[MegatronModule]],
     use_gloo_process_groups: bool = False,
+    pg_collection=None,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -38,10 +39,12 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
+    use_gloo_process_groups = False
     optimizer = get_megatron_optimizer(
         optimizer_config,
         model,
         use_gloo_process_groups=use_gloo_process_groups,
+        pg_collection=pg_collection,
     )
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
