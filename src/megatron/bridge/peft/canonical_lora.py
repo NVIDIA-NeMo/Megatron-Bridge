@@ -178,6 +178,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         }
 
         """
+        super().__post_init__()
         for target in self.target_modules:
             assert not target.endswith("linear_qkv"), (
                 "Canonical LoRA does not support target 'linear_qkv'. Either use 'linear_qkv' with LoRA() or "
@@ -188,18 +189,27 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 "use ['linear_fc1_up', 'linear_fc1_gate'] with Canonical LoRA"
             )
 
+            canonical_target = target
+            canonical_component = target
+
             if "linear_q" in target:
-                self.canonical_mapping[target.replace("linear_q", "linear_qkv")].add("linear_q")
+                canonical_target = target.replace("linear_q", "linear_qkv")
+                canonical_component = "linear_q"
             elif "linear_k" in target:
-                self.canonical_mapping[target.replace("linear_k", "linear_qkv")].add("linear_k")
+                canonical_target = target.replace("linear_k", "linear_qkv")
+                canonical_component = "linear_k"
             elif "linear_v" in target:
-                self.canonical_mapping[target.replace("linear_v", "linear_qkv")].add("linear_v")
+                canonical_target = target.replace("linear_v", "linear_qkv")
+                canonical_component = "linear_v"
             elif "linear_fc1_up" in target:
-                self.canonical_mapping[target.replace("linear_fc1_up", "linear_fc1")].add("linear_fc1_up")
+                canonical_target = target.replace("linear_fc1_up", "linear_fc1")
+                canonical_component = "linear_fc1_up"
             elif "linear_fc1_gate" in target:
-                self.canonical_mapping[target.replace("linear_fc1_gate", "linear_fc1")].add("linear_fc1_gate")
-            else:
-                self.canonical_mapping[target].add(target)
+                canonical_target = target.replace("linear_fc1_gate", "linear_fc1")
+                canonical_component = "linear_fc1_gate"
+
+            self.register_target_alias(target, canonical_target)
+            self.canonical_mapping[canonical_target].add(canonical_component)
 
     def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
