@@ -22,7 +22,7 @@ import pytest
 import torch
 from PIL import Image
 
-from megatron.bridge.recipes.qwen_vl.energon.task_encoder import (
+from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     ChatMLSample,
     QwenVLTaskBatch,
     QwenVLTaskEncoder,

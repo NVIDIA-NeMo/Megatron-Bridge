@@ -54,6 +54,13 @@ class TestEnergonVLMConversationProvider:
         # Instantiate provider
         provider = EnergonVLMConversationProvider(**params)
 
+        # Check sequence_length property
+        assert provider.seq_length == 2048
+
+        # Test build_datasets
+        context = MagicMock(spec=DatasetBuildContext)
+        train_iter, val_iter, test_iter = provider.build_datasets(context)
+
         # Check if EnergonMultiModalDataModule was initialized with correct args
         mock_datamodule_cls.assert_called_once_with(
             path=params["path"],
@@ -65,13 +72,6 @@ class TestEnergonVLMConversationProvider:
             global_batch_size=params["global_batch_size"],
             num_workers=params["num_workers"],
         )
-
-        # Check sequence_length property
-        assert provider.sequence_length == 2048
-
-        # Test build_datasets
-        context = MagicMock(spec=DatasetBuildContext)
-        train_iter, val_iter, test_iter = provider.build_datasets(context)
 
         # Check dataloader calls
         mock_dataset_instance.train_dataloader.assert_called_once()
