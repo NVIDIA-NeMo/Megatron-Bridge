@@ -49,6 +49,7 @@ from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
+from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 
 
 
@@ -417,6 +418,7 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     """
     print_rank_0("Applying PEFT transformation...")
     transformed_model = peft(base_model, training=True)
+    maybe_enable_recompute_inputs_grad(transformed_model)
     peft.set_params_to_save(transformed_model)
 
     # Log PEFT statistics
