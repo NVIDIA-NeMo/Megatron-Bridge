@@ -239,15 +239,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             model_parallel_cuda_manual_seed(seed, **(seed_kwargs or {}))
 
     @property
-    def pg_collection(self) -> ProcessGroupCollection | None:
-        """Backward compatible accessor for the provider process group collection."""
-        return getattr(self, "_pg_collection", None)
-
-    @pg_collection.setter
-    def pg_collection(self, value: ProcessGroupCollection | None) -> None:
-        self._pg_collection = value
-
-    @property
     def meta_model(self) -> list[ModelT]:
         """Returns the model instantiated on the meta device for inspection.
 
@@ -538,6 +529,8 @@ def get_model(
         model_provider.bf16 = bf16
 
     model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
+    # Ensure providers have the current process group context before building models.
+    model_provider.pg_collection = pg_collection
     if init_model_with_meta_device:
         model_provider.init_model_with_meta_device = True
         with torch.device("meta"):
