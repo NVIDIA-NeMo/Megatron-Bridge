@@ -4,7 +4,7 @@ source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
 
 CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
 ACCOUNT="coreai_dlalgo_nemorl"
-PARTITION="batch"
+PARTITION="batch_short"
 # Get current directory to mount
 WORKDIR=$(pwd)
 
