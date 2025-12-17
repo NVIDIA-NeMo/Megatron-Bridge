@@ -128,6 +128,7 @@ def slurm_executor(
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
         container_image=container_image,
+        gpus_per_node=num_gpus_per_node,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,
         srun_args=srun_args,

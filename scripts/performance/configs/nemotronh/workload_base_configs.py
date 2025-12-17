@@ -26,6 +26,66 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
     cuda_graph_scope="full_iteration",
 )
 
+BASE_NEMOTRONH_NANO_30B_A3B_CONFIG = WorkloadBaseConfig(
+    num_gpus=32,
+    global_batch_size=3072,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+
+# Nemotron 3 Nano 30B A3B presets -----------------------------------------------
+
+NEMOTRONH_NANO_30B_A3B_H100_BF16_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_H100_FP8_CS_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_GB300_BF16_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_GB300_FP8_CS_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_GB200_BF16_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_GB200_FP8_CS_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_B200_BF16_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
+NEMOTRONH_NANO_30B_A3B_B200_FP8_CS_BASE_CONFIG = replace(
+    BASE_NEMOTRONH_NANO_30B_A3B_CONFIG,
+    tensor_model_parallel_size=4,
+    expert_model_parallel_size=8,
+)
+
 
 # NemotronH 56B presets ---------------------------------------------------------
 
@@ -47,6 +107,16 @@ NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG = replace(
 )
 
 __all__ = [
+    # Nemotron 3 Nano 30B A3B
+    "NEMOTRONH_NANO_30B_A3B_H100_BF16_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_H100_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_GB300_BF16_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_GB300_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_GB200_BF16_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_GB200_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_B200_BF16_BASE_CONFIG",
+    "NEMOTRONH_NANO_30B_A3B_B200_FP8_CS_BASE_CONFIG",
+    # NemotronH 56B
     "NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG",
     "NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG",
     "NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG",
