@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -93,7 +92,9 @@ def slurm_executor(
         set_nemorun_home(log_dir)
     else:
         if os.environ.get("NEMORUN_HOME") is None:
-            logger.warning(f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument")
+            logger.warning(
+                f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
+            )
 
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
@@ -222,6 +223,6 @@ def dgxc_executor(
             else {}
         ),
         env_vars=env_vars,
-        launcher="torchrun",
+        launcher="ft",
     )
     return executor

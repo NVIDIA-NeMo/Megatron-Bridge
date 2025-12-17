@@ -172,15 +172,10 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
-
     recipe = get_library_recipe(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
+        train_task=args.task,
         wandb_experiment_name=args.wandb_experiment_name,
     )
 
