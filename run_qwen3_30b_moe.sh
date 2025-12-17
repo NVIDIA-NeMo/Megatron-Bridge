@@ -16,6 +16,7 @@ if [ "$DETERMINISTIC" = true ]; then
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local"
     export DETERMINISTIC_FLAG="deterministic"
+    export CUDA_LAUNCH_BLOCKING=1
 else
     export additional_args=""
     export DETERMINISTIC_FLAG="non-deterministic"
