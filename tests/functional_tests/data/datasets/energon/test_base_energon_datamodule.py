@@ -138,29 +138,29 @@ class TestEnergonMultiModalDataModuleFunctional:
         # 2. Build DataLoaders
         # This triggers worker_config creation using real parallel_state
         train_loader, val_loader = datamodule.build()
-        
+
         assert isinstance(train_loader, EnergonDataloader)
         assert isinstance(val_loader, EnergonDataloader)
-        
+
         # 3. Verify WorkerConfig was created correctly
         # We can inspect the calls to get_train_dataset to see what worker_config was passed
-        args, kwargs = mock_energon_dependencies["get_train_dataset"].call_args_list[0] # First call (train)
-        worker_config = kwargs['worker_config']
-        
+        args, kwargs = mock_energon_dependencies["get_train_dataset"].call_args_list[0]  # First call (train)
+        worker_config = kwargs["worker_config"]
+
         # Verify worker config properties derived from parallel_state
         assert worker_config.rank == 0
         assert worker_config.world_size == 1
         assert worker_config.num_workers == 2
-        
+
         # 4. Functional check of the wrapper (Data Iteration)
         train_iterator = iter(train_loader)
         samples = []
         for _ in range(3):
             samples.append(next(train_iterator))
-            
+
         assert len(samples) == 3
         assert samples[0] == {"id": 0}
-        
+
         # 5. State Saving
         state = train_loader.save_state()
         assert state == {"rank_state": 123}

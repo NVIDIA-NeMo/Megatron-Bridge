@@ -206,17 +206,16 @@ def _is_omegaconf_problematic(val: Any) -> bool:
         return False
 
     # Block function objects, methods, partial functions, etc.
-    if (
-        callable(val)
-        or (
-            hasattr(val, "__call__")
-            and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
-        )
+    if callable(val) or (
+        hasattr(val, "__call__")
+        and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
     ):
         return True
 
     # Block arbitrary objects that are not dataclasses or safe primitives
-    if not isinstance(val, (int, float, bool, str, list, tuple, dict, Path, Enum, torch.dtype)) and not dataclasses.is_dataclass(val):
+    if not isinstance(
+        val, (int, float, bool, str, list, tuple, dict, Path, Enum, torch.dtype)
+    ) and not dataclasses.is_dataclass(val):
         return True
 
     return False
