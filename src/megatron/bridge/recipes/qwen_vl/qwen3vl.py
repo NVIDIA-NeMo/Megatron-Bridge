@@ -26,7 +26,7 @@ from megatron.bridge.data.vlm_datasets import (
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
 )
-from megatron.bridge.recipes.qwen_vl.energon.task_encoder import QwenVLTaskEncoder
+from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -257,10 +257,9 @@ def _qwen3_vl_common(
         )
     elif _dataset_choice == "energon":
         tokenizer = AutoTokenizer.from_pretrained(_processor_model)
-        image_processor = Qwen2VLImageProcessor(
-            min_pixels=200704,  # 256*28*28, matching Preloaded/Qwen3-VL default in this repo
-            max_pixels=1003520,  # 1280*28*28
-        )
+        # Use from_pretrained to ensure correct normalization (mean/std) and config (min_pixels)
+        # matching Preloaded provider behavior.
+        image_processor = Qwen2VLImageProcessor.from_pretrained(_processor_model)
 
         dataset_cfg = EnergonVLMConversationProvider(
             seq_length=seq_length,
@@ -273,6 +272,8 @@ def _qwen3_vl_common(
                 tokenizer=tokenizer,
                 image_processor=image_processor,
                 max_padding_length=seq_length,
+                min_pixels=200704,
+                max_pixels=1003520,
             ),
         )
     else:

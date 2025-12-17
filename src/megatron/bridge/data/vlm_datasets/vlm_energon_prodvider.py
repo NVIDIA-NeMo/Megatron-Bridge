@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# pylint: disable=C0115,C0116,C0301
-
-
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from torch import int_repr
 
-from megatron.bridge.data.datasets.base_energon_datamodule import EnergonMultiModalDataModule
+from megatron.bridge.data.datasets.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
@@ -38,8 +35,8 @@ class EnergonVLMConversationProvider(DatasetProvider):
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
 
-    def __post_init__(self):
-        self.dataset = EnergonMultiModalDataModule(
+    def build_datasets(self, context: DatasetBuildContext):
+        dataset = EnergonMultiModalDataModule(
             path=self.path,
             tokenizer=self.tokenizer,
             image_processor=self.image_processor,
@@ -49,11 +46,8 @@ class EnergonVLMConversationProvider(DatasetProvider):
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,
         )
-        self.sequence_length = self.dataset.seq_length
-
-    def build_datasets(self, context: DatasetBuildContext):
         return (
-            iter(self.dataset.train_dataloader()),
-            iter(self.dataset.val_dataloader()),
-            iter(self.dataset.val_dataloader()),
+            iter(dataset.train_dataloader()),
+            iter(dataset.val_dataloader()),
+            iter(dataset.val_dataloader()),
         )

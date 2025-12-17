@@ -17,7 +17,7 @@ Example Usage:
 
 # Example dataset from https://huggingface.co/datasets/liuhaotian/LLaVA-Pretrain
 
-python Megatron-Bridge_vlm_energon/examples/recipes/qwen_vl/data/convert_to_qwenvl_wds.py \\
+python examples/recipes/qwen_vl/data/convert_to_qwenvl_wds.py \\
     --dataset-root=/path/to/LLaVA-Pretrain-LCS-558K \
     --json=blip_laion_cc_sbu_558k.json \
     --mediate-path=images \

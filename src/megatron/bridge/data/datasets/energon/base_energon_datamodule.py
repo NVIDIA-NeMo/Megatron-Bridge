@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 from megatron.core import parallel_state
 from megatron.energon import WorkerConfig, get_savable_loader, get_train_dataset
@@ -42,7 +42,6 @@ class EnergonMultiModalDataModule:
     multimodal_sample_config (MultiModalSampleConfig): Configuration object for multimodal samples.
     task_encoder (MultiModalTaskEncoder): Encoder responsible for encoding and batching samples.
     init_global_step (int): The initial global step for the trainer, used for resuming training.
-    data_sampler (SequentialMegatronSampler): Sampler responsible for generating sequential samples.
     train_dataloader_object (Optional): The DataLoader object for training data.
     val_dataloader_object (Optional): The DataLoader object for validation data.
     """
@@ -159,10 +158,6 @@ class EnergonMultiModalDataModule:
         """
         Initialize and return the training DataLoader.
 
-        This method initializes the DataLoader for the training dataset. It uses the global step
-        from the trainer to configure the data sampler and ensures that the parallel state is initialized
-        correctly for distributed training.
-
         Returns:
         TRAIN_DATALOADERS: The DataLoader for the training dataset.
         """
@@ -247,96 +242,6 @@ class EnergonMultiModalDataModule:
         """
         logger.warning("Multimodal dataloader test dataset split does not exist")
         return None
-
-    def state_dict(self) -> Dict[str, Any]:
-        """
-        Save the state of the data module.
-
-        This method is called when saving a checkpoint. It generates and saves the state of the data module,
-        including the state of the dataloader and the number of consumed samples.
-
-        Returns:
-        Dict[str, Any]: A dictionary containing the state of the data module.
-        """
-
-        if self.trainer:
-            dataloader_obj = self.trainer.train_dataloader
-
-            state = []
-            # All ranks should be zero except the dp rank.
-            if (
-                parallel_state.get_context_parallel_rank()
-                or parallel_state.get_pipeline_model_parallel_rank()
-                or parallel_state.get_tensor_model_parallel_rank()
-                or parallel_state.get_expert_model_parallel_rank()
-            ) == 0:
-                # Save_state_global in energon assumes that we call it for only the first rank within each group that
-                # shares the same dataloader state. By making sure that current rank is the first rank in a model
-                # parallel group, we ensure this.
-                state = dataloader_obj.save_state_global(global_dst_rank=0)
-
-            consumed_samples = self.data_sampler.compute_consumed_samples(
-                self.trainer.global_step - self.init_global_step
-            )
-
-            if state is None:
-                state = []  # Megatron core requires all the states on all the ranks to have same python
-            # type. Energon sends the state as a list
-            logger.info(f"Multimodal data loader saving dataloader state dict consumed samples {consumed_samples}")
-            return {"dataloader_state": state, "consumed_samples": consumed_samples}
-
-        logger.warning("trainer object not connected to data module object returning empty state")
-        return {}
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """
-        Load the state of the data module from a checkpoint.
-
-        This method is called when loading a checkpoint. It restores the state of the data module,
-        including the state of the dataloader and the number of consumed samples.
-
-        Parameters:
-        state_dict (Dict[str, Any]): The state dictionary containing the saved state of the data module.
-        """
-        if not "dataloader_state" in state_dict:
-            logger.warning(
-                f"Data loader state cannot be resumed from state_dict, "
-                f"it does not have the required key dataloader_state. It has {state_dict.keys()}"
-            )
-            return
-
-        state = state_dict["dataloader_state"]
-        try:
-            if self.trainer:
-                self.trainer.datamodule.train_dataloader().restore_state_global(state)
-                logger.info("Multimodal dataloader state restored")
-            else:
-                logger.error(f"Cannot restore state from state_dict {state_dict}")
-                raise ValueError(
-                    "Cannot restore state from state_dict: "
-                    "Is the trainer object is initialized and attached to datamodule???"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Failed to dataloader restore state due to [Please ensure you are using same version "
-                f"of energon while saving and loading, Continuing without restoring data loader] : {e}"
-            )
-
-        try:
-            from megatron.core.num_microbatches_calculator import update_num_microbatches
-
-        except (ImportError, ModuleNotFoundError):
-            logger.warning("Megatron num_microbatches_calculator not found, using Apex version.")
-            from apex.transformer.pipeline_parallel.utils import update_num_microbatches
-
-        consumed_samples = state_dict["consumed_samples"]
-        self.data_sampler.init_consumed_samples = consumed_samples
-        self.data_sampler.prev_consumed_samples = consumed_samples
-        logger.info(f"Multimodal dataloader load state dict with consumed_samples {consumed_samples}")
-        update_num_microbatches(
-            consumed_samples=consumed_samples,
-            consistency_check=False,
-        )
 
 
 class EnergonDataloader:

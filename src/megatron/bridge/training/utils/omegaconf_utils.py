@@ -19,6 +19,7 @@ import dataclasses
 import functools
 import inspect
 import logging
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, TypeVar
 
@@ -197,7 +198,7 @@ def _is_omegaconf_problematic(val: Any) -> bool:
     Returns:
         True if the value is a problematic callable, False otherwise
     """
-    if not callable(val):
+    if val is None:
         return False
 
     # Allow classes/types
@@ -205,12 +206,20 @@ def _is_omegaconf_problematic(val: Any) -> bool:
         return False
 
     # Block function objects, methods, partial functions, etc.
-    return (
-        hasattr(val, "__call__")
-        and not isinstance(val, type)
-        and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
-    )
+    if (
+        callable(val)
+        or (
+            hasattr(val, "__call__")
+            and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
+        )
+    ):
+        return True
 
+    # Block arbitrary objects that are not dataclasses or safe primitives
+    if not isinstance(val, (int, float, bool, str, list, tuple, dict, Path, Enum, torch.dtype)) and not dataclasses.is_dataclass(val):
+        return True
+
+    return False
 
 def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
     """Recursively convert a dataclass instance to a dictionary suitable for OmegaConf.create.
