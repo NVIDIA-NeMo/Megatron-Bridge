@@ -104,7 +104,7 @@ class TestEnergonMultiModalDataModuleFunctional:
                 "megatron.bridge.data.datasets.energon.base_energon_datamodule.get_savable_loader"
             ) as mock_get_loader,
         ):
-             
+
             # Setup dataset mock
             mock_dataset = MagicMock()
             mock_get_dataset.return_value = mock_dataset
@@ -115,7 +115,7 @@ class TestEnergonMultiModalDataModuleFunctional:
             mock_data = [{"id": i} for i in range(10)]
             mock_loader_instance.__iter__.side_effect = lambda: iter(mock_data)
             mock_loader_instance.save_state_rank.return_value = {"rank_state": 123}
-            
+
             mock_get_loader.return_value = mock_loader_instance
 
             yield {
