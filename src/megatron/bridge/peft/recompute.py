@@ -22,6 +22,9 @@ from typing import Iterable, Set
 import torch
 from megatron.core.utils import unwrap_model
 
+from megatron.bridge.utils.common_utils import print_rank_0
+
+
 PEFT_RECOMPUTE_PATCHED: Set[int] = set()
 
 
@@ -105,18 +108,16 @@ def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: Set[int] |
                     patched = True
             if patched:
                 patched_registry.add(id(unwrapped_model))
-                print(
+                print_rank_0(
                     "[PEFT+Recompute] Patched TransformerBlock.forward to enable grad on "
                     "hidden_states input. This ensures checkpoint backward is called when "
                     "only adapters are trainable (PP=1 with frozen base model).",
-                    flush=True,
                 )
     except Exception as exc:  # pragma: no cover - best effort logging
         # Log but don't fail - user will see grad_norm=0 and can debug
-        print(f"[PEFT+Recompute] Warning: Failed to patch TransformerBlock: {exc}", flush=True)
+        print_rank_0(f"[PEFT+Recompute] Warning: Failed to patch TransformerBlock: {exc}")
 
     return patched_registry
 
 
 __all__ = ["maybe_enable_recompute_inputs_grad", "PEFT_RECOMPUTE_PATCHED"]
-

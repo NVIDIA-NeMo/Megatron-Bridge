@@ -87,5 +87,3 @@ def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch):
     # Second invocation should be a no-op (no duplicate patch)
     maybe_enable_recompute_inputs_grad(model, patched_registry)
     assert model.block.forward is patched_forward
-
-
