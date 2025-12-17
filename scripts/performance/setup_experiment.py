@@ -40,7 +40,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 SCRIPT_NAME: str = "run_script.py"
-WORKSPACE_SRC: Path = SCRIPT_DIR.parent.parent / "src"  # /workdir/src
 
 
 def main(
@@ -117,7 +116,7 @@ def main(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
             entrypoint="python",
-            env={"PYTHONPATH": f"{WORKSPACE_SRC}:{SCRIPT_DIR}:$PYTHONPATH"},
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
             args=list(sys.argv[1:]),
         )
     )
@@ -125,7 +124,7 @@ def main(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
             entrypoint="python",
-            env={"PYTHONPATH": f"{WORKSPACE_SRC}:{SCRIPT_DIR}:$PYTHONPATH"},
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
             args=list(sys.argv[1:]),
         ),
         executor=executor,

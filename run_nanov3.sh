@@ -30,7 +30,7 @@ python scripts/performance/setup_experiment.py \
     -ng 32 \
     -gn 8 \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/workdir" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
