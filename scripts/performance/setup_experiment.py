@@ -451,8 +451,8 @@ def main(
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
-
-    logger.info("Megatron-Bridge CI test job completed successfully!")
+    elif is_finished_experiment and not detach:
+        logger.info("Megatron-Bridge CI test job completed successfully!")
 
 
 if __name__ == "__main__":
