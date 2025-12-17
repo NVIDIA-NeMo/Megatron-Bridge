@@ -170,6 +170,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             print("Model parallel not initialized, initializing...")
             self.initialize_model_parallel(seed=0)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        # Providers (GPT, Mamba, Gemma, etc.) expect pg_collection on self for PP/TP role checks.
+        setattr(self, "_pg_collection", pg_collection)
 
         # Convert list of hooks to a single composed callable
         if isinstance(pre_wrap_hook, list):
@@ -529,8 +531,6 @@ def get_model(
         model_provider.bf16 = bf16
 
     model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
-    # Ensure providers have the current process group context before building models.
-    model_provider.pg_collection = pg_collection
     if init_model_with_meta_device:
         model_provider.init_model_with_meta_device = True
         with torch.device("meta"):
