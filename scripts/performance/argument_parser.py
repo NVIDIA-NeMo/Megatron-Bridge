@@ -312,7 +312,7 @@ def parse_cli_args():
         type=lambda x: None if x == "None" else int(x),
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
         required=False,
-        default=-1,
+        default=None,
     )
     parser.add_argument(
         "-ep",
