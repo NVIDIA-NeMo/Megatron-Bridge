@@ -220,6 +220,7 @@ def _is_omegaconf_problematic(val: Any) -> bool:
 
     return False
 
+
 def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
     """Recursively convert a dataclass instance to a dictionary suitable for OmegaConf.create.
 

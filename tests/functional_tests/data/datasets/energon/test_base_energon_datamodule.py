@@ -28,7 +28,6 @@ from megatron.bridge.data.datasets.energon.base_energon_datamodule import (
 
 
 class TestEnergonMultiModalDataModuleFunctional:
-    
     @pytest.fixture(autouse=True)
     def setup_and_teardown_parallel_state(self):
         """Setup and teardown parallel state for Megatron tests."""
@@ -36,7 +35,7 @@ class TestEnergonMultiModalDataModuleFunctional:
         # Initialize distributed backend if not already done
         if not dist.is_initialized():
             os.environ["MASTER_ADDR"] = "127.0.0.1"
-            os.environ["MASTER_PORT"] = "29501" # Use a different port to avoid conflicts
+            os.environ["MASTER_PORT"] = "29501"  # Use a different port to avoid conflicts
             os.environ["RANK"] = "0"
             os.environ["LOCAL_RANK"] = "0"
             os.environ["WORLD_SIZE"] = "1"
@@ -55,7 +54,7 @@ class TestEnergonMultiModalDataModuleFunctional:
             dist.init_process_group(**init_process_group_kwargs)
 
         assert dist.is_initialized(), "Distributed backend not initialized"
-        
+
         # Initialize model parallel state
         if not parallel_state.model_parallel_is_initialized():
             parallel_state.initialize_model_parallel(
@@ -66,9 +65,10 @@ class TestEnergonMultiModalDataModuleFunctional:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
-        
+
         # Seed
         from megatron.bridge.training.initialize import _set_random_seed
+
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
@@ -96,13 +96,19 @@ class TestEnergonMultiModalDataModuleFunctional:
         Mock the external Energon dependencies (dataset creation, loading)
         since we don't have a real Energon dataset available in this environment.
         """
-        with patch("megatron.bridge.data.datasets.energon.base_energon_datamodule.get_train_dataset") as mock_get_dataset, \
-             patch("megatron.bridge.data.datasets.energon.base_energon_datamodule.get_savable_loader") as mock_get_loader:
+        with (
+            patch(
+                "megatron.bridge.data.datasets.energon.base_energon_datamodule.get_train_dataset"
+            ) as mock_get_dataset,
+            patch(
+                "megatron.bridge.data.datasets.energon.base_energon_datamodule.get_savable_loader"
+            ) as mock_get_loader,
+        ):
              
             # Setup dataset mock
             mock_dataset = MagicMock()
             mock_get_dataset.return_value = mock_dataset
-            
+
             # Setup loader mock
             mock_loader_instance = MagicMock()
             # Infinite iterator of mock data
@@ -111,11 +117,11 @@ class TestEnergonMultiModalDataModuleFunctional:
             mock_loader_instance.save_state_rank.return_value = {"rank_state": 123}
             
             mock_get_loader.return_value = mock_loader_instance
-            
+
             yield {
                 "get_train_dataset": mock_get_dataset,
                 "get_savable_loader": mock_get_loader,
-                "loader_instance": mock_loader_instance
+                "loader_instance": mock_loader_instance,
             }
 
     def test_datamodule_distributed_initialization(self, mock_energon_dependencies):
@@ -123,7 +129,7 @@ class TestEnergonMultiModalDataModuleFunctional:
         Test that the DataModule correctly initializes in a distributed environment
         (using the real parallel_state).
         """
-        
+
         # 1. Initialization
         datamodule = EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
@@ -132,9 +138,9 @@ class TestEnergonMultiModalDataModuleFunctional:
             seq_length=1024,
             micro_batch_size=2,
             global_batch_size=4,
-            num_workers=2
+            num_workers=2,
         )
-        
+
         # 2. Build DataLoaders
         # This triggers worker_config creation using real parallel_state
         train_loader, val_loader = datamodule.build()
