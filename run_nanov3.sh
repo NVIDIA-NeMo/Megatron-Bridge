@@ -14,8 +14,8 @@ if [ "$DETERMINISTIC" = true ]; then
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local"
-    export DETERMINISTIC_FLAG="deterministic"
+    export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local model.moe_permute_fusion=false"
+    export DETERMINISTIC_FLAG="deterministic-disable-moe-permute-fusion"
 else
     export additional_args=""
     export DETERMINISTIC_FLAG="non-deterministic"
