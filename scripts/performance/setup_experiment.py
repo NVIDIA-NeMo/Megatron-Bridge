@@ -80,9 +80,6 @@ def main(
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
-    if model_name in ["qwen3"] and model_size in ["30b_a3b", "235b_a22b"]:
-        assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
-
     if wandb_key is not None:
         assert wandb_prj_name is not None and wandb_exp_name is not None, (
             "both wandb_prj_name and wandb_exp_name are required for logging with WandB"
