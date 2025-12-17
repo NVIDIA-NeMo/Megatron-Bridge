@@ -19,7 +19,7 @@ from utils.helpers import (
     set_workload_base_configs,
 )
 
-from megatron.bridge.recipes.nemotronh import nemotronh_56b_pretrain_config
+from megatron.bridge.recipes.nemotronh import nemotronh_56b_pretrain_config, nemotron_3_nano_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
 from . import workload_base_configs as base_cfgs
@@ -32,6 +32,21 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
     """Set common performance configurations for all NemotronH configs."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+
+def nemotronh_nano_30b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
+    """Nemotron 3 Nano 30B A3B on H100."""
+    base_cfg = base_cfgs.NEMOTRONH_NANO_30B_A3B_H100_BF16_BASE_CONFIG if precision == "bf16" else base_cfgs.NEMOTRONH_NANO_30B_A3B_H100_FP8_CS_BASE_CONFIG
+    precision_config = get_precision_config(precision)
+    
+    cfg = nemotron_3_nano_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+    )
+    set_nemotronh_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    
+    return cfg
 
 
 def nemotronh_56b_gb300_config(precision: str = "bf16") -> ConfigContainer:
