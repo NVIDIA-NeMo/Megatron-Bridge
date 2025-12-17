@@ -2,7 +2,7 @@
 set -euo pipefail
 source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
 
-CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11-nano-v3-nsys.sqsh"
 ACCOUNT="coreai_dlalgo_nemorl"
 PARTITION="batch_short"
 # Get current directory to mount
@@ -30,18 +30,19 @@ python scripts/performance/setup_experiment.py \
     -ng 16 \
     -gn 8 \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
     -wdj "nemotron3-nano-30b-a3b-nemo-25.11-${DETERMINISTIC_FLAG}" \
     --task pretrain \
     train.global_batch_size=128 \
-    model.tensor_model_parallel_size=1 \
-    model.sequence_parallel=false \
+    model.tensor_model_parallel_size=2 \
+    model.sequence_parallel=true \
     model.expert_model_parallel_size=8 \
     model.pipeline_model_parallel_size=1 \
     model.context_parallel_size=1 \
+    model.moe_token_dispatcher_type=alltoall \
     logger.tensorboard_dir=/nemo_run/tensorboard \
     logger.log_interval=1 \
     logger.log_throughput=true \
