@@ -556,7 +556,12 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
-
+    performance_args.add_argument(
+        "--use_cudnn_ln",
+        help="Use CuDNN LayerNorm. Disabled by default.",
+        type=bool_arg,
+        required=False,
+    )
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
     logging_args.add_argument(

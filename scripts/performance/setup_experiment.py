@@ -214,6 +214,7 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
+    use_cudnn_ln: bool,
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -372,6 +373,10 @@ def main(
                 )
             if wandb_key is not None:
                 executor.env_vars["WANDB_API_KEY"] = wandb_key
+
+            if use_cudnn_ln:
+                executor.env_vars["NVTE_NORM_FWD_USE_CUDNN"] = "1"
+                executor.env_vars["NVTE_NORM_BWD_USE_CUDNN"] = "1"
 
             run.run(
                 nemorun_script,
@@ -540,4 +545,5 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        use_cudnn_ln=args.use_cudnn_ln,
     )
