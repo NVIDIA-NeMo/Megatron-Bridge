@@ -223,6 +223,6 @@ def dgxc_executor(
             else {}
         ),
         env_vars=env_vars,
-        launcher="torchrun",
+        launcher="ft",
     )
     return executor
