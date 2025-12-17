@@ -27,7 +27,7 @@ python scripts/performance/setup_experiment.py \
     --gpu h100 \
     -m nemotronh \
     -s nano_30b_a3b \
-    -ng 32 \
+    -ng 16 \
     -gn 8 \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
@@ -36,6 +36,12 @@ python scripts/performance/setup_experiment.py \
     -wdp "mbridge-dev-zhiyul" \
     -wdj "nemotron3-nano-30b-a3b-nemo-25.11-${DETERMINISTIC_FLAG}" \
     --task pretrain \
+    train.global_batch_size=128 \
+    model.tensor_model_parallel_size=1 \
+    model.sequence_parallel=false \
+    model.expert_model_parallel_size=8 \
+    model.pipeline_model_parallel_size=1 \
+    model.context_parallel_size=1 \
     logger.tensorboard_dir=/nemo_run/tensorboard \
     logger.log_interval=1 \
     logger.log_throughput=true \
