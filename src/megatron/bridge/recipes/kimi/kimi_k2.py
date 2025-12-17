@@ -14,10 +14,10 @@
 
 import logging
 import os
-from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.kimi import KimiK2Provider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -41,19 +41,80 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 logger = logging.getLogger(__name__)
 
 
-def model_config(
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 16,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 32,
-    sequence_parallelism: bool = True,
+class KimiK2CommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Kimi-K2 recipe helper functions."""
+
+    # Core identifiers
+    dir: str | None
+    name: str
+    # Dataset configuration
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
+    mock: bool
+    # Model configuration
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    expert_model_parallel_size: int
+    sequence_parallel: bool
+    # Recomputation
+    recompute_granularity: str
+    recompute_modules: list[str] | None
+    recompute_method: str | None
+    recompute_num_layers: int | None
+    # DeePEP and RoPE
+    enable_deepep: bool
+    apply_rope_fusion: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    seq_length: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    optimizer_type: str
+    # Precision / overlap configs
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
+
+
+def kimi_k2_pretrain_config(**user_kwargs: Unpack[KimiK2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Kimi-K2 (1T).
+
+    See `_kimi_k2_common` for the full list of parameters.
+    """
+    recommended_kwargs: KimiK2CommonKwargs = {
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 16,
+        "pipeline_dtype": torch.bfloat16,
+        "expert_model_parallel_size": 32,
+        "sequence_parallel": True,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs: KimiK2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _kimi_k2_common(**combined_kwargs)
+
+
+def _kimi_k2_model_config(
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 16,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 32,
+    sequence_parallel: bool = True,
     # Recomputation
     recompute_granularity: str = "selective",
-    recompute_modules: Optional[List[str]] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
+    recompute_modules: list[str] | None = None,
+    recompute_method: str | None = None,
+    recompute_num_layers: int | None = None,
     enable_deepep: bool = False,
     apply_rope_fusion: bool = False,
 ) -> KimiK2Provider:
@@ -61,26 +122,31 @@ def model_config(
     Configure the Kimi-K2 (1T) model.
 
     Args:
-        tensor_parallelism: Degree of tensor model parallelism.
-        pipeline_parallelism: Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype: Data type for pipeline parallelism.
-        virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism.
-        expert_parallelism: Degree of expert model parallelism.
-        sequence_parallelism: Whether to use sequence parallelism.
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
+        pipeline_dtype: Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism.
+        context_parallel_size: Degree of context parallelism.
+        expert_model_parallel_size: Degree of expert model parallelism.
+        sequence_parallel: Whether to use sequence parallelism.
+        recompute_granularity: Granularity of recomputation.
+        recompute_modules: List of modules to recompute.
+        recompute_method: Method of recomputation.
+        recompute_num_layers: Number of layers to recompute.
         enable_deepep: Whether to use DeePEP.
+        apply_rope_fusion: Whether to apply RoPE fusion.
 
     Returns:
         KimiK2Provider: Configuration for the Kimi-K2 model.
     """
     cfg = KimiK2Provider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        expert_model_parallel_size=expert_parallelism,
-        sequence_parallel=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        expert_model_parallel_size=expert_model_parallel_size,
+        sequence_parallel=sequence_parallel,
         expert_tensor_parallel_size=1,  # Do not use ETP
         # Recomputation
         recompute_granularity=recompute_granularity,
@@ -110,8 +176,8 @@ def model_config(
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
     }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
+    pp_size = pipeline_model_parallel_size or 1
+    vp_size = virtual_pipeline_model_parallel_size or 1
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
@@ -132,25 +198,32 @@ def model_config(
     return cfg
 
 
-def pretrain_config(
-    dir: Optional[str] = None,
+def _kimi_k2_common(
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 16,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 32,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 16,
+    pipeline_dtype: torch.dtype | None = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 32,
+    sequence_parallel: bool = True,
+    # Recomputation
+    recompute_granularity: str = "selective",
+    recompute_modules: list[str] | None = None,
+    recompute_method: str | None = None,
+    recompute_num_layers: int | None = None,
+    enable_deepep: bool = False,
+    apply_rope_fusion: bool = False,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 4096,
@@ -159,20 +232,47 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    optimizer_type: str = "adam",
-    # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-    enable_deepep: bool = False,
-    # Recomputation
-    recompute_granularity: str = "selective",
-    recompute_modules: Optional[List[str]] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
-    apply_rope_fusion: bool = False,
+    optimizer_type: str = "muon",
+    # Precision / overlap configs
+    precision_config: MixedPrecisionConfig | str | None = None,
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Kimi-K2 (1T) model.
+
+    Args:
+        dir (str | None): Base directory for saving logs and checkpoints.
+        name (str): Name of the pre-training run.
+        data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
+        data_args_path (str | None): Path to file containing data arguments.
+        train_data_path (list[str] | None): List of training data paths.
+        valid_data_path (list[str] | None): List of validation data paths.
+        test_data_path (list[str] | None): List of test data paths.
+        per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
+        mock (bool): Whether to use mock data. If True, ignores data_paths.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (torch.dtype | None): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (int | None): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism.
+        expert_model_parallel_size (int): Degree of expert model parallelism.
+        sequence_parallel (bool): Whether to use sequence parallelism.
+        recompute_granularity (str): Granularity of recomputation.
+        recompute_modules (list[str] | None): List of modules to recompute.
+        recompute_method (str | None): Method of recomputation.
+        recompute_num_layers (int | None): Number of layers to recompute.
+        enable_deepep (bool): Whether to use DeePEP.
+        apply_rope_fusion (bool): Whether to apply RoPE fusion.
+        train_iters (int): Total number of training iterations.
+        global_batch_size (int): Global batch size for training.
+        micro_batch_size (int): Micro batch size for training.
+        seq_length (int): Sequence length for training data.
+        lr (float): Learning rate.
+        min_lr (float): Minimum learning rate for cosine decay.
+        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        optimizer_type (str): Type of optimizer ("adam" or "muon").
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -186,14 +286,14 @@ def pretrain_config(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
 
-    model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        expert_parallelism=expert_parallelism,
-        sequence_parallelism=sequence_parallelism,
+    model_cfg = _kimi_k2_model_config(
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        expert_model_parallel_size=expert_model_parallel_size,
+        sequence_parallel=sequence_parallel,
         recompute_granularity=recompute_granularity,
         recompute_modules=recompute_modules,
         recompute_method=recompute_method,
@@ -203,27 +303,19 @@ def pretrain_config(
     )
 
     if optimizer_type == "adam":
-        opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
             lr_warmup_iters=lr_warmup_iters,
             lr_decay_iters=train_iters,
-            adam_beta1=0.9,
-            adam_beta2=0.95,
-            adam_eps=1e-5,
-            weight_decay=0.1,
             max_lr=lr,
             min_lr=min_lr,
         )
 
-        opt_config.use_precision_aware_optimizer = True
-        opt_config.main_params_dtype = torch.float32
-        opt_config.main_grads_dtype = torch.bfloat16
-        opt_config.exp_avg_dtype = torch.bfloat16
-        opt_config.exp_avg_sq_dtype = torch.bfloat16
     elif optimizer_type == "muon":
-        opt_config, scheduler = distributed_muon_with_cosine_annealing(
+        opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
             lr_warmup_iters=lr_warmup_iters,
             lr_decay_iters=train_iters,
             max_lr=lr,
+            min_lr=min_lr,
         )
     else:
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")
@@ -249,8 +341,8 @@ def pretrain_config(
             manual_gc_interval=5,
             manual_gc_eval=5,
         ),
-        optimizer=opt_config,
-        scheduler=scheduler,
+        optimizer=opt_cfg,
+        scheduler=scheduler_cfg,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
@@ -292,6 +384,7 @@ def pretrain_config(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
+
     if apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
