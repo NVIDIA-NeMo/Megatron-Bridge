@@ -34,7 +34,7 @@ def list_of_strings(arg):
 
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
-    return dict(item.split("=") for item in arg.split(";"))
+    return dict(item.split("=") for item in arg.split(","))
 
 
 def lower_str(arg):
