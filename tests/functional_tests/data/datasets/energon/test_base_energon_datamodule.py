@@ -104,7 +104,6 @@ class TestEnergonMultiModalDataModuleFunctional:
                 "megatron.bridge.data.datasets.energon.base_energon_datamodule.get_savable_loader"
             ) as mock_get_loader,
         ):
-
             # Setup dataset mock
             mock_dataset = MagicMock()
             mock_get_dataset.return_value = mock_dataset
