@@ -22,10 +22,12 @@ import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
+from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -42,7 +44,6 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.utils.weight_decay_utils import get_no_weight_decay_cond
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -66,6 +67,7 @@ class SetupOutput(NamedTuple):
         test_data_iterator: The data iterator for the testing dataset, if applicable.
         checkpointing_context: A dictionary holding context for checkpointing operations,
                                especially for non-persistent local checkpointing.
+        pg_collection: The process group collection initialized for this run.
     """
 
     state: GlobalState
@@ -76,6 +78,7 @@ class SetupOutput(NamedTuple):
     valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpointing_context: dict[str, Any]
+    pg_collection: ProcessGroupCollection
 
 def setup(
     state: GlobalState,
@@ -110,6 +113,11 @@ def setup(
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
+
+    # Disable the JIT fuser if requested
+    if cfg.dist.disable_jit_fuser:
+        print_rank_0("Disabling JIT fuser.")
+        disable_jit_fuser()
 
     # Initialize async checkpoint worker if enabled (idempotent if already initialized)
     state.initialize_async_checkpoint_worker()
@@ -149,6 +157,9 @@ def setup(
 
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
+
+    # Initialize process group collection once and pass through
+    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -210,16 +221,13 @@ def setup(
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    no_weight_decay_cond = get_no_weight_decay_cond(
-        cfg.scheduler.no_weight_decay_cond_type,
-        default_skip_embedding_weight_decay=cfg.model.embedding_init_method_std is not None,
-    )
+    if cfg.scheduler.no_weight_decay_cond_type == "qwen3_next":
+        raise NotImplementedError("qwen3_next style weight decay disabled until mcore fix.")
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        no_weight_decay_cond=no_weight_decay_cond,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -262,6 +270,7 @@ def setup(
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
+        pg_collection=pg_collection,
     )
 
     # Data stuff.
@@ -286,11 +295,7 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    if get_rank_safe() == 0:
-        # Print final resolved/updated/overridden configs
-        print("------- Task Configuration -------")
-        cfg.print_yaml()
-        print("----------------------------------")
+    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -301,6 +306,7 @@ def setup(
         valid_data_iterator,
         test_data_iterator,
         checkpointing_context,
+        pg_collection,
     )
 
 
@@ -311,6 +317,7 @@ def _update_model_config_funcs(
     optimizer: Optional[MegatronOptimizer],
     *,
     align_grad_reduce: bool = True,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
     if isinstance(model[0], (DistributedDataParallel, megatron_FSDP)) and ddp_config.overlap_grad_reduce:
@@ -330,7 +337,9 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = finalize_model_grads
+        model_config.finalize_model_grads_func = partial(
+            finalize_model_grads, pg_collection=pg_collection
+        )
         model_config.grad_scale_func = optimizer.scale_loss
 
 
@@ -462,3 +471,20 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
                 f" {model_vocab_size - tokenizer_vocab_size}."
             )
         return model_vocab_size, False
+
+
+def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
+    """Save configuration to disk and log it on rank 0."""
+
+    if get_rank_safe() != 0:
+        return
+
+    if cfg.logger.save_config_filepath is not None:
+        try:
+            cfg.to_yaml(cfg.logger.save_config_filepath)
+        except Exception as e:
+            print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
+
+    print("------- Task Configuration -------")
+    cfg.print_yaml()
+    print("----------------------------------")

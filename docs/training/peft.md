@@ -62,7 +62,6 @@ lora_config = LoRA(
     dim=16,                    # Rank of adaptation
     alpha=32,                  # Scaling parameter  
     dropout=0.1,               # Dropout rate
-    network_alpha=None,        # Network alpha for scaling
 )
 ```
 

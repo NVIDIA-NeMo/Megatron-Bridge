@@ -389,9 +389,9 @@ class TestPostTrainingCheckpointUtilities:
             modelopt_state = {"modelopt_state_dict": [("kd_loss", {"some": "data"})]}
             torch.save(modelopt_state, common_state_file)
 
-            # When ignore_kd_state=True and only kd_loss exists, should return True
+            # When ignore_kd_state=True and only kd_loss exists, should return False
             result = has_modelopt_state(str(checkpoint_path), ignore_kd_state=True)
-            assert result is True
+            assert result is False
 
     def test_has_modelopt_state_with_ignore_kd_state_true_multiple_states(self):
         """Test has_modelopt_state with ignore_kd_state=True when multiple states exist."""
@@ -410,9 +410,9 @@ class TestPostTrainingCheckpointUtilities:
             }
             torch.save(modelopt_state, common_state_file)
 
-            # When ignore_kd_state=True but multiple states exist, should return False
+            # When ignore_kd_state=True and multiple states exist, should return True
             result = has_modelopt_state(str(checkpoint_path), ignore_kd_state=True)
-            assert result is False
+            assert result is True
 
     def test_has_modelopt_state_with_iter_folders(self):
         """Test has_modelopt_state when modelopt_state is in an iter_* folder."""

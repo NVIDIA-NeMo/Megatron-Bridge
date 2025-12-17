@@ -457,7 +457,7 @@ class TestConfigContainer_ToYaml:
         mock_safe_representers.return_value.__exit__ = MagicMock()
 
         # Test that deprecation warning is raised
-        with pytest.warns(DeprecationWarning, match="Calling to_yaml\(\) without a path.*Use print_yaml\(\) instead"):
+        with pytest.warns(DeprecationWarning, match=r"Calling to_yaml\(\) without a path.*Use print_yaml\(\) instead"):
             config.to_yaml()
 
         mock_safe_representers.assert_called_once()
@@ -736,7 +736,7 @@ class TestConfigContainer_Integration:
             with patch("yaml.safe_dump") as mock_dump:
                 # Test with deprecation warning
                 with pytest.warns(
-                    DeprecationWarning, match="Calling to_yaml\(\) without a path.*Use print_yaml\(\) instead"
+                    DeprecationWarning, match=r"Calling to_yaml\(\) without a path.*Use print_yaml\(\) instead"
                 ):
                     config.to_yaml()
 
