@@ -31,6 +31,16 @@ def list_of_strings(arg):
     """Split a comma-separated string into a list of substrings."""
     return arg.split(",")
 
+def list_of_ints(arg):
+    """Split a comma-separated string into a list of integers."""
+    if arg is None:
+        raise argparse.ArgumentTypeError("empty argument list")
+    try:
+        result = [int(p, 10) for p in list_of_strings(arg)]
+    except Exception:
+        raise argparse.ArgumentTypeError(f"invalid comma-separated integer list: {arg!r}") from None
+
+    return result
 
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
@@ -468,15 +478,30 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
-        "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=10
+        "--profiling_start_step",
+        type=int,
+        help="Defines start step for profiling",
+        required=False,
+        default=10,
     )
     performance_args.add_argument(
-        "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
+        "--profiling_stop_step",
+        type=int,
+        help="Defines stop step for profiling",
+        required=False,
+        default=11,
     )
     performance_args.add_argument(
         "--profiling_gpu_metrics",
         help="Enable nsys gpu metrics. Disabled by default.",
         action="store_true",
+    )
+    performance_args.add_argument(
+        "--profiling_ranks",
+        type=list_of_ints,
+        help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None
     )
     performance_args.add_argument(
         "--use_tokendrop",
