@@ -32,7 +32,7 @@ Supports loading the Megatron model with different parallelisms.
 
 Usage examples:
     # Nemtron-H 8B Base with PP=2
-    torchrun --nproc-per-node=2 examples/conversion/compare_text_generation.py \
+    uv run python -m torch.distributed.run --nproc-per-node=2 examples/conversion/compare_text_generation.py \
       --hf-model-id nvidia/Nemotron-H-8B-Base-8K \
       --max-new-tokens 40 \
       --megatron-path /tmp/nemotronh-8b-megatron-import \
@@ -41,7 +41,7 @@ Usage examples:
       --logits-compare-method cosine
 
     # Llama-3.2-1B Instruct with TP=2
-    torchrun --nproc-per-node=2 examples/conversion/compare_text_generation.py \
+    uv run python -m torch.distributed.run --nproc-per-node=2 examples/conversion/compare_text_generation.py \
       --hf-model-id meta-llama/Llama-3.2-1B-Instruct \
       --max-new-tokens 40 \
       --megatron-path /tmp/llama32-1b-megatron-import \

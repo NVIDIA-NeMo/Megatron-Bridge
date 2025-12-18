@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import nemo_run as run
 from nemo_run.config import get_nemorun_home
 
 
@@ -34,9 +35,6 @@ except (ImportError, ModuleNotFoundError):
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
 
-import nemo_run as run
-
-
 try:
     import wandb
 
@@ -46,8 +44,10 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .resiliency_plugins import FaultTolerancePlugin
 
 import logging
 
@@ -327,6 +327,18 @@ def main(
             )
         )
 
+    if use_recipes:
+        plugins.append(
+            FaultTolerancePlugin(
+                enable_ft_package=True,
+                calc_ft_timeouts=True,
+                num_in_job_restarts=10,
+                num_job_retries_on_failure=10,
+                initial_rank_heartbeat_timeout=1800,
+                rank_heartbeat_timeout=300,
+            )
+        )
+
     nemorun_script = run.Script(
         path=str(run_script_path),
         entrypoint="python",
@@ -381,7 +393,7 @@ def main(
                 is_testing_passed = True
                 break
 
-            log_file_paths = [str(Path(f"{job_dir}/log-*_0.out"))]
+            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
