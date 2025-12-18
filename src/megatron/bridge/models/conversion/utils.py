@@ -183,6 +183,16 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     if obj is None:
         return obj
 
+    # Explicitly drop process group objects without importing their classes directly.
+    cls = obj if isinstance(obj, type) else type(obj)
+    cls_module = getattr(cls, "__module__", "")
+    cls_name = getattr(cls, "__qualname__", getattr(cls, "__name__", ""))
+    if (cls_module, cls_name) in {
+        ("megatron.core.process_groups_config", "ProcessGroupCollection"),
+        ("torch._C._distributed_c10d", "ProcessGroup"),
+    }:
+        return None
+
     # Check if object is a problematic callable
     if callable(obj):
         # Allow classes/types but remove function objects, methods, partials
@@ -199,16 +209,6 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
         cleaned_obj = copy.copy(obj)
 
         for attr_name in list(vars(cleaned_obj).keys()):
-            # Skip Python's dunder attributes – they generally point to safe metadata
-            if attr_name.startswith("__") and attr_name.endswith("__"):
-                continue
-
-            if attr_name.startswith("_"):
-                # Private attributes often cache runtime-only state like process groups.
-                # Remove them entirely so we never pickle runtime handles.
-                delattr(cleaned_obj, attr_name)
-                continue
-
             attr_value = getattr(cleaned_obj, attr_name)
 
             # Recursively clean attribute
@@ -229,19 +229,7 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
 
     # Handle dictionaries
     elif isinstance(obj, dict):
-        cleaned_dict = {}
-        for key, value in obj.items():
-            if isinstance(key, str) and key.startswith("__") and key.endswith("__"):
-                cleaned_dict[key] = remove_non_pickleables(value, max_depth, current_depth + 1)
-                continue
-
-            if isinstance(key, str) and key.startswith("_"):
-                # Skip private keys entirely; they're typically caches/handles.
-                continue
-
-            cleaned_dict[key] = remove_non_pickleables(value, max_depth, current_depth + 1)
-
-        return cleaned_dict
+        return {key: remove_non_pickleables(value, max_depth, current_depth + 1) for key, value in obj.items()}
 
     # For primitive types and other safe objects, return as-is
     return obj
