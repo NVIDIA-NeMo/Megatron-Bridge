@@ -116,6 +116,8 @@ runs:
           VOLUME_ARGS=""
         fi
 
+        ls -alh /mnt/datadrive/TestData/nemo-fw/TestData
+
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
