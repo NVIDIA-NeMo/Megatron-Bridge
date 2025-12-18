@@ -17,7 +17,7 @@ from __future__ import annotations
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Union
 
 import torch
 from megatron.core import parallel_state
@@ -41,7 +41,8 @@ from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.conversion.model_bridge import MegatronWeightTuple, WeightConversionTask
+    from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+    from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronWeightTuple, WeightConversionTask
 
 
 MegatronModel = MegatronModule
@@ -54,6 +55,13 @@ ADAPTER_NAME_MAP = {
     ".v_proj.weight": "adapter_v",
     ".gate_proj.weight": "adapter_gate",
     ".up_proj.weight": "adapter_up",
+}
+ADAPTER_KEY_TO_SUFFIX = {value: key for key, value in ADAPTER_NAME_MAP.items()}
+
+# Map Megatron adapter suffixes to HuggingFace LoRA parameter suffixes
+MEGATRON_TO_HF_LORA_SUFFIX = {
+    ".linear_in.weight": ".lora_A.weight",
+    ".linear_out.weight": ".lora_B.weight",
 }
 
 
@@ -105,6 +113,62 @@ class MegatronPeftBridge:
         if adapter is None:
             lora_module, _ = get_module_and_param_from_name(megatron_model, local_base_prefix + ".to_wrap", vp_stage)
         return getattr(lora_module, "adapter", None), getattr(lora_module, "to_wrap", None)
+
+    def _resolve_hf_adapter_param_name(
+        self,
+        mapping_registry: "MegatronMappingRegistry",
+        global_base_prefix: str,
+        megatron_suffix: str,
+        adapter_key: Optional[str],
+    ) -> Optional[str]:
+        """
+        Resolve the HuggingFace adapter parameter name by translating the base Megatron name.
+
+        Note:
+            LoRA adapters never register bias tensors for `linear_in` / `linear_out`, so callers
+            only pass weight suffixes here. The bias fallback below is solely for robustness in
+            case a future adapter type introduces biased projections.
+        """
+
+        hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_suffix)
+        assert hf_suffix is not None, (
+            f"Unsupported adapter suffix '{megatron_suffix}'. Update MEGATRON_TO_HF_LORA_SUFFIX."
+        )
+
+        base_suffix = ".weight"
+        base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
+        assert base_mapping is not None, (
+            f"Expected mapping for adapter base '{global_base_prefix}{base_suffix}' but none found"
+        )
+
+        hf_base_name = self._select_hf_base_param_name(base_mapping, adapter_key, base_suffix)
+        if hf_base_name is None or not hf_base_name.endswith(base_suffix):
+            return None
+
+        return hf_base_name[: -len(base_suffix)] + hf_suffix
+
+    def _select_hf_base_param_name(
+        self, base_mapping, adapter_key: Optional[str], expected_suffix: str
+    ) -> Optional[str]:
+        """Return the HF base parameter name associated with this adapter."""
+
+        hf_param = base_mapping.hf_param
+        if isinstance(hf_param, str):
+            return hf_param if hf_param.endswith(expected_suffix) else None
+
+        if isinstance(hf_param, dict):
+            if adapter_key:
+                target_suffix = ADAPTER_KEY_TO_SUFFIX.get(adapter_key)
+                if target_suffix:
+                    for value in hf_param.values():
+                        if value.endswith(target_suffix):
+                            return value
+
+            if len(hf_param) == 1:
+                value = next(iter(hf_param.values()))
+                return value if value.endswith(expected_suffix) else None
+
+        return None
 
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
@@ -188,6 +252,10 @@ class MegatronPeftBridge:
 
         from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 
+        # `MegatronModelBridge` mixes in this class and provides `mapping_registry`.
+        assert hasattr(self, "mapping_registry"), "MegatronModelBridge must define mapping_registry"
+        mapping_registry = self.mapping_registry()  # type: ignore[attr-defined]
+
         for (
             global_base_name,
             local_base_prefix,
@@ -209,6 +277,14 @@ class MegatronPeftBridge:
                 global_base_prefix, adapter_key
             )
             local_linear_in_name, local_linear_out_name = global_linear_in_name, global_linear_out_name
+
+            hf_linear_in_name = self._resolve_hf_adapter_param_name(
+                mapping_registry, global_base_prefix, ".linear_in.weight", adapter_key
+            )
+            hf_linear_out_name = self._resolve_hf_adapter_param_name(
+                mapping_registry, global_base_prefix, ".linear_out.weight", adapter_key
+            )
+
             linear_in_module = linear_in_weight = None
             linear_out_module = linear_out_weight = None
             if parallel_state.get_pipeline_model_parallel_rank() == pp_rank:
@@ -231,7 +307,10 @@ class MegatronPeftBridge:
             linear_in_task = WeightConversionTask(
                 param_name=local_linear_in_name,
                 global_param_name=global_linear_in_name,
-                mapping=linear_in_mapping_cls(megatron_param=local_linear_in_name, hf_param=local_linear_in_name),
+                mapping=linear_in_mapping_cls(
+                    megatron_param=local_linear_in_name,
+                    hf_param=hf_linear_in_name or global_linear_in_name,
+                ),
                 pp_rank=pp_rank,
                 vp_stage=vp_stage,
                 megatron_module=linear_in_module,
@@ -241,7 +320,10 @@ class MegatronPeftBridge:
             linear_out_task = WeightConversionTask(
                 param_name=local_linear_out_name,
                 global_param_name=global_linear_out_name,
-                mapping=linear_out_mapping_cls(megatron_param=local_linear_out_name, hf_param=local_linear_out_name),
+                mapping=linear_out_mapping_cls(
+                    megatron_param=local_linear_out_name,
+                    hf_param=hf_linear_out_name or global_linear_out_name,
+                ),
                 pp_rank=pp_rank,
                 vp_stage=vp_stage,
                 megatron_module=linear_out_module,
@@ -298,6 +380,42 @@ class MegatronPeftBridge:
             )
 
         return materialized
+
+    def stream_adapter_weights_megatron_to_hf(
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        cpu: bool = True,
+        show_progress: bool = True,
+    ) -> Iterable[HFWeightTuple]:
+        """Stream only adapter weights without merging them into base tensors."""
+
+        if not isinstance(megatron_model, list):
+            megatron_model = [megatron_model]
+
+        adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+        adapter_tasks = list(itertools.chain.from_iterable(adapter_tasks_by_base.values()))
+        if not adapter_tasks:
+            return
+
+        for adapter_task in self._with_progress_tracking(adapter_tasks, "Streaming adapter weights", show_progress):
+            adapter_weight = self.materialize_adapter_weights([adapter_task])[0]
+
+            linear_in_tensor = adapter_weight.linear_in_weight.weight
+            linear_out_tensor = adapter_weight.linear_out_weight.weight
+
+            if cpu:
+                linear_in_tensor = linear_in_tensor.cpu()
+                linear_out_tensor = linear_out_tensor.cpu()
+
+            linear_in_hf_name = adapter_task.linear_in_task.mapping.hf_param
+            linear_out_hf_name = adapter_task.linear_out_task.mapping.hf_param
+
+            assert isinstance(linear_in_hf_name, str) and isinstance(linear_out_hf_name, str), (
+                "Adapter mappings must resolve to string HF parameter names"
+            )
+
+            yield HFWeightTuple(linear_in_hf_name, linear_in_tensor)
+            yield HFWeightTuple(linear_out_hf_name, linear_out_tensor)
 
     def _merge_lora_adapter_weights(
         self,

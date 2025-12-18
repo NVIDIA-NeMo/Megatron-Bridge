@@ -711,35 +711,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     # Regular case - yield the tensor normally
                     yield HFWeightTuple(hf_name, final_tensor)
 
-    def stream_adapter_weights_megatron_to_hf(
-        self,
-        megatron_model: Union[MegatronModel, List[MegatronModel]],
-        cpu: bool = True,
-        show_progress: bool = True,
-    ) -> Iterable[HFWeightTuple]:
-        """Stream only adapter weights without merging them into base tensors."""
-
-        if not isinstance(megatron_model, list):
-            megatron_model = [megatron_model]
-
-        adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
-        adapter_tasks = list(itertools.chain.from_iterable(adapter_tasks_by_base.values()))
-        if not adapter_tasks:
-            return
-
-        for adapter_task in self._with_progress_tracking(adapter_tasks, "Streaming adapter weights", show_progress):
-            adapter_weight = self.materialize_adapter_weights([adapter_task])[0]
-
-            linear_in_tensor = adapter_weight.linear_in_weight.weight
-            linear_out_tensor = adapter_weight.linear_out_weight.weight
-
-            if cpu:
-                linear_in_tensor = linear_in_tensor.cpu()
-                linear_out_tensor = linear_out_tensor.cpu()
-
-            yield HFWeightTuple(adapter_task.linear_in_task.global_param_name, linear_in_tensor)
-            yield HFWeightTuple(adapter_task.linear_out_task.global_param_name, linear_out_tensor)
-
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.
 
