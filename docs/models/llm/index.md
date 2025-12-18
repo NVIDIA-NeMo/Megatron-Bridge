@@ -7,6 +7,7 @@ This section documents Large Language Models supported by Megatron Bridge, with 
 
 deepseek-v2.md
 deepseek-v3.md
+gemma2.md
 gemma3.md
 glm45.md
 llama3.md
