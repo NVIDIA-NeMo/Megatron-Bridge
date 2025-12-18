@@ -266,6 +266,7 @@ def main(
     )
 
     if not dgxc_cluster:
+        print(f"custom_env_vars | setup_experiment: {custom_env_vars}")
         executor = slurm_executor(
             gpu=gpu,
             account=account,
@@ -374,9 +375,13 @@ def main(
             if wandb_key is not None:
                 executor.env_vars["WANDB_API_KEY"] = wandb_key
 
+            print(f"use_cudnn_ln | setup_experiment: {use_cudnn_ln}")
             if use_cudnn_ln:
+                print("Setting NVTE_NORM_FWD_USE_CUDNN and NVTE_NORM_BWD_USE_CUDNN to 1")
+                print(f"executor.env_vars before | setup_experiment: {executor.env_vars}")
                 executor.env_vars["NVTE_NORM_FWD_USE_CUDNN"] = "1"
                 executor.env_vars["NVTE_NORM_BWD_USE_CUDNN"] = "1"
+                print(f"executor.env_vars after | setup_experiment: {executor.env_vars}")
 
             run.run(
                 nemorun_script,
@@ -482,6 +487,9 @@ if __name__ == "__main__":
     # but for now we'll just issue a warning.
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
+
+    print(f"args.custom_env_vars | setup_experiment: {args.custom_env_vars}")
+    print(f"args.use_cudnn_ln | setup_experiment: {args.use_cudnn_ln}")
 
     main(
         use_recipes=args.use_recipes,

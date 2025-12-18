@@ -109,7 +109,9 @@ def slurm_executor(
     if hf_token is not None:
         PERF_ENV_VARS.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
 
+    print(f"custom_env_vars | executor: {custom_env_vars}")
     PERF_ENV_VARS.update(custom_env_vars)
+    print(f"PERF_ENV_VARS | executor: {PERF_ENV_VARS}")
     mounts.extend(custom_mounts)
 
     # add --segment flag to sbatch if job uses GB200.
