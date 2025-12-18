@@ -158,9 +158,17 @@ def main(
     if gbs is not None:
         gbs_final = gbs
     else:
-	# Scale GBS based on number of GPUs
-        gbs_final = workload_base_config.global_batch_size
-    
+        # Scale GBS based on number of GPUs
+        default_num_gpus = workload_base_config.num_gpus
+        if num_gpus != default_num_gpus:
+            gbs_final = int(workload_base_config.gbs_scaling_factor * num_gpus)
+            logger.info(
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {gbs_final} "
+                f"for experiment name based on {num_gpus} GPUs."
+            )
+        else:
+            gbs_final = workload_base_config.global_batch_size
+ 
     exp_name = (
         f"{task}_{model_name}_{model_size}_{compute_dtype}"
         f"_gpus{num_gpus}_tp{tp_size_final}_pp{pp_size_final}_cp{cp_size_final}"
