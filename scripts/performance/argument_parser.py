@@ -499,6 +499,7 @@ def parse_cli_args():
     performance_args.add_argument(
         "--profiling_ranks",
         type=list_of_ints,
+        metavar="N[,N...]",
         help="List of ranks to target for profiling (defaults to just first rank)",
         required=False,
         default=None
