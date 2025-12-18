@@ -89,6 +89,28 @@ class AdapterWeight:
     linear_out_weight: "MegatronWeightTuple"
 
 
+def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expected_suffix: str) -> Optional[str]:
+    """Return the HF base parameter name associated with this adapter."""
+
+    hf_param = base_mapping.hf_param
+    if isinstance(hf_param, str):
+        return hf_param if hf_param.endswith(expected_suffix) else None
+
+    if isinstance(hf_param, dict):
+        if adapter_key:
+            target_suffix = ADAPTER_KEY_TO_SUFFIX.get(adapter_key)
+            if target_suffix:
+                for value in hf_param.values():
+                    if value.endswith(target_suffix):
+                        return value
+
+        if len(hf_param) == 1:
+            value = next(iter(hf_param.values()))
+            return value if value.endswith(expected_suffix) else None
+
+    return None
+
+
 class MegatronPeftBridge:
     """Mixin providing adapter-aware utilities for Megatron model bridges."""
 
@@ -141,34 +163,11 @@ class MegatronPeftBridge:
             f"Expected mapping for adapter base '{global_base_prefix}{base_suffix}' but none found"
         )
 
-        hf_base_name = self._select_hf_base_param_name(base_mapping, adapter_key, base_suffix)
+        hf_base_name = _select_hf_base_param_name(base_mapping, adapter_key, base_suffix)
         if hf_base_name is None or not hf_base_name.endswith(base_suffix):
             return None
 
         return hf_base_name[: -len(base_suffix)] + hf_suffix
-
-    def _select_hf_base_param_name(
-        self, base_mapping, adapter_key: Optional[str], expected_suffix: str
-    ) -> Optional[str]:
-        """Return the HF base parameter name associated with this adapter."""
-
-        hf_param = base_mapping.hf_param
-        if isinstance(hf_param, str):
-            return hf_param if hf_param.endswith(expected_suffix) else None
-
-        if isinstance(hf_param, dict):
-            if adapter_key:
-                target_suffix = ADAPTER_KEY_TO_SUFFIX.get(adapter_key)
-                if target_suffix:
-                    for value in hf_param.values():
-                        if value.endswith(target_suffix):
-                            return value
-
-            if len(hf_param) == 1:
-                value = next(iter(hf_param.values()))
-                return value if value.endswith(expected_suffix) else None
-
-        return None
 
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
