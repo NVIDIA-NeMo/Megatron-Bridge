@@ -116,8 +116,6 @@ runs:
           VOLUME_ARGS=""
         fi
 
-        ls -alh /mnt/datadrive/TestData/nemo-fw/TestData
-
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
@@ -130,7 +128,6 @@ runs:
           --env TRANSFORMERS_OFFLINE=0 \
           --cpus=40 \
           --env HYDRA_FULL_ERROR=1 \
-          --env HF_HUB_OFFLINE=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
