@@ -214,7 +214,6 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
-    use_cudnn_ln: bool,
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -375,14 +374,6 @@ def main(
             if wandb_key is not None:
                 executor.env_vars["WANDB_API_KEY"] = wandb_key
 
-            print(f"use_cudnn_ln | setup_experiment: {use_cudnn_ln}")
-            if use_cudnn_ln:
-                print("Setting NVTE_NORM_FWD_USE_CUDNN and NVTE_NORM_BWD_USE_CUDNN to 1")
-                print(f"executor.env_vars before | setup_experiment: {executor.env_vars}")
-                executor.env_vars["NVTE_NORM_FWD_USE_CUDNN"] = "1"
-                executor.env_vars["NVTE_NORM_BWD_USE_CUDNN"] = "1"
-                print(f"executor.env_vars after | setup_experiment: {executor.env_vars}")
-
             run.run(
                 nemorun_script,
                 executor=executor,
@@ -488,9 +479,6 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
-    print(f"args.custom_env_vars | setup_experiment: {args.custom_env_vars}")
-    print(f"args.use_cudnn_ln | setup_experiment: {args.use_cudnn_ln}")
-
     main(
         use_recipes=args.use_recipes,
         model_family_name=args.model_family_name,
@@ -553,5 +541,4 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
-        use_cudnn_ln=args.use_cudnn_ln,
     )

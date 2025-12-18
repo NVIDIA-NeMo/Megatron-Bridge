@@ -41,8 +41,6 @@ PERF_ENV_VARS = {
     "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
-    "NVTE_NORM_FWD_USE_CUDNN": "1",
-    "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",
 }
