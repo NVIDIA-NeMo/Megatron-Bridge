@@ -73,10 +73,6 @@ def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_param_gather = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
-    # use cuda graph for efficiency
-    cfg.model.enable_cuda_graph = True
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
 def qwen3_vl_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
