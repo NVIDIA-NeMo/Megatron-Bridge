@@ -49,12 +49,11 @@ jobs:
     needs: [build-docs]
     env:
       VERSION: '${{ inputs.version-number }}'
-      DOCSET: 'multi-docset'
     steps:
       - uses: actions/checkout@v6
         with:
           repository: NVIDIA-NeMo/FW-CI-templates
-          ref: v0.67.0
+          ref: ko3n1g/fix/docs-publish
           path: FW-CI-templates
 
       - uses: ./FW-CI-templates/.github/actions/publish-docs
@@ -65,7 +64,6 @@ jobs:
           emails-csv: ${{ inputs.notify-emails }}
           request-name: megatron-bridge-publish-docs-${{ github.run_id }}
           run-on-version-tag-only: false
-          project-type: ${{ env.DOCSET }}
           aws-region: ${{ inputs.aws-region }}
           aws-role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
