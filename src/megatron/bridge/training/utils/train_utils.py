@@ -334,6 +334,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    log_max_attention_logit: Optional[float] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -356,7 +357,7 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
-
+        log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
     """
@@ -530,6 +531,15 @@ def training_log(
             writer.add_scalar("params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({"params-norm": params_norm}, iteration)
+        if log_max_attention_logit is not None:
+            writer.add_scalar("max-attention-logit", log_max_attention_logit, iteration)
+            writer.add_scalar(
+                "max-attention-logit vs samples",
+                log_max_attention_logit,
+                global_state.train_state.consumed_train_samples,
+            )
+            if wandb_writer:
+                wandb_writer.log({"max-attention-logit": log_max_attention_logit}, iteration)
 
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
@@ -623,6 +633,8 @@ def training_log(
             log_string += f" num zeros: {num_zeros_in_grad} |"
         if params_norm is not None:
             log_string += f" params norm: {params_norm:.3f} |"
+        if log_max_attention_logit is not None:
+            log_string += f" max attention logit: {log_max_attention_logit:.3f} |"
         log_string += " number of skipped iterations: {:3d} |".format(total_loss_dict[skipped_iters_key])
         log_string += " number of nan iterations: {:3d} |".format(total_loss_dict[nan_iters_key])
         total_loss_dict[advanced_iters_key] = 0
