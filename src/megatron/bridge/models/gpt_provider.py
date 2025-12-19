@@ -343,6 +343,7 @@ class GPTDistillationProvider(GPTModelProvider):
 
     def __post_init__(self):
         assert getattr(self, "teacher", None) is not None, "Teacher model must be provided."
+
         shared_attrs = [
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
@@ -353,6 +354,10 @@ class GPTDistillationProvider(GPTModelProvider):
         for attr in shared_attrs:
             if getattr(self, attr) != getattr(self.teacher, attr):
                 raise ValueError(f"Student and teacher providers must have the same {attr}.")
+
+        # Logits are overwritten in-place when TE cross-entropy loss is enabled, so switch it back to native version.
+        self.cross_entropy_fusion_impl = "native"
+
         # Hack to dynamically subclass other providers and still use their methods
         self._super_class = self.__class__.__bases__[0]
 
