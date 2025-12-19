@@ -29,38 +29,38 @@ class TestEvaluateCudaGraphSync:
     ):
         """Create a mock GlobalState for testing."""
         mock_state = Mock()
-        
+
         # Model config
         mock_state.cfg.model.cuda_graph_impl = cuda_graph_impl
         mock_state.cfg.model.cuda_graph_scope = cuda_graph_scope if cuda_graph_scope is not None else []
         mock_state.cfg.model.cuda_graph_warmup_steps = cuda_graph_warmup_steps
         mock_state.cfg.model.seq_length = 512
-        
+
         # Train config
         mock_state.cfg.train.global_batch_size = 8
         mock_state.cfg.train.micro_batch_size = 2
         mock_state.cfg.train.eval_iters = eval_iters
         mock_state.cfg.train.exit_duration_in_mins = None
         mock_state.cfg.train.empty_unused_memory_level = 0
-        
+
         # Dataset config
         mock_state.cfg.dataset.dataloader_type = "cyclic"
-        
+
         # Data parallel size
         mock_state.cfg.data_parallel_size = 1
-        
+
         # Timers
         mock_timers = Mock()
         mock_timer_context = Mock()
         mock_timers.return_value = mock_timer_context
         mock_state.timers = mock_timers
-        
+
         # Train state
         mock_state.train_state.consumed_valid_samples = 0
-        
+
         # Start time
         mock_state.start_time = 0
-        
+
         return mock_state
 
     @patch("megatron.bridge.training.eval.get_pg_collection")
@@ -84,25 +84,25 @@ class TestEvaluateCudaGraphSync:
     ):
         """Test that torch.cuda.synchronize is called when cuda_graph_impl is 'local' and 'full_iteration' in scope."""
         from megatron.bridge.training.eval import evaluate
-        
+
         # Setup mocks
         mock_rerun_machine = Mock()
         mock_rerun_machine.get_mode.return_value = Mock()
         mock_get_rerun.return_value = mock_rerun_machine
-        
+
         mock_pg = Mock()
         mock_pg.pp = Mock()
         mock_pg.dp_cp = Mock()
         mock_get_pg.return_value = mock_pg
-        
+
         mock_fwd_bwd = Mock(return_value=[{}])
         mock_get_fwd_bwd_func.return_value = mock_fwd_bwd
-        
+
         mock_wrapper_instance = Mock(return_value=[{}])
         mock_cuda_graph_wrapper.return_value = mock_wrapper_instance
-        
+
         mock_prepare_forward_step.return_value = Mock()
-        
+
         # Create state with CUDA graph config
         state = self._create_mock_state(
             cuda_graph_impl="local",
@@ -110,15 +110,15 @@ class TestEvaluateCudaGraphSync:
             cuda_graph_warmup_steps=0,
             eval_iters=1,
         )
-        
+
         # Create mock model
         mock_model = [Mock()]
         mock_model[0].eval = Mock()
         mock_model[0].train = Mock()
-        
+
         # Create mock config
         mock_config = Mock()
-        
+
         # Call evaluate
         evaluate(
             state=state,
@@ -129,10 +129,10 @@ class TestEvaluateCudaGraphSync:
             config=mock_config,
             verbose=False,
         )
-        
+
         # Verify FullCudaGraphWrapper was used
         mock_cuda_graph_wrapper.assert_called_once()
-        
+
         # Verify cuda synchronize was called
         mock_cuda_sync.assert_called()
 
@@ -157,37 +157,37 @@ class TestEvaluateCudaGraphSync:
     ):
         """Test that torch.cuda.synchronize is NOT called when cuda_graph_impl is not 'local'."""
         from megatron.bridge.training.eval import evaluate
-        
+
         # Setup mocks
         mock_rerun_machine = Mock()
         mock_rerun_machine.get_mode.return_value = Mock()
         mock_get_rerun.return_value = mock_rerun_machine
-        
+
         mock_pg = Mock()
         mock_pg.pp = Mock()
         mock_pg.dp_cp = Mock()
         mock_get_pg.return_value = mock_pg
-        
+
         mock_fwd_bwd = Mock(return_value=[{}])
         mock_get_fwd_bwd_func.return_value = mock_fwd_bwd
-        
+
         mock_prepare_forward_step.return_value = Mock()
-        
+
         # Create state WITHOUT cuda graph enabled
         state = self._create_mock_state(
             cuda_graph_impl="none",
             cuda_graph_scope=["full_iteration"],
             eval_iters=1,
         )
-        
+
         # Create mock model
         mock_model = [Mock()]
         mock_model[0].eval = Mock()
         mock_model[0].train = Mock()
-        
+
         # Create mock config
         mock_config = Mock()
-        
+
         # Call evaluate
         evaluate(
             state=state,
@@ -198,10 +198,10 @@ class TestEvaluateCudaGraphSync:
             config=mock_config,
             verbose=False,
         )
-        
+
         # Verify FullCudaGraphWrapper was NOT used
         mock_cuda_graph_wrapper.assert_not_called()
-        
+
         # Verify cuda synchronize was NOT called
         mock_cuda_sync.assert_not_called()
 
@@ -226,37 +226,37 @@ class TestEvaluateCudaGraphSync:
     ):
         """Test that torch.cuda.synchronize is NOT called when 'full_iteration' is not in scope."""
         from megatron.bridge.training.eval import evaluate
-        
+
         # Setup mocks
         mock_rerun_machine = Mock()
         mock_rerun_machine.get_mode.return_value = Mock()
         mock_get_rerun.return_value = mock_rerun_machine
-        
+
         mock_pg = Mock()
         mock_pg.pp = Mock()
         mock_pg.dp_cp = Mock()
         mock_get_pg.return_value = mock_pg
-        
+
         mock_fwd_bwd = Mock(return_value=[{}])
         mock_get_fwd_bwd_func.return_value = mock_fwd_bwd
-        
+
         mock_prepare_forward_step.return_value = Mock()
-        
+
         # Create state with local impl but NOT full_iteration scope
         state = self._create_mock_state(
             cuda_graph_impl="local",
             cuda_graph_scope=["attn"],  # Not full_iteration
             eval_iters=1,
         )
-        
+
         # Create mock model
         mock_model = [Mock()]
         mock_model[0].eval = Mock()
         mock_model[0].train = Mock()
-        
+
         # Create mock config
         mock_config = Mock()
-        
+
         # Call evaluate
         evaluate(
             state=state,
@@ -267,9 +267,9 @@ class TestEvaluateCudaGraphSync:
             config=mock_config,
             verbose=False,
         )
-        
+
         # Verify FullCudaGraphWrapper was NOT used
         mock_cuda_graph_wrapper.assert_not_called()
-        
+
         # Verify cuda synchronize was NOT called
         mock_cuda_sync.assert_not_called()
