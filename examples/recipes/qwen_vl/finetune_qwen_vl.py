@@ -125,7 +125,13 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         "--config-file",
         type=str,
         default=str(DEFAULT_CONFIG_FILE_PATH),
-        help=f"Path to the YAML OmegaConf override file. Default: conf/{DEFAULT_CONFIG_FILENAME}",
+        help=(
+            "Path to the YAML OmegaConf override file. "
+            "If not specified, automatically selects based on recipe:\n"
+            "  - qwen25_vl_pretrain_override_example.yaml for Qwen2.5-VL models\n"
+            "  - qwen3_vl_pretrain_override_example.yaml for Qwen3-VL dense models\n"
+            "  - qwen3_moe_vl_pretrain_override_example.yaml for Qwen3-VL MoE models"
+        ),
     )
     parser.add_argument(
         "--data-path",
