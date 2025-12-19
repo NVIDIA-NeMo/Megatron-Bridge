@@ -49,7 +49,10 @@ class DummyModel(torch.nn.Module):
         self.base.weight.requires_grad = False
 
         # Trainable adapter parameter whose name contains ".adapter."
-        self.adapter = DummyAdapter()
+        # Use a ModuleDict with key "adapter" so that the full parameter
+        # name includes the expected substring (".adapter.") used by
+        # maybe_enable_recompute_inputs_grad.
+        self.adapter = torch.nn.ModuleDict({"adapter": DummyAdapter()})
 
     def modules(self):
         for module in super().modules():
