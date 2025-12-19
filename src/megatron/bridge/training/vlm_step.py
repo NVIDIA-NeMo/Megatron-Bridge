@@ -260,36 +260,6 @@ def forward_step(
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
-    # DEBUGGING
-    output_str = ""
-    output_str += f"[DEBUG] (VLM Step) forward_args.keys(): {forward_args.keys()}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['input_ids'].shape: {forward_args['input_ids'].shape}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['position_ids'].shape: {forward_args['position_ids'].shape}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['attention_mask'].shape: {forward_args['attention_mask'].shape if forward_args['attention_mask'] is not None else None}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['labels'].shape: {forward_args['labels'].shape}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['pixel_values'].shape: {forward_args['pixel_values'].shape if 'pixel_values' in forward_args else None}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['image_grid_thw'].shape: {forward_args['image_grid_thw'].shape if 'image_grid_thw' in forward_args else None}\n"
-    output_str += f"[DEBUG] (VLM Step) loss_mask.shape: {loss_mask.shape}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['input_ids'][0]: {forward_args['input_ids'][0]}\n"
-    try:
-        from transformers import AutoTokenizer
-        qwen_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", trust_remote_code=True)
-        # If input_ids is a tensor, convert to list
-        qwen_decoded = qwen_tokenizer.decode(forward_args['input_ids'][0].tolist() if hasattr(forward_args['input_ids'][0], "tolist") else forward_args['input_ids'][0], skip_special_tokens=False)
-        output_str += f"[DEBUG] (VLM Step) QwenVL-2.5 Decoded input_ids[0]: {qwen_decoded}\n"
-    except Exception as e:
-        output_str += f"[DEBUG] (VLM Step) QwenVL-2.5 decode failed: {e}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['position_ids'][0]: {forward_args['position_ids'][0]}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['attention_mask'][0]: {forward_args['attention_mask'][0] if forward_args['attention_mask'] is not None else None}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['labels'][0]: {forward_args['labels'][0]}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['pixel_values'][0]: {forward_args['pixel_values'][0] if 'pixel_values' in forward_args else None}\n"
-    output_str += f"[DEBUG] (VLM Step) forward_args['image_grid_thw'][0]: {forward_args['image_grid_thw'][0] if 'image_grid_thw' in forward_args else None}\n"
-    output_str += f"[DEBUG] (VLM Step) loss_mask[0]: {loss_mask[0]}\n"
-    if 'packed_seq_params' in forward_args:
-        output_str += f"[DEBUG] (VLM Step) forward_args['packed_seq_params']: {forward_args['packed_seq_params'].shape}\n"
-    print(output_str)
-    print(stop_here)
-
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
     with straggler_timer:
