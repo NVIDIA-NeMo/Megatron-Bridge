@@ -237,6 +237,20 @@ class DataloaderConfig:
     val_persistent_workers: Optional[bool] = None
     """Whether to keep validation data loading workers persistent. If None, uses persistent_workers."""
 
+    def finalize(self) -> None:
+        """Resolve validation dataloader configuration with fallback to training config."""
+        self.val_num_workers = (
+            self.val_num_workers if self.val_num_workers is not None else self.num_workers
+        )
+        self.val_pin_memory = (
+            self.val_pin_memory if self.val_pin_memory is not None else self.pin_memory
+        )
+        self.val_persistent_workers = (
+            self.val_persistent_workers
+            if self.val_persistent_workers is not None
+            else self.persistent_workers
+        )
+
 @dataclass(frozen=True)
 class DatasetBuildContext:
     """Interface that encapsulates framework internals.
@@ -373,6 +387,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
 
+        # Call DataloaderConfig.finalize() to resolve validation dataloader config
+        DataloaderConfig.finalize(self)
 
 @dataclass
 class MockGPTDatasetConfig(GPTDatasetConfig):
@@ -626,8 +642,14 @@ class TrainingConfig:
     skip_train: bool = False
     """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
 
-    def finalize(self) -> None:
-        """Validate training mode specification and calculate train_iters from train_samples if needed."""
+    def finalize(self, data_parallel_size: Optional[int] = None) -> None:
+        """Validate training mode specification and resolve validation training configuration.
+        
+        Args:
+            data_parallel_size: Data parallel size for calculating validation global batch size.
+                              If None, will attempt to get from get_world_size_safe().
+        """
+        # Validate training mode specification
         has_train_iters = self.train_iters is not None
         has_train_samples = self.train_samples is not None
 
@@ -640,6 +662,22 @@ class TrainingConfig:
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
+
+        # Resolve validation training config with fallbacks
+        self.val_micro_batch_size = (
+            self.val_micro_batch_size
+            if self.val_micro_batch_size is not None
+            else self.micro_batch_size
+        )
+
+        # Calculate val_global_batch_size if not defined
+        if self.val_global_batch_size is None:
+            # Use provided data_parallel_size or fallback to get_world_size_safe
+            if data_parallel_size is not None:
+                data_parallel_degree = data_parallel_size
+            else:
+                data_parallel_degree = get_world_size_safe()
+            self.val_global_batch_size = self.val_micro_batch_size * data_parallel_degree
 
 
 @dataclass(kw_only=True)
@@ -1255,6 +1293,9 @@ class ConfigContainer(Container):
         """
 
         if isinstance(self.dataset, GPTDatasetConfig):
+            self.dataset.finalize()
+        elif isinstance(self.dataset, (FinetuningDatasetConfig, DataloaderConfig)):
+            # FinetuningDatasetConfig and DataloaderConfig also have finalize() for validation config
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
