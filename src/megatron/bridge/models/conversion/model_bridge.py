@@ -1115,8 +1115,8 @@ def register_bridge_implementation(
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
-        # allow bridge to access model config
-        bridge.hf_config = hf_pretrained.config
+        # allow bridge to access model config (config-only shims or raw configs lack .config)
+        bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         return bridge.stream_weights_megatron_to_hf(
             megatron_model,
