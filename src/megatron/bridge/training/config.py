@@ -27,7 +27,7 @@ from megatron.core.tokenizers import MegatronTokenizer
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, MambaProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -241,17 +241,12 @@ class DataloaderConfig:
 
     def finalize(self) -> None:
         """Resolve validation dataloader configuration with fallback to training config."""
-        self.val_num_workers = (
-            self.val_num_workers if self.val_num_workers is not None else self.num_workers
-        )
-        self.val_pin_memory = (
-            self.val_pin_memory if self.val_pin_memory is not None else self.pin_memory
-        )
+        self.val_num_workers = self.val_num_workers if self.val_num_workers is not None else self.num_workers
+        self.val_pin_memory = self.val_pin_memory if self.val_pin_memory is not None else self.pin_memory
         self.val_persistent_workers = (
-            self.val_persistent_workers
-            if self.val_persistent_workers is not None
-            else self.persistent_workers
+            self.val_persistent_workers if self.val_persistent_workers is not None else self.persistent_workers
         )
+
 
 @dataclass(frozen=True)
 class DatasetBuildContext:
@@ -391,6 +386,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
 
         # Call DataloaderConfig.finalize() to resolve validation dataloader config
         DataloaderConfig.finalize(self)
+
 
 @dataclass
 class MockGPTDatasetConfig(GPTDatasetConfig):
@@ -540,6 +536,7 @@ class SchedulerConfig:
                 f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
             )
 
+
 @dataclass(kw_only=True)
 class TrainingConfig:
     """Configuration settings related to the training loop and validation."""
@@ -646,7 +643,7 @@ class TrainingConfig:
 
     def finalize(self, data_parallel_size: Optional[int] = None) -> None:
         """Validate training mode specification and resolve validation training configuration.
-        
+
         Args:
             data_parallel_size: Data parallel size for calculating validation global batch size.
                               If None, will attempt to get from get_world_size_safe().
@@ -667,9 +664,7 @@ class TrainingConfig:
 
         # Resolve validation training config with fallbacks
         self.val_micro_batch_size = (
-            self.val_micro_batch_size
-            if self.val_micro_batch_size is not None
-            else self.micro_batch_size
+            self.val_micro_batch_size if self.val_micro_batch_size is not None else self.micro_batch_size
         )
 
         # Calculate val_global_batch_size if not defined
