@@ -97,12 +97,8 @@ class TestEnergonMultiModalDataModuleFunctional:
         since we don't have a real Energon dataset available in this environment.
         """
         with (
-            patch(
-                "megatron.bridge.data.energon.base_energon_datamodule.get_train_dataset"
-            ) as mock_get_dataset,
-            patch(
-                "megatron.bridge.data.energon.base_energon_datamodule.get_savable_loader"
-            ) as mock_get_loader,
+            patch("megatron.bridge.data.energon.base_energon_datamodule.get_train_dataset") as mock_get_dataset,
+            patch("megatron.bridge.data.energon.base_energon_datamodule.get_savable_loader") as mock_get_loader,
         ):
             # Setup dataset mock
             mock_dataset = MagicMock()
