@@ -21,13 +21,17 @@ else
     export DETERMINISTIC_FLAG="non-deterministic"
 fi
 
+# Determinism is broken with recompute
+# export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=block +model.recompute_num_layers=1"
+RECOMPUTE_ARGS=""
+
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
     --gpu h100 \
     -m llama31 \
     -s 405b \
-    -ng 256 \
+    -ng 512 \
     -gn 8 \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/workdir" \
@@ -43,8 +47,6 @@ python scripts/performance/setup_experiment.py \
     logger.log_memory_to_tensorboard=true \
     logger.throughput_window_size=1 \
     logger.tensorboard_log_interval=1 \
-    +model.recompute_granularity=full \
-    +model.recompute_method=uniform \
-    +model.recompute_num_layers=1 \
+    $RECOMPUTE_ARGS \
     $additional_args
 
