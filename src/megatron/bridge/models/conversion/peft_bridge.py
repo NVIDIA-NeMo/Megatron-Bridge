@@ -388,6 +388,9 @@ class MegatronPeftBridge:
     ) -> Iterable[HFWeightTuple]:
         """Stream only adapter weights without merging them into base tensors."""
 
+        # Local import avoids circular dependency while ensuring runtime access.
+        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
+
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
