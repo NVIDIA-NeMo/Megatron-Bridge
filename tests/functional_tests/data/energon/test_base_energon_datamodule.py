@@ -21,7 +21,7 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 
-from megatron.bridge.data.datasets.energon.base_energon_datamodule import (
+from megatron.bridge.data.energon.base_energon_datamodule import (
     EnergonDataloader,
     EnergonMultiModalDataModule,
 )
@@ -98,10 +98,10 @@ class TestEnergonMultiModalDataModuleFunctional:
         """
         with (
             patch(
-                "megatron.bridge.data.datasets.energon.base_energon_datamodule.get_train_dataset"
+                "megatron.bridge.data.energon.base_energon_datamodule.get_train_dataset"
             ) as mock_get_dataset,
             patch(
-                "megatron.bridge.data.datasets.energon.base_energon_datamodule.get_savable_loader"
+                "megatron.bridge.data.energon.base_energon_datamodule.get_savable_loader"
             ) as mock_get_loader,
         ):
             # Setup dataset mock

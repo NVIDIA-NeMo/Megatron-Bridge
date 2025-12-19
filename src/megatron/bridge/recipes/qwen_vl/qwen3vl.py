@@ -21,7 +21,7 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import (
-    EnergonVLMConversationProvider,
+    EnergonProvider,
     HFDatasetConversationProvider,
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
@@ -286,7 +286,7 @@ def _qwen3_vl_common(
         # matching Preloaded provider behavior.
         image_processor = Qwen2VLImageProcessor.from_pretrained(_processor_model)
 
-        dataset_cfg = EnergonVLMConversationProvider(
+        dataset_cfg = EnergonProvider(
             seq_length=seq_length,
             path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
             micro_batch_size=micro_batch_size,

@@ -243,6 +243,11 @@ def main() -> None:
 
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
+    # check micro_batch_size and global_batch_size value consistency
+    if dataset_type == "energon":
+        assert cfg.train.micro_batch_size == cfg.dataset.micro_batch_size, " value of cfg.dataset.micro_batch_size should be the same as cfg.train.micro_batch_size"
+        assert cfg.train.global_batch_size == cfg.dataset.global_batch_size, "value of cfg.dataset.global_batch_size should be the same as cfg.train.global_batch_size"
+
     if get_rank_safe() == 0:
         logger.info("--- Final Merged Configuration ---")
         cfg.print_yaml()

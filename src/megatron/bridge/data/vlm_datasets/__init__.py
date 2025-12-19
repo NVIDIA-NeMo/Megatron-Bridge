@@ -21,6 +21,7 @@ Public API re-exports:
 - Collate fns: model-specific batch builders
 """
 
+from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.vlm_datasets.collate import (
     COLLATE_FNS,
     default_collate_fn,
@@ -40,7 +41,6 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
 from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
-from megatron.bridge.data.vlm_datasets.vlm_energon_prodvider import EnergonVLMConversationProvider
 
 
 __all__ = [
@@ -56,7 +56,7 @@ __all__ = [
     "HFDatasetConversationProvider",
     "PreloadedVLMConversationProvider",
     "MockVLMConversationProvider",
-    "EnergonVLMConversationProvider",
+    "EnergonProvider",
     # Collation utilities
     "COLLATE_FNS",
     "default_collate_fn",

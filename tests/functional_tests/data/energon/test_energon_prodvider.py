@@ -14,12 +14,12 @@
 
 from unittest.mock import MagicMock, patch
 
+from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.utils import DatasetBuildContext
-from megatron.bridge.data.vlm_datasets.vlm_energon_prodvider import EnergonVLMConversationProvider
 
 
-class TestEnergonVLMConversationProvider:
-    @patch("megatron.bridge.data.vlm_datasets.vlm_energon_prodvider.EnergonMultiModalDataModule")
+class TestEnergonProvider:
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
     def test_init_and_build_datasets(self, mock_datamodule_cls):
         # Setup mock instance
         mock_dataset_instance = MagicMock()
@@ -42,7 +42,6 @@ class TestEnergonVLMConversationProvider:
         # Define params
         params = {
             "path": "test/path",
-            "tokenizer": MagicMock(),
             "image_processor": MagicMock(),
             "seq_length": 2048,
             "micro_batch_size": 1,
@@ -52,7 +51,7 @@ class TestEnergonVLMConversationProvider:
         }
 
         # Instantiate provider
-        provider = EnergonVLMConversationProvider(**params)
+        provider = EnergonProvider(**params)
 
         # Check sequence_length property
         assert provider.seq_length == 2048
@@ -64,7 +63,7 @@ class TestEnergonVLMConversationProvider:
         # Check if EnergonMultiModalDataModule was initialized with correct args
         mock_datamodule_cls.assert_called_once_with(
             path=params["path"],
-            tokenizer=params["tokenizer"],
+            tokenizer=context.tokenizer,
             image_processor=params["image_processor"],
             seq_length=params["seq_length"],
             task_encoder=params["task_encoder"],

@@ -17,16 +17,15 @@ from typing import Any, Optional
 
 from torch import int_repr
 
-from megatron.bridge.data.datasets.energon.base_energon_datamodule import EnergonMultiModalDataModule
+from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
-class EnergonVLMConversationProvider(DatasetProvider):
-    """Energon VLM Conversation Provider."""
+class EnergonProvider(DatasetProvider):
+    """Energon Provider."""
 
     path: str
-    tokenizer: Optional[Any] = None
     image_processor: Optional[Any] = None
     seq_length: int
     micro_batch_size: int
@@ -38,7 +37,7 @@ class EnergonVLMConversationProvider(DatasetProvider):
     def build_datasets(self, context: DatasetBuildContext):
         dataset = EnergonMultiModalDataModule(
             path=self.path,
-            tokenizer=self.tokenizer,
+            tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,
             image_processor=self.image_processor,
             seq_length=self.seq_length,
             task_encoder=self.task_encoder,
