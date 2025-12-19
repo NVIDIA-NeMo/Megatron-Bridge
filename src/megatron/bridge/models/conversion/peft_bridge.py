@@ -169,6 +169,103 @@ class MegatronPeftBridge:
 
         return hf_base_name[: -len(base_suffix)] + hf_suffix
 
+    def _get_base_hf_weight_names_for_adapter(
+        self,
+        mapping_registry: "MegatronMappingRegistry",
+        global_base_prefix: str,
+        adapter_key: Optional[str],
+    ) -> List[str]:
+        """Return all HF base weight names associated with this adapter."""
+
+        base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}.weight")
+        if base_mapping is None:
+            return []
+
+        hf_param = base_mapping.hf_param
+        if isinstance(hf_param, str):
+            return [hf_param]
+
+        values = list(hf_param.values())
+        if adapter_key:
+            adapter_suffix = ADAPTER_KEY_TO_SUFFIX.get(adapter_key)
+            if adapter_suffix:
+                filtered = [value for value in values if value.endswith(adapter_suffix)]
+                if filtered:
+                    return filtered
+        return values
+
+    def _make_lora_param_name(self, base_name: str, megatron_suffix: str) -> Optional[str]:
+        """Translate a base HF weight name into its LoRA-specific counterpart."""
+
+        if not base_name.endswith(".weight"):
+            return None
+
+        hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_suffix)
+        if hf_suffix is None:
+            return None
+
+        return base_name[: -len(".weight")] + hf_suffix
+
+    def _is_fused_qkv(self, hf_weight_names: Iterable[str]) -> bool:
+        """Check whether the provided HF names correspond to a fused QKV weight."""
+
+        names = list(hf_weight_names)
+        if len(names) != 3:
+            return False
+
+        required = {"q_proj", "k_proj", "v_proj"}
+        discovered = {token for name in names for token in required if token in name}
+        return discovered == required
+
+    def _is_fused_fc1_gate_up(
+        self,
+        base_hf_weight_names: Iterable[str],
+        linear_out_tensor: torch.Tensor,
+        base_weight_shape: Optional[torch.Size] = None,
+    ) -> bool:
+        """Detect fused FC1 (gate/up) adapters based on names and tensor shape."""
+
+        names = list(base_hf_weight_names)
+        has_gate_up = (
+            bool(names)
+            and len(names) % 2 == 0
+            and all(("gate_proj" in name or "up_proj" in name) for name in names)
+            and any("gate_proj" in name for name in names)
+            and any("up_proj" in name for name in names)
+        )
+        if not has_gate_up:
+            return False
+
+        if linear_out_tensor.ndim != 2 or linear_out_tensor.shape[0] % 2 != 0:
+            return False
+
+        if base_weight_shape is not None and linear_out_tensor.shape[0] != 2 * base_weight_shape[0]:
+            return False
+
+        return True
+
+    def _infer_qkv_projection_from_name(self, hf_name: str) -> Optional[str]:
+        """Return q_proj/k_proj/v_proj identifier based on the HF name."""
+
+        if "q_proj" in hf_name:
+            return "q_proj"
+        if "k_proj" in hf_name:
+            return "k_proj"
+        if "v_proj" in hf_name:
+            return "v_proj"
+        return None
+
+    def _split_qkv_linear_out_weight(
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        linear_out_weight: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        """Split a fused LoRA linear_out tensor for QKV adapters."""
+
+        model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
+        q_out, k_out, v_out = split_qkv_weights(model.config, linear_out_weight)
+        return {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
+
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> List[tuple[str, str, bool, bool, int, int, int, int]]:
@@ -399,18 +496,55 @@ class MegatronPeftBridge:
         if not adapter_tasks:
             return
 
+        assert hasattr(self, "mapping_registry"), "MegatronModelBridge must define mapping_registry"
+        mapping_registry = self.mapping_registry()  # type: ignore[attr-defined]
+
         for adapter_task in self._with_progress_tracking(adapter_tasks, "Streaming adapter weights", show_progress):
             adapter_weight = self.materialize_adapter_weights([adapter_task])[0]
 
             linear_in_tensor = adapter_weight.linear_in_weight.weight
             linear_out_tensor = adapter_weight.linear_out_weight.weight
-
             if cpu:
                 linear_in_tensor = linear_in_tensor.cpu()
                 linear_out_tensor = linear_out_tensor.cpu()
 
+            base_hf_weight_names = self._get_base_hf_weight_names_for_adapter(
+                mapping_registry,
+                adapter_task.global_base_prefix,
+                adapter_task.adapter_key,
+            )
+            if adapter_task.adapter_key is None and base_hf_weight_names:
+                # Handle fused adapters (e.g., gate/up or q/k/v) by splitting the fused tensor
+                # into per-base slices keyed by the HF weight names.
+                # Example: base_hf_weight_names = ["...gate_proj.weight", "...up_proj.weight"]
+                per_base_linear_out = self._get_fused_adapter_linear_out_slices(
+                    megatron_model,
+                    base_hf_weight_names,
+                    linear_out_tensor,
+                )
+                if per_base_linear_out is not None:
+                    for base_name in base_hf_weight_names:
+                        linear_in_hf_name = self._make_lora_param_name(base_name, ".linear_in.weight")
+                        linear_out_hf_name = self._make_lora_param_name(base_name, ".linear_out.weight")
+                        if linear_in_hf_name is None or linear_out_hf_name is None:
+                            continue
+
+                        current_linear_out = per_base_linear_out.get(base_name)
+                        if current_linear_out is None:
+                            # e.g. unknown projection name for QKV; skip gracefully
+                            continue
+
+                        yield HFWeightTuple(linear_in_hf_name, linear_in_tensor)
+                        yield HFWeightTuple(linear_out_hf_name, current_linear_out)
+                    continue
+
             linear_in_hf_name = adapter_task.linear_in_task.mapping.hf_param
             linear_out_hf_name = adapter_task.linear_out_task.mapping.hf_param
+
+            if not isinstance(linear_in_hf_name, str):
+                linear_in_hf_name = adapter_task.linear_in_task.global_param_name
+            if not isinstance(linear_out_hf_name, str):
+                linear_out_hf_name = adapter_task.linear_out_task.global_param_name
 
             assert isinstance(linear_in_hf_name, str) and isinstance(linear_out_hf_name, str), (
                 "Adapter mappings must resolve to string HF parameter names"
@@ -418,6 +552,44 @@ class MegatronPeftBridge:
 
             yield HFWeightTuple(linear_in_hf_name, linear_in_tensor)
             yield HFWeightTuple(linear_out_hf_name, linear_out_tensor)
+
+    def _get_fused_adapter_linear_out_slices(
+        self,
+        megatron_model: List[MegatronModel],
+        base_hf_weight_names: List[str],
+        linear_out_tensor: torch.Tensor,
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        """Return per-base-name linear_out slices for fused adapters, else None.
+
+        This supports fused QKV adapters (split into q/k/v) and fused FC1 adapters
+        (split into gate/up along dim=0). The returned dict is keyed by the HF
+        base weight name (e.g. `...q_proj.weight` or `...gate_proj.weight`).
+        """
+
+        if self._is_fused_qkv(base_hf_weight_names):
+            qkv_linear_out_weights = self._split_qkv_linear_out_weight(megatron_model, linear_out_tensor)
+            per_base: Dict[str, torch.Tensor] = {}
+            for base_name in base_hf_weight_names:
+                projection_key = self._infer_qkv_projection_from_name(base_name)
+                if projection_key is None:
+                    continue
+                per_base[base_name] = qkv_linear_out_weights[projection_key]
+            return per_base
+
+        is_fused_fc1 = self._is_fused_fc1_gate_up(base_hf_weight_names, linear_out_tensor)
+        if is_fused_fc1:
+            split_size = linear_out_tensor.shape[0] // 2
+            per_base = {}
+            for base_name in base_hf_weight_names:
+                if "gate_proj" in base_name:
+                    per_base[base_name] = linear_out_tensor[:split_size, :]
+                elif "up_proj" in base_name:
+                    per_base[base_name] = linear_out_tensor[split_size:, :]
+                else:
+                    raise ValueError(f"Unknown fused-fc1 base weight name: {base_name}")
+            return per_base
+
+        return None
 
     def _merge_lora_adapter_weights(
         self,
@@ -441,20 +613,11 @@ class MegatronPeftBridge:
 
         base_weight_shape = next(iter(converted_weights_dict.values())).shape
         weight_names = converted_weights_dict.keys()
-        is_fused_fc1 = (
-            len(weight_names) % 2 == 0
-            and all("gate_proj" in name or "up_proj" in name for name in weight_names)
-            and linear_out_weight.shape[0] == 2 * base_weight_shape[0]
+        is_fused_fc1 = self._is_fused_fc1_gate_up(weight_names, linear_out_weight, base_weight_shape)
+        is_fused_qkv = self._is_fused_qkv(weight_names)
+        qkv_linear_out_weights = (
+            self._split_qkv_linear_out_weight(megatron_model, linear_out_weight) if is_fused_qkv else None
         )
-        is_fused_qkv = len(weight_names) == 3 and all(
-            "q_proj" in name or "k_proj" in name or "v_proj" in name for name in weight_names
-        )
-
-        if is_fused_qkv:
-            q_out, k_out, v_out = split_qkv_weights(megatron_model[0].config, linear_out_weight)
-            qkv_linear_out_weights = {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
-        else:
-            qkv_linear_out_weights = None
 
         for hf_name, base_weight in list(converted_weights_dict.items()):
             current_linear_out_weight = linear_out_weight
@@ -467,14 +630,10 @@ class MegatronPeftBridge:
                 else:
                     raise ValueError(f"Unknown weight name: {hf_name}")
             elif is_fused_qkv and qkv_linear_out_weights is not None:
-                if "q_proj" in hf_name:
-                    current_linear_out_weight = qkv_linear_out_weights["q_proj"]
-                elif "k_proj" in hf_name:
-                    current_linear_out_weight = qkv_linear_out_weights["k_proj"]
-                elif "v_proj" in hf_name:
-                    current_linear_out_weight = qkv_linear_out_weights["v_proj"]
-                else:
+                projection_key = self._infer_qkv_projection_from_name(hf_name)
+                if projection_key is None:
                     raise ValueError(f"Unknown weight name: {hf_name}")
+                current_linear_out_weight = qkv_linear_out_weights[projection_key]
 
             merged_weight = self._merge_single_adapter_weight(
                 base_weight, alpha, dim, linear_in_weight, current_linear_out_weight
@@ -495,10 +654,16 @@ class MegatronPeftBridge:
 
         merger = LoRAMerge()
         base_device = base_weight.device
+        linear_out_on_base = (
+            linear_out_weight if linear_out_weight.device == base_device else linear_out_weight.to(base_device)
+        )
+        linear_in_on_base = (
+            linear_in_weight if linear_in_weight.device == base_device else linear_in_weight.to(base_device)
+        )
         return merger.merge(
             base_weight,
-            linear_out_weight.to(base_device),
-            linear_in_weight.to(base_device),
+            linear_out_on_base,
+            linear_in_on_base,
             alpha,
             dim,
         )
