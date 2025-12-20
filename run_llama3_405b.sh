@@ -17,7 +17,7 @@ if [ "$DETERMINISTIC" = true ]; then
     export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local comm_overlap.tp_comm_overlap=false"
     export DETERMINISTIC_FLAG="deterministic"
 else
-    export additional_args=""
+    export additional_args="comm_overlap.tp_comm_overlap=false"
     export DETERMINISTIC_FLAG="non-deterministic"
 fi
 
