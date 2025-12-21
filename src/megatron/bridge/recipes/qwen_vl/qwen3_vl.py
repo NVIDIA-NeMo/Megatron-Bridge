@@ -210,6 +210,8 @@ def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 8,
         "pipeline_dtype": torch.bfloat16,
+        "account_for_embedding_in_pipeline_split": True,
+        "account_for_loss_in_pipeline_split": True,
         "expert_model_parallel_size": 8,
         "freeze_language_model": True,
         "freeze_vision_model": True,
@@ -221,6 +223,7 @@ def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs
         "global_batch_size": 32,
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    print(f"for debug, combined_kwargs: {combined_kwargs}")
     return _qwen3_vl_common(**combined_kwargs)
 
 
