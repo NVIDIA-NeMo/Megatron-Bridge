@@ -26,7 +26,6 @@ from megatron.core.transformer.heterogeneous.heterogeneous_config import (
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 
-
 @dataclass
 class TransformerConfig(MCoreTransformerConfig):
     """Megatron Core TransformerConfig with deferred post-init.
