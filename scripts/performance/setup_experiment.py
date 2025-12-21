@@ -327,7 +327,7 @@ def main(
             )
         )
 
-    if use_recipes:
+    if use_recipes and dgxc_cluster is not None:
         plugins.append(
             FaultTolerancePlugin(
                 enable_ft_package=True,
