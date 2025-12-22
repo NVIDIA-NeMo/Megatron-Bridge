@@ -63,6 +63,7 @@ def slurm_executor(
     wandb_key: str = None,
     network: str = None,
     custom_bash_cmds: List[str] = None,
+    work_dir: str = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -112,6 +113,10 @@ def slurm_executor(
     numa_divisor = 2 if gpu.lower() == "gb200" else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
+    
+    # Add cd command if work_dir is specified
+    if work_dir is not None:
+        custom_bash_cmds.insert(0, f"cd {work_dir}")
 
     launcher = SlurmTemplate(
         template_inline=INLINE_TEMPLATE,

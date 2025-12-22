@@ -410,6 +410,13 @@ def parse_cli_args():
         action="store_false",
         dest="detach",
     )
+    parser.add_argument(
+        "--work_dir",
+        type=str,
+        help="Initial working directory for the job. Defaults to None (uses nemo-run default)",
+        required=False,
+        default=None,
+    )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides

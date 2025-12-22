@@ -1,4 +1,8 @@
 #!/bin/bash
+# Usage:
+#   Normal run: ./run_llama3_405b_fp8.sh
+#   Deterministic mode: DETERMINISTIC=true ./run_llama3_405b_fp8.sh
+#   Deterministic with Flash Attention: DETERMINISTIC=true DETERMINISTIC_FLASH=true ./run_llama3_405b_fp8.sh
 set -euo pipefail
 source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
 
@@ -9,13 +13,19 @@ PARTITION="batch"
 WORKDIR=$(pwd)
 
 export DETERMINISTIC=${DETERMINISTIC:-false}
+export DETERMINISTIC_FLASH=${DETERMINISTIC_FLASH:-false}  # Allow Flash Attention in deterministic mode
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local comm_overlap.tp_comm_overlap=false"
-    export DETERMINISTIC_FLAG="deterministic"
+    if [ "$DETERMINISTIC_FLASH" = true ]; then
+        export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=flash comm_overlap.tp_comm_overlap=false"
+        export DETERMINISTIC_FLAG="deterministic-flash"
+    else
+        export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local comm_overlap.tp_comm_overlap=false"
+        export DETERMINISTIC_FLAG="deterministic"
+    fi
 else
     export additional_args=""
     export DETERMINISTIC_FLAG="non-deterministic"
@@ -38,7 +48,7 @@ python scripts/performance/setup_experiment.py \
     -gn 8 \
     -c fp8_cs \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/workdir" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \

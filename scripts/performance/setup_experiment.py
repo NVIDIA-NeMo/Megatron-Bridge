@@ -187,5 +187,6 @@ if __name__ == "__main__":
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
+            work_dir=args.work_dir,
         ),
     )
