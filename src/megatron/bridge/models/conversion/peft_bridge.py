@@ -17,6 +17,7 @@ from __future__ import annotations
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
+from string import digits
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Union
 
 import torch
@@ -37,7 +38,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.peft.canonical_lora import ModuleDict
 from megatron.bridge.peft.lora import LoRAMerge
-from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
+from megatron.bridge.peft.utils import get_adapter_attributes_from_linear, is_expert_linear
 
 
 if TYPE_CHECKING:
@@ -104,9 +105,9 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
                     if value.endswith(target_suffix):
                         return value
 
-        if len(hf_param) == 1:
-            value = next(iter(hf_param.values()))
-            return value if value.endswith(expected_suffix) else None
+        # For fused qkv/gate_up case, we just need a placeholder here
+        value = next(iter(hf_param.values()))
+        return value if value.endswith(expected_suffix) else None
 
     return None
 
@@ -141,6 +142,7 @@ class MegatronPeftBridge:
         mapping_registry: "MegatronMappingRegistry",
         global_base_prefix: str,
         megatron_suffix: str,
+        base_suffix: str,
         adapter_key: Optional[str],
     ) -> Optional[str]:
         """
@@ -157,12 +159,13 @@ class MegatronPeftBridge:
             f"Unsupported adapter suffix '{megatron_suffix}'. Update MEGATRON_TO_HF_LORA_SUFFIX."
         )
 
-        base_suffix = ".weight"
         base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
         assert base_mapping is not None, (
             f"Expected mapping for adapter base '{global_base_prefix}{base_suffix}' but none found"
         )
 
+        # Strip expert layers numbering
+        base_suffix = base_suffix.rstrip(digits)
         hf_base_name = _select_hf_base_param_name(base_mapping, adapter_key, base_suffix)
         if hf_base_name is None or not hf_base_name.endswith(base_suffix):
             return None
@@ -174,10 +177,11 @@ class MegatronPeftBridge:
         mapping_registry: "MegatronMappingRegistry",
         global_base_prefix: str,
         adapter_key: Optional[str],
+        base_suffix: str,
     ) -> List[str]:
         """Return all HF base weight names associated with this adapter."""
 
-        base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}.weight")
+        base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
         if base_mapping is None:
             return []
 
@@ -374,11 +378,16 @@ class MegatronPeftBridge:
             )
             local_linear_in_name, local_linear_out_name = global_linear_in_name, global_linear_out_name
 
+            base_suffix = ".weight"
+            if is_expert_linear(global_base_prefix):
+                # To get expert layer hf mapping properly
+                base_suffix = ".weight0"
+
             hf_linear_in_name = self._resolve_hf_adapter_param_name(
-                mapping_registry, global_base_prefix, ".linear_in.weight", adapter_key
+                mapping_registry, global_base_prefix, ".linear_in.weight", base_suffix, adapter_key
             )
             hf_linear_out_name = self._resolve_hf_adapter_param_name(
-                mapping_registry, global_base_prefix, ".linear_out.weight", adapter_key
+                mapping_registry, global_base_prefix, ".linear_out.weight", base_suffix, adapter_key
             )
 
             linear_in_module = linear_in_weight = None
@@ -405,7 +414,7 @@ class MegatronPeftBridge:
                 global_param_name=global_linear_in_name,
                 mapping=linear_in_mapping_cls(
                     megatron_param=local_linear_in_name,
-                    hf_param=hf_linear_in_name or global_linear_in_name,
+                    hf_param=hf_linear_in_name,
                 ),
                 pp_rank=pp_rank,
                 vp_stage=vp_stage,
@@ -418,7 +427,7 @@ class MegatronPeftBridge:
                 global_param_name=global_linear_out_name,
                 mapping=linear_out_mapping_cls(
                     megatron_param=local_linear_out_name,
-                    hf_param=hf_linear_out_name or global_linear_out_name,
+                    hf_param=hf_linear_out_name,
                 ),
                 pp_rank=pp_rank,
                 vp_stage=vp_stage,
@@ -491,6 +500,7 @@ class MegatronPeftBridge:
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        num_moe_experts = megatron_model[0].config.num_moe_experts
         adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
         adapter_tasks = list(itertools.chain.from_iterable(adapter_tasks_by_base.values()))
         if not adapter_tasks:
@@ -508,50 +518,42 @@ class MegatronPeftBridge:
                 linear_in_tensor = linear_in_tensor.cpu()
                 linear_out_tensor = linear_out_tensor.cpu()
 
-            base_hf_weight_names = self._get_base_hf_weight_names_for_adapter(
-                mapping_registry,
-                adapter_task.global_base_prefix,
-                adapter_task.adapter_key,
-            )
-            if adapter_task.adapter_key is None and base_hf_weight_names:
-                # Handle fused adapters (e.g., gate/up or q/k/v) by splitting the fused tensor
-                # into per-base slices keyed by the HF weight names.
-                # Example: base_hf_weight_names = ["...gate_proj.weight", "...up_proj.weight"]
-                per_base_linear_out = self._get_fused_adapter_linear_out_slices(
-                    megatron_model,
-                    base_hf_weight_names,
-                    linear_out_tensor,
+            base_suffixes = [".weight"]
+            if is_expert_linear(adapter_task.global_base_prefix):
+                base_suffixes = [f".weight{expert_num}" for expert_num in range(num_moe_experts)]
+
+            for base_suffix in base_suffixes:
+                base_hf_weight_names = self._get_base_hf_weight_names_for_adapter(
+                    mapping_registry,
+                    adapter_task.global_base_prefix,
+                    adapter_task.adapter_key,
+                    base_suffix,
                 )
-                if per_base_linear_out is not None:
-                    for base_name in base_hf_weight_names:
-                        linear_in_hf_name = self._make_lora_param_name(base_name, ".linear_in.weight")
-                        linear_out_hf_name = self._make_lora_param_name(base_name, ".linear_out.weight")
-                        if linear_in_hf_name is None or linear_out_hf_name is None:
-                            continue
+                linear_in_hf_names = []
+                linear_out_hf_names = []
+                for base_name in base_hf_weight_names:
+                    linear_in_hf_names.append(self._make_lora_param_name(base_name, ".linear_in.weight"))
+                    linear_out_hf_names.append(self._make_lora_param_name(base_name, ".linear_out.weight"))
+                if adapter_task.adapter_key is None:
+                    # Handle fused adapters (e.g., gate/up or q/k/v) by splitting the fused tensor
+                    # into per-base slices keyed by the HF weight names.
+                    # Example: base_hf_weight_names = ["...gate_proj.weight", "...up_proj.weight"]
+                    per_base_linear_out = self._get_fused_adapter_linear_out_slices(
+                        megatron_model,
+                        base_hf_weight_names,
+                        linear_out_tensor,
+                    )
+                    if per_base_linear_out is not None:
+                        for index, base_name in enumerate(base_hf_weight_names):
+                            current_linear_out = per_base_linear_out.get(base_name)
+                            assert current_linear_out is not None, "unknown projection name"
 
-                        current_linear_out = per_base_linear_out.get(base_name)
-                        if current_linear_out is None:
-                            # e.g. unknown projection name for QKV; skip gracefully
-                            continue
+                            yield HFWeightTuple(linear_in_hf_names[index], linear_in_tensor)
+                            yield HFWeightTuple(linear_out_hf_names[index], current_linear_out)
+                        continue
 
-                        yield HFWeightTuple(linear_in_hf_name, linear_in_tensor)
-                        yield HFWeightTuple(linear_out_hf_name, current_linear_out)
-                    continue
-
-            linear_in_hf_name = adapter_task.linear_in_task.mapping.hf_param
-            linear_out_hf_name = adapter_task.linear_out_task.mapping.hf_param
-
-            if not isinstance(linear_in_hf_name, str):
-                linear_in_hf_name = adapter_task.linear_in_task.global_param_name
-            if not isinstance(linear_out_hf_name, str):
-                linear_out_hf_name = adapter_task.linear_out_task.global_param_name
-
-            assert isinstance(linear_in_hf_name, str) and isinstance(linear_out_hf_name, str), (
-                "Adapter mappings must resolve to string HF parameter names"
-            )
-
-            yield HFWeightTuple(linear_in_hf_name, linear_in_tensor)
-            yield HFWeightTuple(linear_out_hf_name, linear_out_tensor)
+                yield HFWeightTuple(linear_in_hf_names[0], linear_in_tensor)
+                yield HFWeightTuple(linear_out_hf_names[0], linear_out_tensor)
 
     def _get_fused_adapter_linear_out_slices(
         self,
