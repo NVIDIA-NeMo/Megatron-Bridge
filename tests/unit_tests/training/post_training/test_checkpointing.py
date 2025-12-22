@@ -23,7 +23,6 @@ from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAM
 
 from megatron.bridge.training.post_training.checkpointing import (
     _get_modelopt_checkpoint_path,
-    _has_only_kd_state,
     has_modelopt_state,
     load_modelopt_state,
 )
@@ -36,6 +35,13 @@ def mock_model_fixtures():
     mock_model_instance.sharded_state_dict.return_value = {"weight": torch.randn(10, 10), "bias": torch.randn(10)}
     mock_model_instance.load_state_dict.return_value = None
     return [mock_model_instance]
+
+
+def _write_modelopt_common_state(modelopt_state_dir: Path, states):
+    """Helper to write a common_state file with the given modelopt states."""
+    common_state_file = modelopt_state_dir / COMMON_STATE_FNAME
+    torch.save({"modelopt_state_dict": states}, common_state_file)
+    return common_state_file
 
 
 class TestGetModeloptCheckpointPath:
@@ -284,6 +290,8 @@ class TestPostTrainingCheckpointUtilities:
                 modelopt_state_path = checkpoint_dir / "modelopt_state"
                 modelopt_state_path.mkdir()
 
+                _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 1})])
+
                 result = has_modelopt_state(str(checkpoint_dir))
                 assert result == expected
         else:
@@ -309,10 +317,12 @@ class TestPostTrainingCheckpointUtilities:
             result = has_modelopt_state(str(checkpoint_path))
             assert result is False
 
+    @patch("megatron.bridge.training.post_training.checkpointing.torch.load")
     @patch("megatron.bridge.training.post_training.checkpointing.os.path.isdir")
-    def test_has_modelopt_state_with_mock(self, mock_isdir):
-        """Test has_modelopt_state with mocked os.path.isdir."""
+    def test_has_modelopt_state_with_mock(self, mock_isdir, mock_torch_load):
+        """Test has_modelopt_state with mocked os.path.isdir and torch.load."""
         mock_isdir.return_value = True
+        mock_torch_load.return_value = {"modelopt_state_dict": [("quantization", {"foo": "bar"})]}
 
         result = has_modelopt_state("/fake/checkpoint/path")
         assert result is True
@@ -333,85 +343,37 @@ class TestPostTrainingCheckpointUtilities:
         result = has_modelopt_state("")
         assert result is False
 
-    def test_has_only_kd_state_returns_true(self):
-        """Test _has_only_kd_state when modelopt_state contains only kd_loss state."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            modelopt_state_path = Path(temp_dir)
-            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
-
-            # Create modelopt_state_dict with only kd_loss
-            modelopt_state = {"modelopt_state_dict": [("kd_loss", {"some": "data"})]}
-            torch.save(modelopt_state, common_state_file)
-
-            result = _has_only_kd_state(str(modelopt_state_path))
-            assert result is True
-
-    def test_has_only_kd_state_returns_false_multiple_states(self):
-        """Test _has_only_kd_state when modelopt_state contains multiple states."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            modelopt_state_path = Path(temp_dir)
-            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
-
-            # Create modelopt_state_dict with multiple states including kd_loss
-            modelopt_state = {
-                "modelopt_state_dict": [
-                    ("kd_loss", {"some": "data"}),
-                    ("quantization", {"other": "data"}),
-                ]
-            }
-            torch.save(modelopt_state, common_state_file)
-
-            result = _has_only_kd_state(str(modelopt_state_path))
-            assert result is False
-
-    def test_has_only_kd_state_returns_false_different_state(self):
-        """Test _has_only_kd_state when modelopt_state contains a single state that is not kd_loss."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            modelopt_state_path = Path(temp_dir)
-            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
-
-            # Create modelopt_state_dict with only quantization state (not kd_loss)
-            modelopt_state = {"modelopt_state_dict": [("quantization", {"some": "data"})]}
-            torch.save(modelopt_state, common_state_file)
-
-            result = _has_only_kd_state(str(modelopt_state_path))
-            assert result is False
-
-    def test_has_modelopt_state_with_ignore_kd_state_true_only_kd(self):
-        """Test has_modelopt_state with ignore_kd_state=True when only kd_loss state exists."""
+    def test_has_modelopt_state_returns_false_for_only_kd_loss(self):
+        """Test has_modelopt_state ignores a sole kd_loss entry."""
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = Path(temp_dir)
             modelopt_state_path = checkpoint_path / "modelopt_state"
             modelopt_state_path.mkdir()
-            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
 
-            # Create modelopt_state_dict with only kd_loss
-            modelopt_state = {"modelopt_state_dict": [("kd_loss", {"some": "data"})]}
-            torch.save(modelopt_state, common_state_file)
+            _write_modelopt_common_state(
+                modelopt_state_path,
+                [("kd_loss", {"some": "data"})],
+            )
 
-            # When ignore_kd_state=True and only kd_loss exists, should return False
-            result = has_modelopt_state(str(checkpoint_path), ignore_kd_state=True)
+            result = has_modelopt_state(str(checkpoint_path))
             assert result is False
 
-    def test_has_modelopt_state_with_ignore_kd_state_true_multiple_states(self):
-        """Test has_modelopt_state with ignore_kd_state=True when multiple states exist."""
+    def test_has_modelopt_state_returns_true_with_other_states(self):
+        """Test has_modelopt_state stays true when kd_loss is accompanied by other modes."""
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = Path(temp_dir)
             modelopt_state_path = checkpoint_path / "modelopt_state"
             modelopt_state_path.mkdir()
-            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
 
-            # Create modelopt_state_dict with multiple states
-            modelopt_state = {
-                "modelopt_state_dict": [
+            _write_modelopt_common_state(
+                modelopt_state_path,
+                [
                     ("kd_loss", {"some": "data"}),
                     ("quantization", {"other": "data"}),
-                ]
-            }
-            torch.save(modelopt_state, common_state_file)
+                ],
+            )
 
-            # When ignore_kd_state=True and multiple states exist, should return True
-            result = has_modelopt_state(str(checkpoint_path), ignore_kd_state=True)
+            result = has_modelopt_state(str(checkpoint_path))
             assert result is True
 
     def test_has_modelopt_state_with_iter_folders(self):
@@ -422,6 +384,7 @@ class TestPostTrainingCheckpointUtilities:
             iter_folder.mkdir()
             modelopt_state_path = iter_folder / "modelopt_state"
             modelopt_state_path.mkdir()
+            _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 1})])
 
             # Mock the dist_checkpointing.load_common_state_dict
             with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
@@ -458,6 +421,7 @@ class TestPostTrainingCheckpointUtilities:
             # Only create modelopt_state in the iter_200 folder (the latest)
             modelopt_state_path = iter_folder_200 / "modelopt_state"
             modelopt_state_path.mkdir()
+            _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 2})])
 
             # Mock the dist_checkpointing.load_common_state_dict
             with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
@@ -608,6 +572,7 @@ class TestPostTrainingIntegration:
             checkpoint_path = Path(temp_dir)
             modelopt_state_path = checkpoint_path / "modelopt_state"
             modelopt_state_path.mkdir()
+            _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 4})])
 
             # Check that modelopt_state exists
             assert has_modelopt_state(str(checkpoint_path)) is True
