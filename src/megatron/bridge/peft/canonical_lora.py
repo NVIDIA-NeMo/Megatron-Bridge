@@ -226,7 +226,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
                 get_adapter_attributes_from_linear(m, is_expert=is_expert)
             )
 
@@ -244,6 +244,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert,
+                disable_tensor_parallel_comm=disable_tp_comm,
                 disable_sequence_parallel_comm=disable_sp_comm,
                 base_linear_is_parallel=base_linear_is_parallel,
             )
