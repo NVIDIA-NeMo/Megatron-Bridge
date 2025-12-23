@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.walk_utils import walk
 
 
@@ -93,6 +94,9 @@ class PEFT(ABC):
         Returns:
             The same type as the input model, transformed with PEFT applied.
         """
+        if isinstance(self, ModuleMatcher):
+            self._reset_target_match_state()
+
         self.freeze_model(model, training=training)
 
         if isinstance(model, list) and len(model) > 1:
@@ -116,6 +120,9 @@ class PEFT(ABC):
                 model_chunk.train(mode=training)
         else:
             model.train(mode=training)
+
+        if isinstance(self, ModuleMatcher):
+            self._validate_target_matches()
 
         return model
 

@@ -101,6 +101,14 @@ class TestLoRA:
         assert custom_lora.dropout_position == "post"
         assert custom_lora.lora_A_init_method == "uniform"
 
+    def test_lora_raises_when_target_missing(self):
+        """Ensure LoRA alerts when configured modules are not present in the model."""
+        model = SimpleModel()
+        lora = LoRA(target_modules=["linear_fc1_typo"])
+
+        with pytest.raises(ValueError, match="linear_fc1_typo"):
+            lora(model, training=True)
+
     def test_lora_transform_simple_model(self):
         """Test LoRA transformation on a simple model."""
         model = SimpleModel()
