@@ -64,14 +64,10 @@ def set_glm_45v_pipeline_model_parallel_layout(
     # Layout maps for common PP/VP combinations
     layout_map = {
         (1, 1): None,
-        # PP=2: 23 + 23 = 46 layers
         (2, 1): [["embedding"] + ["decoder"] * 23, ["decoder"] * 23 + last_layer],
-        # PP=4: 11 + 12 + 12 + 11 = 46 layers
         (4, 1): [["embedding"] + ["decoder"] * 11, ["decoder"] * 12, ["decoder"] * 12, ["decoder"] * 11 + last_layer],
-        # PP=8: 5 + 6*6 + 5 = 46 layers
         (8, 1): [["embedding"] + ["decoder"] * 5] + [["decoder"] * 6] * 6 + [["decoder"] * 5 + last_layer],
-        # PP=16: 2 + 3*14 + 2 = 46 layers
-        (16, 1): [["embedding"] + ["decoder"] * 3] + [["decoder"] * 3] * 14 + [["decoder"] * 1 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 2] + [["decoder"] * 3] * 14 + [["decoder"] * 2 + last_layer],
     }
 
     if layout is not None:
@@ -137,9 +133,9 @@ class GLM45VCommonKwargs(TypedDict, total=False):
 def glm_45v_finetune_config(**user_kwargs: Unpack[GLM45VCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for GLM-4.5V (based on GLM-4.5 Air 106B).
 
-    Default configuration: 2 nodes, 16 GPUs total
-    - LoRA/DoRA: TP=1, PP=2, EP=4 (8 GPUs, 1 node), LR=1e-4
-    - Full SFT: TP=1, PP=2, EP=16 (32 GPUs, 4 nodes), LR=5e-6
+    Default configuration: 4 nodes, 32 GPUs total
+    - LoRA/DoRA: TP=1, PP=8, EP=4 (32 GPUs, 4 nodes), LR=1e-4
+    - Full SFT: TP=1, PP=8, EP=16 (128 GPUs, 16 nodes), LR=5e-6
 
     GLM-4.5V is a Vision-Language model with:
     - 106B total parameters (based on GLM-4.5 Air)
@@ -255,12 +251,13 @@ def _glm_45v_common(
     model_cfg.num_layers_in_last_pipeline_stage = None
 
     # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
+    # Ensure min_lr does not exceed max_lr (use 10% of effective_lr as default min)
     effective_lr = finetune_lr if finetune_lr is not None else lr
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
         max_lr=effective_lr,
-        min_lr=min_lr,
+        min_lr=min(min_lr, effective_lr * 0.1),
     )
 
     # PEFT config
