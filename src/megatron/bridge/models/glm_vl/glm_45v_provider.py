@@ -19,7 +19,9 @@ from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from transformers.models.glm4v.configuration_glm4v import Glm4vVisionConfig
 
 from megatron.bridge.models import GLM45AirModelProvider106B
+
 from .modeling_glm_45v import GLM45VModel
+
 
 @dataclass
 class GLM45VModelProvider(GLM45AirModelProvider106B):
@@ -43,7 +45,7 @@ class GLM45VModelProvider(GLM45AirModelProvider106B):
     image_end_token_id: int = 151340
     video_start_token_id: int = 151341
     video_end_token_id: int = 151342
-    image_token_id: int = 151363 
+    image_token_id: int = 151363
     video_token_id: int = 151364
 
     # Freeze options

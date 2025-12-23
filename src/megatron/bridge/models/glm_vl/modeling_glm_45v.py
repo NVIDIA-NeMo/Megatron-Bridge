@@ -24,15 +24,18 @@ Reference: https://huggingface.co/zai-org/GLM-4.5V
 
 import types
 from typing import Optional
-import transformers
+
 import torch
-from megatron.core.transformer.module import MegatronModule
-from torch import Tensor
+import transformers
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
+from megatron.core.transformer.module import MegatronModule
+from packaging.version import Version as PkgVersion
+from torch import Tensor
+from transformers.models.glm4v.modeling_glm4v import Glm4vModel
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-from packaging.version import Version as PkgVersion
-from transformers.models.glm4v.modeling_glm4v import Glm4vModel
+
 
 def is_transformers_min_version(version):
     """Check if minimum version of transformers is installed."""
@@ -42,6 +45,7 @@ def is_transformers_min_version(version):
     except Exception:
         # If version parsing fails, assume false for safety
         return False
+
 
 class GLM45VModel(MegatronModule):
     """
@@ -138,7 +142,6 @@ class GLM45VModel(MegatronModule):
         # Some config requires from HF vision tower
         self.config.spatial_merge_size = getattr(self.config.vision_config, "spatial_merge_size", 2)
 
-
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
         self.language_model.set_input_tensor(input_tensor)
@@ -206,7 +209,7 @@ class GLM45VModel(MegatronModule):
 
             # Transpose back to Megatron format [seq_len, batch, hidden]
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
-            
+
             if self.config.sequence_parallel:
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 

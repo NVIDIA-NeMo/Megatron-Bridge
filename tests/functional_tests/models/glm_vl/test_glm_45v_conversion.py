@@ -23,80 +23,67 @@ import torch
 # GLM-4.5V toy model configuration based on GLM-4.5 Air structure
 # This is a minimized version for testing purposes
 HF_GLM_45V_TOY_MODEL_CONFIG = {
-    "architectures": [
-    "Glm4vMoeForConditionalGeneration"
-  ],
-  "model_type": "glm4v_moe",
-  "image_start_token_id": 151339,
-  "image_end_token_id": 151340,
-  "video_start_token_id": 151341,
-  "video_end_token_id": 151342,
-  "image_token_id": 151363,
-  "video_token_id": 151364,
-  "tie_word_embeddings": False,
-  "transformers_version": "4.57.1",
-  "text_config": {
-    "model_type": "glm4v_moe_text",
-    "pad_token_id": 151329,
-    "vocab_size": 151552,
-    "eos_token_id": [
-      151329,
-      151336,
-      151338
-    ],
-    "head_dim": 128,
-    "attention_bias": True,
-    "attention_dropout": 0.0,
-    "first_k_dense_replace": 1,
-    "hidden_act": "silu",
-    "hidden_size": 512,
-    "initializer_range": 0.02,
-    "intermediate_size": 1024,
-    "max_position_embeddings": 65536,
-    "moe_intermediate_size": 128,
-    "n_group": 1,
-    "n_routed_experts": 8,
-    "n_shared_experts": 1,
-    "norm_topk_prob": True,
-    "num_attention_heads":16,
-    "num_experts_per_tok": 4,
-    "num_hidden_layers": 4,
-    "num_key_value_heads": 8,
-    "partial_rotary_factor": 0.5,
-    "rms_norm_eps": 1e-05,
-    "dtype": "bfloat16",
-    "rope_scaling": {
-      "rope_type": "default",
-      "mrope_section": [
-        8,
-        12,
-        12
-      ]
-    },
-    "rope_theta": 10000.0,
-    "routed_scaling_factor": 1.0,
-    "topk_group": 1,
-    "use_cache": True,
-    "use_qk_norm": False
-  },
-  "vision_config": {
+    "architectures": ["Glm4vMoeForConditionalGeneration"],
     "model_type": "glm4v_moe",
-    "attention_bias": False,
-    "attention_dropout": 0.0,
-    "depth": 2,
-    "hidden_act": "silu",
-    "hidden_size": 256,
-    "image_size": 336,
-    "in_channels": 3,
-    "initializer_range": 0.02,
-    "intermediate_size": 10944,
-    "num_heads": 2,
-    "out_hidden_size": 128,
-    "patch_size": 14,
-    "rms_norm_eps": 1e-05,
-    "spatial_merge_size": 2,
-    "temporal_patch_size": 2
-  }
+    "image_start_token_id": 151339,
+    "image_end_token_id": 151340,
+    "video_start_token_id": 151341,
+    "video_end_token_id": 151342,
+    "image_token_id": 151363,
+    "video_token_id": 151364,
+    "tie_word_embeddings": False,
+    "transformers_version": "4.57.1",
+    "text_config": {
+        "model_type": "glm4v_moe_text",
+        "pad_token_id": 151329,
+        "vocab_size": 151552,
+        "eos_token_id": [151329, 151336, 151338],
+        "head_dim": 128,
+        "attention_bias": True,
+        "attention_dropout": 0.0,
+        "first_k_dense_replace": 1,
+        "hidden_act": "silu",
+        "hidden_size": 512,
+        "initializer_range": 0.02,
+        "intermediate_size": 1024,
+        "max_position_embeddings": 65536,
+        "moe_intermediate_size": 128,
+        "n_group": 1,
+        "n_routed_experts": 8,
+        "n_shared_experts": 1,
+        "norm_topk_prob": True,
+        "num_attention_heads": 16,
+        "num_experts_per_tok": 4,
+        "num_hidden_layers": 4,
+        "num_key_value_heads": 8,
+        "partial_rotary_factor": 0.5,
+        "rms_norm_eps": 1e-05,
+        "dtype": "bfloat16",
+        "rope_scaling": {"rope_type": "default", "mrope_section": [8, 12, 12]},
+        "rope_theta": 10000.0,
+        "routed_scaling_factor": 1.0,
+        "topk_group": 1,
+        "use_cache": True,
+        "use_qk_norm": False,
+    },
+    "vision_config": {
+        "model_type": "glm4v_moe",
+        "attention_bias": False,
+        "attention_dropout": 0.0,
+        "depth": 2,
+        "hidden_act": "silu",
+        "hidden_size": 256,
+        "image_size": 336,
+        "in_channels": 3,
+        "initializer_range": 0.02,
+        "intermediate_size": 10944,
+        "num_heads": 2,
+        "out_hidden_size": 128,
+        "patch_size": 14,
+        "rms_norm_eps": 1e-05,
+        "spatial_merge_size": 2,
+        "temporal_patch_size": 2,
+    },
 }
 
 
@@ -146,6 +133,7 @@ class TestGLM45VConversion:
         # We use the smallest available Qwen25 VL model for tokenizer artifacts
         try:
             from transformers import AutoTokenizer
+
             tokenizer = AutoTokenizer.from_pretrained("zai-org/GLM-4.5V")
             tokenizer.save_pretrained(model_dir)
         except Exception as e:

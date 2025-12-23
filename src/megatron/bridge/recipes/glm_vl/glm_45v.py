@@ -24,6 +24,7 @@ from megatron.bridge.data.vlm_datasets import (
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
 )
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -40,7 +41,6 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 def set_glm_45v_pipeline_model_parallel_layout(
@@ -357,4 +357,3 @@ def _glm_45v_common(
     )
 
     return cfg
-

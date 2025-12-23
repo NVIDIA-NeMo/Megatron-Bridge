@@ -273,4 +273,3 @@ class TestGLM45VModelProviderInheritance:
 
         # VL models should have scatter_embedding_sequence_parallel=False
         assert provider.scatter_embedding_sequence_parallel is False
-

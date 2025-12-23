@@ -565,4 +565,3 @@ def test_glm_45v_megatron_fsdp(monkeypatch: pytest.MonkeyPatch):
     _assert_basic_config(cfg)
 
     assert cfg.ddp.use_megatron_fsdp is True
-

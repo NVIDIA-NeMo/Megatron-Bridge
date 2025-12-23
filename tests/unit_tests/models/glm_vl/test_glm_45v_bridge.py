@@ -17,9 +17,9 @@ from unittest.mock import Mock
 import pytest
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
 @pytest.fixture
@@ -536,4 +536,3 @@ class TestGLM45VBridgeCompatibility:
             mock_hf_pretrained.config.text_config.rope_theta = rope_theta
             provider = glm_45v_bridge.provider_bridge(mock_hf_pretrained)
             assert provider.rotary_base == rope_theta
-

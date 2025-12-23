@@ -23,10 +23,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+
 
 @MegatronModelBridge.register_bridge(source=Glm4vMoeForConditionalGeneration, target=GLM45VModel)
 class GLM45VBridge(MegatronModelBridge):
@@ -64,7 +64,7 @@ class GLM45VBridge(MegatronModelBridge):
             num_layers=text_config.num_hidden_layers,
             num_query_groups=text_config.num_key_value_heads,
             layernorm_epsilon=text_config.rms_norm_eps,
-            mtp_num_layers=0, # No MTP for VL models
+            mtp_num_layers=0,  # No MTP for VL models
             qk_layernorm=text_config.use_qk_norm,
             vocab_size=text_config.vocab_size,
             fp16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.float16),
@@ -85,11 +85,11 @@ class GLM45VBridge(MegatronModelBridge):
     @classmethod
     def get_hf_tokenizer_kwargs(cls) -> dict:
         """Return HuggingFace tokenizer kwargs specific to GLM 4.5V models.
-        
+
         GLM 4.5V requires use_fast=True to properly load the tokenizer.
         """
         return {"use_fast": True}
-    
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
