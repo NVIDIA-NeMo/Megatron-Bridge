@@ -12,21 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+GLM 4.5 Vision-Language Model for Megatron.
+
+This module provides the GLM45VLModel class that combines:
+- HuggingFace's vision encoder (vision_tower) for image processing
+- Megatron's language model for text generation
+
+Reference: https://huggingface.co/zai-org/GLM-4.5V
+"""
+
 import types
 from typing import Optional
 
 import torch
 import transformers
-from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from packaging.version import Version as PkgVersion
 from torch import Tensor
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-    Qwen2_5_VisionTransformerPretrainedModel,
-    Qwen2_5_VLModel,
-)
+from transformers.models.glm4v.modeling_glm4v import Glm4vModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
@@ -42,48 +47,51 @@ def is_transformers_min_version(version):
         return False
 
 
-class Qwen25VLModel(MegatronModule):
+class GLM45VModel(MegatronModule):
     """
-    Qwen2.5 VL Model. (Based on GPT Transformer language model.)
+    GLM 4.5 Vision-Language (VL) model wrapper for Megatron.
+
+    This class combines HuggingFace's vision components with Megatron's language model:
+    - Vision tower (HF): Processes images through the vision encoder
+    - Multimodal projector (HF): Projects vision features to language model space
+    - Language model (Megatron): Generates text conditioned on vision and text inputs
+
+    The vision encoder forward pass uses HuggingFace implementation via monkey-patching,
+    while the language model forward pass uses Megatron's optimized implementation.
 
     Args:
-        config (GPTModelProvider):
-            language model provider.
-        transformer_layer_spec (ModuleSpec):
-            Specifies module to use for transformer layers
-        vocab_size (int):
-            Vocabulary size
-        max_sequence_length (int):
-            maximum size of sequence. This is used for positional embedding
-        pre_process (bool, optional):
-            Include embedding layer (used with pipeline parallelism). Defaults to True.
-        post_process (bool, optional):
-            Include an output layer (used with pipeline parallelism). Defaults to True.
-        fp16_lm_cross_entropy (bool, optional):
-            Defaults to False.
-        parallel_output (bool, optional):
-            Do not gather the outputs, keep them split across tensor
-            parallel ranks. Defaults to True.
-        share_embeddings_and_output_weights (bool, optional):
-            When True, input embeddings and output logit weights are shared. Defaults to False.
-        position_embedding_type (Literal[learned_absolute,rope], optional):
-            Position embedding type.. Defaults to 'learned_absolute'.
-        rotary_percent (float, optional):
-            Percent of rotary dimension to use for rotary position embeddings.
-            Ignored unless position_embedding_type is 'rope'. Defaults to 1.0.
-        rotary_base (int, optional):
-            Base period for rotary position embeddings. Ignored unless
-            position_embedding_type is 'rope'.
-            Defaults to 10000.
-        rope_scaling (bool, optional): Toggle RoPE scaling.
-        rope_scaling_factor (float): RoPE scaling factor. Default 8.
-        scatter_embedding_sequence_parallel (bool, optional):
-            Whether embeddings should be scattered across sequence parallel
-            region or not. Defaults to True.
-        seq_len_interpolation_factor (Optional[float], optional):
-            scale of linearly interpolating RoPE for longer sequences.
-            The value must be a float larger than 1.0. Defaults to None.
-        pg_collection (ProcessGroupCollection): Model communication process groups
+        config (GPTModelProvider): Model provider containing configuration for language and vision modules.
+        pre_process (bool, optional): Whether to construct the vision tower and projector. Default: True.
+        post_process (bool, optional): Whether to apply post-processing. Default: True.
+        vp_stage (Optional[int], optional): Pipeline stage for model parallelism. Default: None.
+
+    Attributes:
+        pre_process (bool): If True, enables vision and multimodal components.
+        post_process (bool): If True, enables post-processing.
+        vp_stage (Optional[int]): Pipeline stage for model parallelism.
+        vision_tower (nn.Module): Vision encoder from HuggingFace.
+        multi_modal_projector (nn.Module): Projects vision features to language model space.
+        language_model (nn.Module): Megatron language model.
+        get_image_features (callable): Method to extract image features (monkey-patched from HF).
+
+    Forward Inputs:
+        input_ids (torch.LongTensor, optional): Tokenized input ids for the language model.
+        attention_mask (torch.Tensor, optional): Attention mask for the language model.
+        position_ids (torch.LongTensor, optional): Position ids for the language model.
+        inputs_embeds (torch.FloatTensor, optional): Precomputed input embeddings.
+        pixel_values (torch.Tensor, optional): Image tensor(s) for the vision tower.
+        labels (torch.Tensor, optional): Target labels for supervised training.
+        runtime_gather_output (bool, optional): If True, gather outputs across pipeline stages.
+        loss_mask (Tensor, optional): Mask for loss computation.
+
+    Returns:
+        Tensor: Model output (e.g., logits or loss, depending on mode).
+
+    Note:
+        - If `pre_process` is False, only the language model is constructed.
+        - The vision tower and projector are only active if `pre_process` is True.
+        - This class is intended for use within the Megatron-LM framework.
+        - Requires transformers >= 5.0.0 for Mistral3 model support.
     """
 
     def __init__(
@@ -99,32 +107,40 @@ class Qwen25VLModel(MegatronModule):
         self.post_process = post_process
         self.vp_stage = vp_stage
 
-        if pre_process:
-            self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
-            # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
-            hook_hf_module_setattr_for_tp_grad_sync(self.visual)
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
-
-        # Finalize grad will need these to be bind with module
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
-        self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
-
         # Bind methods from HF's Qwen2_5_VLModel to this instance
         # get_placeholder_mask is only available in transformers 4.55+
-        if is_transformers_min_version("4.55.0"):
-            self.get_placeholder_mask = types.MethodType(Qwen2_5_VLModel.get_placeholder_mask, self)
-        else:
+        if not is_transformers_min_version("4.57.1"):
             raise RuntimeError(
                 f"transformers version {transformers.__version__} is not supported. "
                 f"get_placeholder_mask requires transformers >= 4.55.0. "
                 f"Please upgrade transformers: pip install 'transformers>=4.55.0'"
             )
 
-        self.get_image_features = types.MethodType(Qwen2_5_VLModel.get_image_features, self)
-        self.get_video_features = types.MethodType(Qwen2_5_VLModel.get_video_features, self)
-        self.get_rope_index = types.MethodType(Qwen2_5_VLModel.get_rope_index, self)
+        if pre_process:
+            from transformers.models.glm4v.modeling_glm4v import Glm4vVisionModel
+
+            self.visual = Glm4vVisionModel._from_config(config.vision_config)
+            # Ensure HF visual tower params are marked for TP grad sync
+            hook_hf_module_setattr_for_tp_grad_sync(self.visual)
+
+        # Initialize Megatron language model
+        self.language_model = self.config.provide_language_model(
+            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+        )
+
+        # Finalize grad requires these to be bound with module
+        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
+
+        # Monkey-patch methods from HuggingFace Mistral3Model
+        # This allows us to use HF's image feature extraction logic
+        self.get_image_features = types.MethodType(Glm4vModel.get_image_features, self)
+        self.get_video_features = types.MethodType(Glm4vModel.get_video_features, self)
+        self.get_rope_index = types.MethodType(Glm4vModel.get_rope_index, self)
+        self.get_placeholder_mask = types.MethodType(Glm4vModel.get_placeholder_mask, self)
+
+        # Some config requires from HF vision tower
+        self.config.spatial_merge_size = getattr(self.config.vision_config, "spatial_merge_size", 2)
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -140,32 +156,40 @@ class Qwen25VLModel(MegatronModule):
         pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
-        second_per_grid_ts: Optional[torch.Tensor] = None,
-        labels: Tensor = None,
-        inference_context: BaseInferenceContext = None,
-        packed_seq_params: PackedSeqParams = None,
-        extra_block_kwargs: dict = None,
+        labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
         loss_mask: Optional[Tensor] = None,
     ) -> Tensor:
-        r"""
-        image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
-            The temporal, height and width of feature shape of each image in LLM.
-        video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
-            The temporal, height and width of feature shape of each video in LLM.
-        second_per_grid_ts (`torch.Tensor` of shape `(num_videos)`, *optional*):
-            The time interval (in seconds) for each grid along the temporal dimension in the 3D position IDs.
         """
+        Forward pass combining HuggingFace vision encoder with Megatron language model.
 
+        Args:
+            input_ids: Tokenized input ids for the language model.
+            attention_mask: Attention mask for the language model.
+            position_ids: Position ids for the language model.
+            inputs_embeds: Precomputed input embeddings.
+            pixel_values: Image tensor(s) for the vision tower.
+            pixel_values_videos: Video tensor(s) for the vision tower.
+            image_grid_thw: Grid of image sizes for the vision tower.
+            video_grid_thw: Grid of video sizes for the vision tower.
+            second_per_grid_ts: Time interval for each grid along the temporal dimension in the 3D position IDs.
+            labels: Target labels for supervised training.
+            runtime_gather_output: If True, gather outputs across pipeline stages.
+            loss_mask: Mask for loss computation.
+
+        Returns:
+            Model output (logits or loss depending on mode).
+        """
         if self.pre_process:
             if inputs_embeds is None:
+                # Get text embeddings from Megatron language model
                 inputs_embeds = self.language_model.embedding(
                     input_ids=input_ids, position_ids=None
-                )  # [decoder_seq_len, b, h_language]
+                )  # [seq_len, batch, hidden]
 
-                inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
+                # Transpose to HF format [batch, seq_len, hidden]
+                inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if pixel_values is not None:
                 image_embeds = self.get_image_features(pixel_values, image_grid_thw)
@@ -183,9 +207,8 @@ class Qwen25VLModel(MegatronModule):
                 )
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
-            inputs_embeds = inputs_embeds.transpose(
-                1, 0
-            )  # [b, decoder_seq_len, h_language] -> [decoder_seq_len, b, h_language]
+            # Transpose back to Megatron format [seq_len, batch, hidden]
+            inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if self.config.sequence_parallel:
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
@@ -198,10 +221,10 @@ class Qwen25VLModel(MegatronModule):
             input_ids,
             image_grid_thw,
             video_grid_thw,
-            second_per_grid_ts=second_per_grid_ts,
             attention_mask=hf_attention_mask,
         )
 
+        # Forward through Megatron language model
         outputs = self.language_model.forward(
             input_ids=None,
             position_ids=position_ids,
@@ -213,7 +236,12 @@ class Qwen25VLModel(MegatronModule):
         )
         return outputs
 
-    def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):
+    def freeze(
+        self,
+        freeze_language_model: bool,
+        freeze_vision_model: bool,
+        freeze_vision_projection: bool,
+    ):
         """Freeze model modules.
 
         Make specific modules non-trainable by setting requires_grad to False.
