@@ -14,6 +14,7 @@
 
 import inspect
 import math
+import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -35,7 +36,7 @@ from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0, print_rank_last
 
 
 if TYPE_CHECKING:
@@ -440,11 +441,13 @@ def training_log(
 
     if writer and (iteration % logger_config.tensorboard_log_interval == 0):
         if config.profiling:
-            if config.profiling.record_memory_history and is_last_rank():
+            if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
                 snapshot = torch.cuda.memory._snapshot()
                 from pickle import dump
 
-                with open(config.profiling.memory_snapshot_path, "wb") as f:
+                filename, ext = os.path.splitext(config.profiling.memory_snapshot_path)
+                filename = f"{filename}_{get_rank_safe()}{ext}"
+                with open(filename, "wb") as f:
                     dump(snapshot, f)
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
