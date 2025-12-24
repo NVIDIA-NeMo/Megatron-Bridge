@@ -418,6 +418,8 @@ class AutoBridge(Generic[MegatronModelT]):
         source_path: Optional[Union[str, Path]] = None,
         strict: bool = True,
         merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 2
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -479,6 +481,8 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress,
             strict,
             merge_adapter_weights=merge_adapter_weights,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
         )
 
     def save_hf_weights(
@@ -488,6 +492,8 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         strict: bool = True,
         merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 2,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -544,7 +550,9 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
+            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict,
+                                                           distributed_save=distributed_save,
+                                                           save_every_n_ranks=save_every_n_ranks)
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
