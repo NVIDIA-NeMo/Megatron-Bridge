@@ -438,15 +438,14 @@ def training_log(
         if hasattr(timers, "write_to_wandb"):
             timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
 
-    if config.profiling and config.profiling.record_memory_history:
-        if is_last_rank():
-            snapshot = torch.cuda.memory._snapshot()
-            from pickle import dump
-
-            with open(config.profiling.memory_snapshot_path, "wb") as f:
-                dump(snapshot, f)
-
     if writer and (iteration % logger_config.tensorboard_log_interval == 0):
+        if config.profiling:
+            if config.profiling.record_memory_history and is_last_rank():
+                snapshot = torch.cuda.memory._snapshot()
+                from pickle import dump
+
+                with open(config.profiling.memory_snapshot_path, "wb") as f:
+                    dump(snapshot, f)
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
                 iteration=iteration,
