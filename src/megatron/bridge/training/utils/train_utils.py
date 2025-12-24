@@ -18,7 +18,6 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
@@ -450,10 +449,7 @@ def training_log(
                 snapshot = torch.cuda.memory._snapshot()
                 from pickle import dump
 
-                snapshot_path = Path(config.profiling.memory_snapshot_path)
-                # Ensure destination directory exists (common when users set a nested path).
-                snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(snapshot_path, "wb") as f:
+                with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
