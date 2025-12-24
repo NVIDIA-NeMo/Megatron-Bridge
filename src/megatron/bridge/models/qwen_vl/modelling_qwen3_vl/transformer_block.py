@@ -71,8 +71,11 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 context_mask,
                 rotary_pos_emb,
                 visual_pos_masks,
-                deepstack_visual_embeds,
+                *deepstack_visual_embeds_args,
             ):
+                # Reconstruct list from unpacked tensors
+                deepstack_visual_embeds = list(deepstack_visual_embeds_args) if deepstack_visual_embeds_args else None
+
                 for index in range(start, end):
                     layer = self._get_layer(index)
                     inner_fp8_context = (
@@ -104,6 +107,9 @@ class Qwen3VLTransformerBlock(TransformerBlock):
 
             return custom_forward
 
+        # Unpack list into individual tensors for checkpoint (save_for_backward only accepts tensors)
+        deepstack_visual_embeds_tuple = tuple(deepstack_visual_embeds) if deepstack_visual_embeds else ()
+
         def checkpoint_handler(forward_func):
             """Determines whether to use the `te_checkpoint` or `tensor_parallel.checkpoint`"""
             if self.config.fp8:
@@ -118,7 +124,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     context_mask,
                     rotary_pos_emb,
                     visual_pos_masks,
-                    deepstack_visual_embeds,
+                    *deepstack_visual_embeds_tuple,
                 )
             else:
                 return tensor_parallel.checkpoint(
@@ -130,7 +136,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     context_mask,
                     rotary_pos_emb,
                     visual_pos_masks,
-                    deepstack_visual_embeds,
+                    *deepstack_visual_embeds_tuple,
                 )
 
         if self.config.recompute_method == "uniform":
@@ -169,7 +175,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                         context_mask,
                         rotary_pos_emb,
                         visual_pos_masks,
-                        deepstack_visual_embeds,
+                        *deepstack_visual_embeds_tuple,
                     )
         else:
             raise ValueError("Invalid activation recompute method.")
