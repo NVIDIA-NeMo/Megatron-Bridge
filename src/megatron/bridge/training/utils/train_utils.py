@@ -441,12 +441,17 @@ def training_log(
 
     if writer and (iteration % logger_config.tensorboard_log_interval == 0):
         if config.profiling:
+            print(
+                f"{config.profiling.profile_ranks=}, {type(config.profiling.profile_ranks)=}, {get_rank_safe()=}, {type(get_rank_safe())=}"
+            )
+            print(f"{type(config.profiling.profile_ranks[0])=}")
             if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
                 snapshot = torch.cuda.memory._snapshot()
                 from pickle import dump
 
                 filename, ext = os.path.splitext(config.profiling.memory_snapshot_path)
                 filename = f"{filename}_{get_rank_safe()}{ext}"
+                print(f"{filename=}, {type(get_rank_safe())=}, {get_rank_safe()=}, {ext=}, {type(ext)=}")
                 with open(filename, "wb") as f:
                     dump(snapshot, f)
         if logger_config.log_throughput_to_tensorboard:
