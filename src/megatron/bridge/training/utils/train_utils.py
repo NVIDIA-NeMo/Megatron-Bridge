@@ -14,7 +14,6 @@
 
 import inspect
 import math
-import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -440,11 +439,10 @@ def training_log(
             timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
 
     if config.profiling and config.profiling.record_memory_history:
-        if is_last_rank() and iteration == config.profiling.profile_step_start:
+        if is_last_rank():
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
-            os.makedirs(os.path.dirname(config.profiling.memory_snapshot_path), exist_ok=True)
             with open(config.profiling.memory_snapshot_path, "wb") as f:
                 dump(snapshot, f)
 

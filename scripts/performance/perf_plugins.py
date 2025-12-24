@@ -508,5 +508,8 @@ class PyTorchProfilerPlugin(Plugin):
 
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+
+            os.makedirs(os.path.dirname(self.memory_snapshot_path), exist_ok=True)
+            logger.info(f"{self.__class__.__name__} created directory: {os.path.dirname(self.memory_snapshot_path)}")
         else:
-            raise NotImplementedError("NsysPlugin is only supported for run.Script tasks")
+            raise NotImplementedError("PyTorchProfilerPlugin is only supported for run.Script tasks")
