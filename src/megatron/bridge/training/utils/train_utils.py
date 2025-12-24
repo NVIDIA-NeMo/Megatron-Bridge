@@ -14,6 +14,7 @@
 
 import inspect
 import math
+import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -443,6 +444,7 @@ def training_log(
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
+            os.makedirs(os.path.dirname(config.profiling.memory_snapshot_path), exist_ok=True)
             with open(config.profiling.memory_snapshot_path, "wb") as f:
                 dump(snapshot, f)
 
