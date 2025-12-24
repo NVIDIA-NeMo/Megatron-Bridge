@@ -35,7 +35,12 @@ from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_rank_safe,
+    get_world_size_safe,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 if TYPE_CHECKING:
@@ -440,7 +445,7 @@ def training_log(
 
     if writer and (iteration % logger_config.tensorboard_log_interval == 0):
         if config.profiling:
-            if config.profiling.record_memory_history and is_last_rank():
+            if config.profiling.record_memory_history and get_rank_safe() == 0:
                 snapshot = torch.cuda.memory._snapshot()
                 from pickle import dump
 
