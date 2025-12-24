@@ -20,46 +20,46 @@ and their Megatron equivalents, supporting both text-only and vision-language mo
 
 Run Script Examples:
     # Regular LLM comparison between HF and Megatron models:
-    python examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen3-1.7B" \
         --prompt "Hello, how are you?"
 
 
     # Vision-language comparison with image from URL:
-    python examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen2.5-VL-3B-Instruct" \
         --model_class "Qwen2_5_VLForConditionalGeneration" \
         --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
         --prompt "Describe this image."
 
     # Vision-language comparison with local image:
-    python examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen2.5-VL-3B-Instruct" \
         --model_class "Qwen2_5_VLForConditionalGeneration" \
         --image_path "/path/to/local/image.jpg" \
         --prompt "What do you see in this image?"
 
     # Multi-GPU comparison with tensor parallelism (regular LLM):
-    torchrun --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen3-1.7B" \
         --prompt "Hello world" \
         --tp 2
 
     # Pipeline parallel comparison (VL model):
-    torchrun --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen2.5-VL-3B-Instruct" \
         --model_class "Qwen2_5_VLForConditionalGeneration" \
         --prompt "Hello world" \
         --pp 2
 
     # Compare with pre-converted Megatron checkpoint:
-    python examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen3-1.7B" \
         --megatron_model_path "/path/to/megatron/checkpoint" \
         --prompt "Hello world"
 
     # Enable debug hooks to inspect forward pass intermediate results:
-    python examples/conversion/compare_hf_and_megatron/compare.py \
+    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen3-1.7B" \
         --prompt "Hello world" \
         --enable_debug_hooks
@@ -607,7 +607,6 @@ def _load_megatron_model(args):
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     model_components = [m.eval() for m in megatron_model]
@@ -716,8 +715,8 @@ def compare_models_one_step(args) -> None:
     )
 
     del hf_model
-    # Load Megatron model
-    megatron_model = _load_megatron_model(args)
+    # Reload Megatron model to ensure a fresh instance before comparison
+    megatron_model, _ = _load_megatron_model(args)
 
     # Broadcast HF results to all ranks after Megatron initialization
     # (following the pattern from generate_from_hf.py)

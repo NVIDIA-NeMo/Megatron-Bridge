@@ -16,10 +16,17 @@ import argparse
 import logging
 from typing import List, Optional
 
+from omegaconf import OmegaConf
+
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+from megatron.bridge.training.utils.omegaconf_utils import (
+    apply_overrides,
+    create_omegaconf_dict_config,
+    parse_hydra_overrides,
+)
 from utils.datasets import (
     create_mock_dataset_config,
     create_rp2_dataset_config,
@@ -175,6 +182,26 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     _set_common_perf_overrides(cfg)
 
     return cfg
+
+
+def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> ConfigContainer:
+    """Set Hydra-style CLI overrides."""
+    if not cli_overrides:
+        return recipe
+
+    # OmegaConf can't serialize problematic callable objects (functions/methods/partials, etc.),
+    # so those fields are "excluded_fields" in the temporary OmegaConf conversion and then restored after overrides
+    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
+    logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
+    merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
+    logger.debug("Hydra-style command-line overrides applied successfully.")
+    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
+    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
+    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+    # Apply overrides while preserving "excluded_fields"
+    apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
+
+    return recipe
 
 
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:

@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -93,7 +92,9 @@ def slurm_executor(
         set_nemorun_home(log_dir)
     else:
         if os.environ.get("NEMORUN_HOME") is None:
-            logger.warning(f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument")
+            logger.warning(
+                f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
+            )
 
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
@@ -122,7 +123,7 @@ def slurm_executor(
                     segment = segment_candidate
                     break
 
-    numa_divisor = 2 if gpu.lower() == "gb200" else 4
+    numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
 

@@ -171,6 +171,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         return ".mlp.experts.linear_fc" in self.megatron_param or ".mlp.experts.local_experts." in self.megatron_param
 
+    @property
+    def is_adapter(self) -> bool:
+        """Check if this mapping is for an adapter parameter."""
+        return ".adapter." in self.megatron_param
+
     def _resolve_names(self, captures: Tuple[str, ...]) -> Tuple[str, Union[str, Dict[str, str]]]:
         """Resolve wildcard patterns with captured values.
 
@@ -852,7 +857,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=0)
 
-        if self.is_expert:
+        if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
@@ -945,7 +950,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=1)
 
-        if self.is_expert:
+        if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
