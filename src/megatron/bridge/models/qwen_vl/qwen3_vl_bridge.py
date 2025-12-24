@@ -29,7 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
-from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings, extract_expert_number_from_param
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3VLForConditionalGeneration, target=Qwen3VLModel)
@@ -150,6 +150,8 @@ class Qwen3VLBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
 
@@ -317,6 +319,8 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             # MoE router weights
             "language_model.decoder.layers.*.mlp.router.weight": "model.language_model.layers.*.mlp.gate.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
 

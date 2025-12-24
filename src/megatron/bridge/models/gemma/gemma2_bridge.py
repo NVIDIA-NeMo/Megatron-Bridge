@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gemma.gemma2_provider import Gemma2ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 # Register custom Gemma2 modules for AutoMapping
@@ -101,6 +102,8 @@ class Gemma2Bridge(MegatronModelBridge):
             "model.layers.*.post_attention_layernorm.weight": "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight",
             "model.norm.weight": "decoder.final_layernorm.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)

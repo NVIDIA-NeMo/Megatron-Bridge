@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel)
@@ -82,16 +83,15 @@ class Qwen3MoEBridge(MegatronModelBridge):
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-            # Input layernorm - fused with TE (default layer spec)
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            # Input layernorm - separate (quantization layer spec)
-            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)

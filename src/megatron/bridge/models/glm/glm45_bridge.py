@@ -27,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.glm.glm45_provider import GLMMoEModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,8 @@ class GLM45Bridge(MegatronModelBridge):
             "output_layer.weight": "lm_head.weight",
         }
 
+        add_separate_layernorm_mappings(param_mappings)
+
         layer_specific_mappings = {
             # Attention
             "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
@@ -121,6 +124,8 @@ class GLM45Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
         }
+
+        add_separate_layernorm_mappings(layer_specific_mappings)
 
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))

@@ -26,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,8 @@ class OlMoEBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))

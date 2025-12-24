@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronHModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,8 @@ class NemotronHBridge(MegatronModelBridge):
             "embedding.word_embeddings.weight": "backbone.embeddings.weight",
             "output_layer.weight": "lm_head.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)

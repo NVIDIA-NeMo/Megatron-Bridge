@@ -271,3 +271,42 @@ def resolve_path(path: str) -> Path:
     """Resolve a path to an absolute path."""
 
     return Path(path).expanduser().absolute().resolve()
+
+
+def add_separate_layernorm_mappings(
+    param_mappings: dict,
+) -> None:
+    """Add separate layernorm mappings to the provided param_mappings dict.
+
+    Args:
+        param_mappings: The dictionary to add the parameter name mappings to.
+
+    Returns:
+        None.
+    """
+
+    # From https://github.com/NVIDIA/Megatron-LM/blob/3cf7a63fe9316102a498690ae4cf2b22d5ff4be0/megatron/core/post_training/modelopt/gpt/state_dict_hooks.py#L38-L51
+    module_name_rewrite_list = [
+        ("self_attention.linear_qkv.layer_norm_weight", "input_layernorm.weight"),
+        ("self_attention.linear_qkv.layer_norm_bias", "input_layernorm.bias"),
+        ("self_attention.linear_q_up_proj.layer_norm_weight", "self_attention.q_layernorm.weight"),
+        ("self_attention.linear_q_up_proj.layer_norm_bias", "self_attention.q_layernorm.bias"),
+        (
+            "self_attention.linear_kv_up_proj.layer_norm_weight",
+            "self_attention.kv_layernorm.weight",
+        ),
+        ("self_attention.linear_kv_up_proj.layer_norm_bias", "self_attention.kv_layernorm.bias"),
+        ("mlp.linear_fc1.layer_norm_weight", "pre_mlp_layernorm.weight"),
+        ("mlp.linear_fc1.layer_norm_bias", "pre_mlp_layernorm.bias"),
+        ("mixer.in_proj.layer_norm_weight", "norm.weight"),
+    ]
+
+    param_mapping_keys = list(param_mappings.keys())
+
+    for param_name in param_mapping_keys:
+        for old_name, new_name in module_name_rewrite_list:
+            if param_name.endswith(f"*.{old_name}"):
+                new_param_name = param_name[: -len(old_name)] + new_name
+                if not new_param_name in param_mapping_keys:
+                    param_mappings[new_param_name] = param_mappings[param_name]
+                break

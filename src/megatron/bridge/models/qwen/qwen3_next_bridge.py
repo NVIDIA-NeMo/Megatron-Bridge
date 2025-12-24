@@ -28,6 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel)
@@ -129,6 +130,8 @@ class Qwen3NextBridge(MegatronModelBridge):
             "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
             "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)

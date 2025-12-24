@@ -27,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 @MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
@@ -97,6 +98,8 @@ class LlamaBridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)

@@ -26,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 from megatron.bridge.models.qwen_vl.qwen_vl_provider import Qwen25VLModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 @MegatronModelBridge.register_bridge(source=Qwen2_5_VLForConditionalGeneration, target=Qwen25VLModel)
@@ -93,6 +94,8 @@ class Qwen25VLBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "language_model.decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
