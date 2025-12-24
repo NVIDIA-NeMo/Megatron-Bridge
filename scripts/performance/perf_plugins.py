@@ -484,7 +484,7 @@ class PyTorchProfilerPlugin(Plugin):
     profile_step_end: int
     profile_ranks: Optional[list[int]] = None
     record_memory_history: bool = True
-    memory_snapshot_path: str = "nemo_run/pytorch_profile/snapshot.pickle"
+    memory_snapshot_path: str = "/nemo_run/pytorch_profile/snapshot.pickle"
     record_shapes: bool = False
     script_args_converter_fn: Optional[Callable[[PyTorchProfilerPluginScriptArgs], List[str]]] = None
 
