@@ -169,7 +169,7 @@ class GlobalState:
     def tensorboard_logger(self) -> Optional[SummaryWriter]:
         """The TensorBoard SummaryWriter instance, lazily initialized for rank N-1."""
         if self._tensorboard_logger is None:
-            if self.cfg.logger.tensorboard_dir and get_rank_safe() == 0:
+            if self.cfg.logger.tensorboard_dir and get_rank_safe() == (get_world_size_safe() - 1):
                 from torch.utils.tensorboard.writer import SummaryWriter
 
                 print("> setting tensorboard ...")
