@@ -43,10 +43,10 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from .resiliency_plugins import FaultTolerancePlugin
 
 import logging
@@ -176,6 +176,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     enable_nsys: bool,
+    enable_torch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
     pp_size: Optional[int],
@@ -326,6 +327,13 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
+            )
+        )
+    elif enable_torch_profiler:
+        plugins.append(
+            PyTorchProfilerPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
             )
         )
 
@@ -490,6 +498,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
+        enable_torch_profiler=args.enable_torch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
