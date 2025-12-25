@@ -165,10 +165,3 @@ def reset_te_debug_state():
         TEDebugState._reset()
     except (ImportError, ModuleNotFoundError):
         pass
-
-
-@pytest.fixture(scope="session", autouse=True)
-def mock_datasets_file_lock():
-    """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
-    with patch("datasets.utils.filelock.FileLock", return_value=MagicMock()):
-        yield
