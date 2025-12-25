@@ -111,7 +111,7 @@ runs:
         echo "::group::Start test container"
         ls /mnt/datadrive/TestData/nemo-fw
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume /mnt/datadrive/TestData/nemo-fw/TestData:/home/TestData --env HF_HUB_OFFLINE=1"
+          VOLUME_ARGS="--volume /mnt/datadrive/TestData/nemo-fw/TestData:/home/TestData"
         else
           VOLUME_ARGS=""
         fi
