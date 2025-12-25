@@ -131,6 +131,7 @@ runs:
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
+          --env HF_HUB_OFFLINE=1 \
           --workdir /opt/Megatron-Bridge \
           --volume ${{ github.workspace }}/Megatron-Bridge:/opt/Megatron-Bridge \
           $VOLUME_ARGS \
