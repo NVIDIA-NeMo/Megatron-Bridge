@@ -19,7 +19,12 @@ if [ "$DETERMINISTIC" = true ]; then
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
+    export NVTE_DEBUG=1   # disables/enables debugging
+    export NVTE_DEBUG_LEVEL=2
     if [ "$DETERMINISTIC_FLASH" = true ]; then
+        export NVTE_FUSED_ATTN=0
+        export NVTE_UNFUSED_ATTN=0
+        export NVTE_FLASH_ATTN=1
         export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=flash comm_overlap.tp_comm_overlap=false"
         export DETERMINISTIC_FLAG="deterministic-flash"
     else
@@ -32,7 +37,15 @@ else
 fi
 
 # FP8 memory optimization
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Force Python to not use bytecode cache (.pyc files) to ensure code changes are picked up
+export PYTHONDONTWRITEBYTECODE=1
+
+# Fix TorchInductor/Triton cache race condition
+# Use persistent cache on Lustre instead of /tmp to avoid multi-rank compilation conflicts
+# export TORCHINDUCTOR_CACHE_DIR=/lustre/fs1/portfolios/coreai/users/zhiyul/.cache/torchinductor
+# export TRITON_CACHE_DIR=/lustre/fs1/portfolios/coreai/users/zhiyul/.cache/triton
 
 # Determinism is broken with recompute
 # export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=block +model.recompute_num_layers=1"
@@ -48,7 +61,7 @@ python scripts/performance/setup_experiment.py \
     -gn 8 \
     -c fp8_cs \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \

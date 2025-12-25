@@ -337,6 +337,7 @@ def patch_linear_module(
     dropout_position: Literal["pre", "post"] = "post",
     lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
     lora_dtype: Optional[torch.dtype] = None,
+    layer_name: Optional[str] = None,
 ) -> Union[nn.Linear, "te.Linear"]:
     """Monkey-patch a nn.Linear or te.Linear to be a LinearAdapter.
 
@@ -395,4 +396,6 @@ def patch_linear_module(
         orig_linear.super_fwd = orig_linear.forward
 
     orig_linear.__class__ = new_cls
+    if layer_name is not None:
+        orig_linear._layer_name = layer_name
     return orig_linear

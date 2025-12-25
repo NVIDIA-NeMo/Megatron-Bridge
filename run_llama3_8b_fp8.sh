@@ -12,6 +12,9 @@ PARTITION="interactive"
 # Get current directory to mount
 WORKDIR=$(pwd)
 
+export NVTE_DEBUG=1   # disables/enables debugging
+export NVTE_DEBUG_LEVEL=2
+
 export DETERMINISTIC=${DETERMINISTIC:-false}
 export DETERMINISTIC_FLASH=${DETERMINISTIC_FLASH:-false}  # Allow Flash Attention in deterministic mode
 if [ "$DETERMINISTIC" = true ]; then
@@ -20,6 +23,9 @@ if [ "$DETERMINISTIC" = true ]; then
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     if [ "$DETERMINISTIC_FLASH" = true ]; then
+        export NVTE_FUSED_ATTN=0
+        export NVTE_UNFUSED_ATTN=0
+        export NVTE_FLASH_ATTN=1
         export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=flash"
         export DETERMINISTIC_FLAG="deterministic-flash"
     else
@@ -27,7 +33,7 @@ if [ "$DETERMINISTIC" = true ]; then
         export DETERMINISTIC_FLAG="deterministic"
     fi
 else
-    export additional_args=""
+    export additional_args="model.attention_backend=flash"
     export DETERMINISTIC_FLAG="non-deterministic"
 fi
 
@@ -44,7 +50,7 @@ python scripts/performance/setup_experiment.py \
     -gn 8 \
     -c fp8_cs \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \

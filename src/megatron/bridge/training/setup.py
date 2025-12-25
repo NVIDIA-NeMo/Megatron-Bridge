@@ -213,6 +213,16 @@ def setup(
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
     )
 
+    # Apply NVTX profiling hooks to model for nsys profiling
+    from megatron.bridge.utils import autonvtx
+    if isinstance(model, list):
+        # For pipeline parallel models
+        for i, model_chunk in enumerate(model):
+            autonvtx.patch(model_chunk, name=f"PipelineStage_{i}")
+    else:
+        # For single model
+        autonvtx.patch(model, name=model.__class__.__name__)
+
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
     no_weight_decay_cond = get_no_weight_decay_cond(
