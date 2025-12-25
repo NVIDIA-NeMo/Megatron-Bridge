@@ -100,6 +100,15 @@ class AdapterWrapper(nn.Module):
         super(AdapterWrapper, self).__init__()
         self.to_wrap = to_wrap
         self.adapter = adapter
+        self._adapter_enabled = True
+
+    def enable_adapter_layers(self) -> None:
+        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
+        self._adapter_enabled = True
+
+    def disable_adapter_layers(self) -> None:
+        """Disable the adapter layers, making the forward pass return only the base module output."""
+        self._adapter_enabled = False
 
     def base_linear_forward(
         self, x: torch.Tensor, *args: Any, **kwargs: Any
