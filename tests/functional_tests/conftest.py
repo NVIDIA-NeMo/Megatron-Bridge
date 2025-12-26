@@ -170,5 +170,5 @@ def reset_te_debug_state():
 @pytest.fixture(scope="session", autouse=True)
 def mock_datasets_file_lock():
     """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
-    with patch("datasets.utils.filelock.FileLock", return_value=MagicMock()):
+    with patch("filelock.FileLock", return_value=MagicMock()):
         yield
