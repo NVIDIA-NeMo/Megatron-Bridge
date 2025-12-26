@@ -15,7 +15,7 @@
 import logging
 import os
 import tempfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -170,10 +170,7 @@ def reset_te_debug_state():
 @pytest.fixture(scope="session", autouse=True)
 def mock_datasets_file_lock():
     """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
-    import filelock
-
-    original_filelock_cls = filelock.FileLock
-    raise Exception("wtf")
-    filelock.FileLock = MagicMock()
-    yield
-    filelock.FileLock = original_filelock_cls
+    with patch("datasets.builder.FileLock", return_value=MagicMock()):
+        print("patching FileLock")
+        yield
+        print("done patching FileLock")
