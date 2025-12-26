@@ -173,6 +173,7 @@ def mock_datasets_file_lock():
     import filelock
 
     original_filelock_cls = filelock.FileLock
+    raise Exception("wtf")
     filelock.FileLock = MagicMock()
     yield
     filelock.FileLock = original_filelock_cls
