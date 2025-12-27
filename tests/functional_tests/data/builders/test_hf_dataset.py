@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from importlib import reload
 from pathlib import PosixPath
 
 import datasets
