@@ -46,6 +46,8 @@ from tqdm import tqdm
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.gpt_provider import quantization_layer_spec
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, quantization_mamba_stack_spec
 
 
 warnings.filterwarnings("ignore")
@@ -153,6 +155,7 @@ def main(
     export_kv_cache_quant: bool = False,
     force_all_expert_routing: bool = False,
     prompts: str = "Hello!|Born in California, Soyer trained as a",
+    trust_remote_code: bool | None = None,
 ) -> None:
     """Perform quantization from HuggingFace model to quantized Megatron-LM model on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -160,7 +163,13 @@ def main(
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
         sys.exit(1)
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_model_id,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=trust_remote_code,
+            hf_path=hf_model_id,
+        ),
+    )
 
     model_provider = bridge.to_megatron_provider(load_weights=True)
     model_provider.tensor_model_parallel_size = tp
@@ -171,7 +180,15 @@ def main(
     # Disable MoE permute fusion for SequentialMLP (used by quantization_layer_spec)
     # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
     model_provider.moe_permute_fusion = False
-    model_provider.transformer_layer_spec = quantization_layer_spec
+
+    # Set the correct layer spec for quantization based on model type
+    if isinstance(model_provider, MambaModelProvider):
+        # For Mamba/Nemotron-H models: use quantization_mamba_stack_spec
+        model_provider.mamba_stack_spec = quantization_mamba_stack_spec
+    else:
+        # For GPT/Llama models: use the standard quantization layer spec
+        model_provider.transformer_layer_spec = quantization_layer_spec
+
     # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
@@ -319,6 +336,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable HF datasets file lock. This is only needed when testing with data in a read-only directory.",
     )
+    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
     if args.disable_hf_datasets_file_lock:
@@ -342,6 +360,7 @@ if __name__ == "__main__":
         args.export_kv_cache_quant,
         args.force_all_expert_routing,
         args.prompts,
+        args.trust_remote_code,
     )
 
     if torch.distributed.is_initialized():

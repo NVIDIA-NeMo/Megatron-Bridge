@@ -32,9 +32,21 @@ def list_of_strings(arg):
     return arg.split(",")
 
 
+def list_of_ints(arg):
+    """Split a comma-separated string into a list of integers."""
+    if arg is None:
+        raise argparse.ArgumentTypeError("empty argument list")
+    try:
+        result = [int(p, 10) for p in list_of_strings(arg)]
+    except Exception:
+        raise argparse.ArgumentTypeError(f"invalid comma-separated integer list: {arg!r}") from None
+
+    return result
+
+
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
-    return dict(item.split("=") for item in arg.split(";"))
+    return dict(item.split("=") for item in arg.split(","))
 
 
 def lower_str(arg):
@@ -118,6 +130,8 @@ def parse_additional_slurm_params(params_str):
         else:
             # Boolean flag (no value)
             params[part] = True
+
+    return params if params else None
 
 
 def parse_cli_args():
@@ -285,8 +299,9 @@ def parse_cli_args():
     parallelism_args.add_argument(
         "-vp",
         "--virtual_pipeline_model_parallel_size",
-        type=int,
+        type=lambda x: None if x == "None" else int(x),
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
+        default=-1,
     )
     parallelism_args.add_argument(
         "-ep",
@@ -364,6 +379,13 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated string of srun arguments",
         default=[],
+    )
+    slurm_args.add_argument(
+        "--gres",
+        type=str,
+        help="Slurm generic resources to request (e.g., 'gpu:4').",
+        required=False,
+        default=None,
     )
     slurm_args.add_argument(
         "--additional_slurm_params",
@@ -458,15 +480,31 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
-        "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=10
+        "--profiling_start_step",
+        type=int,
+        help="Defines start step for profiling",
+        required=False,
+        default=10,
     )
     performance_args.add_argument(
-        "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
+        "--profiling_stop_step",
+        type=int,
+        help="Defines stop step for profiling",
+        required=False,
+        default=11,
     )
     performance_args.add_argument(
         "--profiling_gpu_metrics",
         help="Enable nsys gpu metrics. Disabled by default.",
         action="store_true",
+    )
+    performance_args.add_argument(
+        "--profiling_ranks",
+        type=list_of_ints,
+        metavar="N[,N...]",
+        help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
     )
     performance_args.add_argument(
         "--use_tokendrop",
@@ -525,7 +563,7 @@ def parse_cli_args():
         "-wdk",
         "--wandb_key",
         type=str,
-        help="wandb key. Needed for wandb logger projetion to server",
+        help="wandb key. Needed for wandb logger projection to server",
         required=False,
     )
     logging_args.add_argument(
@@ -560,9 +598,9 @@ def parse_cli_args():
         "-l",
         "--log_dir",
         type=str,
-        help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()}",
+        help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()} or NEMORUN_HOME envvar",
         required=False,
-        default=get_nemorun_home(),
+        default=None,
     )
 
     parser.add_argument(

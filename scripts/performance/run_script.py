@@ -16,7 +16,7 @@ import logging
 
 import torch
 from argument_parser import parse_cli_args
-from utils.overrides import set_post_overrides, set_user_overrides
+from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
 from utils.utils import get_perf_optimized_recipe
 
 from megatron.bridge.training.gpt_step import forward_step
@@ -28,28 +28,22 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main function to run the pretraining/finetuning script."""
+    # Parse known args and treat any unknown args as Hydra-style config overrides.
+    # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
     parser = parse_cli_args()
-    args, _ = parser.parse_known_args()
-
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
-
-    if args.model_recipe_name == "deepseek_v3_32nodes_pretrain_config":
-        args.model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
+    args, cli_overrides = parser.parse_known_args()
 
     recipe = get_perf_optimized_recipe(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
+        train_task=args.task,
         gpu=args.gpu,
         compute_dtype=args.compute_dtype,
         mock=args.data == "mock",
     )
 
+    recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
-
     recipe = set_post_overrides(
         recipe,
         args.model_family_name,

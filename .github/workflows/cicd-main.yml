@@ -380,6 +380,7 @@ jobs:
           - script: L2_Launch_models_mistral
           - script: L2_Launch_models_nemotron
           - script: L2_Launch_models_nemotronh
+          - script: L2_Launch_models_nemotronh_quantization
           - script: L2_Launch_models_nemotron_vl
           - script: L2_Launch_models_olmoe
           - script: L2_Launch_models_qwen
@@ -395,7 +396,8 @@ jobs:
           - script: L2_Launch_post_training_quantization
           - script: L2_Launch_quantization_aware_training
           - script: L2_Launch_quantization_export
-    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
+          - script: L2_Launch_recipes_llama_cuda_graphs
+    needs: [cicd-unit-tests]
     runs-on: nemo-ci-aws-gpu-x2
     if: |
       (

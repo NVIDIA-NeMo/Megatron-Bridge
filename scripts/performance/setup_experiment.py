@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,9 +18,11 @@ import glob
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import nemo_run as run
 from nemo_run.config import get_nemorun_home
 
 
@@ -31,9 +35,6 @@ except (ImportError, ModuleNotFoundError):
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
 
-import nemo_run as run
-
-
 try:
     import wandb
 
@@ -43,8 +44,10 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .resiliency_plugins import FaultTolerancePlugin
 
 import logging
 
@@ -127,12 +130,6 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     return config if config else None
 
 
-def log_assets_dirname_to_disk(assets_dir: str):
-    """Log experiment dirname to disk."""
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "NEMORUN_ASSETS_DIR.txt"), "w") as f:
-        f.write(assets_dir)
-
-
 def ensure_logs_where_written(log_file_paths: List[str]):
     """Ensure logs were written to disk."""
     if len(log_file_paths) != 1:
@@ -190,6 +187,7 @@ def main(
     profiling_start_step: int,
     profiling_stop_step: int,
     profiling_gpu_metrics: bool,
+    profiling_ranks: Optional[List[int]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -218,10 +216,15 @@ def main(
     dgxc_pvc_mount_path: str,
 ):
     """Sets up the experiment and runs it."""
-    if model_family_name in ["qwen3"] and model_recipe_name in [
-        "qwen3_30b_a3b_pretrain_config",
-        "qwen3_235b_a22b_pretrain_config",
-    ]:
+    if (
+        model_family_name in ["qwen3"]
+        and model_recipe_name
+        in [
+            "qwen3_30b_a3b",
+            "qwen3_235b_a22b",
+        ]
+        and task == "pretrain"
+    ):
         assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
 
     if wandb_key is not None:
@@ -234,7 +237,7 @@ def main(
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
-            else f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{num_gpus}gpu_{gpu}"
+            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
         )
 
     else:
@@ -242,7 +245,7 @@ def main(
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
-            else f"{model_recipe_name.replace('_pretrain_config', '')}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
+            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
         )
 
     if pretrained_checkpoint is not None:
@@ -274,6 +277,7 @@ def main(
             custom_mounts=custom_mounts,
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
+            gres=args.gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
@@ -311,7 +315,7 @@ def main(
                 model_recipe_name=model_recipe_name,
                 gpu=gpu,
                 compute_dtype=compute_dtype,
-                task=task,
+                train_task=task,
             )
         )
 
@@ -321,6 +325,19 @@ def main(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
+                profile_ranks=profiling_ranks,
+            )
+        )
+
+    if use_recipes and dgxc_cluster is not None:
+        plugins.append(
+            FaultTolerancePlugin(
+                enable_ft_package=True,
+                calc_ft_timeouts=True,
+                num_in_job_restarts=10,
+                num_job_retries_on_failure=10,
+                initial_rank_heartbeat_timeout=1800,
+                rank_heartbeat_timeout=300,
             )
         )
 
@@ -364,6 +381,9 @@ def main(
                 detach=detach,
                 name=exp_name,
             )
+            if dryrun:
+                logger.info("dryrun requested: exiting")
+                return
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
@@ -375,10 +395,7 @@ def main(
                 is_testing_passed = True
                 break
 
-            assets_dir = os.path.join(job_dir, exp_name)
-            log_assets_dirname_to_disk(assets_dir)
-
-            log_file_paths = [str(Path(f"{job_dir}/log-*_0.out"))]
+            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
@@ -414,10 +431,13 @@ def main(
                     project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
                 )
 
+            logger.info("Waiting 10 seconds for I/O to settle")
+            time.sleep(10)
+
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
-                assets_dir=assets_dir,
+                assets_dir=os.path.join(job_dir, exp_name),
                 log_paths=log_paths,
                 loss_metric="lm loss",
                 timing_metric="elapsed time per iteration (ms)",
@@ -445,19 +465,18 @@ def main(
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
-
-    logger.info("Megatron-Bridge CI test job completed successfully!")
+    elif is_finished_experiment and not detach:
+        logger.info("Megatron-Bridge CI test job completed successfully!")
 
 
 if __name__ == "__main__":
     parser = parse_cli_args()
-    args, _ = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args()
 
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
+    # probably better to use parser.parse_args() and make unknowns an error,
+    # but for now we'll just issue a warning.
+    if unknown_args:
+        logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
     main(
         use_recipes=args.use_recipes,
@@ -482,6 +501,7 @@ if __name__ == "__main__":
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
+        profiling_ranks=args.profiling_ranks,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,

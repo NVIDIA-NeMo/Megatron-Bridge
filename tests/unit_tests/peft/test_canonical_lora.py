@@ -61,6 +61,7 @@ class MockMegatronLinear(nn.Module):
             def __init__(self):
                 self.kv_channels = kv_channels or 64
                 self.num_query_groups = num_query_groups or 8
+                self.num_attention_heads = self.num_query_groups
                 self.sequence_parallel = False
 
         self.config = MockConfig()
@@ -220,10 +221,10 @@ class TestCanonicalLoRA:
         def mock_get_attrs(module, is_expert=False):
             if hasattr(module, "out_features"):
                 if module.out_features == 1536:  # linear_qkv
-                    return (False, 512, 1536, False, True)
+                    return (False, 512, 1536, False, True, True)
                 elif module.out_features == 2048:  # linear_fc1
-                    return (False, 512, 2048, False, True)
-            return (False, 512, 512, False, True)  # default
+                    return (False, 512, 2048, False, True, True)
+            return (False, 512, 512, False, True, True)  # default
 
         with patch(
             "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
@@ -486,7 +487,7 @@ class TestCanonicalLoRA:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False, True)
+            mock_get_attrs.return_value = (False, 512, 1536, False, True, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -524,7 +525,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False, True)
+            mock_get_attrs.return_value = (False, 512, 1536, False, True, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -546,7 +547,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 2048, False, True)
+            mock_get_attrs.return_value = (False, 512, 2048, False, True, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:

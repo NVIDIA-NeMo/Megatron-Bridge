@@ -16,14 +16,17 @@ import os
 from typing import List, Optional, Union
 
 import torch
+from transformers import AutoTokenizer, Qwen2VLImageProcessor
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import (
+    EnergonProvider,
     HFDatasetConversationProvider,
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
 )
+from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -107,8 +110,8 @@ def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> C
     return _qwen3_vl_common(**combined_kwargs)
 
 
-def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL 3B Active 30B MoE (Qwen3-VL-3B-Active-30B-A3B-Instruct).
+def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen/Qwen3-VL-30B-A3B-Instruct.
 
     This is a Mixture-of-Experts model with 128 experts and top-8 routing.
     Recommended to use with expert parallelism (EP) for efficient training.
@@ -118,6 +121,31 @@ def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLComm
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
         "expert_parallelism": 8,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+        "min_lr": 2e-6,
+        "lr": 2e-5,
+        "lr_warmup_iters": 200,
+        "micro_batch_size": 1,
+        "global_batch_size": 32,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen/Qwen3-VL-235B-A22B-Instruct.
+
+    This is a Mixture-of-Experts model with 128 experts and top-8 routing.
+    Recommended to use with expert parallelism (EP) for efficient training.
+    """
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 1,
+        "expert_parallelism": 8,
+        "expert_tensor_parallelism": 1,
         "freeze_language_model": True,
         "freeze_vision_model": True,
         "freeze_vision_projection": False,
@@ -216,7 +244,7 @@ def _qwen3_vl_common(
 
     if _dataset_choice == "mock":
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             prompt="Describe this image.",
             num_workers=1,
@@ -229,7 +257,7 @@ def _qwen3_vl_common(
         )
     elif _dataset_choice == "preloaded":
         dataset_cfg = PreloadedVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
             valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,
@@ -252,8 +280,31 @@ def _qwen3_vl_common(
             pin_memory=True,
             persistent_workers=False,
         )
+    elif _dataset_choice == "energon":
+        tokenizer = AutoTokenizer.from_pretrained(_processor_model)
+        # Use from_pretrained to ensure correct normalization (mean/std) and config (min_pixels)
+        # matching Preloaded provider behavior.
+        image_processor = Qwen2VLImageProcessor.from_pretrained(_processor_model)
+
+        dataset_cfg = EnergonProvider(
+            seq_length=seq_length,
+            path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
+            micro_batch_size=micro_batch_size,
+            global_batch_size=global_batch_size,
+            num_workers=2,
+            dataloader_type="external",
+            task_encoder=QwenVLTaskEncoder(
+                tokenizer=tokenizer,
+                image_processor=image_processor,
+                max_padding_length=seq_length,
+                min_pixels=200704,
+                max_pixels=1003520,
+            ),
+        )
     else:
-        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf'].")
+        raise ValueError(
+            f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf', 'energon']."
+        )
 
     cfg = ConfigContainer(
         model=model_cfg,
