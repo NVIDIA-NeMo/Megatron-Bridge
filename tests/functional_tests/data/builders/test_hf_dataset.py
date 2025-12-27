@@ -15,6 +15,8 @@
 import os
 from pathlib import PosixPath
 
+import datasets
+import huggingface_hub
 import pytest
 from datasets import load_dataset
 
