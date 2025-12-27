@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
-from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings, extract_expert_number_from_param
 
 
 @MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel)
@@ -169,6 +169,8 @@ class GPTOSSBridge(MegatronModelBridge):
             "model.layers.*.mlp.router.bias": "decoder.layers.*.mlp.router.bias",
             "model.layers.*.mlp.router.weight": "decoder.layers.*.mlp.router.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)

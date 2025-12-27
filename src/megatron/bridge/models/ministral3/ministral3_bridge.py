@@ -42,6 +42,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 # Import HuggingFace model classes with fallback for older transformers versions
@@ -132,6 +133,8 @@ class Ministral3Bridge(MegatronModelBridge):
             # MLP output projection
             "language_model.decoder.layers.*.mlp.linear_fc2.weight": "language_model.model.layers.*.mlp.down_proj.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)

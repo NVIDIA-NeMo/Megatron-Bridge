@@ -28,6 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 @MegatronModelBridge.register_bridge(source=Gemma3ForConditionalGeneration, target=Gemma3VLModel)
@@ -101,6 +102,8 @@ class Gemma3VLBridge(MegatronModelBridge):
             # Vision projector
             "multi_modal_projector.mm_soft_emb_norm.weight": "multi_modal_projector.mm_soft_embed_norm.weight",
         }
+
+        add_separate_layernorm_mappings(param_mappings)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)

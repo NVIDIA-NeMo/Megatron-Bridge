@@ -14,6 +14,7 @@
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils.common_utils import add_separate_layernorm_mappings
 
 
 try:
@@ -115,6 +116,8 @@ def get_common_mapping_list() -> list:
         # For models without MLA
         "decoder.layers.*.self_attention.linear_q_proj.weight": "model.layers.*.self_attn.q_proj.weight",
     }
+
+    add_separate_layernorm_mappings(param_mappings)
 
     # TODO: mtp layers
 
