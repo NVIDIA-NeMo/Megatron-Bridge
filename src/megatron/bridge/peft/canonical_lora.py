@@ -74,6 +74,8 @@ class LoRALinearSplitQKV(AdapterWrapper):
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         query = self.adapter.adapter_q(layernorm_output)
         key = self.adapter.adapter_k(layernorm_output)
         value = self.adapter.adapter_v(layernorm_output)
@@ -100,6 +102,8 @@ class LoRALinearSplitFC1UpGate(AdapterWrapper):
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         adapter_output_gate = self.adapter.adapter_gate(layernorm_output)
         adapter_output_up = self.adapter.adapter_up(layernorm_output)
         adapter_output = torch.cat([adapter_output_gate, adapter_output_up], dim=-1)
