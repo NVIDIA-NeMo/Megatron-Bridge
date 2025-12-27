@@ -480,6 +480,14 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
+        "-pyp",
+        "--pytorch_profiler",
+        type=bool_arg,
+        help="Enable PyTorch profiler. Disabled by default",
+        required=False,
+        default=False,
+    )
+    performance_args.add_argument(
         "--profiling_start_step",
         type=int,
         help="Defines start step for profiling",
@@ -492,6 +500,14 @@ def parse_cli_args():
         help="Defines stop step for profiling",
         required=False,
         default=11,
+    )
+    performance_args.add_argument(
+        "-mh",
+        "--record_memory_history",
+        type=bool_arg,
+        help="Enable PyTorch profiler memory history recording. Enabled by default (if pytorch_profiler is enabled)",
+        required=False,
+        default=True,
     )
     performance_args.add_argument(
         "--profiling_gpu_metrics",
