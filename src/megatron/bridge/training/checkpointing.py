@@ -1012,6 +1012,13 @@ def _generate_model_state_dict(
     """
     state_dict = {}
 
+    # This is necessary for SWiGLU weight handling which requires megatron_fsdp_slice attribute
+    if ckpt_format == "fsdp_dtensor":
+        for model_chunk in model:
+            # Check if model is wrapped with MegatronFSDP
+            if hasattr(model_chunk, '_replace_param_with_distributed_if_needed'):
+                model_chunk._replace_param_with_distributed_if_needed()
+
     if len(model) == 1:
         if ckpt_format == "torch_dist":
             state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
