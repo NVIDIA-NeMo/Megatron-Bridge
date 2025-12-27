@@ -473,10 +473,17 @@ def parse_cli_args():
         type=bool_arg,
         required=False,
     )
-    performance_args.add_argument(
+    profile_group = performance_args.add_mutually_exclusive_group()
+    profile_group.add_argument(
         "-en",
         "--enable_nsys",
         help="Enable Nsys profiling. Disabled by default",
+        action="store_true",
+    )
+    profile_group.add_argument(
+        "-entp",
+        "--enable_torch_profiler",
+        help="Enable PyTorch profiler. Disabled by default",
         action="store_true",
     )
     performance_args.add_argument(
