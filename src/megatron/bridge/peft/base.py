@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.peft.walk_utils import walk
 
 
@@ -106,6 +107,9 @@ class PEFT(ABC):
             else:
                 model_to_walk = model
             walk(model_to_walk, self.transform)
+
+        if training:
+            maybe_enable_recompute_inputs_grad(model)
 
         if not training:
             self.freeze_model(model, training=training)
