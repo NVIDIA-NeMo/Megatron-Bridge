@@ -45,6 +45,22 @@ def get_tokenizer(ensure_test_data):
     return tokenizer
 
 
+@pytest.fixture(scope="module", autouse=True)
+def disable_hf_cache():
+    """Disable HF cache for the dataset tests."""
+    hf_home = os.environ["HF_HOME"]
+    hub_offline = os.environ["HF_HUB_OFFLINE"]
+    del os.environ["HF_HOME"]
+    del os.environ["HF_HUB_OFFLINE"]
+    reload(huggingface_hub.constants)
+    reload(datasets.config)
+    yield
+    os.environ["HF_HOME"] = hf_home
+    os.environ["HF_HUB_OFFLINE"] = hub_offline
+    reload(huggingface_hub.constants)
+    reload(datasets.config)
+
+
 class TestDataHFDataset:
     def test_preprocess_and_split_data_split_val_from_train(self, ensure_test_data):
         path = f"{ensure_test_data}/datasets/hf"
