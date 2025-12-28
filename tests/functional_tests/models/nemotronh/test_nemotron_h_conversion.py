@@ -66,7 +66,7 @@ class TestNemotronHConversion:
         """
         # Create a temporary directory for this test class
         temp_dir = tmp_path_factory.mktemp("nemotronh_toy_model")
-        model_dir = temp_dir / "nemotronh_toy"
+        model_dir = temp_dir / "nemotronh_toy_8b"
 
         # Create NemotronH toy model config by starting with 8B and applying overrides
         # This avoids attempting import of NemotronHConfig from Transformers
