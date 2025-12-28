@@ -171,6 +171,4 @@ def reset_te_debug_state():
 def mock_datasets_file_lock():
     """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
     with patch("datasets.builder.FileLock", return_value=MagicMock()):
-        print("patching FileLock")
         yield
-        print("done patching FileLock")
