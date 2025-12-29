@@ -49,7 +49,11 @@ def test_merge_lora_adapter_weights_merges(monkeypatch):
         linear_out_weight=MegatronWeightTuple("out", torch.eye(4), vp_stage=0),
     )
 
-    updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
+    updated = bridge._merge_lora_adapter_weights(
+        [Mock(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_weight],
+    )
     expected = base_weight + torch.eye(4)
     torch.testing.assert_close(updated["hf.weight"], expected)
 
@@ -90,7 +94,11 @@ def test_merge_lora_adapter_weights_fused_fc1(monkeypatch):
         lambda: 1,
     )
 
-    updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
+    updated = bridge._merge_lora_adapter_weights(
+        [Mock(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_weight],
+    )
     torch.testing.assert_close(updated["decoder.layers.0.mlp.gate_proj.weight"], torch.eye(4))
     torch.testing.assert_close(updated["decoder.layers.0.mlp.up_proj.weight"], 2 * torch.eye(4))
 
@@ -122,7 +130,11 @@ def test_merge_lora_adapter_weights_fused_fc1_tp_aware(monkeypatch):
         lambda: 2,
     )
 
-    updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
+    updated = bridge._merge_lora_adapter_weights(
+        [Mock(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_weight],
+    )
     expected_gate = torch.cat([gate0, gate1], dim=0)
     expected_up = torch.cat([up0, up1], dim=0)
     torch.testing.assert_close(updated["decoder.layers.0.mlp.gate_proj.weight"], expected_gate)
@@ -137,6 +149,7 @@ def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
         kv_channels=None,
         hidden_size=4,
         attention_output_gate=False,
+        num_moe_experts=0,
     )
     megatron_model = [SimpleNamespace(config=config)]
     converted = {
@@ -198,7 +211,12 @@ def test_merge_canonical_adapter_from_weights(monkeypatch):
         linear_out_weight=MegatronWeightTuple("out_v", 3 * torch.ones(1, 2), vp_stage=0),
     )
 
-    updated = bridge._merge_canonical_adapter_from_weights(converted, [adapter_q, adapter_k, adapter_v])
+    megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
+    updated = bridge._merge_canonical_adapter_from_weights(
+        megatron_model,
+        converted,
+        [adapter_q, adapter_k, adapter_v],
+    )
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.q_proj.weight"], torch.ones(2, 2))
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.k_proj.weight"], 2 * torch.ones(1, 2))
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.v_proj.weight"], 3 * torch.ones(1, 2))
@@ -210,6 +228,9 @@ def test_global_param_names_skip_adapter(monkeypatch):
     class DummyGroup:
         def size(self):
             return 1
+
+        def rank(self):
+            return 0
 
     fake_param = torch.nn.Parameter(torch.zeros(1, 1))
 
@@ -254,6 +275,9 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     class DummyGroup:
         def size(self):
             return 1
+
+        def rank(self):
+            return 0
 
     class FakeAdapter:
         def __init__(self):
@@ -471,7 +495,8 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
         lambda *_: [adapter_weight],
     )
 
-    weights = list(bridge.stream_adapter_weights_megatron_to_hf([Mock()], cpu=False, show_progress=False))
+    megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
+    weights = list(bridge.stream_adapter_weights_megatron_to_hf(megatron_model, cpu=False, show_progress=False))
     assert len(weights) == 2
     assert weights[0].param_name.endswith(".linear_in.weight")
     assert weights[1].param_name.endswith(".linear_out.weight")
@@ -533,7 +558,7 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
 
     weights = list(
         bridge.stream_adapter_weights_megatron_to_hf(
-            [SimpleNamespace(config=SimpleNamespace())],
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
             cpu=False,
             show_progress=False,
         )
@@ -606,7 +631,7 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
 
     weights = list(
         bridge.stream_adapter_weights_megatron_to_hf(
-            [SimpleNamespace(config=SimpleNamespace())],
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
             cpu=False,
             show_progress=False,
         )
