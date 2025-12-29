@@ -346,8 +346,10 @@ class MegatronPeftBridge:
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> List[tuple[str, str, bool, bool, int, int, int, int]]:
-        """Collect adapter metadata across PP ranks."""
-
+        """Get all adapters' information tuple:
+         (global_base_name, local_base_prefix, input_is_parallel, base_linear_is_parallel, alpha, dim, pp_rank, vp_stage)
+        across all pipeline parallel ranks."""
+        # Cache the result after first call
         if hasattr(self, "_cached_param_objects_adapter"):
             return self._cached_param_objects_adapter
 
@@ -369,6 +371,7 @@ class MegatronPeftBridge:
                 global_param_name = _megatron_local_name_to_global(
                     megatron_model, model_config, local_param_name, vp_stage
                 )
+                # only collect linear_in.weight for deduplication
                 if not self._is_adapter_param_name(global_param_name) or not global_param_name.endswith(
                     ".linear_in.weight"
                 ):
@@ -380,7 +383,7 @@ class MegatronPeftBridge:
                 if isinstance(adapter, ModuleDict):
                     adapter_name = local_param_name.removeprefix(local_base_prefix + ".adapter.").split(".")[0]
                     adapter = adapter[adapter_name]
-                input_is_parallel, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
                 global_param_objects.append(
                     (
                         global_base_name,
@@ -396,14 +399,31 @@ class MegatronPeftBridge:
 
         gathered_global_param_objects = [None] * pp_group.size()
         torch.distributed.all_gather_object(gathered_global_param_objects, global_param_objects, group=pp_group)
+
+        # flatten the list, sort it and remove duplicates
+        # the order matters here, casually re-order will cause a hang.
         flattened_names = list(set(sum(gathered_global_param_objects, [])))
+
+        # the order cannot be changed, this sync for all ranks for conversion
+        # change this might cause a hang
         gathered_global_param_objects = sorted(flattened_names, key=lambda x: extract_sort_key(x[0]))
+
         self._cached_param_objects_adapter = gathered_global_param_objects
+
         return gathered_global_param_objects
 
     def _construct_adapters_names(self, prefix: str, adapter_key: Optional[str]) -> tuple[str, str]:
-        """Build linear_in/linear_out parameter names for an adapter."""
+        """Build linear_in/linear_out parameter names for an adapter.
 
+        Args:
+            prefix: Base module prefix without any adapter suffix (global or local, depending on caller).
+            adapter_key: Optional adapter identifier used by CanonicalLoRA (e.g. ``adapter_q``). ``None`` for
+                standard single-adapter LoRA modules.
+
+        Returns:
+            Tuple ``(linear_in_name, linear_out_name)`` containing the parameter names for the adapter's
+            input and output projection weights.
+        """
         linear_in_name, linear_out_name = prefix + ".adapter", prefix + ".adapter"
         if adapter_key is not None:
             linear_in_name += f".{adapter_key}"
@@ -415,7 +435,13 @@ class MegatronPeftBridge:
     def build_adapter_conversion_tasks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> Dict[str, List[AdapterWeightConversionTask]]:
-        """Construct adapter merge tasks keyed by their base parameter."""
+        """Construct adapter merge tasks keyed by their base parameter.
+
+        The returned dict is keyed by the *global* LoRA-wrapped parameter name
+        (e.g., ``decoder.layers.0.mlp.linear_fc1.to_wrap.weight``). Each value
+        contains the adapter tasks (canonical or regular) that should be
+        merged into that base weight.
+        """
 
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
@@ -439,7 +465,9 @@ class MegatronPeftBridge:
             pp_rank,
             vp_stage,
         ) in adapters_info:
+            # global_base_name example: decoder.layers.0.mlp.linear_fc1.adapter.adapter_q
             global_base_prefix, _, adapter_suffix = global_base_name.partition(".adapter")
+
             adapter_key = None
             if adapter_suffix:
                 key_token = adapter_suffix.split(".")[-1]
@@ -449,6 +477,7 @@ class MegatronPeftBridge:
             global_linear_in_name, global_linear_out_name = self._construct_adapters_names(
                 global_base_prefix, adapter_key
             )
+            # In case the adapter doesn't exist locally, we use the global names
             local_linear_in_name, local_linear_out_name = global_linear_in_name, global_linear_out_name
 
             base_suffix = ".weight"
@@ -463,8 +492,8 @@ class MegatronPeftBridge:
                 mapping_registry, global_base_prefix, ".linear_out.weight", base_suffix, adapter_key
             )
 
-            linear_in_module = linear_in_weight = None
-            linear_out_module = linear_out_weight = None
+            linear_in_module, linear_in_weight = None, None
+            linear_out_module, linear_out_weight = None, None
             if parallel_state.get_pipeline_model_parallel_rank() == pp_rank:
                 adapter, _ = self._get_adapter_wrap_module(local_base_prefix, megatron_model, vp_stage)
                 if isinstance(adapter, ModuleDict):
@@ -475,6 +504,7 @@ class MegatronPeftBridge:
                     local_base_prefix, adapter_key
                 )
 
+            # Pick mapping strategies based on base layer parallelism
             if base_linear_is_parallel:
                 linear_in_mapping_cls = RowParallelMapping if input_is_parallel else ColumnParallelMapping
                 linear_out_mapping_cls = ColumnParallelMapping
