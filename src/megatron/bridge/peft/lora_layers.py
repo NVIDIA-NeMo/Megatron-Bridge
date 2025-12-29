@@ -71,7 +71,7 @@ class TELinearAdapter(te.Linear):
         dim: LoRA's dimension (in_features -> dim -> out_features).
         alpha: LoRA's scaling alpha.
         dropout: Dropout probability (default: 0.0).
-        dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='post').
+        dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
         lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
         lora_dtype: Weight's dtype, by default will use orig_linear's but if they
                     are quantized weights (e.g. 4bit) needs to be specified explicitly.
@@ -83,7 +83,7 @@ class TELinearAdapter(te.Linear):
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "post",
+        dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
@@ -130,7 +130,7 @@ class TELinearAdapter(te.Linear):
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "post",
+        dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
@@ -141,7 +141,7 @@ class TELinearAdapter(te.Linear):
             dim: LoRA's dimension (in_features -> dim -> out_features).
             alpha: LoRA's scaling alpha.
             dropout: Dropout probability (default: 0.0).
-            dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='post').
+            dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
             lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
             lora_dtype: Weight's dtype, by default will use orig_linear's but if they
                         are quantized weights (e.g. 4bit) needs to be specified explicitly.
@@ -162,11 +162,14 @@ class TELinearAdapter(te.Linear):
         obj.lora_a = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
         obj.lora_b = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
         if lora_A_init_method == "xavier":
-            torch.nn.init.uniform_(obj.lora_a.weight.data)
+            torch.nn.init.xavier_uniform_(obj.lora_a.weight.data)
         else:
             nn.init.kaiming_uniform_(obj.lora_a.weight.data, a=math.sqrt(5))
         obj.lora_b.weight.data.fill_(0)
-        obj.dropout = nn.Dropout(p=dropout)
+        if dropout > 0.0:
+            obj.dropout = nn.Dropout(p=dropout)
+        else:
+            obj.dropout = nn.Identity()
         assert dropout_position in ["pre", "post"], dropout_position
         obj.dropout_position = dropout_position
 
@@ -356,15 +359,14 @@ class TEFusedLoRALinear(LoRALinear):
             lora_a_weight = self.adapter.lora_a.weight
             lora_b_weight = self.adapter.lora_b.weight
             lora_dim = lora_b_weight.size(1)
-            dropout = self.adapter.dropout.p
+            dropout = getattr(self.adapter.dropout, "p", 0.0)
             dropout_position = self.adapter.dropout_position
             scale = self.adapter.scale
         elif isinstance(self.adapter, ParallelLinearAdapter):
             lora_a_weight = self.adapter.linear_in.weight
             lora_b_weight = self.adapter.linear_out.weight
             lora_dim = lora_b_weight.size(1)
-            if self.adapter.dropout is not None:
-                dropout = self.adapter.dropout.p
+            dropout = getattr(self.adapter.dropout, "p", 0.0)
             dropout_position = self.adapter.dropout_position
             scale = self.adapter.alpha / self.adapter.dim
         else:
@@ -457,7 +459,7 @@ class LinearAdapter(nn.Linear):
         dim: LoRA's dimension (in_features -> dim -> out_features).
         alpha: LoRA's scaling alpha.
         dropout: Dropout probability (default: 0.0).
-        dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='post').
+        dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
         lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
         lora_dtype: Weight's dtype, by default will use orig_linear's but if they
                    are quantized weights (e.g. 4bit) needs to be specified explicitly.
@@ -469,7 +471,7 @@ class LinearAdapter(nn.Linear):
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "post",
+        dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
@@ -514,7 +516,7 @@ class LinearAdapter(nn.Linear):
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "post",
+        dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
@@ -525,7 +527,7 @@ class LinearAdapter(nn.Linear):
             dim: LoRA's dimension (in_features -> dim -> out_features).
             alpha: LoRA's scaling alpha.
             dropout: Dropout probability (default: 0.0).
-            dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='post').
+            dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
             lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
             lora_dtype: Weight's dtype, by default will use orig_linear's but if they
                        are quantized weights (e.g. 4bit) needs to be specified explicitly.
@@ -546,11 +548,14 @@ class LinearAdapter(nn.Linear):
         obj.lora_a = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
         obj.lora_b = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
         if lora_A_init_method == "xavier":
-            torch.nn.init.uniform_(obj.lora_a.weight.data)
+            torch.nn.init.xavier_uniform_(obj.lora_a.weight.data)
         else:
             nn.init.kaiming_uniform_(obj.lora_a.weight.data, a=math.sqrt(5))
         obj.lora_b.weight.data.fill_(0)
-        obj.dropout = nn.Dropout(p=dropout)
+        if dropout > 0.0:
+            obj.dropout = nn.Dropout(p=dropout)
+        else:
+            obj.dropout = nn.Identity()
         assert dropout_position in ["pre", "post"], dropout_position
         obj.dropout_position = dropout_position
 
@@ -587,7 +592,7 @@ def patch_linear_module(
     dim: int = 8,
     alpha: int = 32,
     dropout: float = 0.0,
-    dropout_position: Literal["pre", "post"] = "post",
+    dropout_position: Literal["pre", "post"] = "pre",
     lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
     lora_dtype: Optional[torch.dtype] = None,
 ) -> Union[nn.Linear, "te.Linear"]:
@@ -610,7 +615,7 @@ def patch_linear_module(
         alpha: LoRA alpha scale. Defaults to 32.
         dropout: Dropout probability. Defaults to 0.0.
         dropout_position: Location to apply dropout wrt LoRA.
-            Defaults to 'post' (choices: 'pre', 'post').
+            Defaults to 'pre' (choices: 'pre', 'post').
         lora_A_init_method: LoRA_A initialization method. Defaults to 'xavier'.
         lora_dtype: LoRA weights' dtype. By default will use orig_linear's dtype
             but orig_linear might use non-trainable dtype (e.g., 4bit), in which case the user must
