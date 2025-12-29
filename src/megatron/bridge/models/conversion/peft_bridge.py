@@ -270,6 +270,37 @@ class MegatronPeftBridge:
         q_out, k_out, v_out = split_qkv_weights(model.config, linear_out_weight)
         return {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
 
+    def _split_fused_fc1_linear_out_weight(
+        self,
+        linear_out_weight: torch.Tensor,
+        *,
+        is_expert: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Split fused FC1 LoRA linear_out into gate/up with TP-aware ordering."""
+
+        tp_size = (
+            parallel_state.get_expert_tensor_parallel_world_size()
+            if is_expert
+            else parallel_state.get_tensor_model_parallel_world_size()
+        )
+        if tp_size <= 1:
+            return torch.chunk(linear_out_weight, 2, dim=0)
+
+        shard_size = linear_out_weight.shape[0] // tp_size
+        if shard_size * tp_size != linear_out_weight.shape[0] or shard_size % 2 != 0:
+            return torch.chunk(linear_out_weight, 2, dim=0)
+
+        shards = torch.split(linear_out_weight, shard_size, dim=0)
+        gate_parts = []
+        up_parts = []
+        for shard in shards:
+            gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
+            gate_parts.append(gate_shard)
+            up_parts.append(up_shard)
+        gate = torch.cat(gate_parts, dim=0)
+        up = torch.cat(up_parts, dim=0)
+        return gate, up
+
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> List[tuple[str, str, bool, bool, int, int, int, int]]:
@@ -542,6 +573,7 @@ class MegatronPeftBridge:
                         megatron_model,
                         base_hf_weight_names,
                         linear_out_tensor,
+                        is_expert=is_expert_linear(adapter_task.global_base_prefix),
                     )
                     if per_base_linear_out is not None:
                         for index, base_name in enumerate(base_hf_weight_names):
@@ -560,6 +592,7 @@ class MegatronPeftBridge:
         megatron_model: List[MegatronModel],
         base_hf_weight_names: List[str],
         linear_out_tensor: torch.Tensor,
+        is_expert: bool = False,
     ) -> Optional[Dict[str, torch.Tensor]]:
         """Return per-base-name linear_out slices for fused adapters, else None.
 
@@ -580,13 +613,16 @@ class MegatronPeftBridge:
 
         is_fused_fc1 = self._is_fused_fc1_gate_up(base_hf_weight_names, linear_out_tensor)
         if is_fused_fc1:
-            split_size = linear_out_tensor.shape[0] // 2
+            gate_weight, up_weight = self._split_fused_fc1_linear_out_weight(
+                linear_out_tensor,
+                is_expert=is_expert,
+            )
             per_base = {}
             for base_name in base_hf_weight_names:
                 if "gate_proj" in base_name:
-                    per_base[base_name] = linear_out_tensor[:split_size, :]
+                    per_base[base_name] = gate_weight
                 elif "up_proj" in base_name:
-                    per_base[base_name] = linear_out_tensor[split_size:, :]
+                    per_base[base_name] = up_weight
                 else:
                     raise ValueError(f"Unknown fused-fc1 base weight name: {base_name}")
             return per_base
@@ -620,15 +656,20 @@ class MegatronPeftBridge:
         qkv_linear_out_weights = (
             self._split_qkv_linear_out_weight(megatron_model, linear_out_weight) if is_fused_qkv else None
         )
+        fc1_gate_weight = fc1_up_weight = None
+        if is_fused_fc1:
+            fc1_gate_weight, fc1_up_weight = self._split_fused_fc1_linear_out_weight(
+                linear_out_weight,
+                is_expert=is_expert_linear(adapter_weight.global_base_prefix),
+            )
 
         for hf_name, base_weight in list(converted_weights_dict.items()):
             current_linear_out_weight = linear_out_weight
             if is_fused_fc1:
-                split_size = linear_out_weight.shape[0] // 2
                 if "gate_proj" in hf_name:
-                    current_linear_out_weight = linear_out_weight[:split_size, :]
+                    current_linear_out_weight = fc1_gate_weight
                 elif "up_proj" in hf_name:
-                    current_linear_out_weight = linear_out_weight[split_size:, :]
+                    current_linear_out_weight = fc1_up_weight
                 else:
                     raise ValueError(f"Unknown weight name: {hf_name}")
             elif is_fused_qkv and qkv_linear_out_weights is not None:
