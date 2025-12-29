@@ -85,9 +85,48 @@ def test_merge_lora_adapter_weights_fused_fc1(monkeypatch):
         linear_out_weight=MegatronWeightTuple("out", linear_out, vp_stage=0),
     )
 
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 1,
+    )
+
     updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
     torch.testing.assert_close(updated["decoder.layers.0.mlp.gate_proj.weight"], torch.eye(4))
     torch.testing.assert_close(updated["decoder.layers.0.mlp.up_proj.weight"], 2 * torch.eye(4))
+
+
+def test_merge_lora_adapter_weights_fused_fc1_tp_aware(monkeypatch):
+    bridge = DummyBridge()
+    base = torch.zeros(4, 4)
+    converted = {
+        "decoder.layers.0.mlp.gate_proj.weight": base.clone(),
+        "decoder.layers.0.mlp.up_proj.weight": base.clone(),
+    }
+
+    gate0 = torch.arange(0, 8, dtype=base.dtype).reshape(2, 4)
+    up0 = torch.arange(100, 108, dtype=base.dtype).reshape(2, 4)
+    gate1 = torch.arange(200, 208, dtype=base.dtype).reshape(2, 4)
+    up1 = torch.arange(300, 308, dtype=base.dtype).reshape(2, 4)
+    linear_out = torch.cat([gate0, up0, gate1, up1], dim=0)
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(4), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", linear_out, vp_stage=0),
+    )
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 2,
+    )
+
+    updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
+    expected_gate = torch.cat([gate0, gate1], dim=0)
+    expected_up = torch.cat([up0, up1], dim=0)
+    torch.testing.assert_close(updated["decoder.layers.0.mlp.gate_proj.weight"], expected_gate)
+    torch.testing.assert_close(updated["decoder.layers.0.mlp.up_proj.weight"], expected_up)
 
 
 def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
@@ -559,6 +598,10 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
             "model.layers.0.mlp.gate_proj.weight",
             "model.layers.0.mlp.up_proj.weight",
         ],
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 1,
     )
 
     weights = list(
