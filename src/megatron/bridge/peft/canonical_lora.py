@@ -75,10 +75,41 @@ class LoRALinearSplitQKV(AdapterWrapper):
         """Interleave QKV outputs to match Megatron's packed ordering."""
 
         config = self.to_wrap.config
-        head_num = config.num_attention_heads
-        num_query_groups = config.num_query_groups
+        head_num = getattr(config, "num_attention_heads", None)
+        num_query_groups = getattr(config, "num_query_groups", None)
+        head_size = getattr(config, "kv_channels", None)
+
+        if head_size is None:
+            hidden_size = getattr(config, "hidden_size", None)
+            if head_num is not None and hidden_size is not None:
+                head_size = hidden_size // head_num
+            elif num_query_groups:
+                if key.size(-1) % num_query_groups != 0:
+                    raise ValueError("Key projection size must be divisible by num_query_groups.")
+                head_size = key.size(-1) // num_query_groups
+            elif head_num is not None:
+                if query.size(-1) % head_num != 0:
+                    raise ValueError("Query projection size must be divisible by num_attention_heads.")
+                head_size = query.size(-1) // head_num
+            else:
+                raise ValueError(
+                    "Cannot infer head size without kv_channels or hidden_size/num_attention_heads or num_query_groups."
+                )
+
+        if head_num is None:
+            if query.size(-1) % head_size != 0:
+                raise ValueError("Query projection size must be divisible by head_size.")
+            head_num = query.size(-1) // head_size
+
+        if not num_query_groups:
+            if key.size(-1) % head_size != 0:
+                raise ValueError("Key projection size must be divisible by head_size.")
+            num_query_groups = key.size(-1) // head_size
+
+        if head_num % num_query_groups != 0:
+            raise ValueError("num_attention_heads must be divisible by num_query_groups.")
+
         heads_per_group = head_num // num_query_groups
-        head_size = config.kv_channels or (config.hidden_size // head_num)
 
         leading_shape = query.shape[:-1]
         query = query.reshape(-1, head_num, head_size)
