@@ -328,7 +328,7 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     )
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.peft_bridge.get_adapter_attributes_from_linear",
-        lambda *_args, **_kwargs: (True, None, None, None, False),
+        lambda *_args, **_kwargs: (True, None, None, None, None, False),
     )
     monkeypatch.setattr(
         "torch.distributed.all_gather_object",

@@ -342,6 +342,226 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         return self._cached_param_names
 
+    def _megatron_global_adapters_info_all_pp_ranks(
+        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+    ) -> List[tuple[str, str, bool, bool, int, int, int, int]]:
+        """Get all adapters' information tuple:
+         (global_base_name, local_base_prefix, input_is_parallel, base_linear_is_parallel, alpha, dim, pp_rank, vp_stage)
+        across all pipeline parallel ranks."""
+        # Cache the result after first call
+        if hasattr(self, "_cached_param_objects_adapter"):
+            return self._cached_param_objects_adapter
+
+        # Compute the result
+        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        model_config = unwrap_model(megatron_model)[0].config
+        global_param_objects = []
+
+        # Ensure megatron_model is a list for consistent handling
+        models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+
+        for vp_stage, model in enumerate(models_list):
+            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
+            for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+                if "_extra_state" in local_param_name:
+                    continue
+                local_param_name = self._unwrap_name(local_param_name)
+                global_param_name = _megatron_local_name_to_global(
+                    models_list, model_config, local_param_name, vp_stage
+                )
+                is_adapter_param = self._is_adapter_param_name(global_param_name)
+                # only collect linear_in.weight for deduplication
+                if not is_adapter_param or not global_param_name.endswith(".linear_in.weight"):
+                    continue
+                local_base_prefix = local_param_name.partition(".adapter.")[0]
+                global_base_name = global_param_name[: -len(".linear_in.weight")]
+                adapter, to_wrap = self._get_adapter_wrap_module(local_base_prefix, models_list, vp_stage)
+                if isinstance(adapter, ModuleDict):
+                    adapter_name = local_param_name.removeprefix(local_base_prefix + ".adapter.").split(".")[0]
+                    adapter = adapter[adapter_name]
+                input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                global_param_objects.append(
+                    (
+                        global_base_name,
+                        local_base_prefix,
+                        input_is_parallel,
+                        base_linear_is_parallel,
+                        adapter.alpha,
+                        adapter.dim,
+                        pp_rank,
+                        vp_stage,
+                    )
+                )
+
+        gathered_global_param_objects = [None] * pp_group.size()
+        torch.distributed.all_gather_object(gathered_global_param_objects, global_param_objects, group=pp_group)
+
+        # flatten the list, sort it and remove duplicates
+        # the order matters here, casually re-order will cause a hang.
+        flattened_names = list(set(sum(gathered_global_param_objects, [])))
+
+        # the order cannot be changed, this sync for all ranks for conversion
+        # change this might cause a hang
+        gathered_global_param_objects = sorted(flattened_names, key=lambda x: extract_sort_key(x[0]))
+
+        self._cached_param_objects_adapter = gathered_global_param_objects
+
+        return gathered_global_param_objects
+
+    def _construct_adapters_names(self, prefix: str, adapter_key: Optional[str]) -> tuple[str, str]:
+        """Build linear_in/linear_out parameter names for an adapter.
+
+        Args:
+            prefix: Base module prefix without any adapter suffix (global or local, depending on caller).
+            adapter_key: Optional adapter identifier used by CanonicalLoRA (e.g. ``adapter_q``). ``None`` for
+                standard single-adapter LoRA modules.
+
+        Returns:
+            Tuple ``(linear_in_name, linear_out_name)`` containing the parameter names for the adapter's
+            input and output projection weights.
+        """
+        linear_in_name, linear_out_name = prefix + ".adapter", prefix + ".adapter"
+        if adapter_key is not None:
+            linear_in_name += f".{adapter_key}"
+            linear_out_name += f".{adapter_key}"
+        linear_in_name += ".linear_in.weight"
+        linear_out_name += ".linear_out.weight"
+        return linear_in_name, linear_out_name
+
+    def build_adapter_conversion_tasks(
+        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+    ) -> Dict[str, List[AdapterWeightConversionTask]]:
+        """Construct adapter merge tasks keyed by their base parameter.
+
+        The returned dict is keyed by the *global* LoRA-wrapped parameter name
+        (e.g., ``decoder.layers.0.mlp.linear_fc1.to_wrap.weight``). Each value
+        contains the adapter tasks (canonical or regular) that should be
+        merged into that base weight.
+        """
+
+        models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+
+        adapters_info = self._megatron_global_adapters_info_all_pp_ranks(models_list)
+        tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = defaultdict(list)
+
+        for (
+            global_base_name,
+            local_base_prefix,
+            input_is_parallel,
+            base_linear_is_parallel,
+            alpha,
+            dim,
+            pp_rank,
+            vp_stage,
+        ) in adapters_info:
+            # global_base_name example: decoder.layers.0.mlp.linear_fc1.adapter.adapter_q
+            global_base_prefix, _, adapter_suffix = global_base_name.partition(".adapter")
+
+            adapter_key = None
+            if adapter_suffix:
+                key_token = adapter_suffix.split(".")[-1]
+                if key_token.startswith("adapter_"):
+                    adapter_key = key_token
+
+            global_linear_in_name, global_linear_out_name = self._construct_adapters_names(
+                global_base_prefix, adapter_key
+            )
+            # In case the adapter doesn't exist locally, we use the global names
+            local_linear_in_name, local_linear_out_name = global_linear_in_name, global_linear_out_name
+            linear_in_module, linear_in_weight = None, None
+            linear_out_module, linear_out_weight = None, None
+            if parallel_state.get_pipeline_model_parallel_rank() == pp_rank:
+                adapter, _ = self._get_adapter_wrap_module(local_base_prefix, models_list, vp_stage)
+                if isinstance(adapter, ModuleDict):
+                    adapter = adapter[adapter_key]
+                linear_in_module, linear_in_weight = adapter.linear_in, adapter.linear_in.weight
+                linear_out_module, linear_out_weight = adapter.linear_out, adapter.linear_out.weight
+                local_linear_in_name, local_linear_out_name = self._construct_adapters_names(
+                    local_base_prefix, adapter_key
+                )
+
+            # Pick mapping strategies based on base layer parallelism
+            if base_linear_is_parallel:
+                linear_in_mapping_cls = RowParallelMapping if input_is_parallel else ColumnParallelMapping
+                linear_out_mapping_cls = ColumnParallelMapping
+            else:
+                linear_in_mapping_cls = ReplicatedMapping
+                linear_out_mapping_cls = ReplicatedMapping
+
+            linear_in_task = WeightConversionTask(
+                param_name=local_linear_in_name,
+                global_param_name=global_linear_in_name,
+                # TODO: use some actual HF param name mapping
+                mapping=linear_in_mapping_cls(local_linear_in_name, local_linear_out_name),
+                pp_rank=pp_rank,
+                vp_stage=vp_stage,
+                megatron_module=linear_in_module,
+                param_weight=linear_in_weight,
+            )
+
+            linear_out_task = WeightConversionTask(
+                param_name=local_linear_out_name,
+                global_param_name=global_linear_out_name,
+                # TODO: use some actual HF param name mapping
+                mapping=linear_out_mapping_cls(local_linear_out_name, local_linear_out_name),
+                pp_rank=pp_rank,
+                vp_stage=vp_stage,
+                megatron_module=linear_out_module,
+                param_weight=linear_out_weight,
+            )
+
+            tasks_by_base[global_base_prefix].append(
+                AdapterWeightConversionTask(
+                    global_base_prefix=global_base_prefix,
+                    adapter_key=adapter_key,
+                    alpha=alpha,
+                    dim=dim,
+                    linear_in_task=linear_in_task,
+                    linear_out_task=linear_out_task,
+                )
+            )
+
+        return tasks_by_base
+
+    def materialize_adapter_weights(self, adapter_tasks: List[AdapterWeightConversionTask]) -> List[AdapterWeight]:
+        """Run adapter merge tasks to gather full adapter weights."""
+
+        materialized: List[AdapterWeight] = []
+        for adapter_task in adapter_tasks:
+            mapping = adapter_task.linear_in_task.mapping
+            linear_in_dict = mapping.megatron_to_hf(
+                adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+            )
+            linear_in_tensor = next(iter(linear_in_dict.values()))
+
+            mapping = adapter_task.linear_out_task.mapping
+            linear_out_dict = mapping.megatron_to_hf(
+                adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+            )
+            linear_out_tensor = next(iter(linear_out_dict.values()))
+
+            materialized.append(
+                AdapterWeight(
+                    global_base_prefix=adapter_task.global_base_prefix,
+                    adapter_key=adapter_task.adapter_key,
+                    alpha=adapter_task.alpha,
+                    dim=adapter_task.dim,
+                    linear_in_weight=MegatronWeightTuple(
+                        adapter_task.linear_in_task.param_name,
+                        linear_in_tensor,
+                        adapter_task.linear_in_task.vp_stage,
+                    ),
+                    linear_out_weight=MegatronWeightTuple(
+                        adapter_task.linear_out_task.param_name,
+                        linear_out_tensor,
+                        adapter_task.linear_out_task.vp_stage,
+                    ),
+                )
+            )
+
+        return materialized
+
     def _with_progress_tracking(self, tasks, description: str, show_progress: bool = True):
         """Helper method to wrap an iterable with progress tracking.
 

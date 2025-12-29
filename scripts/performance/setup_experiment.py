@@ -187,6 +187,7 @@ def main(
     profiling_start_step: int,
     profiling_stop_step: int,
     profiling_gpu_metrics: bool,
+    profiling_ranks: Optional[List[int]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -324,10 +325,11 @@ def main(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
+                profile_ranks=profiling_ranks,
             )
         )
 
-    if use_recipes:
+    if use_recipes and dgxc_cluster is not None:
         plugins.append(
             FaultTolerancePlugin(
                 enable_ft_package=True,
@@ -499,6 +501,7 @@ if __name__ == "__main__":
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
+        profiling_ranks=args.profiling_ranks,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
