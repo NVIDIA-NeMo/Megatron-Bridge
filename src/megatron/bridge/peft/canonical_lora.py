@@ -71,6 +71,30 @@ class LoRALinearSplitQKV(AdapterWrapper):
     class to provide a specific implementation of the forward method.
     """
 
+    def _interleave_qkv(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        """Interleave QKV outputs to match Megatron's packed ordering."""
+
+        config = self.to_wrap.config
+        head_num = config.num_attention_heads
+        num_query_groups = config.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = config.kv_channels or (config.hidden_size // head_num)
+
+        leading_shape = query.shape[:-1]
+        query = query.reshape(-1, head_num, head_size)
+        key = key.reshape(-1, num_query_groups, head_size)
+        value = value.reshape(-1, num_query_groups, head_size)
+
+        qkv_chunks = []
+        for i in range(num_query_groups):
+            q_group = query[:, i * heads_per_group : (i + 1) * heads_per_group, :]
+            k_group = key[:, i : i + 1, :]
+            v_group = value[:, i : i + 1, :]
+            qkv_chunks.extend([q_group, k_group, v_group])
+
+        qkv = torch.cat(qkv_chunks, dim=1)
+        return qkv.reshape(*leading_shape, -1)
+
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
@@ -78,12 +102,7 @@ class LoRALinearSplitQKV(AdapterWrapper):
         key = self.adapter.adapter_k(layernorm_output)
         value = self.adapter.adapter_v(layernorm_output)
 
-        query_4d = query.reshape(query.shape[0], query.shape[1], -1, self.to_wrap.config.kv_channels)
-        key_4d = key.reshape(key.shape[0], key.shape[1], -1, self.to_wrap.config.kv_channels)
-        value_4d = value.reshape(value.shape[0], value.shape[1], -1, self.to_wrap.config.kv_channels)
-
-        qkv_4d = torch.cat([query_4d, key_4d, value_4d], dim=2)
-        adapter_output = qkv_4d.reshape(qkv_4d.shape[0], qkv_4d.shape[1], -1)
+        adapter_output = self._interleave_qkv(query, key, value)
 
         return linear_output + adapter_output, bias
 
