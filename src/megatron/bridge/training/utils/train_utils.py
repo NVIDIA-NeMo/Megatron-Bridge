@@ -29,7 +29,7 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.training.config import ConfigContainer, TrainingConfig
+from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
@@ -72,6 +72,30 @@ MEMORY_KEYS: dict[str, str] = {
     "num_alloc_retries": "mem-alloc-retires",
     "allocation.all.current": "mem-allocated-count",
 }
+
+
+def get_effective_seq_length(config: ConfigContainer) -> int:
+    """Get the effective sequence length for throughput calculations.
+
+    When sequence packing is enabled, the effective sequence length is the
+    packed_sequence_size, not the base seq_length. This affects throughput
+    calculations since each sample processes more tokens when packing is used.
+
+    Args:
+        config: The main configuration container.
+
+    Returns:
+        int: The effective sequence length (packed_sequence_size if packing
+             is enabled, otherwise seq_length).
+    """
+    dataset_config = config.dataset
+    if (
+        isinstance(dataset_config, FinetuningDatasetConfig)
+        and dataset_config.packed_sequence_specs is not None
+        and dataset_config.packed_sequence_specs.packed_sequence_size > 0
+    ):
+        return dataset_config.packed_sequence_specs.packed_sequence_size
+    return dataset_config.seq_length
 
 
 def param_is_not_shared(param: nn.Parameter) -> bool:
@@ -450,7 +474,7 @@ def training_log(
             throughput_report = report_throughput(
                 iteration=iteration,
                 train_config=train_config,
-                seq_length=config.dataset.seq_length,
+                seq_length=get_effective_seq_length(config),
                 history_wct=history_wct,
                 window_size=logger_config.throughput_window_size,
             )
@@ -469,7 +493,7 @@ def training_log(
             runtime_report = report_runtime(
                 train_state=train_state,
                 start_time=global_state.start_time,
-                seq_length=config.dataset.seq_length,
+                seq_length=get_effective_seq_length(config),
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )

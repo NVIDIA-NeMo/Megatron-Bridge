@@ -691,7 +691,10 @@ class CheckpointConfig:
     Assumed when loading a release checkpoint."""
 
     pretrained_checkpoint: Optional[str] = None
-    """Directory containing a pretrained model checkpoint for finetuning."""
+    """Directory containing a pretrained model checkpoint for finetuning.
+    The checkpoint must be in Megatron distributed checkpoint format (torch_dist, zarr, or fsdp_dtensor).
+    If this path is set but the checkpoint is not found, training will fail unless
+    exit_on_missing_checkpoint is explicitly set to False."""
 
     ckpt_step: Optional[int] = None
     """Checkpoint step to load model from."""
@@ -1394,6 +1397,18 @@ class ConfigContainer(Container):
 
         if self.peft is not None:
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
+
+        # When pretrained_checkpoint is specified for finetuning, ensure we don't silently
+        # start from random weights if the checkpoint is missing. This catches common mistakes
+        # like typos in the checkpoint path early, rather than wasting compute on training
+        # from random initialization.
+        if self.checkpoint.pretrained_checkpoint is not None and not self.checkpoint.exit_on_missing_checkpoint:
+            print_rank_0(
+                "Warning: pretrained_checkpoint is specified but exit_on_missing_checkpoint=False. "
+                "If the checkpoint at the specified path is not found or invalid, training will "
+                "silently start from random initialization. Consider setting exit_on_missing_checkpoint=True "
+                "to fail early on missing checkpoints."
+            )
 
         if self.dataset is not None:
             # Only validate sequence length for GPTDatasetConfig or FinetuningDatasetConfig
