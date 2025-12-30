@@ -43,6 +43,8 @@ PERF_ENV_VARS = {
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
     "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",
+    "NVTE_NORM_FWD_USE_CUDNN": "1",
+    "NVTE_NORM_BWD_USE_CUDNN": "1",
 }
 
 
