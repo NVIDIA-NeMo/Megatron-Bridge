@@ -556,7 +556,6 @@ def parse_cli_args():
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
     )
-
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
     logging_args.add_argument(
