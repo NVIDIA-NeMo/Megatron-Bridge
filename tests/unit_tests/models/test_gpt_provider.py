@@ -17,7 +17,12 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from megatron.bridge.models.gpt_provider import GPTDistillationProvider, GPTModelProvider
+from megatron.bridge.models.gpt_provider import (
+    GPTDistillationProvider,
+    GPTModelProvider,
+    convert_to_distillation_provider,
+)
+from megatron.bridge.models.qwen import Qwen3MoEModelProvider
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
@@ -639,3 +644,91 @@ class TestGPTDistillationProvider:
         student.new_attribute = "test_value"  # Should not be reflected on teacher
         assert student.new_attribute == "test_value"
         assert not hasattr(teacher, "new_attribute")
+
+    def test_convert_to_distillation_provider_preserves_original_provider(self):
+        """Ensure convert_to_distillation_provider retains original provider behavior."""
+
+        class CustomProvider(GPTModelProvider):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.extra_attr = "custom-attr"
+                self.custom_provide_calls = 0
+
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                self.custom_provide_calls += 1
+                return "custom-result"
+
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        student = CustomProvider(
+            num_layers=12,
+            hidden_size=2048,
+            num_attention_heads=16,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+
+        original_bases = GPTDistillationProvider.__bases__
+        try:
+            converted = convert_to_distillation_provider(student, teacher)
+
+            assert converted is student
+            assert isinstance(converted, GPTDistillationProvider)
+            assert isinstance(converted, CustomProvider)
+            assert converted.extra_attr == "custom-attr"
+
+            result = converted._super_class.provide(converted)
+            assert result == "custom-result"
+            assert converted.custom_provide_calls == 1
+        finally:
+            # Restore original bases since it was modified globally for the entire class
+            GPTDistillationProvider.__bases__ = original_bases
+
+    def test_converted_provider_to_cfg_dict_preserves_original_provider(self):
+        """Ensure converted provider to_cfg_dict retains original provider behavior."""
+
+        teacher = Qwen3MoEModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        student = Qwen3MoEModelProvider(
+            num_layers=12,
+            hidden_size=2048,
+            num_attention_heads=16,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+
+        original_bases = GPTDistillationProvider.__bases__
+        try:
+            converted = convert_to_distillation_provider(student, teacher)
+            cfg_dict = converted.to_cfg_dict()
+
+            assert cfg_dict["_target_"] == "megatron.bridge.models.qwen.qwen_provider.Qwen3MoEModelProvider"
+        finally:
+            # Restore original bases since it was modified globally for the entire class
+            GPTDistillationProvider.__bases__ = original_bases
