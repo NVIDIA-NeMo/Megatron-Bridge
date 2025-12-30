@@ -265,7 +265,6 @@ def main(
     )
 
     if not dgxc_cluster:
-        print(f"custom_env_vars | setup_experiment: {custom_env_vars}")
         executor = slurm_executor(
             gpu=gpu,
             account=account,
