@@ -147,6 +147,7 @@ class TELinearAdapter(te.Linear):
                         are quantized weights (e.g. 4bit) needs to be specified explicitly.
         """
         obj.dim = dim
+        obj.alpha = alpha
         obj.scale = alpha / dim
 
         # Freeze original weights
@@ -159,13 +160,13 @@ class TELinearAdapter(te.Linear):
         out_features = obj.out_features
         dtype = lora_dtype or obj.weight.dtype
 
-        obj.lora_a = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        obj.lora_b = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
+        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
+        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
         if lora_A_init_method == "xavier":
-            torch.nn.init.xavier_uniform_(obj.lora_a.weight.data)
+            torch.nn.init.xavier_uniform_(obj.linear_in.weight.data)
         else:
-            nn.init.kaiming_uniform_(obj.lora_a.weight.data, a=math.sqrt(5))
-        obj.lora_b.weight.data.fill_(0)
+            nn.init.kaiming_uniform_(obj.linear_in.weight.data, a=math.sqrt(5))
+        obj.linear_out.weight.data.fill_(0)
         if dropout > 0.0:
             obj.dropout = nn.Dropout(p=dropout)
         else:
@@ -187,7 +188,7 @@ class TELinearAdapter(te.Linear):
         if self.dropout_position == "pre":
             x = self.dropout(x)
         # LoRA fwd is performed in original precision regardless of FP8 enabled
-        lora_res = self.lora_b(self.lora_a(x))
+        lora_res = self.linear_out(self.linear_in(x))
         lora_res = lora_res * self.scale
         if self.dropout_position == "post":
             lora_res = self.dropout(lora_res)
@@ -344,28 +345,28 @@ class TEFusedLoRALinear(LoRALinear):
         sequence_parallel: bool,
         accumulate_into_main_grad: bool,
     ) -> te.ops.Sequential:
-        """Construct fused module for LoRA branch (lora_a + lora_b + add)"""
+        """Construct fused module for LoRA branch (linear_in + linear_out + add)"""
 
         from megatron.bridge.peft.utils import ParallelLinearAdapter
 
         # Extract params from LoRA adapter
-        lora_a_weight = None
-        lora_b_weight = None
+        linear_in_weight = None
+        linear_out_weight = None
         lora_dim = None
         dropout = 0
         dropout_position = None
         scale = None
         if isinstance(self.adapter, (LinearAdapter, TELinearAdapter)):
-            lora_a_weight = self.adapter.lora_a.weight
-            lora_b_weight = self.adapter.lora_b.weight
-            lora_dim = lora_b_weight.size(1)
+            linear_in_weight = self.adapter.linear_in.weight
+            linear_out_weight = self.adapter.linear_out.weight
+            lora_dim = linear_out_weight.size(1)
             dropout = getattr(self.adapter.dropout, "p", 0.0)
             dropout_position = self.adapter.dropout_position
             scale = self.adapter.scale
         elif isinstance(self.adapter, ParallelLinearAdapter):
-            lora_a_weight = self.adapter.linear_in.weight
-            lora_b_weight = self.adapter.linear_out.weight
-            lora_dim = lora_b_weight.size(1)
+            linear_in_weight = self.adapter.linear_in.weight
+            linear_out_weight = self.adapter.linear_out.weight
+            lora_dim = linear_out_weight.size(1)
             dropout = getattr(self.adapter.dropout, "p", 0.0)
             dropout_position = self.adapter.dropout_position
             scale = self.adapter.alpha / self.adapter.dim
@@ -385,13 +386,13 @@ class TEFusedLoRALinear(LoRALinear):
             lora_dim,
             bias=False,
             device="meta",
-            dtype=lora_a_weight.dtype,
+            dtype=linear_in_weight.dtype,
             tensor_parallel_mode=tensor_parallel_mode,
             tensor_parallel_group=tensor_parallel_group,
             sequence_parallel=sequence_parallel,
             accumulate_into_main_grad=accumulate_into_main_grad,
         )
-        op.weight = lora_a_weight
+        op.weight = linear_in_weight
         lora_branch.append(op)
 
         # LoRA B linear op
@@ -403,13 +404,13 @@ class TEFusedLoRALinear(LoRALinear):
             out_features,
             bias=False,
             device="meta",
-            dtype=lora_b_weight.dtype,
+            dtype=linear_out_weight.dtype,
             tensor_parallel_mode=None if tensor_parallel_mode is None else "column",
             tensor_parallel_group=tensor_parallel_group,
             sequence_parallel=False,
             accumulate_into_main_grad=accumulate_into_main_grad,
         )
-        op.weight = lora_b_weight
+        op.weight = linear_out_weight
         lora_branch.append(op)
 
         # LoRA post-processing
@@ -533,6 +534,7 @@ class LinearAdapter(nn.Linear):
                        are quantized weights (e.g. 4bit) needs to be specified explicitly.
         """
         obj.dim = dim
+        obj.alpha = alpha
         obj.scale = alpha / dim
 
         # Freeze original weights
@@ -545,13 +547,13 @@ class LinearAdapter(nn.Linear):
         out_features = obj.out_features
         dtype = lora_dtype or obj.weight.dtype
 
-        obj.lora_a = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        obj.lora_b = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
+        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
+        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
         if lora_A_init_method == "xavier":
-            torch.nn.init.xavier_uniform_(obj.lora_a.weight.data)
+            torch.nn.init.xavier_uniform_(obj.linear_in.weight.data)
         else:
-            nn.init.kaiming_uniform_(obj.lora_a.weight.data, a=math.sqrt(5))
-        obj.lora_b.weight.data.fill_(0)
+            nn.init.kaiming_uniform_(obj.linear_in.weight.data, a=math.sqrt(5))
+        obj.linear_out.weight.data.fill_(0)
         if dropout > 0.0:
             obj.dropout = nn.Dropout(p=dropout)
         else:
@@ -580,7 +582,7 @@ class LinearAdapter(nn.Linear):
 
         if self.dropout_position == "pre":
             x = self.dropout(x)
-        lora_res = self.lora_b(self.lora_a(x))
+        lora_res = self.linear_out(self.linear_in(x))
         lora_res = lora_res * self.scale
         if self.dropout_position == "post":
             lora_res = self.dropout(lora_res)
