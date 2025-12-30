@@ -196,8 +196,9 @@ def main(
     time_limit: str,
     container_image: str,
     custom_mounts: List[str],
-    custom_env_vars: List[str],
+    custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -263,6 +264,9 @@ def main(
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
         ]
     )
+
+    if nccl_ub:
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -512,6 +516,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,

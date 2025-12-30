@@ -371,7 +371,7 @@ def parse_cli_args():
         "--custom_env_vars",
         type=to_dict,
         help="Comma separated string of environment variables",
-        default=[],
+        default={},
     )
     slurm_args.add_argument(
         "-cs",
@@ -515,6 +515,12 @@ def parse_cli_args():
     performance_args.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
+        type=bool_arg,
+        required=False,
+    )
+    performance_args.add_argument(
+        "--nccl_ub",
+        help="Enable NCCL user buffer for FSDP communication. Disabled by default.",
         type=bool_arg,
         required=False,
     )

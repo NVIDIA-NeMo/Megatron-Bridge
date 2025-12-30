@@ -191,6 +191,54 @@ class DistributedInitConfig:
     disable_jit_fuser: bool = False
     """Disable the JIT fuser."""
 
+    nccl_ub: bool = False
+    """If true, allocate and register NCCL userbuffer for param and grad buffer.
+      This flag enables SM efficient nccl algorithm that could improve the performance
+      of FSDP and DP with comm_overlap. This flag will be much more effective when used
+      together with sharp.
+      The follwoing will be the expected number of SM usage for various cases.
+      (Note that this is just a reference number and the number of SM usage could vary
+      on message size, communication domain size and nccl version.)
+      ----------------------------------------------------------
+      | Communication domain | use_sharp | SM usage of "AG/RS" |
+      |----------------------|-----------|---------------------|
+      | NVL                  | N/A       | 4 / 5               |
+      | NVL+IB               | False     | 16 / 16             |
+      | NVL+IB               | True      | 6 / 6               |
+      | IB                   | False     | 1 / 4               |
+      | IB                   | True      | 1 / 1               |
+      ----------------------------------------------------------
+    """
+
+    fsdp_double_buffer: bool = False
+    """If true, use persistently allocated double buffers for the
+      temporary memory needed in the Megatron FSDP communications.
+      This option will cause additional memory overhead, however, it is necessary for
+      to register user buffer (nccl_ub=True) for the Megatron FSDP.
+      This option will be automatically set to True when nccl_ub=True.
+    """
+
+    outer_dp_sharding_strategy: str = "no_shard"
+    """
+    Sharding strategy for outer data parallel group in Hybrid Sharded Data Parallel (HSDP) mode.
+    Valid values are 'no_shard', 'optim', 'optim_grads', 'optim_grads_params'.
+    This option is only effective when Hybrid FSDP is enabled.
+    """
+
+    disable_symmetric_registration: bool = False
+    """If true, disable symmetric (window) registration for NCCL userbuffer registration.
+      This option will force to use conventional (local) userbuffer registration
+      when nccl_ub is set.
+    """
+
+    fsdp_manual_registration: bool = False
+    """If true, manually register the FSDP communication buffers to NCCL user buffer.
+      This option is only effective when use_megatron_fsdp and nccl_ub is set.
+      For symmetric registration with large models, the registration itself can take
+      a significant amount of time. This option minimizes the number of registration calls
+      to minimize the registration time.
+    """
+
 
 @dataclass
 class RerunStateMachineConfig:
