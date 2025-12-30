@@ -104,13 +104,10 @@ class MegatronMappingRegistry:
                 if isinstance(mapping, AutoMapping):
                     new_mapping = AutoMapping(new_megatron_param, mapping.hf_param, mapping.permute_dims)
                 else:
-                    try:
-                        new_mapping = type(mapping)(new_megatron_param, mapping.hf_param)
-                    except TypeError:
-                        new_mapping = None
-                if new_mapping is not None:
-                    extra_mappings.append(new_mapping)
-                    existing_names.add(new_megatron_param)
+                    print(f"Unrecognized mapping type for {mapping.megatron_param} -> {mapping.hf_param}")
+                    break
+                extra_mappings.append(new_mapping)
+                existing_names.add(new_megatron_param)
                 break
 
         if extra_mappings:
