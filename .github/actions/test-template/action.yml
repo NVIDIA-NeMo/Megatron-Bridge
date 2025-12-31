@@ -49,6 +49,10 @@ inputs:
   container-image:
     description: "Container image to use for test"
     required: true
+  test-data-path:
+    description: "Test data path"
+    required: false
+    default: "/mnt/datadrive/TestData/nemo-fw/TestData"
 
 runs:
   using: "composite"
@@ -109,9 +113,8 @@ runs:
         MOUNT_FS: ${{ inputs.is_unit_test == 'false' }}
       run: |
         echo "::group::Start test container"
-        ls /mnt/datadrive/TestData/nemo-fw
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume /mnt/datadrive/TestData/nemo-fw/TestData:/home/TestData --env HF_HUB_OFFLINE=1"
+          VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
         else
           VOLUME_ARGS=""
         fi
