@@ -65,12 +65,13 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@e22680a5efe0231752ec9ccab4bf66a13f6e42c9
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@4cf3fb936f9c74f3a8c721b958c6bafed6565ed8
     with:
       default_runner_prefix: nemo-ci-aws
       non_nvidia_runner_prefix: nemo-ci-azure
       default_test_data_path: /mnt/datadrive/TestData/nemo-fw/TestData
       non_nvidia_test_data_path: /mnt/datadrive/TestData
+      workflow_ref: 4cf3fb936f9c74f3a8c721b958c6bafed6565ed8
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
