@@ -21,6 +21,7 @@ functionality for Parameter-Efficient Fine-Tuning.
 
 import os
 from copy import deepcopy
+from types import SimpleNamespace
 
 import megatron.core.parallel_state as parallel_state
 import pytest
@@ -29,8 +30,14 @@ import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
 
-from megatron.bridge.peft.lora import TELinearAdapter
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TEFusedLoRALinear, patch_linear_module
+from megatron.bridge.peft.lora import LoRA, TELinearAdapter
+from megatron.bridge.peft.lora_layers import (
+    LinearAdapter,
+    LoRALinear,
+    LoRATopKRouter,
+    TEFusedLoRALinear,
+    patch_linear_module,
+)
 
 
 class MockLinearWithTupleReturn(nn.Module):
@@ -661,3 +668,75 @@ class TestLoRAUtilities:
         expected = torch.full((1, 5), 10.4)
 
         assert torch.allclose(output, expected, atol=1e-6)
+
+
+class DummyRouter(nn.Module):
+    def __init__(self, hidden_size: int = 4, num_experts: int = 3) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(num_experts, hidden_size))
+        self.expert_bias = torch.zeros(num_experts)
+        self.config = SimpleNamespace(
+            moe_router_force_load_balancing=False,
+            sequence_parallel=False,
+        )
+
+    def _maintain_float32_expert_bias(self) -> None:
+        if isinstance(self.expert_bias, torch.Tensor):
+            self.expert_bias = self.expert_bias.float()
+
+    def apply_input_jitter(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+    def gating(self, x: torch.Tensor) -> torch.Tensor:
+        return x @ self.weight.t()
+
+    def routing(self, logits: torch.Tensor):
+        return logits, logits > 0
+
+
+class RouterModel(nn.Module):
+    def __init__(self, router_cls: type[DummyRouter]) -> None:
+        super().__init__()
+        self.mlp = nn.Module()
+        self.mlp.router = router_cls()
+
+
+class TestLoRATopKRouter:
+    """Test LoRA router wrapper behavior."""
+
+    def test_forward_adds_adapter_delta(self) -> None:
+        hidden_size = 5
+        num_experts = 4
+        router = DummyRouter(hidden_size=hidden_size, num_experts=num_experts)
+        adapter = nn.Linear(hidden_size, num_experts, bias=False)
+        wrapper = LoRATopKRouter(router, adapter)
+
+        x = torch.randn(2, hidden_size)
+        expected_logits = router.gating(x) + adapter(x)
+
+        logits, routing_map = wrapper(x)
+
+        assert torch.allclose(logits, expected_logits)
+        assert routing_map.shape == expected_logits.shape
+
+    def test_lora_wraps_router_with_lora_topk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import lora as lora_module
+
+        class DummyTopKRouter(DummyRouter):
+            pass
+
+        def fake_adapter(in_features, out_features, *args, **kwargs):
+            return nn.Linear(in_features, out_features, bias=False)
+
+        def fake_attrs(*args, **kwargs):
+            return False, 4, 3, False, True, False
+
+        monkeypatch.setattr(lora_module, "TopKRouter", DummyTopKRouter, raising=True)
+        monkeypatch.setattr(lora_module, "ParallelLinearAdapter", fake_adapter, raising=True)
+        monkeypatch.setattr(lora_module, "get_adapter_attributes_from_linear", fake_attrs, raising=True)
+
+        model = RouterModel(DummyTopKRouter)
+        lora = LoRA(target_modules=["router"])
+        transformed = lora(model, training=True)
+
+        assert isinstance(transformed.mlp.router, LoRATopKRouter)

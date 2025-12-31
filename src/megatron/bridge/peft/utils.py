@@ -28,6 +28,7 @@ from megatron.core.tensor_parallel.mappings import (
     scatter_to_sequence_parallel_region,
 )
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.utils.import_utils import safe_import_from
 
@@ -107,7 +108,13 @@ def get_adapter_attributes_from_linear(
         tp_size = parallel_state.get_expert_tensor_parallel_world_size()
     else:
         tp_size = parallel_state.get_tensor_model_parallel_world_size()
-    if HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
+    if isinstance(m, TopKRouter):
+        input_is_parallel = False
+        in_features = m.weight.shape[1]
+        out_features = m.weight.shape[0]
+        base_linear_is_parallel = False
+        disable_sequence_parallel_comm = True
+    elif HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
         input_is_parallel = False
         # m.in_features and m.out_features are divided by tp_size already,
         # but in_features and out_features passed to ParallelLinearAdapter are not.
