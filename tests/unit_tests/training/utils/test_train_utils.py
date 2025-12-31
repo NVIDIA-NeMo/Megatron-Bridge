@@ -1081,7 +1081,7 @@ class TestTrainingLog:
         mock_memory_snapshot.assert_called_once()
         mock_open.assert_called_once_with("/tmp/memory_snapshot_7.pkl", "wb")
         mock_pickle_dump.assert_called_once_with({"mock": "snapshot"}, mock_file_handle)
-        mock_print_rank_0.assert_called("Saved memory snapshot to /tmp/memory_snapshot_7.pkl")
+        mock_print_rank_0.assert_any_call("Saved memory snapshot to /tmp/memory_snapshot_7.pkl")
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
