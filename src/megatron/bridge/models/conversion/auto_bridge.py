@@ -419,7 +419,7 @@ class AutoBridge(Generic[MegatronModelT]):
         strict: bool = True,
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
-        save_every_n_ranks: int = 2
+        save_every_n_ranks: int = 1
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -446,6 +446,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 the path will be automatically determined from the HuggingFace configuration.
             strict: Whether to perform strict validation during weight export
             merge_adapter_weights: Whether to gather/merge LoRA adapter weights into base tensors during export.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently. When False (default), only rank 0 performs
+                the save operation after gathering weights from all ranks.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+                This is useful for reducing I/O pressure when dealing with large-scale distributed
+                training. Only effective when distributed_save=True. Default is 1 (all ranks save).
 
 
         Example:
@@ -493,7 +500,7 @@ class AutoBridge(Generic[MegatronModelT]):
         strict: bool = True,
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
-        save_every_n_ranks: int = 2,
+        save_every_n_ranks: int = 1,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -515,6 +522,10 @@ class AutoBridge(Generic[MegatronModelT]):
             path: Directory path where weight files will be saved
             show_progress: Display progress bar during export
             merge_adapter_weights: Whether to gather/merge LoRA adapter weights into base tensors during export.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
 
         Raises:
             ValueError: If the state source doesn't support streaming save

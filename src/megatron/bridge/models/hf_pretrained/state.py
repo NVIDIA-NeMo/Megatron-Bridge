@@ -669,7 +669,7 @@ class SafeTensorsStateSource(StateSource):
 
     def save_generator(
         self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True,
-        distributed_save: bool = False, save_every_n_ranks: int = 2
+        distributed_save: bool = False, save_every_n_ranks: int = 1
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -692,6 +692,11 @@ class SafeTensorsStateSource(StateSource):
                     yields a tensor name not found in the original model's
                     sharding structure. If False, it prints a warning and
                     skips the tensor.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+            
         """
         if distributed_save:
             return self._save_generator_distibuted(generator,
@@ -855,7 +860,7 @@ class SafeTensorsStateSource(StateSource):
         return None
 
     def _save_generator_distibuted(
-        self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True, save_every_n_ranks: int = 2
+        self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True, save_every_n_ranks: int = 1
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
