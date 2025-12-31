@@ -20,12 +20,14 @@ import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
 from megatron.core import parallel_state
+from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import (
     LinearAdapter,
     LoRALinear,
+    LoRATopKRouter,
     TEFusedLoRALinear,
     TELinearAdapter,
     patch_linear_module,
@@ -102,7 +104,7 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         adapter_types = adapter_types + (TELinearAdapter,)
         if isinstance(module, adapter_types):
             return module
@@ -168,6 +170,8 @@ class LoRA(PEFT, ModuleMatcher):
                 disable_sequence_parallel_comm=disable_sp_comm,
                 base_linear_is_parallel=base_linear_is_parallel,
             )
+            if isinstance(module, TopKRouter):
+                return LoRATopKRouter(module, adapter)
             if enable_op_fuser:
                 return TEFusedLoRALinear(module, adapter)
             else:
