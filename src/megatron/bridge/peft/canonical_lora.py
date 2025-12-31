@@ -188,15 +188,15 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 "use ['linear_fc1_up', 'linear_fc1_gate'] with Canonical LoRA"
             )
 
-            if "linear_q" in target:
+            if target.endswith("linear_q"):
                 self.canonical_mapping[target.replace("linear_q", "linear_qkv")].add("linear_q")
-            elif "linear_k" in target:
+            elif target.endswith("linear_k"):
                 self.canonical_mapping[target.replace("linear_k", "linear_qkv")].add("linear_k")
-            elif "linear_v" in target:
+            elif target.endswith("linear_v"):
                 self.canonical_mapping[target.replace("linear_v", "linear_qkv")].add("linear_v")
-            elif "linear_fc1_up" in target:
+            elif target.endswith("linear_fc1_up"):
                 self.canonical_mapping[target.replace("linear_fc1_up", "linear_fc1")].add("linear_fc1_up")
-            elif "linear_fc1_gate" in target:
+            elif target.endswith("linear_fc1_gate"):
                 self.canonical_mapping[target.replace("linear_fc1_gate", "linear_fc1")].add("linear_fc1_gate")
             else:
                 self.canonical_mapping[target].add(target)
@@ -226,7 +226,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
                 get_adapter_attributes_from_linear(m, is_expert=is_expert)
             )
 
@@ -244,13 +244,10 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert,
+                disable_tensor_parallel_comm=disable_tp_comm,
                 disable_sequence_parallel_comm=disable_sp_comm,
                 base_linear_is_parallel=base_linear_is_parallel,
             )
-            if name in ["linear_proj", "linear_fc2"]:
-                adapter = ParallelLinearAdapter(in_features, out_features, **adapter_kwargs)
-                logger.info(f"Adding lora to: {full_name}")
-                return LoRALinear(m, adapter)
 
             canonical_submodules = self.canonical_mapping[match]
             logger.info(f"Adding lora to: {full_name} ({canonical_submodules})")
@@ -275,5 +272,9 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                     adapter_gate = ParallelLinearAdapter(in_features, out_features // 2, **adapter_kwargs)
                 adapters = ModuleDict({"adapter_up": adapter_up, "adapter_gate": adapter_gate})
                 return LoRALinearSplitFC1UpGate(m, adapters)
+
+            adapter = ParallelLinearAdapter(in_features, out_features, **adapter_kwargs)
+            logger.info(f"Adding lora to: {full_name}")
+            return LoRALinear(m, adapter)
 
         return m

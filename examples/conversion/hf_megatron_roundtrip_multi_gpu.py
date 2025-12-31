@@ -33,8 +33,13 @@ The process is as follows:
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-torchrun --nproc_per_node 1 examples/conversion/hf_megatron_roundtrip_multi_gpu.py
-torchrun --nproc_per_node 1 examples/conversion/hf_megatron_roundtrip_multi_gpu.py --megatron-save-path ./megatron_checkpoint
+    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B
+
+    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B \
+       --megatron-save-path ./megatron_checkpoint
+
+    uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id Qwen/Qwen3-30B-A3B --tp 1 --pp 8
 """
 
 import argparse
