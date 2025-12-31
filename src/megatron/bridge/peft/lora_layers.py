@@ -70,8 +70,9 @@ class LoRATopKRouter(AdapterWrapper):
         self.to_wrap._maintain_float32_expert_bias()
         jittered_input = self.to_wrap.apply_input_jitter(x)
         logits = self.to_wrap.gating(jittered_input)
-        adapter_output = self.adapter(jittered_input.contiguous())
-        logits = logits + adapter_output.to(dtype=logits.dtype)
+        if self._adapter_enabled:
+            adapter_output = self.adapter(jittered_input.contiguous())
+            logits = logits + adapter_output.to(dtype=logits.dtype)
         if self.to_wrap.config.moe_router_force_load_balancing:
             logits = apply_random_logits(logits)
         return self.to_wrap.routing(logits)
