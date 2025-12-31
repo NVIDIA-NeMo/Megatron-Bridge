@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import warnings
 from dataclasses import dataclass
@@ -167,8 +168,11 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         else:
             padded_vocab_size = self.vocab_size
 
+        model_config = copy.copy(self)
+        model_config._pg_collection = None
+
         return MCoreMambaModel(
-            self,
+            model_config,
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,

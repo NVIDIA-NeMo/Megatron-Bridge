@@ -115,6 +115,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
         if self.pipeline_model_parallel_size > 1:
             assert self.encoder_pipeline_model_parallel_size > 0, "Need to know how to shard the encoder & decoder."
             encoder_config.pipeline_model_parallel_size = self.encoder_pipeline_model_parallel_size
+        encoder_config._pg_collection = None
 
         transformer_layer_spec = self.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):
@@ -128,8 +129,11 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
         else:
             padded_vocab_size = self.vocab_size
 
+        decoder_config = copy.copy(self)
+        decoder_config._pg_collection = None
+
         model = MCoreT5Model(
-            config=self,
+            config=decoder_config,
             encoder_config=encoder_config,
             transformer_encoder_layer_spec=transformer_layer_spec[0],
             transformer_decoder_layer_spec=transformer_layer_spec[1],
