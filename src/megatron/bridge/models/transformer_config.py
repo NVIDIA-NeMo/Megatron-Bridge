@@ -18,6 +18,7 @@ These classes provide deferred post-initialization to support the Bridge configu
 override system while maintaining compatibility with Megatron Core's post_init behavior.
 """
 
+import copy
 from dataclasses import dataclass
 
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
@@ -67,6 +68,25 @@ class TransformerConfig(MCoreTransformerConfig):
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         MCoreTransformerConfig.__post_init__(self)
+
+    def __deepcopy__(self, memo):
+        """Custom deepcopy to preserve process group handles when cloning configs.
+
+        Certain attributes (_pg_collection, etc.) should remain shared references
+        rather than being wiped or re-created during deepcopy.
+        TODO: This is a temporary hack. Once providers stop embedding the Transformer
+        config and instead hold the MCore config as an attribute, we can remove this.
+        """
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for key, value in self.__dict__.items():
+            if key in {"_pg_collection"}:
+                # Keep the same reference to avoid losing initialized process groups.
+                setattr(result, key, value)
+            else:
+                setattr(result, key, copy.deepcopy(value, memo))
+        return result
 
 
 @dataclass

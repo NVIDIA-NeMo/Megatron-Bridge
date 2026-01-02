@@ -161,7 +161,11 @@ def test_forward_step_schedule_plan(monkeypatch):
     class _Model:
         def __init__(self):
             self.config = type("C", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
-            self.pg_collection = type("PG", (), {"pp": object()})()
+            self._pg_collection = type("PG", (), {"pp": object()})()
+
+        @property
+        def pg_collection(self):
+            return self._pg_collection
 
         def build_schedule_plan(self, tokens, position_ids, attention_mask, labels=None, loss_mask=None):  # noqa: ARG002
             return torch.tensor(1)
