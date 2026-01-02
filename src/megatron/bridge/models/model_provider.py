@@ -594,7 +594,7 @@ def get_model(
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             pg_collection=pg_collection,
-        )  # Critical: ensure side-stream work completes before touching params on default stream
+        )# Critical: ensure side-stream work completes before touching params on default stream
     torch.cuda.current_stream().wait_stream(create_model_stream)
 
     return model

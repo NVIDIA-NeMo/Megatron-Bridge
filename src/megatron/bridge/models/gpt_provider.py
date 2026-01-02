@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import contextlib
-import copy
 import inspect
 import logging
 from dataclasses import dataclass, field
@@ -273,12 +272,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         # Expose vp stage on config for downstream modules (e.g., TE layers)
         # so they can compute correct offsets without legacy globals.
         self._vp_stage = vp_stage
-        config_for_model = copy.copy(self)
-        config_for_model._pg_collection = None
-        config_for_model._vp_stage = vp_stage
         with model_init_device_context():
             model = MCoreGPTModel(
-                config_for_model,
+                self,
                 transformer_layer_spec=transformer_layer_spec,
                 vocab_size=padded_vocab_size,
                 max_sequence_length=self.seq_length,
