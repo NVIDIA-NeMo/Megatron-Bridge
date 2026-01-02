@@ -15,6 +15,7 @@
 from typing import Union
 
 from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
+from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
 
@@ -38,11 +39,20 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
-    optimizer = get_megatron_optimizer(
-        optimizer_config,
-        model,
-        use_gloo_process_groups=use_gloo_process_groups,
-    )
+    if "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
+        optimizer = get_megatron_optimizer(
+            optimizer_config,
+            model,
+            use_gloo_process_groups=use_gloo_process_groups,
+        )
+    else:
+        optimizer = get_megatron_muon_optimizer(
+            optimizer_config,
+            model,
+            use_gloo_process_groups=use_gloo_process_groups,
+            layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
+        )
+
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler

@@ -66,10 +66,12 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) -> Tuple[bool, int, int, bool, bool]:
+def get_adapter_attributes_from_linear(
+    m: nn.Module, is_expert: bool = False
+) -> Tuple[bool, int, int, bool, bool, bool]:
     """Returns attributes from the base layer.
 
-    input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
+    input_is_parallel, in_features, out_features, disable_tensor_parallel_comm, disable_sequence_parallel_comm, base_linear_is_parallel
 
     This function analyzes a linear module and extracts key attributes needed for adapter configuration,
     particularly for PEFT adapters in distributed training scenarios.
@@ -82,6 +84,7 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
             - input_is_parallel: Whether the input is already parallelized
             - in_features: Input feature dimension
             - out_features: Output feature dimension
+            - disable_tensor_parallel_comm: Whether to disable tensor parallel communication
             - disable_sequence_parallel_comm: Whether to disable sequence parallel communication
             - base_linear_is_parallel: Whether the base linear layer uses parallelization
 
@@ -90,6 +93,16 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
     """
     disable_sequence_parallel_comm = not m.config.sequence_parallel
     base_linear_is_parallel = True
+
+    # In some modules (notably MoE shared_experts when moe_shared_expert_overlap is enabled),
+    # Megatron disables TP-related communications on the base linear layer by
+    # setting `parallel_mode=None` (TE) or `explicit_expert_comm=True` (legacy).
+    # https://github.com/NVIDIA/Megatron-LM/blob/5b1ef0703184299fbf71f6131bf2f9a5331e7238/megatron/core/transformer/moe/shared_experts.py#L95-L104
+    # The weights are still TP-sharded though, so we must keep using the real TP size
+    disable_tensor_parallel_comm = getattr(m, "parallel_mode", "") is None or getattr(m, "explicit_expert_comm", False)
+    if disable_tensor_parallel_comm:
+        disable_sequence_parallel_comm = True
+
     if is_expert:
         tp_size = parallel_state.get_expert_tensor_parallel_world_size()
     else:
@@ -142,7 +155,14 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
     else:
         raise NotImplementedError(f"Layer type is unrecognized for LoRA: {type(m)}")
 
-    return input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
+    return (
+        input_is_parallel,
+        in_features,
+        out_features,
+        disable_tensor_parallel_comm,
+        disable_sequence_parallel_comm,
+        base_linear_is_parallel,
+    )
 
 
 def is_expert_linear(fqn: str) -> bool:
@@ -163,7 +183,7 @@ def is_expert_linear(fqn: str) -> bool:
         >>> is_expert_linear("model.layers.0.mlp.linear_fc1")
         False
     """
-    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None
+    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None and not ".shared_experts." in fqn
 
 
 def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
@@ -389,6 +409,7 @@ class ParallelLinearAdapter(nn.Module):
         dropout_position: str = "post",
         a2a_experimental: bool = False,
         is_expert: bool = False,
+        disable_tensor_parallel_comm: bool = False,
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
         **kwargs,
@@ -410,6 +431,7 @@ class ParallelLinearAdapter(nn.Module):
             dropout_position: When to apply dropout.
             a2a_experimental: Use experimental all-to-all communication.
             is_expert: Whether for expert layers in MoE.
+            disable_tensor_parallel_comm: Disable tensor parallel communication.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
             dropout_recompute: Use recomputation for dropout.
             **kwargs: Additional keyword arguments.
@@ -466,7 +488,12 @@ class ParallelLinearAdapter(nn.Module):
         # if the original column parallel layer uses gather_output=False,
         # then we will use the self.liner_out layer defined below.
         lin_out_gather_output = True if input_is_parallel else False
-        if self.use_a2a and input_is_parallel and _sequence_parallel:
+        if (
+            self.use_a2a
+            and input_is_parallel
+            and _sequence_parallel
+            or (disable_tensor_parallel_comm and not input_is_parallel)
+        ):
             lin_out_gather_output = False
 
         if not base_linear_is_parallel:

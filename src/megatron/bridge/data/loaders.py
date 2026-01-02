@@ -370,12 +370,13 @@ def build_train_valid_test_data_iterators(
         train_data_iterator = None
 
     if valid_dataloader is not None:
+        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
         if isinstance(valid_dataloader, list):
             # Multiple validation datasets - create a list of iterators
             valid_data_iterator = []
             for valid_dl in valid_dataloader:
                 if valid_dl is not None:
-                    valid_data_iterator.append(_get_iterator("cyclic", valid_dl))
+                    valid_data_iterator.append(_get_iterator(val_dataloader_type, valid_dl))
                 else:
                     valid_data_iterator.append(None)
         else:

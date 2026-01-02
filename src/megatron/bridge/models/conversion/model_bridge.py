@@ -446,7 +446,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 if isinstance(adapter, ModuleDict):
                     adapter_name = local_param_name.removeprefix(local_base_prefix + ".adapter.").split(".")[0]
                     adapter = adapter[adapter_name]
-                input_is_parallel, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
                 global_param_objects.append(
                     (
                         global_base_name,

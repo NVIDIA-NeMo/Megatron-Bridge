@@ -135,7 +135,7 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
                 get_adapter_attributes_from_linear(module, is_expert=is_expert)
             )
 
@@ -164,6 +164,7 @@ class LoRA(PEFT, ModuleMatcher):
                 alpha=self.alpha,
                 is_expert=is_expert,
                 a2a_experimental=self.a2a_experimental,
+                disable_tensor_parallel_comm=disable_tp_comm,
                 disable_sequence_parallel_comm=disable_sp_comm,
                 base_linear_is_parallel=base_linear_is_parallel,
             )

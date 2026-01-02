@@ -111,6 +111,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
+DEFAULT_CONFIG_FILENAME: str = "qwen3_vl_pretrain_override_example.yaml"
+DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
@@ -122,7 +124,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--config-file",
         type=str,
-        default=None,
+        default=str(DEFAULT_CONFIG_FILE_PATH),
         help=(
             "Path to the YAML OmegaConf override file. "
             "If not specified, automatically selects based on recipe:\n"
@@ -146,10 +148,10 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--dataset-type",
         type=str,
-        choices=["mock", "preloaded", "hf"],
+        choices=["mock", "preloaded", "hf", "energon"],
         default=None,
         help=(
-            "Dataset type to use: 'mock', 'preloaded', or 'hf'. "
+            "Dataset type to use: 'mock', 'preloaded', 'hf', or 'energon'. "
             "If not set, auto-detects based on --data-path/--use-preloaded."
         ),
     )
@@ -244,7 +246,17 @@ def main() -> None:
         merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
 
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
+
+    # check micro_batch_size and global_batch_size value consistency
+    if dataset_type == "energon":
+        assert cfg.train.micro_batch_size == cfg.dataset.micro_batch_size, (
+            "value of cfg.dataset.micro_batch_size should be the same as cfg.train.micro_batch_size"
+        )
+        assert cfg.train.global_batch_size == cfg.dataset.global_batch_size, (
+            "value of cfg.dataset.global_batch_size should be the same as cfg.train.global_batch_size"
+        )
 
     if get_rank_safe() == 0:
         logger.info("--- Final Merged Configuration ---")
