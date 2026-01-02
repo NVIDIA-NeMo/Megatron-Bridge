@@ -233,6 +233,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_exp_name = args.wandb_experiment_name
         recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
+    if args.enable_torch_profiler:
+        recipe.logger.tensorboard_dir = "/nemo_run/tensorboard"
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
     if args.tensor_model_parallel_size is not None:

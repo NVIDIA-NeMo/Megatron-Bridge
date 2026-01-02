@@ -122,7 +122,7 @@ def initialize_pytorch_profiler(
         ),
         on_trace_ready=torch.profiler.tensorboard_trace_handler(tensorboard_dir),
         record_shapes=config.record_shapes,
-        with_stack=True,
+        activities=[torch.profiler.ProfilerActivity.CUDA],
     )
     return prof
 
