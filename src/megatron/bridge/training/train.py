@@ -397,9 +397,10 @@ def train(
 
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
         if (
-            config.ddp.use_megatron_fsdp
+            global_state.train_state.step == start_iteration + 1
+            and config.ddp.use_megatron_fsdp
+            and hasattr(config.ddp, "fsdp_manual_registration")
             and config.ddp.fsdp_manual_registration
-            and global_state.train_state.step == start_iteration + 1
         ):
             print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
             for model_chunk in model:
