@@ -37,6 +37,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16 = replace(
     micro_batch_size=2,
     use_megatron_fsdp=True,
     cpu_offloading_num_layers=30,
+    nccl_ub=True,
 )
 
 
