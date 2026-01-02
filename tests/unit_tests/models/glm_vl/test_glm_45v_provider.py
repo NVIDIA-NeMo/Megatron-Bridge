@@ -253,11 +253,6 @@ class TestGLM45VModelProviderInheritance:
 
     def test_glm_45v_overrides_position_embedding(self, mock_vision_config):
         """Test GLM45VModelProvider overrides position embedding type."""
-        from megatron.bridge.models import GLM45AirModelProvider106B
-
-        # Check base class default
-        base_provider = GLM45AirModelProvider106B()
-
         # VL provider should use mrope
         vl_provider = GLM45VModelProvider(
             vision_config=mock_vision_config,
