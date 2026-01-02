@@ -615,6 +615,7 @@ class TestCanonicalLoRAHelperClasses:
 
     def test_lora_linear_split_qkv_interleaves_gqa(self):
         """Test that LoRALinearSplitQKV interleaves QKV outputs for GQA."""
+
         class MockConfig:
             kv_channels = 4
             num_query_groups = 2
@@ -643,6 +644,7 @@ class TestCanonicalLoRAHelperClasses:
 
     def test_lora_linear_split_qkv_infers_head_size_from_hidden_size(self):
         """Test LoRALinearSplitQKV infers head size when kv_channels is missing."""
+
         class MockConfig:
             kv_channels = None
             num_query_groups = None
