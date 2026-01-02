@@ -161,6 +161,7 @@ class TestNemotronHQuantizationWorkflow:
             "--megatron-save-path",
             str(output_dir),
             "--trust-remote-code",
+            "--disable-hf-datasets-file-lock",
         ]
 
         # Add parallelism arguments only if > 1
