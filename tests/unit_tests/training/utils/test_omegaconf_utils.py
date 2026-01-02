@@ -17,6 +17,8 @@
 
 import dataclasses
 import functools
+from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytest
@@ -171,6 +173,37 @@ class TestIsOmegaconfProblematic:
         assert _is_omegaconf_problematic(TestClass.instance_method)  # unbound method
         assert _is_omegaconf_problematic(TestClass.class_method)  # bound class method
         assert _is_omegaconf_problematic(TestClass.static_method)  # function object
+
+    def test_arbitrary_objects_problematic(self):
+        """Test that arbitrary objects (not dataclasses/primitives) are problematic."""
+
+        class ArbitraryObj:
+            pass
+
+        # Arbitrary object instance should be problematic now
+        obj = ArbitraryObj()
+        assert _is_omegaconf_problematic(obj)
+
+    def test_allowed_special_types(self):
+        """Test that Path, Enum, and torch.dtype instances are allowed."""
+
+        class MyEnum(Enum):
+            A = 1
+
+        # Path instance
+        assert not _is_omegaconf_problematic(Path("/tmp"))
+
+        # Enum member
+        assert not _is_omegaconf_problematic(MyEnum.A)
+
+        # torch.dtype
+        assert not _is_omegaconf_problematic(torch.float32)
+
+    def test_dataclass_instance_allowed(self):
+        """Test that dataclass instances are allowed."""
+        # Dataclass instance
+        config = SimpleConfig()
+        assert not _is_omegaconf_problematic(config)
 
 
 class TestDataclassToOmegaconfDict:
