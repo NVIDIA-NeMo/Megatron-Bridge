@@ -103,6 +103,7 @@ def create_test_training_config(**kwargs: Any) -> TrainingConfig:
     """Creates an instance of TrainingConfig with defaults for testing."""
     defaults = {
         "global_batch_size": 32,
+        "micro_batch_size": 4,
         "train_iters": 1000,
     }
     defaults.update(kwargs)
@@ -2265,3 +2266,276 @@ class TestDatasetSequenceLengthValidation:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+class TestSyncAndValidateExternalCudaGraph:
+    """Tests for the `_sync_and_validate_external_cuda_graph` method of the `ConfigContainer` class."""
+
+    def test_rng_config_sync_to_model(self):
+        """Test that rng.te_rng_tracker syncs to model.use_te_rng_tracker."""
+        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=False)
+        rng_cfg = RNGConfig(te_rng_tracker=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container.rng = rng_cfg
+
+        container._sync_and_validate_external_cuda_graph()
+        # RNG config should sync to model config
+        assert container.model.use_te_rng_tracker is True
+
+    def test_rng_config_sync_preserves_model_override(self):
+        """Test that model.use_te_rng_tracker is preserved when already True."""
+        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
+        rng_cfg = RNGConfig(te_rng_tracker=False)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container.rng = rng_cfg
+
+        container._sync_and_validate_external_cuda_graph()
+        # Model config should sync to RNG config
+        assert container.rng.te_rng_tracker is True
+
+    def test_cuda_graph_mutual_exclusivity_error(self):
+        """Test that enable_cuda_graph and external_cuda_graph cannot both be True."""
+        gpt_model_cfg = create_test_gpt_config(enable_cuda_graph=True, external_cuda_graph=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        with pytest.raises(
+            AssertionError,
+            match="enable_cuda_graph and external_cuda_graph cannot be enabled at the same time",
+        ):
+            container._sync_and_validate_external_cuda_graph()
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_te_rng_tracker_auto_enable_with_enable_cuda_graph(self, mock_warn_rank_0):
+        """Test that te_rng_tracker is auto-enabled when using transformer_engine with CUDA graphs."""
+        gpt_model_cfg = create_test_gpt_config(
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=False,
+            enable_cuda_graph=True,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()
+        # Should auto-enable te_rng_tracker and warn
+        assert container.model.use_te_rng_tracker is True
+        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_te_rng_tracker_auto_enable_with_external_cuda_graph(self, mock_warn_rank_0):
+        """Test that te_rng_tracker is auto-enabled when using transformer_engine with external CUDA graphs."""
+        gpt_model_cfg = create_test_gpt_config(
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=False,
+            external_cuda_graph=True,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()
+        # Should auto-enable te_rng_tracker and warn
+        assert container.model.use_te_rng_tracker is True
+        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_te_rng_tracker_no_warn_when_already_enabled(self, mock_warn_rank_0):
+        """Test that no warning is issued when te_rng_tracker is already enabled."""
+        gpt_model_cfg = create_test_gpt_config(
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=True,
+            enable_cuda_graph=True,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()
+        # Should not warn since te_rng_tracker is already enabled
+        mock_warn_rank_0.assert_not_called()
+
+    @patch("os.getenv")
+    def test_expandable_segments_validation_error(self, mock_getenv):
+        """Test that expandable_segments:True in PYTORCH_CUDA_ALLOC_CONF raises error with external CUDA graphs."""
+        mock_getenv.side_effect = ["0", "0", "expandable_segments:True"]
+
+        gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        with pytest.raises(
+            AssertionError,
+            match="expandable_segments:True may not be safe when using CUDA Graphs",
+        ):
+            container._sync_and_validate_external_cuda_graph()
+
+    @patch("os.getenv")
+    def test_expandable_segments_validation_pass(self, mock_getenv):
+        """Test that expandable_segments validation passes when not set or set to False."""
+        # Test with expandable_segments:False
+        mock_getenv.side_effect = ["0", "0", ""]
+
+        gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()  # Should pass
+
+    def test_no_cuda_graph_features_enabled(self):
+        """Test normal case where no CUDA graph features are enabled."""
+        gpt_model_cfg = create_test_gpt_config(
+            enable_cuda_graph=False,
+            external_cuda_graph=False,
+            transformer_impl="local",
+            use_te_rng_tracker=False,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()  # Should pass without any changes
+        assert container.model.use_te_rng_tracker is False
+
+    def test_all_validations_combined(self):
+        """Test a valid configuration with external CUDA graphs that passes all validations."""
+        gpt_model_cfg = create_test_gpt_config(
+            external_cuda_graph=True,
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=True,
+            recompute_granularity="selective",
+        )
+
+        rng_cfg = RNGConfig(te_rng_tracker=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+        container.rng = rng_cfg
+
+        container._sync_and_validate_external_cuda_graph()
+        assert container.model.use_te_rng_tracker is True
+
+
+class TestValidationConfigResolution:
+    """Test validation configuration resolution with fallback to training config."""
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_resolution_with_fallbacks(self, mock_get_world_size):
+        """Test that validation config falls back to training config when not specified."""
+        mock_get_world_size.return_value = 4
+
+        # Create training config with only training values, no validation values
+        train_config = TrainingConfig(micro_batch_size=16, global_batch_size=64, train_iters=1000)
+
+        # Create dataset config with only training values
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+
+        # Create model config
+        model_config = create_test_gpt_config()
+
+        # Create config container using helper function
+        config, _, _ = create_test_config_container(
+            world_size_override=4,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        # Validate config - this should resolve validation configs with fallbacks
+        config.validate()
+
+        # Check that validation configs fall back to training configs
+        assert config.dataset.val_num_workers == 8
+        assert config.dataset.val_pin_memory == True
+        assert config.dataset.val_persistent_workers == True
+        assert config.train.val_micro_batch_size == 16
+        assert config.train.val_global_batch_size == 64  # 16 * 4
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_resolution_with_explicit_values(self, mock_get_world_size):
+        """Test that explicit validation config values are used when specified."""
+        mock_get_world_size.return_value = 2
+
+        # Create training config with both training and validation values
+        train_config = TrainingConfig(
+            micro_batch_size=16,
+            global_batch_size=64,
+            val_micro_batch_size=8,
+            val_global_batch_size=16,
+            train_iters=1000,
+        )
+
+        # Create dataset config with both training and validation values
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+        dataset_config.val_num_workers = 4
+        dataset_config.val_pin_memory = False
+        dataset_config.val_persistent_workers = False
+
+        # Create model config
+        model_config = create_test_gpt_config()
+
+        # Create config container using helper function
+        config, _, _ = create_test_config_container(
+            world_size_override=2,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        # Validate config
+        config.validate()
+
+        # Check that explicit validation values are used
+        assert config.dataset.val_num_workers == 4
+        assert config.dataset.val_pin_memory == False
+        assert config.dataset.val_persistent_workers == False
+        assert config.train.val_micro_batch_size == 8
+        assert config.train.val_global_batch_size == 16
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_mixed_fallbacks(self, mock_get_world_size):
+        """Test mixed scenario where some validation values are explicit, others fall back."""
+        mock_get_world_size.return_value = 2
+
+        # Create training config with some explicit validation values, others None
+        train_config = TrainingConfig(
+            micro_batch_size=16,
+            global_batch_size=64,
+            val_micro_batch_size=None,  # should fall back
+            val_global_batch_size=None,  # should be calculated
+            train_iters=1000,
+        )
+
+        # Create dataset config with some explicit validation values, others None
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+        dataset_config.val_num_workers = 4  # explicit
+        dataset_config.val_pin_memory = None  # should fall back
+        dataset_config.val_persistent_workers = None  # should fall back
+
+        # Create model config
+        model_config = create_test_gpt_config()
+
+        # Create config container using helper function
+        config, _, _ = create_test_config_container(
+            world_size_override=2,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        # Validate config
+        config.validate()
+
+        # Check mixed behavior
+        assert config.dataset.val_num_workers == 4  # explicit value
+        assert config.dataset.val_pin_memory == True  # fallback
+        assert config.dataset.val_persistent_workers == True  # fallback
+        assert config.train.val_micro_batch_size == 16  # fallback
+        assert config.train.val_global_batch_size == 32  # calculated: 16 * 2
