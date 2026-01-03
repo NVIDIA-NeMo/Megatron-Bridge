@@ -535,7 +535,7 @@ class TestParallelLinearAdapter:
             dropout=0.0,
             model_parallel_config=mock_config,
         )
-        assert adapter1.dropout is None
+        assert isinstance(adapter1.dropout, nn.Identity)
 
         # Reset mocks
         mock_col_linear.reset_mock()

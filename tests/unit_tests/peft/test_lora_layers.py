@@ -138,16 +138,16 @@ class TestLinearAdapter:
         assert torch.equal(adapter.bias, original_linear.bias)
 
         # Check LoRA components exist
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert hasattr(adapter, "dropout")
         assert hasattr(adapter, "scale")
 
         # Check dimensions
-        assert adapter.lora_a.in_features == 10
-        assert adapter.lora_a.out_features == 8
-        assert adapter.lora_b.in_features == 8
-        assert adapter.lora_b.out_features == 5
+        assert adapter.linear_in.in_features == 10
+        assert adapter.linear_in.out_features == 8
+        assert adapter.linear_out.in_features == 8
+        assert adapter.linear_out.out_features == 5
 
         # Check scale
         assert adapter.scale == 16 / 8  # alpha / dim
@@ -159,19 +159,19 @@ class TestLinearAdapter:
         assert torch.equal(adapter.weight, original_linear_no_bias.weight)
         assert adapter.bias is None
 
-    def test_linear_adapter_lora_b_initialized_to_zero(self, original_linear):
+    def test_linear_adapter_linear_out_initialized_to_zero(self, original_linear):
         """Test that LoRA B matrix is initialized to zero."""
         adapter = LinearAdapter(original_linear)
 
-        assert torch.allclose(adapter.lora_b.weight, torch.zeros_like(adapter.lora_b.weight))
+        assert torch.allclose(adapter.linear_out.weight, torch.zeros_like(adapter.linear_out.weight))
 
     @pytest.mark.parametrize("lora_A_init_method", ["xavier", "uniform"])
-    def test_linear_adapter_lora_a_initialization(self, original_linear, lora_A_init_method):
+    def test_linear_adapter_linear_in_initialization(self, original_linear, lora_A_init_method):
         """Test LoRA A matrix initialization methods."""
         adapter = LinearAdapter(original_linear, lora_A_init_method=lora_A_init_method)
 
         # Should not be all zeros
-        assert not torch.allclose(adapter.lora_a.weight, torch.zeros_like(adapter.lora_a.weight))
+        assert not torch.allclose(adapter.linear_in.weight, torch.zeros_like(adapter.linear_in.weight))
 
     def test_linear_adapter_freezes_original_weights(self, original_linear):
         """Test that original weights are frozen."""
@@ -185,8 +185,8 @@ class TestLinearAdapter:
         """Test that LoRA weights are trainable."""
         adapter = LinearAdapter(original_linear)
 
-        assert adapter.lora_a.weight.requires_grad
-        assert adapter.lora_b.weight.requires_grad
+        assert adapter.linear_in.weight.requires_grad
+        assert adapter.linear_out.weight.requires_grad
 
     @pytest.mark.parametrize("dropout_position", ["pre", "post"])
     def test_linear_adapter_dropout_position(self, original_linear, dropout_position):
@@ -235,7 +235,7 @@ class TestLinearAdapter:
         for key, val in adapter.state_dict().items():
             if key in state_init:
                 continue
-            assert key in ["lora_a.weight", "lora_b.weight"]
+            assert key in ["linear_in.weight", "linear_out.weight"]
 
     def test_linear_adapter_zero_output_initially(self, original_linear):
         """Test that adapter produces zero output initially (LoRA B is zero)."""
@@ -252,7 +252,7 @@ class TestLinearAdapter:
             adapter_output = adapter(x)
 
         # Initially, LoRA should add approximately zero
-        # (not exactly zero due to random initialization of lora_a, but very small)
+        # (not exactly zero due to random initialization of linear_in, but very small)
         lora_contribution = adapter_output - original_output
         assert torch.allclose(lora_contribution, torch.zeros_like(lora_contribution), atol=1e-2)
 
@@ -279,7 +279,7 @@ class TestPatchLinearModule:
         for key, val in patched_linear.state_dict().items():
             if key in state_init:
                 continue
-            assert key in ["lora_a.weight", "lora_b.weight"]
+            assert key in ["linear_in.weight", "linear_out.weight"]
 
     def test_patch_linear_module_attributes(self):
         """Test that patched module has required LoRA attributes."""
@@ -287,7 +287,7 @@ class TestPatchLinearModule:
         patched_linear = patch_linear_module(linear)
 
         state_dict = patched_linear.state_dict()
-        for key in ["lora_a", "lora_b"]:
+        for key in ["linear_in", "linear_out"]:
             assert hasattr(patched_linear, key), f"Expected {key} to be in module"
             assert f"{key}.weight" in state_dict, f"Expected {key} to be in state dict"
             assert getattr(patched_linear, key).weight.requires_grad == True, f"Expected {key} to require_grad"
@@ -310,8 +310,8 @@ class TestPatchLinearModule:
         assert patched_linear is te_linear
 
         # Check LoRA attributes exist
-        assert hasattr(patched_linear, "lora_a")
-        assert hasattr(patched_linear, "lora_b")
+        assert hasattr(patched_linear, "linear_in")
+        assert hasattr(patched_linear, "linear_out")
 
     def test_patch_linear_module_unsupported_type(self):
         """Test error with unsupported module type."""
@@ -328,8 +328,8 @@ class TestPatchLinearModule:
 
         assert patched_linear.dim == dim
         assert patched_linear.scale == alpha / dim
-        assert patched_linear.lora_a.out_features == dim
-        assert patched_linear.lora_b.in_features == dim
+        assert patched_linear.linear_in.out_features == dim
+        assert patched_linear.linear_out.in_features == dim
 
 
 class TestTEFusedLoRALinear:
@@ -578,15 +578,15 @@ class TestTELinearAdapter:
         adapter = TELinearAdapter(te_linear, dim=8, alpha=16)
 
         # Check that it's properly initialized
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert adapter.scale == 16 / 8
 
         # Check dimensions
-        assert adapter.lora_a.in_features == 10
-        assert adapter.lora_a.out_features == 8
-        assert adapter.lora_b.in_features == 8
-        assert adapter.lora_b.out_features == 5
+        assert adapter.linear_in.in_features == 10
+        assert adapter.linear_in.out_features == 8
+        assert adapter.linear_out.in_features == 8
+        assert adapter.linear_out.out_features == 5
 
     def test_te_linear_adapter_forward(self, te_linear):
         """Test TELinearAdapter forward pass."""
@@ -615,8 +615,8 @@ class TestLoRAUtilities:
         linear = nn.Linear(10, 5)
         adapter = LinearAdapter(linear, lora_dtype=torch.float16)
 
-        assert adapter.lora_a.weight.dtype == torch.float16
-        assert adapter.lora_b.weight.dtype == torch.float16
+        assert adapter.linear_in.weight.dtype == torch.float16
+        assert adapter.linear_out.weight.dtype == torch.float16
 
     def test_linear_adapter_different_dropout_values(self):
         """Test LinearAdapter with different dropout values."""
@@ -645,15 +645,15 @@ class TestLoRAUtilities:
 
         # Manually set LoRA weights for predictable output
         with torch.no_grad():
-            nn.init.constant_(adapter.lora_a.weight, 0.1)
-            nn.init.constant_(adapter.lora_b.weight, 0.1)
+            nn.init.constant_(adapter.linear_in.weight, 0.1)
+            nn.init.constant_(adapter.linear_out.weight, 0.1)
 
         x = torch.ones(1, 10)
 
-        # Expected: original + lora_scale * lora_b(lora_a(x))
+        # Expected: original + lora_scale * linear_out(linear_in(x))
         # original = x @ linear.weight.T = 1*10 @ 1_{5,10}.T = 10 * ones(1,5)
-        # lora_a(x) = x @ lora_a.weight.T = 1*10 @ 0.1_{2,10}.T = 1.0 * ones(1,2)
-        # lora_b(lora_a(x)) = 1.0 @ 0.1_{5,2}.T = 0.2 * ones(1,5)
+        # linear_in(x) = x @ linear_in.weight.T = 1*10 @ 0.1_{2,10}.T = 1.0 * ones(1,2)
+        # linear_out(linear_in(x)) = 1.0 @ 0.1_{5,2}.T = 0.2 * ones(1,5)
         # lora_scale = alpha/dim = 4/2 = 2
         # final = 10 + 2 * 0.2 = 10.4
 

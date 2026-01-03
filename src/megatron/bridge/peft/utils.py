@@ -386,7 +386,7 @@ class ParallelLinearAdapter(nn.Module):
         dropout: Dropout probability (default: 0.0).
         model_parallel_config: Configuration for model parallelism (default: None).
         alpha: Scaling factor for adapter output (default: None, uses dim).
-        dropout_position: Where to apply dropout ('pre' or 'post', default: 'post').
+        dropout_position: Where to apply dropout ('pre' or 'post', default: 'pre').
         a2a_experimental: Whether to use experimental all-to-all communication (default: False).
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
@@ -406,7 +406,7 @@ class ParallelLinearAdapter(nn.Module):
         dropout: float = 0.0,
         model_parallel_config: Optional[ModelParallelConfig] = None,
         alpha: Optional[float] = None,
-        dropout_position: str = "post",
+        dropout_position: str = "pre",
         a2a_experimental: bool = False,
         is_expert: bool = False,
         disable_tensor_parallel_comm: bool = False,
@@ -456,7 +456,6 @@ class ParallelLinearAdapter(nn.Module):
 
         # Ensure adapter parameters are initialized when creating adapter layers.
         # In some flows (e.g., after import), perform_initialization may be False to skip heavy init.
-        _prev_perform_initialization = getattr(model_parallel_config, "perform_initialization", True)
         if hasattr(model_parallel_config, "perform_initialization"):
             model_parallel_config.perform_initialization = True
 
@@ -512,7 +511,7 @@ class ParallelLinearAdapter(nn.Module):
         if dropout > 0.0:
             self.dropout = nn.Dropout(dropout)
         else:
-            self.dropout = None
+            self.dropout = nn.Identity()
 
         # cast all parameters when using amp O2 training
         if model_parallel_config.bf16:
@@ -588,7 +587,7 @@ class ParallelLinearAdapter(nn.Module):
         Returns:
             Adapted output tensor with scaling applied.
         """
-        if self.dropout is not None and self.dropout_position == "pre":
+        if self.dropout_position == "pre":
             x = self.dropout(x)
 
         pad_len = 0
@@ -624,7 +623,7 @@ class ParallelLinearAdapter(nn.Module):
                 x = scatter_to_sequence_parallel_region(x)
 
         # Add dropout if available
-        if self.dropout is not None and self.dropout_position == "post":
+        if self.dropout_position == "post":
             x = self.dropout(x)
 
         x = x * (self.alpha / self.dim)
