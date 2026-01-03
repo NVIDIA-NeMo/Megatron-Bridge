@@ -385,6 +385,8 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         source_path: Optional[Union[str, Path]] = None,
         strict: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -410,6 +412,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 HuggingFace model with custom modeling files needs to be referenced. If not specified,
                 the path will be automatically determined from the HuggingFace configuration.
             strict: Whether to perform strict validation during weight export
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently. When False (default), only rank 0 performs
+                the save operation after gathering weights from all ranks.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+                This is useful for reducing I/O pressure when dealing with large-scale distributed
+                training. Only effective when distributed_save=True. Default is 1 (all ranks save).
 
 
         Example:
@@ -433,10 +442,18 @@ class AutoBridge(Generic[MegatronModelT]):
             # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
 
-        self.save_hf_weights(model, path, show_progress, strict)
+        self.save_hf_weights(model, path, show_progress, strict,
+                             distributed_save=distributed_save,
+                             save_every_n_ranks=save_every_n_ranks)
 
     def save_hf_weights(
-        self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        show_progress: bool = True,
+        strict: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -457,6 +474,10 @@ class AutoBridge(Generic[MegatronModelT]):
             model: Megatron model instance or list of instances
             path: Directory path where weight files will be saved
             show_progress: Display progress bar during export
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
 
         Raises:
             ValueError: If the state source doesn't support streaming save
@@ -487,7 +508,9 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
+            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict,
+                                                           distributed_save=distributed_save,
+                                                           save_every_n_ranks=save_every_n_ranks)
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
