@@ -545,7 +545,9 @@ class TestAutoBridge:
 
             # Check artifacts were saved on rank 0
             mock_hf_model.save_artifacts.assert_called_once_with("./output_dir", original_source_path=None)
-            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True, True)
+            mock_save_hf_weights.assert_called_once_with(
+                mock_megatron_model, "./output_dir", True, True, merge_adapter_weights=True
+            )
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
@@ -566,7 +568,9 @@ class TestAutoBridge:
 
             # Artifacts should NOT be saved on non-zero rank
             mock_hf_model.save_artifacts.assert_not_called()
-            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True, True)
+            mock_save_hf_weights.assert_called_once_with(
+                mock_megatron_model, "./output_dir", True, True, merge_adapter_weights=True
+            )
 
     def test_export_hf_weights(self):
         """Test exporting weights from Megatron to HF format."""
