@@ -48,11 +48,14 @@ class LoRALinear(AdapterWrapper):
 
         Returns:
             A tuple containing:
-                - Combined output (linear_output + adapter_output)
+                - Combined output (linear_output + adapter_output) if adapter is enabled,
+                  otherwise just the linear_output
                 - Bias term (if present, otherwise None)
         """
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         adapter_output = self.adapter(layernorm_output.contiguous())
         adapter_output = adapter_output.reshape(linear_output.shape)
         return linear_output + adapter_output, bias
@@ -122,6 +125,15 @@ class TELinearAdapter(te.Linear):
             lora_A_init_method=lora_A_init_method,
             lora_dtype=lora_dtype,
         )
+        self._adapter_enabled = True
+
+    def enable_adapter_layers(self) -> None:
+        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
+        self._adapter_enabled = True
+
+    def disable_adapter_layers(self) -> None:
+        """Disable the adapter layers, making the forward pass return only the base module output."""
+        self._adapter_enabled = False
 
     @torch.no_grad
     @staticmethod
@@ -181,6 +193,10 @@ class TELinearAdapter(te.Linear):
         """
         # pylint: disable=C0115,C0116
         res = super(TELinearAdapter, self).forward(x)
+
+        if not self._adapter_enabled:
+            return res
+
         if self.dropout_position == "pre":
             x = self.dropout(x)
         # LoRA fwd is performed in original precision regardless of FP8 enabled
@@ -428,6 +444,10 @@ class TEFusedLoRALinear(LoRALinear):
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, None]:
         # pylint: disable=C0115,C0116
 
+        # If adapter is disabled, fall back to base forward
+        if not self._adapter_enabled:
+            return super().forward(x)
+
         # Construct fused impl if needed
         # Note: We initialize during the first forward pass in
         # case the params are modified after the constructor.
@@ -506,6 +526,15 @@ class LinearAdapter(nn.Linear):
             lora_A_init_method=lora_A_init_method,
             lora_dtype=lora_dtype,
         )
+        self._adapter_enabled = True
+
+    def enable_adapter_layers(self) -> None:
+        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
+        self._adapter_enabled = True
+
+    def disable_adapter_layers(self) -> None:
+        """Disable the adapter layers, making the forward pass return only the base module output."""
+        self._adapter_enabled = False
 
     @torch.no_grad
     @staticmethod
@@ -572,6 +601,9 @@ class LinearAdapter(nn.Linear):
             res = fwd(x)
         else:
             res = torch.nn.functional.linear(x, self.weight, self.bias)
+
+        if not self._adapter_enabled:
+            return res
 
         if self.dropout_position == "pre":
             x = self.dropout(x)
