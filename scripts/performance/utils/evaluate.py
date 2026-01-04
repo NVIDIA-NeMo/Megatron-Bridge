@@ -65,6 +65,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "lm loss": r"lm loss:\s+([\d.E+\-]+)",
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
         "step time": r"Step Time :\s+([\d.]+)s",
+        "grad norm": r"grad norm:\s+([\d.]+)",
     }
 
     pending_step_time = None
@@ -423,6 +424,7 @@ def calc_convergence_and_performance(
 
     current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
     current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
+    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm")
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
@@ -504,6 +506,13 @@ def calc_convergence_and_performance(
         error_msg += f"Performance check failed. {performance_result['summary']}\n"
         error_msg += f"Timing difference is greater than threshold: {performance_result['timing_diff'] * 100:.2f}% > {performance_config['timing_threshold'] * 100:.1f}%\n"
 
+    # check for grad norm
+    has_nan_grad_norm = any(current_grad_norm[s] == "nan" for s in steps)
+    has_inf_grad_norm = any(current_grad_norm[s] == "inf" for s in steps)
+    if has_nan_grad_norm or has_inf_grad_norm:
+        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
+        error_msg += f"Grad norm values: {current_grad_norm}\n"
+
     wandb_run.define_metric("compare/*", step_metric="compare/step")
     for i in range(len(steps)):
         wandb_run.log(
@@ -513,6 +522,7 @@ def calc_convergence_and_performance(
                 "compare/current_iter_time": current_iter_time_values[i],
                 "compare/golden_lm_loss": golden_train_loss_values[i],
                 "compare/golden_iter_time": golden_iter_time_values[i],
+                "compare/current_grad_norm": current_grad_norm[i],
             }
         )
 
