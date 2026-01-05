@@ -71,8 +71,13 @@ class TestGLM45VModelInitialization:
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.hook_hf_module_setattr_for_tp_grad_sync")
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.Glm4vModel")
     def test_init_with_pre_process(
-        self, mock_glm4v_model, mock_hook_hf, mock_vision_cls, mock_version_check,
-        mock_gpt_provider, mock_visual,
+        self,
+        mock_glm4v_model,
+        mock_hook_hf,
+        mock_vision_cls,
+        mock_version_check,
+        mock_gpt_provider,
+        mock_visual,
     ):
         """Test initialization with pre_process=True creates vision and language components."""
         mock_version_check.return_value = True
@@ -138,8 +143,13 @@ class TestGLM45VModelForward:
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.hook_hf_module_setattr_for_tp_grad_sync")
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.Glm4vModel")
     def test_forward_text_only(
-        self, mock_glm4v_model, mock_hook_hf, mock_vision_cls, mock_version_check,
-        mock_gpt_provider, mock_visual,
+        self,
+        mock_glm4v_model,
+        mock_hook_hf,
+        mock_vision_cls,
+        mock_version_check,
+        mock_gpt_provider,
+        mock_visual,
     ):
         """Test forward pass with text-only input."""
         mock_version_check.return_value = True
@@ -160,8 +170,13 @@ class TestGLM45VModelForward:
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.hook_hf_module_setattr_for_tp_grad_sync")
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.Glm4vModel")
     def test_forward_with_images(
-        self, mock_glm4v_model, mock_hook_hf, mock_vision_cls, mock_version_check,
-        mock_gpt_provider, mock_visual,
+        self,
+        mock_glm4v_model,
+        mock_hook_hf,
+        mock_vision_cls,
+        mock_version_check,
+        mock_gpt_provider,
+        mock_visual,
     ):
         """Test forward pass with image input processes vision features."""
         mock_version_check.return_value = True
@@ -193,8 +208,13 @@ class TestGLM45VModelForward:
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.hook_hf_module_setattr_for_tp_grad_sync")
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.Glm4vModel")
     def test_forward_with_videos(
-        self, mock_glm4v_model, mock_hook_hf, mock_vision_cls, mock_version_check,
-        mock_gpt_provider, mock_visual,
+        self,
+        mock_glm4v_model,
+        mock_hook_hf,
+        mock_vision_cls,
+        mock_version_check,
+        mock_gpt_provider,
+        mock_visual,
     ):
         """Test forward pass with video input processes video features."""
         mock_version_check.return_value = True
@@ -245,8 +265,13 @@ class TestGLM45VModelFreeze:
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.hook_hf_module_setattr_for_tp_grad_sync")
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.Glm4vModel")
     def test_freeze_all_components(
-        self, mock_glm4v_model, mock_hook_hf, mock_vision_cls, mock_version_check,
-        mock_gpt_provider, mock_visual,
+        self,
+        mock_glm4v_model,
+        mock_hook_hf,
+        mock_vision_cls,
+        mock_version_check,
+        mock_gpt_provider,
+        mock_visual,
     ):
         """Test freezing all model components (language, vision, projection)."""
         mock_version_check.return_value = True
