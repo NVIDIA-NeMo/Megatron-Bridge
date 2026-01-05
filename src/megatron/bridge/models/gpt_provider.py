@@ -104,6 +104,7 @@ def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
     from megatron.core import parallel_state
+
     use_arbitrary_attention_mask = (
         config.use_arbitrary_attention_mask
         if config.use_arbitrary_attention_mask is not None
