@@ -40,13 +40,15 @@ The following line shows an example of how you can launch a pre-training benchma
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
-### Configuration Options
-
 #### Mandatory arguments
+- `-m/--model_family_name`
+- `-mr/--model_recipe_name`
+- `-ng/--num_gpus`
+- `-g/--gpu`
+- `-a/--account` (Mandatory for Slurm based clusters)
+- `-p/--partition` (Mandatory for Slurm based clusters)
 
-- `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
-- `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
-- `-ng/--num_gpus`: Number of GPUs.
+### Configuration Options
 
 #### Container Image
 
@@ -56,16 +58,13 @@ The following line shows an example of how you can launch a pre-training benchma
 
 #### General arguments
 
+- `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
+- `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
 - `--use_recipes`: Use library recipes. Disabled by default.
-- `-hf/--hf_token`: HuggingFace token for accessing tokenizers and checkpoints.
-  - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
-  - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
 - `-nh/--nemo_home`: Directory to expose as `NEMO_HOME` on the compute node. Defaults to `~/.cache/nemo`.
 - `--detach`: Detach the experiment from the terminal. Pass `true` or `false`. Default `true`.
 - `--max_retries`: Maximum number of retries. Default `2`.
-- `-l/--log_dir`: Directory for logging experiment results. Defaults to `NEMORUN_HOME`.
-  - Make sure the environment variable `NEMORUN_HOME=<log_dir>` is accessible and set correctly in your virtual environment.
-  - You can run `export NEMORUN_HOME=<log_dir>` in your terminal. You can add it your bashrc file (or equivalent for your OS/Linux distro) for setting it permanently.
+- `-ng/--num_gpus`: Number of GPUs.
 - `-d/--dryrun`: Print the generated `sbatch` script without launching.
 
 #### Training arguments
@@ -106,6 +105,9 @@ The following line shows an example of how you can launch a pre-training benchma
 - `--tokenizer_type`: Tokenizer type (`NullTokenizer`, `HuggingFaceTokenizer`, `SentencePieceTokenizer`).
 - `--tokenizer_model`: Path to tokenizer model (automatically provided by launcher).
 - `--vocab_size`: Vocabulary size for NullTokenizer. Default `32000`.
+- `-hf/--hf_token`: HuggingFace token for accessing tokenizers and checkpoints.
+  - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
+  - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
 
 #### Parallelism arguments
 
@@ -160,6 +162,9 @@ The following line shows an example of how you can launch a pre-training benchma
 
 #### Logging arguments
 
+- `-l/--log_dir`: Directory for logging experiment results. Defaults to `NEMORUN_HOME`.
+  - Make sure the environment variable `NEMORUN_HOME=<log_dir>` is accessible and set correctly in your virtual environment.
+  - You can run `export NEMORUN_HOME=<log_dir>` in your terminal. You can add it your bashrc file (or equivalent for your OS/Linux distro) for setting it permanently.
 - `-wdk/--wandb_key`: Weights & Biases API key for remote logging.
 - `-wdp/--wandb_project_name`: Weights & Biases project name.
 - `-wde/--wandb_entity_name`: Weights & Biases entity name.

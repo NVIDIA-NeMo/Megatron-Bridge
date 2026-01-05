@@ -163,12 +163,6 @@ def parse_cli_args():
         default=False,
     )
     parser.add_argument(
-        "-hf",
-        "--hf_token",
-        type=str,
-        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
-    )
-    parser.add_argument(
         "-nh",
         "--nemo_home",
         type=str,
@@ -199,6 +193,13 @@ def parse_cli_args():
         type=int,
         help="Number of gpus.",
         required=True,
+    )
+    parser.add_argument(
+        "-d",
+        "--dryrun",
+        help="If true, prints sbatch script to terminal without launching experiment.",
+        required=False,
+        action="store_true",
     )
 
     # Training
@@ -259,14 +260,14 @@ def parse_cli_args():
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
-    parser.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
+    data_args.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
-    data_args.add_argument(
+    tokenizer_args.add_argument(
         "--tokenizer_type",
         type=str,
         choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
@@ -275,6 +276,12 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
+    tokenizer_args.add_argument(
+        "-hf",
+        "--hf_token",
+        type=str,
+        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
 
     # Parallelism
     parallelism_args = parser.add_argument_group("Parallelism arguments")
@@ -455,7 +462,7 @@ def parse_cli_args():
         type=str,
         choices=["h100", "b200", "gb200", "gb300"],
         help="Target gpu type.",
-        required=False,
+        required=True,
     )
     performance_args.add_argument(
         "-c",
@@ -601,14 +608,6 @@ def parse_cli_args():
         help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()} or NEMORUN_HOME envvar",
         required=False,
         default=None,
-    )
-
-    parser.add_argument(
-        "-d",
-        "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
-        required=False,
-        action="store_true",
     )
 
     # Testing parameters
