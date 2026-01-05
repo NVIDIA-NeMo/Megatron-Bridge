@@ -76,6 +76,9 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         if match := re.search(patterns["step time"], line):
             pending_step_time = float(match.group(1))
 
+        if match := re.search(patterns["grad norm"], line):
+            pending_grad_norm = float(match.group(1))
+
         if match := re.search(patterns["GPU utilization"], line):
             pending_gpu_util = float(match.group(1))
 
@@ -90,6 +93,10 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
             if pending_step_time is not None:
                 metrics["step time"][completed_step] = pending_step_time
                 pending_step_time = None
+
+            if pending_grad_norm is not None:
+                metrics["grad norm"][completed_step] = pending_grad_norm
+                pending_grad_norm = None
 
             if pending_gpu_util is not None:
                 metrics["GPU utilization"][completed_step] = pending_gpu_util
