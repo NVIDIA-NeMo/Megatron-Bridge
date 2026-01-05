@@ -14,19 +14,22 @@
 
 import logging
 from functools import partial
-from typing import Iterable
+from typing import Iterable, Optional
 
 import modelopt.torch.distill as mtd
 import torch
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
+from megatron.core.utils import get_model_config, unwrap_model
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+from megatron.bridge.training.utils.packed_seq_utils import (
+    prepare_packed_seq_params_and_slice_cp,
+)
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
@@ -61,8 +64,11 @@ def get_batch_from_iterator(
 
     if "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
+        required_device_keys.add("cu_seqlens_padded")
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
+    if "local_cp_size" in batch:
+        required_host_keys.add("local_cp_size")
 
     if is_first_pp_stage or use_mtp:
         required_device_keys.update(("tokens", "position_ids"))
@@ -89,9 +95,7 @@ def get_batch(
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
+    Optional[PackedSeqParams],
 ]:
     """Generate a batch.
 
@@ -102,13 +106,13 @@ def get_batch(
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, and max_seqlen
+        and an optional PackedSeqParams if packed sequences are enabled.
     """
     # Determine pipeline stage role via process group collection
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
     if (not is_first) and (not is_last):
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -118,8 +122,8 @@ def get_batch(
         is_last_pp_stage=is_last,
     )
 
-    # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank(batch)
+    # Slice batch along sequence dimension for context parallelism and build PackedSeqParams when needed
+    batch, packed_seq_params = prepare_packed_seq_params_and_slice_cp(batch, pg_collection.cp)
 
     return (
         batch["tokens"],
@@ -127,9 +131,7 @@ def get_batch(
         batch["loss_mask"],
         batch["attention_mask"],
         batch["position_ids"],
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("max_seqlen"),
+        packed_seq_params,
     )
 
 
@@ -156,9 +158,14 @@ def _forward_step_common(
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
-        tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = get_batch(
-            data_iterator, state.cfg, use_mtp, pg_collection=pg_collection
-        )
+        (
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            packed_seq_params,
+        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
     forward_args = {
@@ -169,13 +176,8 @@ def _forward_step_common(
     }
 
     # Add packed sequence support
-    if cu_seqlens is not None:
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
-            "max_seqlen": max_seqlen,
-        }
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
+    if packed_seq_params is not None:
+        forward_args["packed_seq_params"] = packed_seq_params
 
     with straggler_timer:
         if return_schedule_plan:
