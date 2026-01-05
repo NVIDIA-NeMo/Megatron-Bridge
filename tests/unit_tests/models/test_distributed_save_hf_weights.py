@@ -1,3 +1,17 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 
 """
 Unit tests for distributed_save.
@@ -7,20 +21,19 @@ Run with: torchrun --nproc_per_node=8 --master_port=29501 -m pytest -vs tests/un
 Or for single GPU: pytest -vs tests/unit_tests/models/test_distributed_save_hf_weights.py
 """
 
-from unittest.mock import Mock, PropertyMock, patch
-import unittest
-import time
 import datetime
-import shutil
-import os
-import pytest
-from pathlib import Path
 import logging
+import os
+import shutil
+import time
+import unittest
+from pathlib import Path
 
+import megatron.core.parallel_state as parallel_state
+import pytest
 import torch
 import torch.distributed as dist
 
-import megatron.core.parallel_state as parallel_state
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 
 
@@ -65,13 +78,14 @@ def init_parallel_state(tp_size, pp_size):
 
 
 class TestAutoBridgeDistributedSave(unittest.TestCase):
-
-    def test_distributed_save_hf_pretrained(self,):
+    def test_distributed_save_hf_pretrained(
+        self,
+    ):
         world_size = int(os.environ.get("WORLD_SIZE", 1))
         pp_size = 1
         tp_size = min(2, world_size // pp_size)
         distributed_save = True
-        save_every_n_ranks=1
+        save_every_n_ranks = 1
         temp_dir = f"_test_distributed_save_dir_{distributed_save}/hf_exports_qwen3_8B"
 
         init_parallel_state(tp_size, pp_size)
@@ -95,10 +109,7 @@ class TestAutoBridgeDistributedSave(unittest.TestCase):
             torch.cuda.synchronize()
             before_save = time.time()
             bridge.save_hf_pretrained(
-                model,
-                str(output_path),
-                distributed_save=distributed_save,
-                save_every_n_ranks=save_every_n_ranks
+                model, str(output_path), distributed_save=distributed_save, save_every_n_ranks=save_every_n_ranks
             )
             torch.distributed.barrier()
             torch.cuda.synchronize()
@@ -112,14 +123,16 @@ class TestAutoBridgeDistributedSave(unittest.TestCase):
                 config_file = output_path / "config.json"
                 assert config_file.exists(), "config.json not found in output directory"
 
-                weight_files = list(output_path.glob("model*.safetensors")) or \
-                                list(output_path.glob("pytorch_model*.bin"))
+                weight_files = list(output_path.glob("model*.safetensors")) or list(
+                    output_path.glob("pytorch_model*.bin")
+                )
                 assert len(weight_files) > 0, "No model weight files found in output directory"
 
                 tokenizer_files = list(output_path.glob("tokenizer*"))
                 assert len(tokenizer_files) > 0, "No tokenizer files found in output directory"
 
-                from transformers import AutoModelForCausalLM, AutoConfig
+                from transformers import AutoConfig, AutoModelForCausalLM
+
                 reloaded_config = AutoConfig.from_pretrained(str(output_path))
                 assert reloaded_config is not None, "Failed to load config from saved model"
 
@@ -132,12 +145,14 @@ class TestAutoBridgeDistributedSave(unittest.TestCase):
 
                 assert hasattr(reloaded_model, "model"), "Reloaded model missing 'model' attribute"
                 assert hasattr(reloaded_model.model, "layers"), "Reloaded model missing 'layers' attribute"
-                
-                logger.info(f"Distributed_save test passed: Model successfully saved to {output_path} using time {(after_save - before_save):.2f}s")
+
+                logger.info(
+                    f"Distributed_save test passed: Model successfully saved to {output_path} using time {(after_save - before_save):.2f}s"
+                )
                 logger.info(f"  - Config file: {config_file}")
                 logger.info(f"  - Weight files: {len(weight_files)} file(s)")
                 logger.info(f"  - Tokenizer files: {len(tokenizer_files)} file(s)")
-                logger.info(f"  - Model successfully reloaded and validated")
+                logger.info("  - Model successfully reloaded and validated")
 
         except Exception as e:
             logger.error(f"Distributed_save test skipped due to: {e}")
@@ -149,4 +164,4 @@ class TestAutoBridgeDistributedSave(unittest.TestCase):
                     shutil.rmtree(output_path)
                     logger.info(f"Successfully cleaned up temporary directory: {output_path}")
                 except Exception as e:
-                    logger.warning(f"Failed to clean up temporary directory {output_path}: {e}") 
+                    logger.warning(f"Failed to clean up temporary directory {output_path}: {e}")

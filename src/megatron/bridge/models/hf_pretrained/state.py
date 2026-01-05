@@ -668,8 +668,12 @@ class SafeTensorsStateSource(StateSource):
         return False
 
     def save_generator(
-        self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True,
-        distributed_save: bool = False, save_every_n_ranks: int = 1
+        self,
+        generator: Iterable[Tuple[str, torch.Tensor]],
+        output_path: Union[str, Path],
+        strict: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -696,13 +700,12 @@ class SafeTensorsStateSource(StateSource):
                 part of weights independently.
             save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
-            
+
         """
         if distributed_save:
-            return self._save_generator_distibuted(generator,
-                                                   output_path,
-                                                   strict,
-                                                   save_every_n_ranks=save_every_n_ranks)
+            return self._save_generator_distibuted(
+                generator, output_path, strict, save_every_n_ranks=save_every_n_ranks
+            )
 
         # In a distributed environment, only rank 0 should write to disk.
         # Other ranks must still exhaust the generator to participate in collectives.
@@ -860,7 +863,11 @@ class SafeTensorsStateSource(StateSource):
         return None
 
     def _save_generator_distibuted(
-        self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True, save_every_n_ranks: int = 1
+        self,
+        generator: Iterable[Tuple[str, torch.Tensor]],
+        output_path: Union[str, Path],
+        strict: bool = True,
+        save_every_n_ranks: int = 1,
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -877,7 +884,7 @@ class SafeTensorsStateSource(StateSource):
         # Calculate which ranks should participate in saving
         # Only rank % save_every_n_ranks == 0 will save
         num_nodes = (world_size + save_every_n_ranks - 1) // save_every_n_ranks
-        is_saver_rank = (rank % save_every_n_ranks == 0)
+        is_saver_rank = rank % save_every_n_ranks == 0
         saver_ranks = [i * save_every_n_ranks for i in range(num_nodes) if i * save_every_n_ranks < world_size]
         num_savers = len(saver_ranks)
         saver_index = rank // save_every_n_ranks if is_saver_rank else -1
@@ -915,7 +922,9 @@ class SafeTensorsStateSource(StateSource):
             assigned_filenames = [fname for idx, fname in enumerate(all_filenames) if idx % num_savers == saver_index]
             assigned_filenames_set = set(assigned_filenames)
             assigned_expected_keys: Set[str] = (
-                set().union(*(filename_to_keys_map[fname] for fname in assigned_filenames)) if assigned_filenames else set()
+                set().union(*(filename_to_keys_map[fname] for fname in assigned_filenames))
+                if assigned_filenames
+                else set()
             )
         else:
             assigned_filenames = []
