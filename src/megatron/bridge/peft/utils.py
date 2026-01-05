@@ -21,7 +21,7 @@ import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
@@ -66,10 +66,12 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool, bool]:
+def get_adapter_attributes_from_linear(
+    m: nn.Module, is_expert: bool = False
+) -> Tuple[bool, int, int, bool, bool, bool]:
     """Returns attributes from the base layer.
 
-    input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
+    input_is_parallel, in_features, out_features, disable_tensor_parallel_comm, disable_sequence_parallel_comm, base_linear_is_parallel
 
     This function analyzes a linear module and extracts key attributes needed for adapter configuration,
     particularly for PEFT adapters in distributed training scenarios.
@@ -82,6 +84,7 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
             - input_is_parallel: Whether the input is already parallelized
             - in_features: Input feature dimension
             - out_features: Output feature dimension
+            - disable_tensor_parallel_comm: Whether to disable tensor parallel communication
             - disable_sequence_parallel_comm: Whether to disable sequence parallel communication
             - base_linear_is_parallel: Whether the base linear layer uses parallelization
 
@@ -90,11 +93,24 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
     """
     disable_sequence_parallel_comm = not m.config.sequence_parallel
     base_linear_is_parallel = True
+
+    # In some modules (notably MoE shared_experts when moe_shared_expert_overlap is enabled),
+    # Megatron disables TP-related communications on the base linear layer by
+    # setting `parallel_mode=None` (TE) or `explicit_expert_comm=True` (legacy).
+    # https://github.com/NVIDIA/Megatron-LM/blob/5b1ef0703184299fbf71f6131bf2f9a5331e7238/megatron/core/transformer/moe/shared_experts.py#L95-L104
+    # The weights are still TP-sharded though, so we must keep using the real TP size
+    disable_tensor_parallel_comm = getattr(m, "parallel_mode", "") is None or getattr(m, "explicit_expert_comm", False)
+    if disable_tensor_parallel_comm:
+        disable_sequence_parallel_comm = True
+
+    if is_expert:
+        tp_size = parallel_state.get_expert_tensor_parallel_world_size()
+    else:
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
     if HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
         input_is_parallel = False
         # m.in_features and m.out_features are divided by tp_size already,
         # but in_features and out_features passed to ParallelLinearAdapter are not.
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
         in_features = m.in_features
         out_features = m.out_features * tp_size
 
@@ -121,7 +137,6 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
                     disable_sequence_parallel_comm = True
     elif HAVE_TE and any(isinstance(m, te_row_parallel) for te_row_parallel in TERL):
         input_is_parallel = True
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
         in_features = m.in_features * tp_size
         out_features = m.out_features
     elif HAVE_TE and isinstance(m, TELinear):  # parallel_mode="duplicated"
@@ -140,7 +155,14 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
     else:
         raise NotImplementedError(f"Layer type is unrecognized for LoRA: {type(m)}")
 
-    return input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
+    return (
+        input_is_parallel,
+        in_features,
+        out_features,
+        disable_tensor_parallel_comm,
+        disable_sequence_parallel_comm,
+        base_linear_is_parallel,
+    )
 
 
 def is_expert_linear(fqn: str) -> bool:
@@ -161,7 +183,7 @@ def is_expert_linear(fqn: str) -> bool:
         >>> is_expert_linear("model.layers.0.mlp.linear_fc1")
         False
     """
-    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None
+    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None and not ".shared_experts." in fqn
 
 
 def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
@@ -387,6 +409,7 @@ class ParallelLinearAdapter(nn.Module):
         dropout_position: str = "post",
         a2a_experimental: bool = False,
         is_expert: bool = False,
+        disable_tensor_parallel_comm: bool = False,
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
         **kwargs,
@@ -408,6 +431,7 @@ class ParallelLinearAdapter(nn.Module):
             dropout_position: When to apply dropout.
             a2a_experimental: Use experimental all-to-all communication.
             is_expert: Whether for expert layers in MoE.
+            disable_tensor_parallel_comm: Disable tensor parallel communication.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
             dropout_recompute: Use recomputation for dropout.
             **kwargs: Additional keyword arguments.
@@ -430,6 +454,12 @@ class ParallelLinearAdapter(nn.Module):
         model_parallel_config.sequence_parallel = False  # SP is irrelevant for the lora linear layer
         self.config = model_parallel_config
 
+        # Ensure adapter parameters are initialized when creating adapter layers.
+        # In some flows (e.g., after import), perform_initialization may be False to skip heavy init.
+        _prev_perform_initialization = getattr(model_parallel_config, "perform_initialization", True)
+        if hasattr(model_parallel_config, "perform_initialization"):
+            model_parallel_config.perform_initialization = True
+
         if input_is_parallel:
             self.linear_in = RowParallelLinear(
                 in_features,
@@ -439,6 +469,7 @@ class ParallelLinearAdapter(nn.Module):
                 skip_bias_add=True,
                 bias=False,
                 init_method=self._get_init_fn(column_init_method),
+                is_expert=is_expert,
             )
         else:
             self.linear_in = ColumnParallelLinear(
@@ -449,6 +480,7 @@ class ParallelLinearAdapter(nn.Module):
                 gather_output=True,
                 init_method=self._get_init_fn(column_init_method),
                 disable_grad_reduce=_sequence_parallel,
+                is_expert=is_expert,
             )
 
         # (@adithyare) we use this option to mirror the behavior
@@ -456,7 +488,12 @@ class ParallelLinearAdapter(nn.Module):
         # if the original column parallel layer uses gather_output=False,
         # then we will use the self.liner_out layer defined below.
         lin_out_gather_output = True if input_is_parallel else False
-        if self.use_a2a and input_is_parallel and _sequence_parallel:
+        if (
+            self.use_a2a
+            and input_is_parallel
+            and _sequence_parallel
+            or (disable_tensor_parallel_comm and not input_is_parallel)
+        ):
             lin_out_gather_output = False
 
         if not base_linear_is_parallel:
@@ -469,6 +506,7 @@ class ParallelLinearAdapter(nn.Module):
             bias=False,
             gather_output=lin_out_gather_output,
             init_method=self._get_init_fn(row_init_method),
+            is_expert=is_expert,
         )
 
         if dropout > 0.0:
@@ -555,7 +593,7 @@ class ParallelLinearAdapter(nn.Module):
 
         pad_len = 0
         if self.is_expert:
-            x, pad_len = pad_seq_to_mult(x, self.config.tensor_model_parallel_size)
+            x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
 
         if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
             # for attention_qkv and linear_fc1
@@ -598,7 +636,11 @@ class ParallelLinearAdapter(nn.Module):
         return x
 
     def sharded_state_dict(
-        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+        self,
+        prefix: str = "",
+        sharded_offsets: Tuple = (),
+        metadata: Optional[Dict] = None,
+        mamba_dim_info: Optional[Dict] = None,
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 
@@ -617,10 +659,57 @@ class ParallelLinearAdapter(nn.Module):
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
 
+        # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP),
+        # but it will cause errors as mentioned in https://github.com/volcengine/verl/issues/4303,
+        # since adapter weights are not EP sharded and it assumes that it will
+        # replicate along DP modulo EP (sharded by EP)
+        if self.is_expert:
+            from megatron.core import parallel_state
+
+            ep_rank = parallel_state.get_expert_model_parallel_rank()
+            edp_rank = parallel_state.get_expert_data_parallel_rank()
+            dp_size = parallel_state.get_data_parallel_world_size()
+            # TODO: This modification logic is in question and needs further verification.
+            rank = (ep_rank + 1) * (edp_rank + 1) - 1 if dp_size == 1 else ep_rank
+            for sd in [linear_in_sd, linear_out_sd]:
+                for v in sd.values():
+                    if hasattr(v, "replica_id"):
+                        old_rid = v.replica_id
+                        v.replica_id = (old_rid[0], rank, old_rid[2])
+
         if "linear_fc1" in self.base_linear_name:
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
                     linear_out_sd[k] = apply_swiglu_sharded_factory(v, sharded_offsets)
+
+        # Special handling for Mamba in_proj layer which needs to be split into 5 tensors
+        if mamba_dim_info is not None:
+            from megatron.core.ssm.mamba_mixer import _split_tensor_factory
+
+            # Split linear_out.weight into 5 parts: z, x, B, C, dt
+            # The in_proj output dimension is: d_inner * 2 + 2 * ngroups * d_state + nheads
+            # After TP sharding: d_inner_local_tp * 2 + 2 * ngroups_local_tp * d_state + nheads_local_tp
+            for k, v in linear_out_sd.items():
+                if k == f"{prefix}linear_out.weight" and isinstance(v, ShardedTensor):
+                    in_proj_dim_local = (
+                        mamba_dim_info["d_inner_local_tp"] * 2
+                        + 2 * mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"]
+                        + mamba_dim_info["nheads_local_tp"]
+                    )
+                    # Verify the dimension matches
+                    if v.data.size(0) == in_proj_dim_local:
+                        linear_out_sd[k] = _split_tensor_factory(
+                            v,
+                            [
+                                mamba_dim_info["d_inner_local_tp"],  # z
+                                mamba_dim_info["d_inner_local_tp"],  # x
+                                mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"],  # B
+                                mamba_dim_info["ngroups_local_tp"] * mamba_dim_info["d_state"],  # C
+                                mamba_dim_info["nheads_local_tp"],  # dt
+                            ],
+                            ["z", "x", "B", "C", "dt"],
+                            0,  # split along dimension 0
+                        )
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)

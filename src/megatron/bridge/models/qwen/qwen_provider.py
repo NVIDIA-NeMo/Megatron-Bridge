@@ -14,14 +14,33 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from functools import partial
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+if TYPE_CHECKING:
+    from megatron.core.transformer import ModuleSpec
 logger = logging.getLogger(__name__)
 
 
@@ -246,6 +265,7 @@ class Qwen3ModelProvider(GPTModelProvider):
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
     seq_length: int = 40960
+    max_position_embeddings: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -352,6 +372,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
     seq_length: int = 40960
+    max_position_embeddings: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -401,3 +422,61 @@ class Qwen3MoEModelProvider235B_A22B(Qwen3MoEModelProvider):
     num_query_groups: int = 4
     ffn_hidden_size: int = 12288
     moe_ffn_hidden_size: int = 1536
+
+
+# =============================================================================
+# Qwen 3 Next Model Provider (based on Qwen3MoEModelProvider)
+# =============================================================================
+
+
+@dataclass
+class Qwen3NextModelProvider(Qwen3MoEModelProvider):
+    """Base provider for Qwen 3 Next Models."""
+
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = partial(
+        get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
+    )
+
+    layernorm_zero_centered_gamma: bool = True  # Zero-centered RMSNorm
+    kv_channels: int | None = 256
+    num_query_groups: int = 2
+    seq_length: int = 262144  # 256k tokens
+    rotary_base: float = 10000000.0
+    rotary_percent: float = 0.25  # 25% of the hidden size is used for RoPE
+    attention_output_gate: bool = True  # Gated Attention
+
+    # MoE specific parameters
+    num_moe_experts: int = 512
+    moe_router_topk: int = 10  # 10 routed experts per token
+    moe_shared_expert_gate: bool = True  # Qwen3-Next uses a gate for the shared expert
+    moe_router_dtype: str = "fp32"
+    moe_router_load_balancing_type: str = "global_aux_loss"  # Qwen3-Next uses global aux loss for load balancing
+
+    # Linear Attention specific parameters
+    experimental_attention_variant: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
+    linear_attention_freq: int | list[int] = 4  # 1 gated standard attention layer per 4 layers
+    linear_conv_kernel_dim: int = 4
+    linear_key_head_dim: int = 128
+    linear_value_head_dim: int = 128
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 32
+
+    # Checkpointing
+    hetereogenous_dist_checkpoint: bool = True
+
+
+@dataclass
+class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
+    """
+    Provider for Qwen 3 Next 80B-A3B: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct and https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking
+    """
+
+    num_layers: int = 48
+    hidden_size: int = 2048
+    num_attention_heads: int = 16
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 5120
+    moe_ffn_hidden_size: int = 512
+    moe_shared_expert_intermediate_size: int = 512
+    mtp_num_layers: Optional[int] = 0
+    mtp_loss_scaling_factor: Optional[float] = None

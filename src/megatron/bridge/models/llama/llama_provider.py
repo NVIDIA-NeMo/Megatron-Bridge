@@ -24,7 +24,6 @@ from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama.llama4_utils import get_llama4_layer_spec
-from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)
@@ -51,10 +50,10 @@ class LlamaModelProvider(GPTModelProvider):
     share_embeddings_and_output_weights: bool = False
     # Fusions
     bias_activation_fusion: bool = True
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
-    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
-    gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
     use_transformer_engine_op_fuser: Optional[bool] = None
 
 
@@ -123,9 +122,10 @@ class Llama3ModelProvider(LlamaModelProvider):
     gated_linear_unit: bool = True
     # Fusions
     bias_activation_fusion: bool = True
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
-    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
     share_embeddings_and_output_weights: bool = False
     position_embedding_type: str = "rope"
     rotary_percent: float = 1.0
@@ -271,6 +271,7 @@ class Llama32ModelProvider1B(Llama31ModelProvider):
     scale_factor: float = 32.0
     share_embeddings_and_output_weights: bool = True
     rotary_base: int = 500_000
+    seq_length: int = 131072
     num_layers: int = 16
     hidden_size: int = 2048
     ffn_hidden_size: int = 8192
@@ -290,6 +291,7 @@ class Llama32ModelProvider3B(Llama31ModelProvider):
     scale_factor: int = 32
     share_embeddings_and_output_weights: bool = True
     rotary_base: int = 500_000
+    seq_length: int = 131072
     num_layers: int = 28
     hidden_size: int = 3072
     ffn_hidden_size: int = 8192

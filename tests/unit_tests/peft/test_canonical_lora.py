@@ -61,6 +61,7 @@ class MockMegatronLinear(nn.Module):
             def __init__(self):
                 self.kv_channels = kv_channels or 64
                 self.num_query_groups = num_query_groups or 8
+                self.num_attention_heads = self.num_query_groups
                 self.sequence_parallel = False
 
         self.config = MockConfig()
@@ -217,13 +218,13 @@ class TestCanonicalLoRA:
         lora = CanonicalLoRA(target_modules=["linear_q", "linear_k", "linear_v", "linear_fc1_up", "linear_fc1_gate"])
 
         # Mock the get_adapter_attributes_from_linear function
-        def mock_get_attrs(module):
+        def mock_get_attrs(module, is_expert=False):
             if hasattr(module, "out_features"):
                 if module.out_features == 1536:  # linear_qkv
-                    return (False, 512, 1536, False, True)
+                    return (False, 512, 1536, False, True, True)
                 elif module.out_features == 2048:  # linear_fc1
-                    return (False, 512, 2048, False, True)
-            return (False, 512, 512, False, True)  # default
+                    return (False, 512, 2048, False, True, True)
+            return (False, 512, 512, False, True, True)  # default
 
         with patch(
             "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
@@ -486,7 +487,7 @@ class TestCanonicalLoRA:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False, True)
+            mock_get_attrs.return_value = (False, 512, 1536, False, True, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -524,7 +525,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False, True)
+            mock_get_attrs.return_value = (False, 512, 1536, False, True, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -546,7 +547,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 2048, False, True)
+            mock_get_attrs.return_value = (False, 512, 2048, False, True, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -611,6 +612,78 @@ class TestCanonicalLoRAHelperClasses:
 
             assert output.shape == (2, 10, 1536)
             assert bias is None
+
+    def test_lora_linear_split_qkv_interleaves_gqa(self):
+        """Test that LoRALinearSplitQKV interleaves QKV outputs for GQA."""
+
+        class MockConfig:
+            kv_channels = 4
+            num_query_groups = 2
+            num_attention_heads = 4
+
+        base_layer = nn.Linear(4, 4)
+        base_layer.config = MockConfig()
+        adapters = ModuleDict({"adapter_q": nn.Identity(), "adapter_k": nn.Identity(), "adapter_v": nn.Identity()})
+        wrapper = LoRALinearSplitQKV(base_layer, adapters)
+
+        head_size = 4
+        q_heads = [torch.full((head_size,), i + 1, dtype=torch.float32) for i in range(4)]
+        k_heads = [torch.full((head_size,), 10 + i, dtype=torch.float32) for i in range(2)]
+        v_heads = [torch.full((head_size,), 20 + i, dtype=torch.float32) for i in range(2)]
+
+        query = torch.cat(q_heads).reshape(1, 1, -1)
+        key = torch.cat(k_heads).reshape(1, 1, -1)
+        value = torch.cat(v_heads).reshape(1, 1, -1)
+
+        output = wrapper._interleave_qkv(query, key, value)
+        expected = torch.cat(
+            [q_heads[0], q_heads[1], k_heads[0], v_heads[0], q_heads[2], q_heads[3], k_heads[1], v_heads[1]]
+        ).reshape(1, 1, -1)
+
+        assert torch.equal(output, expected)
+
+    def test_lora_linear_split_qkv_infers_head_size_from_hidden_size(self):
+        """Test LoRALinearSplitQKV infers head size when kv_channels is missing."""
+
+        class MockConfig:
+            kv_channels = None
+            num_query_groups = None
+            num_attention_heads = 4
+            hidden_size = 16
+
+        base_layer = nn.Linear(4, 4)
+        base_layer.config = MockConfig()
+        adapters = ModuleDict({"adapter_q": nn.Identity(), "adapter_k": nn.Identity(), "adapter_v": nn.Identity()})
+        wrapper = LoRALinearSplitQKV(base_layer, adapters)
+
+        head_size = 4
+        q_heads = [torch.full((head_size,), i + 1, dtype=torch.float32) for i in range(4)]
+        k_heads = [torch.full((head_size,), 10 + i, dtype=torch.float32) for i in range(4)]
+        v_heads = [torch.full((head_size,), 20 + i, dtype=torch.float32) for i in range(4)]
+
+        query = torch.cat(q_heads).reshape(1, 1, -1)
+        key = torch.cat(k_heads).reshape(1, 1, -1)
+        value = torch.cat(v_heads).reshape(1, 1, -1)
+
+        output = wrapper._interleave_qkv(query, key, value)
+        expected = torch.cat(
+            [
+                q_heads[0],
+                k_heads[0],
+                v_heads[0],
+                q_heads[1],
+                k_heads[1],
+                v_heads[1],
+                q_heads[2],
+                k_heads[2],
+                v_heads[2],
+                q_heads[3],
+                k_heads[3],
+                v_heads[3],
+            ]
+        ).reshape(1, 1, -1)
+
+        assert torch.equal(output, expected)
 
     def test_lora_linear_split_fc1_up_gate_forward(self):
         """Test LoRALinearSplitFC1UpGate forward pass."""

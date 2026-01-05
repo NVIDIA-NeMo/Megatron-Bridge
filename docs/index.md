@@ -23,6 +23,14 @@ bridge-tech-details.md
 ```
 
 ```{toctree}
+:caption: Supported Models
+:hidden:
+
+models/llm/index.md
+models/vlm/index.md
+```
+
+```{toctree}
 :caption: Training and Customization
 :hidden:
 
@@ -41,6 +49,7 @@ training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
+training/distillation.md
 ```
 
 ```{toctree}
@@ -48,6 +57,28 @@ training/packed-sequences.md
 :hidden:
 
 adding-new-models.md
+bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
+```
+
+```{toctree}
+:caption: Releases
+:hidden:
+
+releases/software-versions.md
+releases/changelog.md
+releases/known-issues.md
+```
+
+```{toctree}
+:caption: Directory Readme Files
+:hidden:
+
+README.md
+models/README.md
+models/llm/README.md
+models/vlm/README.md
+releases/README.md
+training/README.md
 ```

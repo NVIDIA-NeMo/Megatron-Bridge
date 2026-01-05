@@ -35,6 +35,7 @@ from megatron.bridge.data.datasets.utils import (
     _response_value_formater,
     build_index_from_memdata,
     handle_index,
+    safe_map,
 )
 
 
@@ -308,3 +309,68 @@ class TestDataUtils:
 
             assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.npy")
             assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.info")
+
+
+class TestSafeMap:
+    """Test cases for crash-resilient safe_map function."""
+
+    def test_safe_map_basic_functionality(self):
+        """Test that safe_map works like normal map for successful cases."""
+
+        def square(x):
+            return x * x
+
+        items = [1, 2, 3, 4, 5]
+        result = safe_map(square, items, workers=2)
+
+        assert result == [1, 4, 9, 16, 25]
+
+    def test_safe_map_handles_exceptions(self):
+        """Test that safe_map handles exceptions gracefully."""
+
+        def process_with_error(x):
+            if x == 3:
+                raise ValueError("Simulated error")
+            return x * 2
+
+        items = [1, 2, 3, 4, 5]
+        result = safe_map(process_with_error, items, workers=2)
+
+        # Item 3 should be None (failed), others should succeed
+        assert result[0] == 2
+        assert result[1] == 4
+        assert result[2] is None  # Failed item
+        assert result[3] == 8
+        assert result[4] == 10
+
+    def test_safe_map_preserves_order(self):
+        """Test that safe_map preserves input order even with parallel execution."""
+
+        def identity(x):
+            return x
+
+        items = list(range(100))
+        result = safe_map(identity, items, workers=4)
+
+        assert result == items
+
+    def test_safe_map_with_single_worker(self):
+        """Test safe_map with workers=1 (sequential execution)."""
+
+        def double(x):
+            return x * 2
+
+        items = [1, 2, 3]
+        result = safe_map(double, items, workers=1)
+
+        assert result == [2, 4, 6]
+
+    def test_safe_map_empty_iterable(self):
+        """Test safe_map with empty input."""
+
+        def identity(x):
+            return x
+
+        result = safe_map(identity, [], workers=2)
+
+        assert result == []

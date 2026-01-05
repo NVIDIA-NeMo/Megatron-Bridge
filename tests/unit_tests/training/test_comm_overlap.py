@@ -79,8 +79,6 @@ class TestMegatronCommOverlapConfig:
         cfg.finalize()
 
         assert cfg.tp_comm_overlap is True
-        assert cfg.tp_comm_overlap_cfg is None  # Should be reset to None in finalize()
-        assert cfg.tp_comm_bootstrap_backend is None  # Should be reset to None in finalize()
         assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
         assert isinstance(cfg.user_comm_overlap_cfg.tp_comm_overlap_cfg, TransformerLayerTPOverlapCfg)
 
@@ -440,7 +438,7 @@ class TestMegatronCommOverlapConfig:
         # Check that model config was updated correctly
         assert model_cfg.tp_comm_overlap is True
         assert model_cfg.tp_comm_overlap_cfg is None
-        assert model_cfg.tp_comm_bootstrap_backend is None
+        assert model_cfg.tp_comm_bootstrap_backend == "nccl"
 
     def test_tp_overlap_config_filters_none_values(self):
         """Test that None values are filtered from tp_comm_overlap_cfg dict."""

@@ -58,7 +58,7 @@ def test_mock_provider_builds_splits(monkeypatch):
     import transformers
 
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: _Proc()))
-    provider = mock.MockVLMConversationProvider(sequence_length=16, hf_processor_path="dummy/model", num_images=0)
+    provider = mock.MockVLMConversationProvider(seq_length=16, hf_processor_path="dummy/model", num_images=0)
     ctx = DatasetBuildContext(train_samples=2, valid_samples=1, test_samples=0)
     train_ds, valid_ds, test_ds = provider.build_datasets(ctx)
     assert train_ds is not None and valid_ds is not None and test_ds is None

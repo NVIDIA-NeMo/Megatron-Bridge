@@ -46,11 +46,7 @@ def get_dataset(
     else:
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
         tokenizer_model_name = None
-    tokenizer = build_tokenizer(
-        tokenizer_config=tokenizer_config,
-        make_vocab_size_divisible_by=128,
-        tensor_model_parallel_size=1,
-    )
+    tokenizer = build_tokenizer(tokenizer_config)
     packed_sequence_specs = PackedSequenceSpecs(
         packed_sequence_size=packed_sequence_size,
         tokenizer_model_name=tokenizer_model_name,
@@ -208,3 +204,240 @@ class TestDataFineTuningDataset:
         assert datasets[0] is not None
         assert datasets[1] is not None
         assert datasets[2] is not None
+
+
+class TestFinetuningDatasetBuilderWithChatTemplates:
+    """Test FinetuningDatasetBuilder with chat template and tool schema support."""
+
+    def test_dataset_kwargs_passed_to_packing(self, tmp_path, monkeypatch):
+        """Test that dataset_kwargs are passed to prepare_packed_sequence_data."""
+        from unittest.mock import patch
+
+        # Create builder with dataset_kwargs
+        dataset_kwargs = {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            "tool_schemas": {"type": "function"},
+        }
+
+        tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
+        tokenizer = build_tokenizer(tokenizer_config)
+
+        packed_sequence_specs = PackedSequenceSpecs(
+            packed_sequence_size=2048,
+            tokenizer_model_name="test_tokenizer",
+        )
+
+        builder = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=tokenizer,
+            packed_sequence_specs=packed_sequence_specs,
+            dataset_kwargs=dataset_kwargs,
+        )
+
+        # Mock prepare_packed_sequence_data to verify it receives dataset_kwargs
+        with patch("megatron.bridge.data.datasets.packed_sequence.prepare_packed_sequence_data") as mock_prepare:
+            # Mock file existence checks
+            monkeypatch.setattr("pathlib.Path.is_file", lambda self: False)
+
+            builder.prepare_packed_data()
+
+            # Verify prepare_packed_sequence_data was called twice (train and val)
+            assert mock_prepare.call_count == 2
+
+            # Verify dataset_kwargs were passed
+            for call in mock_prepare.call_args_list:
+                call_kwargs = call[1]
+                assert call_kwargs["dataset_kwargs"] == dataset_kwargs
+
+    def test_dataset_kwargs_empty_by_default(self, tmp_path):
+        """Test that dataset_kwargs defaults to empty dict."""
+        tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
+        tokenizer = build_tokenizer(tokenizer_config)
+
+        builder = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=tokenizer,
+        )
+
+        assert builder.dataset_kwargs == {}
+
+    def test_chat_template_with_packing(self, tmp_path):
+        """Test that chat templates work with packed sequences."""
+        from unittest.mock import MagicMock
+
+        # Mock HF tokenizer
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+
+        # Add dataset_kwargs for chat
+        dataset_kwargs = {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+        }
+
+        packed_sequence_specs = PackedSequenceSpecs(
+            packed_sequence_size=2048,
+            tokenizer_model_name="test_model",
+        )
+
+        builder = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=mock_tokenizer,
+            packed_sequence_specs=packed_sequence_specs,
+            dataset_kwargs=dataset_kwargs,
+        )
+
+        # Verify dataset_kwargs are stored
+        assert builder.dataset_kwargs["chat"] is True
+        assert builder.dataset_kwargs["use_hf_tokenizer_chat_template"] is True
+
+    def test_tool_schemas_with_packing(self, tmp_path):
+        """Test that tool_schemas work with packed sequences."""
+        from unittest.mock import MagicMock
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+
+        # Add tool schemas
+        tool_schemas = [
+            {
+                "type": "function",
+                "function": {"name": "get_weather", "description": "Get weather"},
+            }
+        ]
+
+        dataset_kwargs = {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            "tool_schemas": tool_schemas,
+        }
+
+        packed_sequence_specs = PackedSequenceSpecs(
+            packed_sequence_size=2048,
+            tokenizer_model_name="test_model",
+        )
+
+        builder = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=mock_tokenizer,
+            packed_sequence_specs=packed_sequence_specs,
+            dataset_kwargs=dataset_kwargs,
+        )
+
+        # Verify tool_schemas are stored in dataset_kwargs
+        assert "tool_schemas" in builder.dataset_kwargs
+        assert builder.dataset_kwargs["tool_schemas"] == tool_schemas
+
+
+class TestPackedSequenceDatasetKwargs:
+    """Test that dataset_kwargs flow through the packing pipeline."""
+
+    def test_tokenize_dataset_with_chat_kwargs(self):
+        """Test tokenize_dataset receives and uses dataset_kwargs."""
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+
+        # Mock tokenizer
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+
+        dataset_kwargs = {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            "tool_schemas": [{"type": "function"}],
+        }
+
+        # Mock create_sft_dataset to verify it receives kwargs
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+            mock_dataset = MagicMock()
+            mock_dataset.__len__.return_value = 0
+            mock_create.return_value = mock_dataset
+
+            tokenize_dataset(
+                path=Path("test.jsonl"),
+                tokenizer=mock_tokenizer,
+                max_seq_length=512,
+                seed=1234,
+                dataset_kwargs=dataset_kwargs,
+            )
+
+            # Verify create_sft_dataset was called with kwargs
+            mock_create.assert_called_once()
+            call_kwargs = mock_create.call_args[1]
+            assert call_kwargs["chat"] is True
+            assert call_kwargs["use_hf_tokenizer_chat_template"] is True
+            # tool_schemas should be converted to JSON string
+            assert "tool_schemas" in call_kwargs
+
+    def test_tokenize_dataset_converts_tool_schemas_to_json(self):
+        """Test that tool_schemas dict is converted to JSON string."""
+        import json
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+
+        tool_schemas_dict = [{"type": "function", "function": {"name": "test"}}]
+        dataset_kwargs = {"tool_schemas": tool_schemas_dict}
+
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+            mock_dataset = MagicMock()
+            mock_dataset.__len__.return_value = 0
+            mock_create.return_value = mock_dataset
+
+            tokenize_dataset(
+                path=Path("test.jsonl"),
+                tokenizer=mock_tokenizer,
+                max_seq_length=512,
+                seed=1234,
+                dataset_kwargs=dataset_kwargs,
+            )
+
+            # Verify tool_schemas was converted to JSON string
+            call_kwargs = mock_create.call_args[1]
+            assert isinstance(call_kwargs["tool_schemas"], str)
+            # Should be parseable back to original
+            parsed = json.loads(call_kwargs["tool_schemas"])
+            assert parsed == tool_schemas_dict
+
+    def test_tokenize_dataset_sets_chat_template_on_tokenizer(self):
+        """Test that chat_template from dataset_kwargs is set on tokenizer."""
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+
+        # Mock HF tokenizer
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        custom_template = "{% for msg in messages %}{{ msg.content }}{% endfor %}"
+        dataset_kwargs = {"chat_template": custom_template}
+
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+            mock_dataset = MagicMock()
+            mock_dataset.__len__.return_value = 0
+            mock_create.return_value = mock_dataset
+
+            tokenize_dataset(
+                path=Path("test.jsonl"),
+                tokenizer=mock_tokenizer,
+                max_seq_length=512,
+                seed=1234,
+                dataset_kwargs=dataset_kwargs,
+            )
+
+            # Verify chat_template was set on tokenizer
+            assert mock_hf_tokenizer.chat_template == custom_template
+
+            # Verify chat_template was popped from dataset_kwargs (not passed to create_sft_dataset)
+            call_kwargs = mock_create.call_args[1]
+            assert "chat_template" not in call_kwargs
