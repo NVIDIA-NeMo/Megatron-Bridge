@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 import itertools
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from string import digits
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, TypeVar, Union
 
 import torch
 from megatron.core import parallel_state
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
     from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronWeightTuple, WeightConversionTask
 
 
-MegatronModel = MegatronModule
+MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 
 
 ADAPTER_NAME_MAP = {
@@ -142,7 +140,7 @@ class MegatronPeftBridge:
         self,
         mapping_registry: "MegatronMappingRegistry",
         global_base_prefix: str,
-        megatron_suffix: str,
+        megatron_adapter_suffix: str,
         base_suffix: str,
         adapter_key: Optional[str],
     ) -> Optional[str]:
@@ -155,9 +153,9 @@ class MegatronPeftBridge:
             case a future adapter type introduces biased projections.
         """
 
-        hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_suffix)
+        hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_adapter_suffix)
         assert hf_suffix is not None, (
-            f"Unsupported adapter suffix '{megatron_suffix}'. Update MEGATRON_TO_HF_LORA_SUFFIX."
+            f"Unsupported adapter suffix '{megatron_adapter_suffix}'. Update MEGATRON_TO_HF_LORA_SUFFIX."
         )
 
         base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
@@ -173,14 +171,14 @@ class MegatronPeftBridge:
 
         return hf_base_name[: -len(base_suffix)] + hf_suffix
 
-    def _get_base_hf_weight_names_for_adapter(
+    def _get_base_hf_param_names_for_adapter(
         self,
         mapping_registry: "MegatronMappingRegistry",
         global_base_prefix: str,
         adapter_key: Optional[str],
         base_suffix: str,
     ) -> List[str]:
-        """Return all HF base weight names associated with this adapter."""
+        """Return all HF base parameter names associated with this adapter."""
 
         base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
         if base_mapping is None:
@@ -199,13 +197,13 @@ class MegatronPeftBridge:
                     return filtered
         return values
 
-    def _make_lora_param_name(self, base_name: str, megatron_suffix: str) -> Optional[str]:
+    def _make_lora_param_name(self, base_name: str, megatron_adapter_suffix: str) -> Optional[str]:
         """Translate a base HF weight name into its LoRA-specific counterpart."""
 
         if not base_name.endswith(".weight"):
             return None
 
-        hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_suffix)
+        hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_adapter_suffix)
         if hf_suffix is None:
             return None
 
@@ -387,7 +385,9 @@ class MegatronPeftBridge:
                     input_is_parallel = adapter.input_is_parallel
                     base_linear_is_parallel = True
                 else:
-                    input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                    input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(
+                        to_wrap
+                    )
                 global_param_objects.append(
                     (
                         global_base_name,
@@ -659,7 +659,7 @@ class MegatronPeftBridge:
                     current_linear_in_tensor = current_linear_in_tensor.cpu()
                     current_linear_out_tensor = current_linear_out_tensor.cpu()
 
-                base_hf_weight_names = self._get_base_hf_weight_names_for_adapter(
+                base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
                     mapping_registry,
                     adapter_task.global_base_prefix,
                     adapter_task.adapter_key,

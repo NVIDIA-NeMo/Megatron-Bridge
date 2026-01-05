@@ -499,7 +499,7 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     # translate it into lora_A/lora_B names.
     monkeypatch.setattr(
         bridge,
-        "_get_base_hf_weight_names_for_adapter",
+        "_get_base_hf_param_names_for_adapter",
         lambda *_args, **_kwargs: ["model.layers.0.mlp.linear_fc1.weight"],
     )
 
@@ -549,7 +549,7 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
         bridge,
-        "_get_base_hf_weight_names_for_adapter",
+        "_get_base_hf_param_names_for_adapter",
         lambda *_: [
             "model.layers.0.self_attn.q_proj.weight",
             "model.layers.0.self_attn.k_proj.weight",
@@ -626,7 +626,7 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
         bridge,
-        "_get_base_hf_weight_names_for_adapter",
+        "_get_base_hf_param_names_for_adapter",
         lambda *_: [
             "model.layers.0.mlp.gate_proj.weight",
             "model.layers.0.mlp.up_proj.weight",
