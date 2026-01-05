@@ -39,7 +39,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.peft.canonical_lora import ModuleDict
 from megatron.bridge.peft.lora import LoRAMerge
-from megatron.bridge.peft.utils import get_adapter_attributes_from_linear, is_expert_linear
+from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
 
 if TYPE_CHECKING:
@@ -383,7 +383,11 @@ class MegatronPeftBridge:
                 if isinstance(adapter, ModuleDict):
                     adapter_name = local_param_name.removeprefix(local_base_prefix + ".adapter.").split(".")[0]
                     adapter = adapter[adapter_name]
-                input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                if isinstance(adapter, ParallelLinearAdapter):
+                    input_is_parallel = adapter.input_is_parallel
+                    base_linear_is_parallel = True
+                else:
+                    input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
                 global_param_objects.append(
                     (
                         global_base_name,

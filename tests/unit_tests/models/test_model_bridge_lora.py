@@ -495,11 +495,19 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
         lambda *_: [adapter_weight],
     )
 
+    # Provide a base HF weight name so stream_adapter_weights_megatron_to_hf can
+    # translate it into lora_A/lora_B names.
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_weight_names_for_adapter",
+        lambda *_args, **_kwargs: ["model.layers.0.mlp.linear_fc1.weight"],
+    )
+
     megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
     weights = list(bridge.stream_adapter_weights_megatron_to_hf(megatron_model, cpu=False, show_progress=False))
     assert len(weights) == 2
-    assert weights[0].param_name.endswith(".linear_in.weight")
-    assert weights[1].param_name.endswith(".linear_out.weight")
+    assert weights[0].param_name.endswith("lora_A.weight")
+    assert weights[1].param_name.endswith("lora_B.weight")
     torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
     torch.testing.assert_close(weights[1].weight, 2 * torch.ones(2, 2))
 
