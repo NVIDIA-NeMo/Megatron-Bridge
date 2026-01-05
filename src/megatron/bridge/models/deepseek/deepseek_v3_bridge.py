@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Dict, Mapping
+
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
 from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider
@@ -68,3 +70,56 @@ class DeepSeekV3Bridge(MegatronModelBridge):
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Add rotary embedding inverse frequency parameter if needed but not present.
+        This is needed for moonshotai related models (e.g., Moonlight-16B-A3B-Instruct).
+        """
+        global_name = task.global_param_name
+        # Shipped together with input_layernorm.weight
+        if not global_name.startswith("decoder.layers.") or not global_name.endswith(".input_layernorm.weight"):
+            return converted_weights_dict
+
+        parts = global_name.split(".")
+        if len(parts) < 4 or not parts[2].isdigit():
+            return converted_weights_dict
+
+        inv_freq_prefix = "model.layers."
+        inv_freq_suffix = ".self_attn.rotary_emb.inv_freq"
+        layer_idx = int(parts[2])
+        inv_freq_key = f"{inv_freq_prefix}{layer_idx}{inv_freq_suffix}"
+        if inv_freq_key in converted_weights_dict:
+            return converted_weights_dict
+
+        has_inv_freq = getattr(self, "_deepseek_has_inv_freq", None)
+        if has_inv_freq is None:
+            has_inv_freq = False
+            for key in hf_state_dict.keys():
+                if key.startswith(inv_freq_prefix) and key.endswith(inv_freq_suffix):
+                    has_inv_freq = True
+                    break
+            self._deepseek_has_inv_freq = has_inv_freq
+        if not has_inv_freq:
+            return converted_weights_dict
+
+        inv_freq = getattr(self, "_deepseek_inv_freq", None)
+        if inv_freq is None:
+            rotary_dim = self.hf_config.qk_rope_head_dim
+            rotary_base = self.hf_config.rope_theta
+            inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
+            self._deepseek_inv_freq = inv_freq
+
+        if converted_weights_dict:
+            reference_tensor = next(iter(converted_weights_dict.values()))
+            if inv_freq.device != reference_tensor.device:
+                inv_freq = inv_freq.to(device=reference_tensor.device)
+                self._deepseek_inv_freq = inv_freq
+
+        converted_weights_dict[inv_freq_key] = inv_freq
+        return converted_weights_dict

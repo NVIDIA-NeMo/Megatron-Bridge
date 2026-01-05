@@ -5,7 +5,7 @@ pyproject.toml @nvidia-nemo/automation
 ruff.toml @nvidia-nemo/automation
 .pre-commit-config.yaml
 
-scripts/performance/argument_parser.py @nvidia-nemo/automation @malay-nagda
-scripts/performance/setup_experiment.py @nvidia-nemo/automation @malay-nagda
-scripts/performance/run_script.py @nvidia-nemo/automation @malay-nagda
-scripts/performance/run_recipe.py @nvidia-nemo/automation @malay-nagda
+scripts/performance/argument_parser.py @nvidia-nemo/automation @malay-nagda @erhoo82
+scripts/performance/setup_experiment.py @nvidia-nemo/automation @malay-nagda @erhoo82
+scripts/performance/run_script.py @nvidia-nemo/automation @malay-nagda @erhoo82
+scripts/performance/run_recipe.py @nvidia-nemo/automation @malay-nagda @erhoo82

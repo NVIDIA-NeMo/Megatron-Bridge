@@ -613,6 +613,78 @@ class TestCanonicalLoRAHelperClasses:
             assert output.shape == (2, 10, 1536)
             assert bias is None
 
+    def test_lora_linear_split_qkv_interleaves_gqa(self):
+        """Test that LoRALinearSplitQKV interleaves QKV outputs for GQA."""
+
+        class MockConfig:
+            kv_channels = 4
+            num_query_groups = 2
+            num_attention_heads = 4
+
+        base_layer = nn.Linear(4, 4)
+        base_layer.config = MockConfig()
+        adapters = ModuleDict({"adapter_q": nn.Identity(), "adapter_k": nn.Identity(), "adapter_v": nn.Identity()})
+        wrapper = LoRALinearSplitQKV(base_layer, adapters)
+
+        head_size = 4
+        q_heads = [torch.full((head_size,), i + 1, dtype=torch.float32) for i in range(4)]
+        k_heads = [torch.full((head_size,), 10 + i, dtype=torch.float32) for i in range(2)]
+        v_heads = [torch.full((head_size,), 20 + i, dtype=torch.float32) for i in range(2)]
+
+        query = torch.cat(q_heads).reshape(1, 1, -1)
+        key = torch.cat(k_heads).reshape(1, 1, -1)
+        value = torch.cat(v_heads).reshape(1, 1, -1)
+
+        output = wrapper._interleave_qkv(query, key, value)
+        expected = torch.cat(
+            [q_heads[0], q_heads[1], k_heads[0], v_heads[0], q_heads[2], q_heads[3], k_heads[1], v_heads[1]]
+        ).reshape(1, 1, -1)
+
+        assert torch.equal(output, expected)
+
+    def test_lora_linear_split_qkv_infers_head_size_from_hidden_size(self):
+        """Test LoRALinearSplitQKV infers head size when kv_channels is missing."""
+
+        class MockConfig:
+            kv_channels = None
+            num_query_groups = None
+            num_attention_heads = 4
+            hidden_size = 16
+
+        base_layer = nn.Linear(4, 4)
+        base_layer.config = MockConfig()
+        adapters = ModuleDict({"adapter_q": nn.Identity(), "adapter_k": nn.Identity(), "adapter_v": nn.Identity()})
+        wrapper = LoRALinearSplitQKV(base_layer, adapters)
+
+        head_size = 4
+        q_heads = [torch.full((head_size,), i + 1, dtype=torch.float32) for i in range(4)]
+        k_heads = [torch.full((head_size,), 10 + i, dtype=torch.float32) for i in range(4)]
+        v_heads = [torch.full((head_size,), 20 + i, dtype=torch.float32) for i in range(4)]
+
+        query = torch.cat(q_heads).reshape(1, 1, -1)
+        key = torch.cat(k_heads).reshape(1, 1, -1)
+        value = torch.cat(v_heads).reshape(1, 1, -1)
+
+        output = wrapper._interleave_qkv(query, key, value)
+        expected = torch.cat(
+            [
+                q_heads[0],
+                k_heads[0],
+                v_heads[0],
+                q_heads[1],
+                k_heads[1],
+                v_heads[1],
+                q_heads[2],
+                k_heads[2],
+                v_heads[2],
+                q_heads[3],
+                k_heads[3],
+                v_heads[3],
+            ]
+        ).reshape(1, 1, -1)
+
+        assert torch.equal(output, expected)
+
     def test_lora_linear_split_fc1_up_gate_forward(self):
         """Test LoRALinearSplitFC1UpGate forward pass."""
         # Create mock base layer
