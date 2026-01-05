@@ -51,7 +51,13 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     Returns:
         Dictionary with format: {step: value}
     """
-    metrics = {"elapsed time per iteration (ms)": {}, "lm loss": {}, "GPU utilization": {}, "step time": {}}
+    metrics = {
+        "elapsed time per iteration (ms)": {},
+        "lm loss": {},
+        "GPU utilization": {},
+        "step time": {},
+        "grad norm": {},
+    }
 
     content = ""
     for log_path in log_paths:
