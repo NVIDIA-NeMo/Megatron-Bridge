@@ -385,9 +385,9 @@ class MegatronPeftBridge:
                     input_is_parallel = adapter.input_is_parallel
                     base_linear_is_parallel = True
                 else:
-                    input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(
-                        to_wrap
-                    )
+                    attrs = get_adapter_attributes_from_linear(to_wrap)
+                    input_is_parallel = attrs.input_is_parallel
+                    base_linear_is_parallel = attrs.base_linear_is_parallel
                 global_param_objects.append(
                     (
                         global_base_name,

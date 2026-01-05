@@ -26,6 +26,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ColumnParallelMapping, merge_qkv_weights
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeight
+from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class DummyBridge(MegatronModelBridge):
@@ -328,7 +329,14 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     )
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.peft_bridge.get_adapter_attributes_from_linear",
-        lambda *_args, **_kwargs: (True, None, None, None, None, False),
+        lambda *_args, **_kwargs: AdapterAttributes(
+            input_is_parallel=True,
+            in_features=0,
+            out_features=0,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=False,
+            base_linear_is_parallel=False,
+        ),
     )
     monkeypatch.setattr(
         "torch.distributed.all_gather_object",
