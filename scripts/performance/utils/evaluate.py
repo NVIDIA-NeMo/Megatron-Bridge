@@ -483,6 +483,14 @@ def calc_convergence_and_performance(
     logger.info(f"Comparing {len(steps)} training steps for convergence")
     steps = sorted(golden_train_loss.keys(), key=int)
 
+    # check for grad norm
+    has_nan_grad_norm = any(current_grad_norm[s] == "nan" for s in steps)
+    has_inf_grad_norm = any(current_grad_norm[s] == "inf" for s in steps)
+    if has_nan_grad_norm or has_inf_grad_norm:
+        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
+        error_msg += f"Grad norm values: {current_grad_norm}\n"
+        return len(error_msg) == 0, error_msg
+
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
     current_train_loss_values = np.array([current_train_loss[s] for s in steps])
@@ -518,13 +526,6 @@ def calc_convergence_and_performance(
     if not performance_result["passed"]:
         error_msg += f"Performance check failed. {performance_result['summary']}\n"
         error_msg += f"Timing difference is greater than threshold: {performance_result['timing_diff'] * 100:.2f}% > {performance_config['timing_threshold'] * 100:.1f}%\n"
-
-    # check for grad norm
-    has_nan_grad_norm = any(current_grad_norm[s] == "nan" for s in steps)
-    has_inf_grad_norm = any(current_grad_norm[s] == "inf" for s in steps)
-    if has_nan_grad_norm or has_inf_grad_norm:
-        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
-        error_msg += f"Grad norm values: {current_grad_norm}\n"
 
     wandb_run.define_metric("compare/*", step_metric="compare/step")
     for i in range(len(steps)):
