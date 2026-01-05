@@ -1477,7 +1477,7 @@ def is_tensor_parallel(param) -> bool:
 
 # Core dispatch functions
 @dispatch
-def get_model_bridge(hf_architecture) -> "MegatronModelBridge":
+def get_model_bridge(hf_architecture, hf_config = None) -> "MegatronModelBridge":
     """Get the appropriate model bridge for a given HuggingFace architecture."""
     ...
 
@@ -1513,8 +1513,10 @@ def register_bridge_implementation(
     bridge_class_name = bridge_class.__name__
 
     @get_model_bridge.impl(source)
-    def _get_model_bridge_impl(_) -> "MegatronModelBridge":
+    def _get_model_bridge_impl(_, hf_config) -> "MegatronModelBridge":
         bridge = bridge_class()
+        # allow bridge to access model config
+        bridge.hf_config = hf_config
         return bridge
 
     @stream_weights_megatron_to_hf.impl((source, target))
