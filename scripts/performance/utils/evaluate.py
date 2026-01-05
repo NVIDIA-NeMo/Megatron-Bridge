@@ -65,7 +65,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "lm loss": r"lm loss:\s+([\d.E+\-]+)",
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
         "step time": r"Step Time :\s+([\d.]+)s",
-        "grad norm": r"grad norm:\s+([\d.]+)",
+        "grad norm": r"grad norm:\s+([\d.]+|nan|inf)",
     }
 
     pending_step_time = None
