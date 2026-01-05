@@ -484,8 +484,8 @@ def calc_convergence_and_performance(
     steps = sorted(golden_train_loss.keys(), key=int)
 
     # check for grad norm
-    has_nan_grad_norm = any(current_grad_norm[s] == "nan" for s in steps)
-    has_inf_grad_norm = any(current_grad_norm[s] == "inf" for s in steps)
+    has_nan_grad_norm = any(str(current_grad_norm[str(s)]) == "nan" for s in steps)
+    has_inf_grad_norm = any(str(current_grad_norm[str(s)]) == "inf" for s in steps)
     if has_nan_grad_norm or has_inf_grad_norm:
         error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
         error_msg += f"Grad norm values: {current_grad_norm}\n"
@@ -536,7 +536,7 @@ def calc_convergence_and_performance(
                 "compare/current_iter_time": current_iter_time_values[i],
                 "compare/golden_lm_loss": golden_train_loss_values[i],
                 "compare/golden_iter_time": golden_iter_time_values[i],
-                "compare/current_grad_norm": current_grad_norm[i],
+                "compare/current_grad_norm": current_grad_norm[str(i)],
             }
         )
 
