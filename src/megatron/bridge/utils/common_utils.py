@@ -17,6 +17,7 @@ import re
 import types
 import warnings
 from pathlib import Path
+from typing import Dict
 
 import torch
 import torch.distributed
@@ -265,6 +266,59 @@ def extract_expert_number_from_param(param_name: str) -> int:
             f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
         )
     return int(match.group(1))
+
+
+def merge_expert_weights_for_hf_export(
+    *,
+    task,
+    converted_weights_dict: Dict[str, torch.Tensor],
+    num_experts: int | None,
+    ep_size: int,
+    hf_weights_cache: Dict[str, Dict[int, torch.Tensor]],
+) -> Dict[str, torch.Tensor]:
+    """
+    Collect per-rank expert weights into a single HF tensor during Megatron -> HF export.
+
+    The function caches partial expert shards in ``hf_weights_cache`` until all experts
+    are observed, then returns a merged weight dict that mirrors the input shape expected
+    by HuggingFace. If not all shards are available yet, it returns an empty dict.
+    """
+    if not num_experts or ep_size <= 1:
+        return converted_weights_dict
+
+    experts_per_rank = num_experts // ep_size
+
+    try:
+        local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
+    except ValueError:
+        # Not an expert parameter
+        return converted_weights_dict
+
+    assert len(converted_weights_dict) == 1, (
+        f"There should be only one key in the converted_weights_dict, got keys: {converted_weights_dict.keys()}"
+    )
+
+    for key, value in converted_weights_dict.items():
+        cache = hf_weights_cache.setdefault(key, {})
+
+        if ep_size == 1:
+            cache[local_expert_number] = value
+        else:
+            # Value is gathered from TP already; first dim should match ep_size.
+            assert value.shape[0] == ep_size, (
+                f"Expected expert dimension {ep_size} for {key}, but got shape {value.shape}"
+            )
+            for i, exp_val in enumerate(value):
+                global_expert_number = local_expert_number + (i * experts_per_rank)
+                cache[global_expert_number] = exp_val
+
+        if len(cache) == num_experts:
+            merged = torch.cat([cache[i].unsqueeze(0) for i in range(num_experts)], dim=0)
+            del hf_weights_cache[key]
+            return {key: merged}
+
+    # Not all shards collected yet.
+    return {}
 
 
 def resolve_path(path: str) -> Path:

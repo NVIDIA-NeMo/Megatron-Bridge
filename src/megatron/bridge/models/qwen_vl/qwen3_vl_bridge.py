@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Union
+from typing import Dict, Mapping, Union
 
 import torch
 import torch.nn as nn
+from megatron.core import parallel_state
 from transformers import Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
@@ -29,7 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
-from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param, merge_expert_weights_for_hf_export
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3VLForConditionalGeneration, target=Qwen3VLModel)
@@ -359,19 +360,37 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
 
         return MegatronMappingRegistry(*mapping_list)
 
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Reassemble expert weights across EP ranks during Megatron -> HF export."""
+        return merge_expert_weights_for_hf_export(
+            task=task,
+            converted_weights_dict=converted_weights_dict,
+            num_experts=getattr(self.hf_config.text_config, "num_experts", None),
+            ep_size=parallel_state.get_expert_model_parallel_world_size(),
+            hf_weights_cache=self.hf_weights_cache,
+        )
+
 
 class ExpertMLPDownProjMapping(AutoMapping):
     """Mapping for expert MLP down projection weights between HF and Megatron formats."""
 
+    def __init__(self, *args, **kwargs):
+        # Down projection weights need a transpose; rely on AutoMapping permutation support.
+        permute_dims = kwargs.pop("permute_dims", (1, 0))
+        super().__init__(*args, permute_dims=permute_dims, **kwargs)
+
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        return super().hf_to_megatron(hf_weights[global_expert_number].transpose(0, 1), megatron_module)
+        expert_weight = hf_weights[global_expert_number]
+        return super().hf_to_megatron(expert_weight, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        if megatron_weights is None:
-            return super().megatron_to_hf(megatron_weights, megatron_module)
-
-        return super().megatron_to_hf(megatron_weights.transpose(0, 1).contiguous(), megatron_module)
+        return super().megatron_to_hf(megatron_weights, megatron_module)
 
     def _validate_patterns(self, *args, **kwargs):
         # allow number of wildcards to mismatch in this mapping
@@ -379,18 +398,51 @@ class ExpertMLPDownProjMapping(AutoMapping):
 
 
 class ExpertMLPGateUpProjMapping(AutoMapping):
-    """Mapping for expert MLP gate and up projection weights between HF and Megatron formats."""
+    """Mapping for expert MLP gate+up projection using shared GatedMLPMapping logic."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Reuse the generic TP-aware split/gather, but we still handle expert selection
+        # and HF<->Megatron transpose at this wrapper layer.
+        self._gated_mapping = GatedMLPMapping(
+            megatron_param=self.megatron_param,
+            gate=f"{self.hf_param}.gate",
+            up=f"{self.hf_param}.up",
+        )
 
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        return super().hf_to_megatron(hf_weights[global_expert_number].transpose(0, 1), megatron_module)
+        expert_weight = hf_weights[global_expert_number]
+
+        # HF gate_up_proj is [2 * hidden, hidden]; Megatron expects transposed.
+        gate, up = torch.chunk(expert_weight, 2, dim=0)
+        gate = gate.transpose(0, 1).contiguous()
+        up = up.transpose(0, 1).contiguous()
+
+        return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        if megatron_weights is None:
-            return super().megatron_to_hf(megatron_weights, megatron_module)
+        # Let the shared mapping handle TP/PP/EP gather.
+        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not converted:
+            return {}
 
-        print(f"ExpertMLPGateUpProjMapping module {megatron_module} weights shape {megatron_weights.shape}")
-        return super().megatron_to_hf(megatron_weights.transpose(0, 1).contiguous(), megatron_module)
+        fused: Dict[str, torch.Tensor] = {}
+
+        for name, tensor in converted.items():
+            if name.endswith(".gate"):
+                base_name = name[: -len(".gate")]
+                gate_tensor = tensor
+                up_tensor = converted.get(f"{base_name}.up")
+                if up_tensor is None:
+                    continue
+                # Back to HF layout.
+                gate_tensor = gate_tensor.transpose(0, 1).contiguous()
+                up_tensor = up_tensor.transpose(0, 1).contiguous()
+                fused[base_name] = torch.cat([gate_tensor, up_tensor], dim=0)
+
+        # gather_from_ep_ranks already handled inside _gated_mapping, so keys match HF expert names.
+        return fused
 
     def _validate_patterns(self, *args, **kwargs):
         # allow number of wildcards to mismatch in this mapping
