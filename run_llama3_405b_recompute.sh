@@ -8,6 +8,9 @@ PARTITION="batch"
 # Get current directory to mount
 WORKDIR=$(pwd)
 
+export NVTE_DEBUG=1   # disables/enables debugging
+export NVTE_DEBUG_LEVEL=2
+
 export DETERMINISTIC=${DETERMINISTIC:-false}
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
@@ -22,7 +25,7 @@ else
 fi
 
 # Determinism is broken with recompute
-export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=block +model.recompute_num_layers=1"
+export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=uniform +model.recompute_num_layers=1"
 
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
@@ -30,7 +33,7 @@ python scripts/performance/setup_experiment.py \
     --gpu h100 \
     -m llama31 \
     -s 405b \
-    -ng 512 \
+    -ng 256 \
     -gn 8 \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/workdir" \
