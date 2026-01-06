@@ -22,8 +22,8 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.profiler
-from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -33,9 +33,14 @@ from megatron.core.num_microbatches_calculator import (
 )
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
@@ -321,7 +326,16 @@ def train(
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
-        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
+        (
+            loss_dict,
+            skipped_iter,
+            should_checkpoint,
+            should_exit,
+            exit_code,
+            grad_norm,
+            num_zeros_in_grad,
+            log_max_attention_logit,
+        ) = train_step(
             wrapped_forward_step_func,
             train_data_iterator,
             model,
@@ -331,6 +345,7 @@ def train(
             pg_collection,
             forward_backward_func,
         )
+
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -379,6 +394,11 @@ def train(
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
+
+        # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
+        if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
+            _maybe_register_fsdp_buffers(config, model)
+
         dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
@@ -426,6 +446,7 @@ def train(
             global_state,
             history_wct,
             model,
+            log_max_attention_logit,
         )
 
         if (
@@ -511,10 +532,8 @@ def train(
         )
         if should_exit:
             break
-    # Explicitly delete the training CUDA graph because of
-    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
-    if "training" in FullCudaGraphWrapper.cuda_graph:
-        del FullCudaGraphWrapper.cuda_graph["training"]
+
+    _delete_cuda_graphs(cuda_graph_helper)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -586,6 +605,7 @@ def train_step(
         - exit_code: Exit code if should_exit is True
         - grad_norm: Gradient norm if available, None otherwise
         - num_zeros_in_grad: Number of zeros in gradient if available, None otherwise
+        - max_attention_logit: Maximum attention logit if available, None otherwise
     """
     cfg: ConfigContainer = global_state.cfg
     timers = global_state.timers
@@ -651,7 +671,7 @@ def train_step(
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
-        return {}, True, should_checkpoint, should_exit, exit_code, None, None
+        return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:
@@ -660,16 +680,23 @@ def train_step(
     # Update parameters.
     timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+
+    # get max attention logit for logging and run clip_qk()
+    # Part of MuonClip Optimizer step
+    log_max_attention_logit = None
+    if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
+        log_max_attention_logit = clip_qk(model)
+
     timers("optimizer").stop()
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful)
+    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm)
+    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
     if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad)
+        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
 
     # Update learning rate.
     if update_successful:
@@ -683,7 +710,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
+    if pg_collection.pp.rank() == pg_collection.pp.size() - 1:
         # Average loss across microbatches.
         loss_reduced = {}
 
@@ -710,8 +737,18 @@ def train_step(
             exit_code,
             grad_norm,
             num_zeros_in_grad,
+            log_max_attention_logit,
         )
-    return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
+    return (
+        {},
+        skipped_iter,
+        should_checkpoint,
+        should_exit,
+        exit_code,
+        grad_norm,
+        num_zeros_in_grad,
+        log_max_attention_logit,
+    )
 
 
 def maybe_synchronize_training_step(train_sync_interval: Optional[int], iteration: int) -> None:
@@ -1195,7 +1232,7 @@ def _should_skip_and_handle_iteration(
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
-    _dummy_train_step(global_state, train_data_iterator)
+    _dummy_train_step(global_state, train_data_iterator, pg_collection)
 
     # Update step and sample counters
     global_state.train_state.step += 1
@@ -1208,7 +1245,9 @@ def _should_skip_and_handle_iteration(
 
 
 def _dummy_train_step(
-    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+    global_state: GlobalState,
+    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    pg_collection: ProcessGroupCollection,
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.
 
@@ -1226,7 +1265,8 @@ def _dummy_train_step(
     rerun_state_machine = get_rerun_state_machine()
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
-        if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+        pp_group = pg_collection.pp
+        if is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
             if train_data_iterator is not None:
                 if cfg.dataset.dataloader_type == "batch":
                     # Finetuning: Consume global batch once
@@ -1255,3 +1295,56 @@ def _handle_mxfp8_param_buffer_copy(
         for optim_instance in optimizer.chained_optimizers:
             if isinstance(optim_instance, DistributedOptimizer):
                 optim_instance._copy_main_params_to_param_buffer()
+
+
+def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
+    """
+    Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
+    process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
+
+    TODO: Move this method to MCore.
+
+    Args:
+        cuda_graph_helper: The TECudaGraphHelper object.
+
+    """
+
+    print_rank_0("Deleting CUDA graphs")
+
+    # Explicitly delete the training CUDA graph because of
+    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
+    if "training" in FullCudaGraphWrapper.cuda_graph:
+        del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
+    if cuda_graph_helper is not None:
+        for layers in cuda_graph_helper.callables_per_chunk:
+            for layer in layers:
+                for cuda_graph in layer.cuda_graphs:
+                    del cuda_graph
+                del layer.cuda_graphs
+
+    # Run GC to collect the freshed object
+    gc.collect()
+
+
+def _maybe_register_fsdp_buffers(
+    config: ConfigContainer,
+    model: list[MegatronModule],
+) -> None:
+    """Manually register FSDP communication buffers if enabled."""
+    # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
+    if (
+        config.ddp.use_megatron_fsdp
+        and hasattr(config.ddp, "fsdp_manual_registration")
+        and config.ddp.fsdp_manual_registration
+    ):
+        print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
+        for model_chunk in model:
+            if isinstance(model_chunk, megatron_FSDP) and getattr(
+                model_chunk.ddp_config, "fsdp_manual_registration", False
+            ):
+                fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)
+                if fsdp_param_and_grad_buffer is not None:
+                    fsdp_param_and_grad_buffer.manual_buffer_registration()
+        print_rank_0("[Megatron-FSDP] Buffer registered")

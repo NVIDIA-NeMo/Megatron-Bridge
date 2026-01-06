@@ -20,6 +20,9 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
+    # If the model provider has a custom TFLOPS calculation method, use it.
+    if hasattr(cfg.model, "_get_num_floating_point_operations"):
+        return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, and MLP layers."""
@@ -45,13 +48,12 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         seq_len,
         hidden_size,
         num_heads,
-        gqa=True,
         gqa_groups=8,
         kv_channels=None,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
-        g = gqa_groups if gqa else num_heads
+        g = gqa_groups
         return (
             4
             * batch_size
@@ -96,7 +98,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         mamba_num_groups=8,
         mamba_num_heads=128,
         num_attn_heads=32,
-        gqa=True,
         gqa_groups=8,
         kv_channels=None,
         mlp_expansion=4.0,
@@ -111,7 +112,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 seq_len,
                 hidden_size,
                 num_attn_heads,
-                gqa,
                 gqa_groups,
                 kv_channels,
             )
@@ -318,31 +318,37 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
 
     # Main entrypoint for FLOPs calculation.
     if getattr(cfg.model, "is_hybrid_model", False):
-        # TODO: Fix this when onboarding hybrid models
         # Calculate the number of each type of layer.
-        # num_attn_layers, num_mamba_layers, num_mlp_layers = calculate_layer_counts()
+        num_attn_layers, num_mamba_layers, num_mlp_layers = calculate_layer_counts()
+        padded_vocab_size = calculate_padded_vocab_size(
+            cfg.model.vocab_size,
+            cfg.model.make_vocab_size_divisible_by,
+            cfg.model.tensor_model_parallel_size,
+            logging_enabled=False,
+        )
+        num_query_groups = (
+            cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
+        )
 
-        # # Compute hybrid model FLOPs.
-        # return hybrid_flops(
-        #     batch_size=batch_size,
-        #     seq_len=cfg.model.seq_length,
-        #     hidden_size=cfg.model.hidden_size,
-        #     num_attn_layers=num_attn_layers,
-        #     num_mamba_layers=num_mamba_layers,
-        #     num_mlp_layers=num_mlp_layers,
-        #     mamba_state_dim=getattr(cfg.model, 'mamba_state_dim', 128),
-        #     mamba_head_dim=getattr(cfg.model, 'mamba_head_dim', 64),
-        #     mamba_num_groups=getattr(cfg.model, 'mamba_num_groups', 8),
-        #     mamba_num_heads=getattr(cfg.model, 'mamba_num_heads', 128),
-        #     num_attn_heads=cfg.model.num_attention_heads,
-        #     gqa=getattr(cfg.model, 'group_query_attention', False),
-        #     gqa_groups=getattr(cfg.model, 'num_query_groups', 8),
-        #     kv_channels=getattr(cfg.model, 'kv_channels', None),
-        #     mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
-        #     swiglu=getattr(cfg.model, 'gated_linear_unit', False),
-        #     vocab_size=cfg.tokenizer.padded_vocab_size,
-        # )
-        return 0
+        # Compute hybrid model FLOPs.
+        return hybrid_flops(
+            batch_size=batch_size,
+            seq_len=cfg.model.seq_length,
+            hidden_size=cfg.model.hidden_size,
+            num_attn_layers=num_attn_layers,
+            num_mamba_layers=num_mamba_layers,
+            num_mlp_layers=num_mlp_layers,
+            mamba_state_dim=getattr(cfg.model, "mamba_state_dim", 128),
+            mamba_head_dim=getattr(cfg.model, "mamba_head_dim", 64),
+            mamba_num_groups=getattr(cfg.model, "mamba_num_groups", 8),
+            mamba_num_heads=getattr(cfg.model, "mamba_num_heads", 128),
+            num_attn_heads=cfg.model.num_attention_heads,
+            gqa_groups=num_query_groups,
+            kv_channels=getattr(cfg.model, "kv_channels", None),
+            mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
+            swiglu=getattr(cfg.model, "gated_linear_unit", False),
+            vocab_size=padded_vocab_size,
+        )
     else:
         # Compute standard Transformer model FLOPs.
         return transformer_flops()

@@ -107,6 +107,7 @@ class NsysPlugin(Plugin):
     profile_step_end: int
     profile_ranks: Optional[list[int]] = None
     nsys_trace: Optional[list[str]] = None
+    nsys_extra_args: Optional[list[str]] = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
     script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
@@ -116,6 +117,7 @@ class NsysPlugin(Plugin):
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
         launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
+        launcher.nsys_extra_args = self.nsys_extra_args or launcher.nsys_extra_args
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -193,13 +195,14 @@ class PerfEnvPlugin(Plugin):
     tp_size: int = 1
     cp_size: int = 1
     pp_size: int = 1
+    ep_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
     moe_a2a_overlap: bool = False
-    model_name: str
-    model_size: str
+    model_family_name: str
+    model_recipe_name: str
     gpu: str
     compute_dtype: str
-    use_tokendrop: str
+    train_task: str
 
     def _set_num_cuda_device_max_connections(
         self,
@@ -208,11 +211,11 @@ class PerfEnvPlugin(Plugin):
         tp_size: int,
         cp_size: int,
         moe_a2a_overlap: bool,
-        enable_deepep: bool,
+        moe_flex_dispatcher_backend: str,
         gpu_sm100_or_newer: bool,
     ):
         cuda_device_max_connections = 8
-        if enable_deepep:
+        if moe_flex_dispatcher_backend in ["deepep", "hybridep"]:
             cuda_device_max_connections = 32
         if gpu_sm100_or_newer:
             """
@@ -238,31 +241,33 @@ class PerfEnvPlugin(Plugin):
         self,
         task: Union["run.Partial", "run.Script"],
         executor: "run.Executor",
-        model_name: str,
-        model_size: str,
+        model_family_name: str,
+        model_recipe_name: str,
         gpu: str,
         compute_dtype: str,
-        use_tokendrop: bool,
+        train_task: str,
     ):
         """Set model-specific environment variables"""
-        if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
+        if (
+            model_family_name in ["llama31"]
+            and model_recipe_name in ["llama31_405b"]
+            and train_task == "pretrain"
+            and gpu in ["gb200"]
+        ):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-        if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
-            if compute_dtype == "bf16" and (not use_tokendrop):
-                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
         del_cudnn_ln = True
         if gpu in ["h100"]:
-            if model_name == "llama3" and model_size == "8b":
+            if model_family_name == "llama3" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
-            if model_name == "llama3" and model_size == "70b":
+            if model_family_name == "llama3" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_name == "llama31" and model_size == "405b":
+            if model_family_name == "llama31" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
@@ -281,6 +286,20 @@ class PerfEnvPlugin(Plugin):
         if enable_layernorm_sm_margin:
             executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
             executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
+
+    def _set_nvl_domain_size(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        moe_flex_dispatcher_backend: str,
+        gpu: str,
+        ep_size: int,
+    ):
+        if moe_flex_dispatcher_backend == "hybridep":
+            assert ep_size <= 72, "ep_size must be less than or equal to 72"
+            executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
+            executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
+            executor.env_vars["USE_MNNVL"] = "1"
 
     def _set_nccl_pp_comm_chunksize(
         self,
@@ -349,32 +368,52 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
-        workload_base_config = get_workload_base_config(self.model_name, self.model_size, self.gpu, self.compute_dtype)
+        workload_base_config = get_workload_base_config(
+            self.model_family_name, self.model_recipe_name, self.gpu, self.compute_dtype, self.train_task
+        )
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
+        ep_size = self.ep_size if self.ep_size is not None else workload_base_config.ep_size
 
         # Force program order kernel launch for TP, CP overlap
-        enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
-        moe_a2a_overlap = enable_deepep or (False if self.moe_a2a_overlap is None else self.moe_a2a_overlap)
+        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
+        moe_a2a_overlap = (
+            self.moe_a2a_overlap
+            if self.moe_a2a_overlap is not None
+            else getattr(workload_base_config, "moe_a2a_overlap", False)
+        )
         self._set_num_cuda_device_max_connections(
             task,
             executor,
             tp_size,
             cp_size,
             moe_a2a_overlap=moe_a2a_overlap,
-            enable_deepep=enable_deepep,
+            moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
             gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
-        layernorm_sm_margin = 20 if enable_deepep else 16
+        layernorm_sm_margin = 20 if moe_flex_dispatcher_backend in ["deepep", "hybridep"] else 16
         self._set_layernorm_sm_margin(
             task, executor, self.enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
         )
 
+        # Set NVL domain size when using HybridEP
+        self._set_nvl_domain_size(
+            task,
+            executor,
+            moe_flex_dispatcher_backend,
+            self.gpu,
+            ep_size,
+        )
+
         # Set the chunk size of P2P communications
-        nccl_pp_comm_chunksize = 2097152 if self.model_size in ["70b", "405b"] else None
+        nccl_pp_comm_chunksize = (
+            2097152
+            if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
+            else None
+        )
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
         # Configure manual garbage collection
@@ -387,9 +426,87 @@ class PerfEnvPlugin(Plugin):
         self._set_model_specific_environment_variables(
             task,
             executor,
-            self.model_name,
-            self.model_size,
+            self.model_family_name,
+            self.model_recipe_name,
             self.gpu,
             self.compute_dtype,
-            self.use_tokendrop,
+            self.train_task,
         )
+
+
+@dataclass
+class PyTorchProfilerPluginScriptArgs:
+    """Arguments for PyTorchProfilerPlugin to pass to run.Script."""
+
+    profile_step_start: int
+    profile_step_end: int
+    profile_ranks: List[int]
+    record_memory_history: bool
+    memory_snapshot_path: str
+    record_shapes: bool
+
+
+def _default_pytorch_profiler_converter(args: PyTorchProfilerPluginScriptArgs) -> List[str]:
+    """Default converter for PyTorchProfilerPlugin that generates hydra-style overrides."""
+    return [
+        "profiling.use_pytorch_profiler=true",
+        f"profiling.profile_step_start={args.profile_step_start}",
+        f"profiling.profile_step_end={args.profile_step_end}",
+        f"profiling.profile_ranks={_format_list_for_override(args.profile_ranks)}",
+        f"profiling.record_memory_history={str(args.record_memory_history).lower()}",
+        f"profiling.memory_snapshot_path={args.memory_snapshot_path}",
+        f"profiling.record_shapes={str(args.record_shapes).lower()}",
+    ]
+
+
+@dataclass(kw_only=True)
+class PyTorchProfilerPlugin(Plugin):
+    """
+    A plugin for PyTorch profiler configuration.
+
+    The PyTorchProfilerPlugin allows you to use the built-in PyTorch profiler
+    which can be viewed in TensorBoard.
+
+    Args:
+        profile_step_start (int): The step at which to start profiling.
+        profile_step_end (int): The step at which to end profiling.
+        profile_ranks (Optional[list[int]]): The ranks on which to run the profiling. If not specified,
+            profiling will be run on rank 0.
+        record_memory_history (bool): Whether to record memory history. Default is False.
+        memory_snapshot_path (str): Path to save memory snapshots. Default is "snapshot.pickle".
+        record_shapes (bool): Whether to record tensor shapes. Default is False.
+        script_args_converter_fn (Optional[Callable]): A function that takes PyTorchProfilerPluginScriptArgs
+                                                        and returns a list of CLI arguments. If not provided,
+                                                        uses the default hydra-style converter.
+    """
+
+    profile_step_start: int
+    profile_step_end: int
+    profile_ranks: Optional[list[int]] = None
+    record_memory_history: bool = True
+    memory_snapshot_path: str = "/nemo_run/pytorch_profile/snapshot.pickle"
+    record_shapes: bool = False
+    script_args_converter_fn: Optional[Callable[[PyTorchProfilerPluginScriptArgs], List[str]]] = None
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        """Set up the PyTorch profiler plugin."""
+        if isinstance(task, Script):
+            # For run.Script, append CLI overrides to the script arguments
+            # Create args dataclass
+            script_args = PyTorchProfilerPluginScriptArgs(
+                profile_step_start=self.profile_step_start,
+                profile_step_end=self.profile_step_end,
+                profile_ranks=self.profile_ranks or [0],
+                record_memory_history=self.record_memory_history,
+                memory_snapshot_path=self.memory_snapshot_path,
+                record_shapes=self.record_shapes,
+            )
+
+            # Use custom converter or default
+            converter = self.script_args_converter_fn or _default_pytorch_profiler_converter
+            cli_overrides = converter(script_args)
+
+            task.args.extend(cli_overrides)
+            logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+        else:
+            raise NotImplementedError("PyTorchProfilerPlugin is only supported for run.Script tasks")

@@ -367,6 +367,8 @@ def load_megatron_model(
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
@@ -375,6 +377,9 @@ def load_megatron_model(
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    if use_cpu_init:
+        model_cfg.fp8 = None
+        model_cfg.fp8_param = False
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
@@ -462,6 +467,7 @@ def save_megatron_model(
             save_optim=False,
             save_rng=False,
             ckpt_format=ckpt_format,
+            dist_ckpt_optim_fully_reshardable=True,
         ),
         dist=None,
     )

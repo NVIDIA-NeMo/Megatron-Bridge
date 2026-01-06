@@ -18,8 +18,8 @@ from typing import Iterable
 
 import modelopt.torch.distill as mtd
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -36,11 +36,6 @@ from megatron.core.parallel_state import (
 from megatron.core.utils import (
     is_te_min_version,
 )
-from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig
-from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.state import GlobalState
-from megatron.bridge.utils.common_utils import print_rank_0
-
 try:
     # Register the TE CUDA kernels
     import transformer_engine  # pylint: disable=unused-import
@@ -50,6 +45,7 @@ try:
 except ImportError:
     # TE isn’t installed or the torch wrapper is missing
     tex = None
+from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
@@ -93,6 +89,9 @@ def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
     skip_getting_attention_mask_from_dataset: bool = True,
+    *,
+    is_first_pp_stage: bool,
+    is_last_pp_stage: bool,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
@@ -117,9 +116,9 @@ def get_batch_from_iterator(
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
 
-    if parallel_state.is_pipeline_first_stage() or use_mtp:
+    if is_first_pp_stage or use_mtp:
         required_device_keys.update(("tokens", "position_ids"))
-    if parallel_state.is_pipeline_last_stage():
+    if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
 
     _batch_required_keys = {}
@@ -135,7 +134,7 @@ def get_batch_from_iterator(
 
 
 def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -157,13 +156,18 @@ def get_batch(
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
         cu_seqlens, cu_seqlens_argmin, and max_seqlen
     """
-    if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
+    # Determine pipeline stage role via process group collection
+    is_first = is_pp_first_stage(pg_collection.pp)
+    is_last = is_pp_last_stage(pg_collection.pp)
+    if (not is_first) and (not is_last):
         return None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+        is_first_pp_stage=is_first,
+        is_last_pp_stage=is_last,
     )
 
     # print_rank_0("before get_batch_on_this_cp_rank")
@@ -252,12 +256,13 @@ def _forward_step_common(
     straggler_timer = state.straggler_timer
 
     config = get_model_config(model)
+    pg_collection = get_pg_collection(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
         tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = get_batch(
-            data_iterator, state.cfg, use_mtp
+            data_iterator, state.cfg, use_mtp, pg_collection=pg_collection
         )
     timers("batch-generator").stop()
 

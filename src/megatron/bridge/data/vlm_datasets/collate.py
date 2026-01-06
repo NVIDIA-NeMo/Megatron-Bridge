@@ -192,6 +192,8 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             max_pixels=1003520,  # 1280*28*28
         )
 
+        batch_with = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_with.items()}
+
     if idx_without:
         texts_without = [texts[i] for i in idx_without]
         batch_without = processor(
@@ -199,6 +201,8 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             padding=True,
             return_tensors="pt",
         )
+
+        batch_without = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_without.items()}
 
     # Merge batches back to original order
     if batch_with is not None and batch_without is None:
@@ -235,7 +239,7 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         if "image_grid_thw" in batch_with:
             batch["image_grid_thw"] = batch_with["image_grid_thw"]
 
-    labels = batch["input_ids"].clone()[:, 1:]
+    labels = batch["input_ids"].clone()[:, 1:].contiguous()
     labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
     labels[torch.isin(labels, skipped_tokens)] = -100
     batch["labels"] = labels
@@ -243,7 +247,11 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+            torch.arange(seq_len, device=batch["input_ids"].device)
+            .unsqueeze(0)
+            .expand(batch_size, -1)
+            .clone()
+            .contiguous()
         )
     # Prefer general search-based masking using structured example content (not template-specific)
     loss_masks = [
@@ -363,6 +371,93 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     return batch
 
 
+def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for Ministral 3 VL model."""
+    skipped_tokens = extract_skipped_token_ids(processor)
+
+    if processor.chat_template is not None:
+        batch = processor.apply_chat_template(
+            [example["conversation"] for example in examples],
+            tokenize=True,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            return_dict=True,
+        )
+    else:
+        texts = []
+        for example in examples:
+            conv_text = []
+            for msg in example["conversation"]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+
+                # Handle multimodal content (list of items)
+                if isinstance(content, list):
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif item.get("type") == "image":
+                                text_parts.append("[IMG]")
+                        elif isinstance(item, str):
+                            text_parts.append(item)
+                    content = " ".join(text_parts)
+
+                conv_text.append(f"{role.capitalize()}: {content}")
+            texts.append("\n".join(conv_text))
+
+        images = []
+        for example in examples:
+            ex_images = []
+            for msg in example.get("conversation", []):
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "image":
+                            if "image" in item:
+                                ex_images.append(item["image"])
+                            elif "path" in item:
+                                ex_images.append(Image.open(item["path"]))
+            images.append(ex_images if ex_images else None)
+        batch = processor(
+            text=texts,
+            images=[img if img else [] for img in images],
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+
+    if "input_ids" in batch:
+        labels = batch["input_ids"].clone()[:, 1:]
+        labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
+        labels[torch.isin(labels, skipped_tokens)] = -100
+        batch["labels"] = labels
+
+        # Create loss mask using search-based masking for assistant turns
+        loss_masks = [
+            create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
+            for example, input_ids in zip(examples, batch["input_ids"])
+        ]
+        loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
+        # Unmask the last token (EOS) so the model learns when to stop generating
+        loss_mask_t[:, -1] = 1
+        # Shift loss mask to align with next-token labels timeline
+        loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
+        # Enforce label masking to match shifted loss_mask
+        batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
+        batch["loss_mask"] = loss_mask_t
+
+    if "position_ids" not in batch and "input_ids" in batch:
+        batch_size, seq_len = batch["input_ids"].shape
+        batch["position_ids"] = (
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
+        )
+
+    return batch
+
+
 def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """Default collate function for VLM models."""
     if not HAVE_QWEN_VL_UTILS:
@@ -382,7 +477,7 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
         )
 
     batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
@@ -415,6 +510,8 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 # Mapping of processor types to their collate functions
 COLLATE_FNS = {
     "Qwen2_5_VLProcessor": qwen2_5_collate_fn,
+    "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
+    "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
     "default": default_collate_fn,
 }

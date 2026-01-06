@@ -352,7 +352,7 @@ def _mamba2_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -376,6 +376,7 @@ def _mamba2_common(
             else TokenizerConfig(
                 tokenizer_type="HuggingFaceTokenizer",
                 tokenizer_model=tokenizer_model or "EleutherAI/gpt-neox-20b",
+                hf_tokenizer_kwargs={"use_fast": True},
             )
         ),
         checkpoint=CheckpointConfig(

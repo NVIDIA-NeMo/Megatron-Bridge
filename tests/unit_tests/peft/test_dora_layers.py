@@ -64,7 +64,7 @@ class MockParallelLinearAdapter(nn.Module):
         self.linear = nn.Linear(in_features, out_features)
         self.dim = dim
         self.alpha = 8
-        self.dropout = None
+        self.dropout = nn.Identity()
         self.input_is_parallel = False
 
     def forward(self, x):
@@ -186,7 +186,7 @@ class TestDoRALinear:
         adapter = Mock()
         adapter.dim = 4
         adapter.alpha = 8
-        adapter.dropout = None
+        adapter.dropout = nn.Identity()
         adapter.input_is_parallel = False
 
         # Create mock linear layers with weight attributes

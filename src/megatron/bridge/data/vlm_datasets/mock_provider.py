@@ -29,6 +29,7 @@ import numpy
 from PIL import Image
 
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
@@ -42,7 +43,7 @@ class MockVLMConversationProvider(DatasetProvider):
     """
 
     # Required to match model.seq_length
-    sequence_length: int
+    seq_length: int
 
     # HF processor/model ID (e.g., Qwen/Qwen2.5-VL-3B-Instruct or other VLMs)
     hf_processor_path: str
@@ -92,7 +93,13 @@ class MockVLMConversationProvider(DatasetProvider):
         from transformers import AutoProcessor
 
         # Initialize and store processor
-        self._processor = AutoProcessor.from_pretrained(self.hf_processor_path, trust_remote_code=True)
+        self._processor = AutoProcessor.from_pretrained(
+            self.hf_processor_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=self.trust_remote_code,
+                hf_path=self.hf_processor_path,
+            ),
+        )
 
         base_examples = self._make_base_examples()
 

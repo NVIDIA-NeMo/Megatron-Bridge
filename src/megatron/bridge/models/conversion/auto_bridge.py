@@ -32,7 +32,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
@@ -270,7 +270,12 @@ class AutoBridge(Generic[MegatronModelT]):
         except Exception:
             return False
 
-    def load_hf_weights(self, model: list[MegatronModelT], hf_path: str | Path | None = None) -> None:
+    def load_hf_weights(
+        self,
+        model: list[MegatronModelT],
+        hf_path: str | Path | None = None,
+        allowed_mismatched_params: list[str] | None = None,
+    ) -> None:
         """
         Load HuggingFace weights into a Megatron model.
 
@@ -282,6 +287,8 @@ class AutoBridge(Generic[MegatronModelT]):
             model: List of Megatron model instances (one per virtual pipeline stage)
             hf_path: Optional path to load weights from. If None, uses weights
                 from the bridge's hf_pretrained instance
+            allowed_mismatched_params: Optional list of parameter names or patterns
+                to allow mismatch (skip instead of raise error).
 
         Returns:
             The input model with loaded weights
@@ -297,6 +304,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
             >>> # Load weights from a different checkpoint
             >>> bridge.load_hf_weights(megatron_model, "./finetuned_model")
+
+            >>> # Load weights with allowed mismatched parameters
+            >>> bridge.load_hf_weights(
+            ...     megatron_model,
+            ...     allowed_mismatched_params=["*.bias", "decoder.layers.0.*"]
+            ... )
         """
         if hf_path is None:
             if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
@@ -306,7 +319,9 @@ class AutoBridge(Generic[MegatronModelT]):
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-        self._model_bridge.load_weights_hf_to_megatron(pre_trained, model)
+        self._model_bridge.load_weights_hf_to_megatron(
+            pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
+        )
 
         return model
 
@@ -749,9 +764,15 @@ class AutoBridge(Generic[MegatronModelT]):
             GPTModelProvider: The provider class for creating models
             load_weights: Method to load weights into existing models
         """
-        provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
+        provider_input = self._provider_bridge_input
+        provider: ModelProviderMixin = self._model_bridge.provider_bridge(provider_input)
 
         if load_weights:
+            if hf_path is None and not isinstance(self.hf_pretrained, PreTrainedCausalLM):
+                raise ValueError(
+                    "AutoBridge.from_hf_config() does not include weights. "
+                    "Pass load_weights=False for random initialization or provide hf_path to load weights."
+                )
             # Skip weights initialization since we are going to load weights
             provider.perform_initialization = False
             if hf_path is None:
@@ -760,7 +781,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 )
             else:
                 # Load from specified path
-                pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
+                trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
+                pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
                 provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
         hf_identifier: str | None = None
@@ -768,6 +790,8 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_identifier = str(hf_path)
         else:
             hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
+            if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
+                hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
             if hf_name_or_path:
                 hf_identifier = str(hf_name_or_path)
 
@@ -884,6 +908,12 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
         return model_bridge.get_model_bridge(self._causal_lm_architecture)
+
+    @property
+    def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
+        if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            return self.hf_pretrained
+        return self._config_only_pretrained
 
     @cached_property
     def _causal_lm_architecture(self):
@@ -1037,6 +1067,12 @@ class AutoBridge(Generic[MegatronModelT]):
             if hasattr(source_obj, field.name):
                 kwargs[field.name] = getattr(source_obj, field.name)
         return target_dataclass(**kwargs)
+
+    @cached_property
+    def _config_only_pretrained(self) -> _ConfigOnlyPretrainedShim:
+        if not isinstance(self.hf_pretrained, PretrainedConfig):
+            raise ValueError("Config-only shim accessed when hf_pretrained is not a PretrainedConfig instance.")
+        return _ConfigOnlyPretrainedShim(self.hf_pretrained)
 
     def __repr__(self) -> str:
         class_name = self.__class__.__name__

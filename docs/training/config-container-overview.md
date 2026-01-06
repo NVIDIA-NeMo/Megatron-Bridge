@@ -166,7 +166,7 @@ model = model_provider.provide()
 config = ConfigContainer(
     model=GPTModelProvider(num_layers=24, seq_length=2048),
     train=TrainingConfig(train_iters=1000),
-    dataset=GPTDatasetConfig(sequence_length=2048),  # Must match model seq_length
+    dataset=GPTDatasetConfig(seq_length=2048),  # Must match model seq_length
     # ... other required configs
 )
 

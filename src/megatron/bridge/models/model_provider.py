@@ -444,6 +444,8 @@ class ModelParallelKwargs(TypedDict, total=False):
 
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
+    num_layers_in_first_pipeline_stage: int | None
+    num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
@@ -516,72 +518,77 @@ def get_model(
         model_provider.bf16 = bf16
 
     model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
-    if init_model_with_meta_device:
-        model_provider.init_model_with_meta_device = True
-        with torch.device("meta"):
+    create_model_stream = torch.cuda.Stream()
+    # make sure current stream is complete before starting create_model_stream
+    create_model_stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(create_model_stream):
+        if init_model_with_meta_device:
+            model_provider.init_model_with_meta_device = True
+            with torch.device("meta"):
+                model = _create_model(model_provider, model_type)
+        else:
             model = _create_model(model_provider, model_type)
-    else:
-        model = _create_model(model_provider, model_type)
 
-    model_config = get_model_config(model[0])
+        model_config = get_model_config(model[0])
 
-    if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
+        if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
+            model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
 
-        # Maintain expert bias in float32 wrapped in Float16Module
-        for model_module in model:
-            for submodule in model_module.modules():
-                if hasattr(submodule, "_maintain_float32_expert_bias"):
-                    submodule._maintain_float32_expert_bias()
+            # Maintain expert bias in float32 wrapped in Float16Module
+            for model_module in model:
+                for submodule in model_module.modules():
+                    if hasattr(submodule, "_maintain_float32_expert_bias"):
+                        submodule._maintain_float32_expert_bias()
 
-    if pre_wrap_hook:
-        if isinstance(pre_wrap_hook, list):
-            # Execute hooks in order
-            for hook in pre_wrap_hook:
-                if not callable(hook):
-                    raise RuntimeError("All elements in pre_wrap_hook list must be callable")
-                _model = hook(model)
+        if pre_wrap_hook:
+            if isinstance(pre_wrap_hook, list):
+                # Execute hooks in order
+                for hook in pre_wrap_hook:
+                    if not callable(hook):
+                        raise RuntimeError("All elements in pre_wrap_hook list must be callable")
+                    _model = hook(model)
+                    if _model is not None:
+                        model = _model
+            else:
+                if not callable(pre_wrap_hook):
+                    raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
+                _model = pre_wrap_hook(model)
                 if _model is not None:
                     model = _model
-        else:
-            if not callable(pre_wrap_hook):
-                raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
-            _model = pre_wrap_hook(model)
-            if _model is not None:
-                model = _model
 
-    # Set tensor model parallel attributes if not set
-    # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
-    for model_module in model:
-        for param in model_module.parameters():
-            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
-
-    _print_num_params(model)
-
-    # GPU allocation.
-    # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
-    # in the fully_shard function of FSDP2 instead.
-    if (
-        not use_torch_fsdp2
-        and not model_config.use_cpu_initialization
-        and not model_config.init_model_with_meta_device
-    ):
+        # Set tensor model parallel attributes if not set
+        # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
         for model_module in model:
-            model_module.cuda(torch.cuda.current_device())
+            for param in model_module.parameters():
+                tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
 
+        _print_num_params(model)
 
-    if correct_amax_history_if_needed is not None:
-        correct_amax_history_if_needed(model)
+        # GPU allocation.
+        # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
+        # in the fully_shard function of FSDP2 instead.
+        if (
+            not use_torch_fsdp2
+            and not model_config.use_cpu_initialization
+            and not model_config.init_model_with_meta_device
+        ):
+            for model_module in model:
+                model_module.cuda(torch.cuda.current_device())
 
-    if wrap_with_ddp:
-        model = _ddp_wrap(
-            model,
-            data_parallel_random_init,
-            ddp_config,
-            overlap_param_gather_with_optimizer_step,
-            use_megatron_fsdp=use_megatron_fsdp,
-            use_torch_fsdp2=use_torch_fsdp2,
-        )
+        if correct_amax_history_if_needed is not None:
+            correct_amax_history_if_needed(model)
+
+        if wrap_with_ddp:
+            model = _ddp_wrap(
+                model,
+                data_parallel_random_init,
+                ddp_config,
+                overlap_param_gather_with_optimizer_step,
+                use_megatron_fsdp=use_megatron_fsdp,
+                use_torch_fsdp2=use_torch_fsdp2,
+            )
+    # Critical: ensure side-stream work completes before touching params on default stream
+    torch.cuda.current_stream().wait_stream(create_model_stream)
 
     return model
 
@@ -685,7 +692,11 @@ def _ddp_wrap(
         DP = DistributedDataParallel
 
     # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
-    with torch.cuda.stream(torch.cuda.Stream()):
+    #  this side-stream may be nested if being called from within the get_model function, but it
+    #  is here in case someone wants to use this directly outside of get_model.
+    ddp_stream = torch.cuda.Stream()
+    ddp_stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(ddp_stream):
         model = [
             DP(
                 config=get_model_config(model_chunk),
@@ -697,6 +708,8 @@ def _ddp_wrap(
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
+    # Critical: ensure side-stream work completes before touching params on default stream
+    torch.cuda.current_stream().wait_stream(ddp_stream)
 
     # Broadcast params from data parallel src rank to other data parallel ranks.
     if data_parallel_random_init:

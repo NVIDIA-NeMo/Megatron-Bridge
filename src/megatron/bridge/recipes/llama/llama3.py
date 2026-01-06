@@ -260,6 +260,13 @@ def llama3_8b_low_precision_pretrain_config(
         "bf16_with_nvfp4_mixed",
     ], f"Invalid low precision recipe: {mixed_precision_recipe}. This recipe has not been tested yet."
     precision_config = get_mixed_precision_config(mixed_precision_recipe)
+    if (
+        mixed_precision_recipe == "bf16_with_nvfp4_mixed"
+    ):  # for llama3-8B nvfp4 recipe, we use BF16 for the last 4 layers
+        precision_config.first_last_layers_bf16 = True
+        precision_config.num_layers_at_start_in_bf16 = 0
+        precision_config.num_layers_at_end_in_bf16 = 4
+
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
         "tensor_model_parallel_size": 1,
@@ -421,6 +428,7 @@ def _llama3_common(
     hf_path: str,
     dir: str | None = None,
     name: str = "default",
+    load_weights: bool = False,
     # Dataset configuration
     data_paths: list[str] | None = None,
     data_args_path: str | None = None,
@@ -504,7 +512,7 @@ def _llama3_common(
     )
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg = bridge.to_megatron_provider(load_weights=load_weights)
     model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
     model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
     model_cfg.pipeline_dtype = pipeline_dtype
@@ -557,7 +565,7 @@ def _llama3_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,

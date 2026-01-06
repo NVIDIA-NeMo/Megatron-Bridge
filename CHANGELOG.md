@@ -1,5 +1,60 @@
 # Changelog
 
+## NVIDIA Megatron-Bridge 0.2.0
+
+* [Model Collection Support](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models)
+
+  * LLM
+    * HuggingFace Conversion + training recipes:
+      * GPT-OSS
+      * Qwen3 Next
+      * Nemotron-H
+      * Nemotron Nano v2
+      * Moonlight
+      * OlMoE
+      * GLM 4.5
+      * Gemma 3
+    * HuggingFace conversion support:
+      * Llama Nemotron
+      * Mistral
+      * Gemma
+      * Gemma 2
+  * VLM
+    * Nemotron Nano v2 VL
+    * Qwen 3 VL
+    * Qwen2.5 VL
+    * Gemma3 VL
+
+* [Performance](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance)
+  * Megatron-Bridge support for new benchmarks
+      * Benchmarks (same workloads as GB200 system) for GB300 system
+      * GPT-OSS 120B
+      * Qwen3-Next 80B_A3B
+      * Support for linear attention on Blackwell - Gated Delta Networks
+      * Pre-training with NVFP4 precision: Llama3 8B, Lama3 70B, Llama3.1 405B
+  * Megatron-Bridge support for benchmarks previously existing only for NeMo 2.0
+    * Nemotron-H 56B
+    * Fine-tuning (SFT and LoRA): Llama3 8B and Llama3 70B
+  * HybridEP: DeepSeek V3 benchmarks on GB200 and GB300 systems now use HybridEP
+  * CUDA Graphs
+    * Full-model iteration CUDA graph used for dense models- Llama3 8B, Llama3 70B, Llama3.1 405B
+    * Fine-grained Transformer component specific CUDA Graphs used for MoE models
+
+* [NVIDIA Model Optimization Integration](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/quantization)
+  * Knowledge Distillation
+  * Post training quantization export
+  * Quantization aware training
+
+* [Enhanced LoRA support](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/peft)
+  * Support for expert layers
+  * Supported merging adapters for export to HuggingFace @HollowMan6
+
+* [Finetuning dataset improvements: OpenAI messages format conversion, chat template support](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/data)
+* [Integration with Tensor NVIDIA-DLFW-Inspect for tensor statistic collection & monitoring](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/tensor_inspect.py)
+* [Support for sample-based training](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/config.py)
+* Broader Community Adoption: Integrate the Megatron-Bridge into the training pipelines of VeRL ([PR](https://github.com/volcengine/verl/pull/4063/files)), Slime ([PR](https://github.com/THUDM/slime/pull/894/)), and Sky-RL ([PR](https://github.com/NovaSky-AI/SkyRL/pull/453)).
+* Special thanks to the community contributors for this release: @HollowMan6, @fzyzcjy, @erictang000, @hawkoli1987.
+
 ## NVIDIA Megatron-Bridge 0.1.0rc4
 
 * Fix docs build

@@ -455,7 +455,30 @@ class TestAutoBridge:
             bridge = AutoBridge(mock_hf_model)
             bridge.load_hf_weights(mock_megatron_model)
 
-            mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(mock_hf_model, mock_megatron_model)
+            mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
+                mock_hf_model, mock_megatron_model, allowed_mismatched_params=None
+            )
+
+    def test_load_hf_weights_with_allowed_mismatched_params(self):
+        """Test loading weights with allowed_mismatched_params."""
+        # Setup mocks
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        mock_model_bridge = Mock()
+        mock_model_bridge.load_weights_hf_to_megatron = Mock()
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            whitelist = ["*.bias", "layer.1.weight"]
+            bridge.load_hf_weights(mock_megatron_model, allowed_mismatched_params=whitelist)
+
+            mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
+                mock_hf_model, mock_megatron_model, allowed_mismatched_params=whitelist
+            )
 
     def test_load_hf_weights_from_path(self):
         """Test loading weights from a different path."""
@@ -486,6 +509,7 @@ class TestAutoBridge:
                 mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
                     mock_loaded_model,
                     mock_megatron_model,
+                    allowed_mismatched_params=None,
                 )
 
     def test_load_hf_weights_no_path_config_only(self):

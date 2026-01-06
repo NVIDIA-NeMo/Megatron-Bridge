@@ -19,10 +19,17 @@ from typing import List, Literal, Optional
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
+from megatron.core import parallel_state
 from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
+from megatron.bridge.peft.lora_layers import (
+    LinearAdapter,
+    LoRALinear,
+    TEFusedLoRALinear,
+    TELinearAdapter,
+    patch_linear_module,
+)
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -127,9 +134,18 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_dtype=self.lora_dtype,
                 )
 
-            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(module)
+            is_expert = is_expert_linear(full_name)
+            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
+                get_adapter_attributes_from_linear(module, is_expert=is_expert)
             )
+
+            enable_op_fuser = (
+                hasattr(module, "config")
+                and getattr(module.config, "use_transformer_engine_op_fuser", False)
+                # TP not yet supported
+                and parallel_state.get_tensor_model_parallel_world_size() == 1
+            )
+
             logging.info(f"Adding lora to: {full_name}")
             adapter = ParallelLinearAdapter(
                 in_features,
@@ -146,12 +162,16 @@ class LoRA(PEFT, ModuleMatcher):
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(module, "config", None),
                 alpha=self.alpha,
-                is_expert=is_expert_linear(full_name),
+                is_expert=is_expert,
                 a2a_experimental=self.a2a_experimental,
+                disable_tensor_parallel_comm=disable_tp_comm,
                 disable_sequence_parallel_comm=disable_sp_comm,
                 base_linear_is_parallel=base_linear_is_parallel,
             )
-            return LoRALinear(module, adapter)
+            if enable_op_fuser:
+                return TEFusedLoRALinear(module, adapter)
+            else:
+                return LoRALinear(module, adapter)
         return module
 
 
