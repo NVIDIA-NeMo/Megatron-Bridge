@@ -569,10 +569,8 @@ def parse_cli_args():
     profile_group.add_argument(
         "-mh",
         "--record_memory_history",
-        type=bool_arg,
-        help="Enable PyTorch profiler memory history recording. Enabled by default (if pytorch_profiler is enabled)",
-        required=False,
-        default=True,
+        help="Enable PyTorch profiler memory history recording. Disabled by default",
+        action="store_true",
     )
     profile_group.add_argument(
         "--profiling_gpu_metrics",
