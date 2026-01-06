@@ -693,8 +693,8 @@ class CheckpointConfig:
     pretrained_checkpoint: Optional[str] = None
     """Directory containing a pretrained model checkpoint for finetuning.
     The checkpoint must be in Megatron distributed checkpoint format (torch_dist, zarr, or fsdp_dtensor).
-    If this path is set but the checkpoint is not found, training will fail unless
-    exit_on_missing_checkpoint is explicitly set to False."""
+    If this path is set but the checkpoint is not found, training will start from random
+    initialization (scratch) unless exit_on_missing_checkpoint is set to True."""
 
     ckpt_step: Optional[int] = None
     """Checkpoint step to load model from."""
