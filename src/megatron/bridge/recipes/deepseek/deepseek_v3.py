@@ -19,6 +19,7 @@ import torch
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -35,6 +36,29 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+def set_deepseek_v3_pipeline_model_parallel_layout(
+    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+) -> None:
+    """Set the DeepSeek-V3 pipeline model parallel layout."""
+    mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
+    last_layer = ["mtp"] * mtp_layers + ["loss"]
+    pp_size = model_cfg.pipeline_model_parallel_size or 1
+    vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    if layout is not None:
+        model_cfg.pipeline_model_parallel_layout = layout
+    elif (pp_size, vp_size) in layout_map:
+        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
 
 class DeepSeekV3CommonKwargs(TypedDict, total=False):
@@ -230,24 +254,7 @@ def _deepseek_v3_common(
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
 
-    mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
-    last_layer = ["mtp"] * mtp_layers + ["loss"]
-    layout_map = {
-        (1, 1): None,
-        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
-        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    }
-    pp_size = pipeline_model_parallel_size or 1
-    vp_size = virtual_pipeline_model_parallel_size or 1
-    if layout is not None:
-        # Allow overriding the automatically selected layout
-        model_cfg.pipeline_model_parallel_layout = layout
-    elif (pp_size, vp_size) in layout_map:
-        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
+    set_deepseek_v3_pipeline_model_parallel_layout(model_cfg, layout)
 
     # Pipeline split for asymmetric stages are specified with map_pp_vp_to_layout below
     model_cfg.account_for_embedding_in_pipeline_split = False
