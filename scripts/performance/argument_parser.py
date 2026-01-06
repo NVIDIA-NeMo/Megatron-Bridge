@@ -163,12 +163,6 @@ def parse_cli_args():
         default=False,
     )
     parser.add_argument(
-        "-hf",
-        "--hf_token",
-        type=str,
-        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
-    )
-    parser.add_argument(
         "-nh",
         "--nemo_home",
         type=str,
@@ -199,6 +193,13 @@ def parse_cli_args():
         type=int,
         help="Number of gpus.",
         required=True,
+    )
+    parser.add_argument(
+        "-d",
+        "--dryrun",
+        help="If true, prints sbatch script to terminal without launching experiment.",
+        required=False,
+        action="store_true",
     )
 
     # Training
@@ -259,14 +260,14 @@ def parse_cli_args():
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
-    parser.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
+    data_args.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
-    data_args.add_argument(
+    tokenizer_args.add_argument(
         "--tokenizer_type",
         type=str,
         choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
@@ -275,6 +276,12 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
+    tokenizer_args.add_argument(
+        "-hf",
+        "--hf_token",
+        type=str,
+        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
 
     # Parallelism
     parallelism_args = parser.add_argument_group("Parallelism arguments")
@@ -371,7 +378,7 @@ def parse_cli_args():
         "--custom_env_vars",
         type=to_dict,
         help="Comma separated string of environment variables",
-        default=[],
+        default={},
     )
     slurm_args.add_argument(
         "-cs",
@@ -455,7 +462,7 @@ def parse_cli_args():
         type=str,
         choices=["h100", "b200", "gb200", "gb300"],
         help="Target gpu type.",
-        required=False,
+        required=True,
     )
     performance_args.add_argument(
         "-c",
@@ -473,46 +480,6 @@ def parse_cli_args():
         type=bool_arg,
         required=False,
     )
-    profile_group = performance_args.add_mutually_exclusive_group()
-    profile_group.add_argument(
-        "-en",
-        "--enable_nsys",
-        help="Enable Nsys profiling. Disabled by default",
-        action="store_true",
-    )
-    profile_group.add_argument(
-        "-entp",
-        "--enable_torch_profiler",
-        help="Enable PyTorch profiler. Disabled by default",
-        action="store_true",
-    )
-    performance_args.add_argument(
-        "--profiling_start_step",
-        type=int,
-        help="Defines start step for profiling",
-        required=False,
-        default=10,
-    )
-    performance_args.add_argument(
-        "--profiling_stop_step",
-        type=int,
-        help="Defines stop step for profiling",
-        required=False,
-        default=11,
-    )
-    performance_args.add_argument(
-        "--profiling_gpu_metrics",
-        help="Enable nsys gpu metrics. Disabled by default.",
-        action="store_true",
-    )
-    performance_args.add_argument(
-        "--profiling_ranks",
-        type=list_of_ints,
-        metavar="N[,N...]",
-        help="List of ranks to target for profiling (defaults to just first rank)",
-        required=False,
-        default=None,
-    )
     performance_args.add_argument(
         "--use_tokendrop",
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
@@ -522,6 +489,12 @@ def parse_cli_args():
     performance_args.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
+        type=bool_arg,
+        required=False,
+    )
+    performance_args.add_argument(
+        "--nccl_ub",
+        help="Enable NCCL user buffer for FSDP communication. Disabled by default.",
         type=bool_arg,
         required=False,
     )
@@ -562,6 +535,57 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
+    )
+
+    # Profiling
+    profile_group = parser.add_argument_group("Profiling arguments")
+    profiler_exclusive_subgroup = profile_group.add_mutually_exclusive_group()
+    profiler_exclusive_subgroup.add_argument(
+        "-en",
+        "--enable_nsys",
+        help="Enable Nsys profiling. Disabled by default",
+        action="store_true",
+    )
+    profiler_exclusive_subgroup.add_argument(
+        "-entp",
+        "--enable_torch_profiler",
+        help="Enable PyTorch profiler. Disabled by default",
+        action="store_true",
+    )
+    profile_group.add_argument(
+        "--profiling_start_step",
+        type=int,
+        help="Defines start step for profiling",
+        required=False,
+        default=10,
+    )
+    profile_group.add_argument(
+        "--profiling_stop_step",
+        type=int,
+        help="Defines stop step for profiling",
+        required=False,
+        default=11,
+    )
+    profile_group.add_argument(
+        "-mh",
+        "--record_memory_history",
+        type=bool_arg,
+        help="Enable PyTorch profiler memory history recording. Enabled by default (if pytorch_profiler is enabled)",
+        required=False,
+        default=True,
+    )
+    profile_group.add_argument(
+        "--profiling_gpu_metrics",
+        help="Enable nsys gpu metrics. Disabled by default.",
+        action="store_true",
+    )
+    profile_group.add_argument(
+        "--profiling_ranks",
+        type=list_of_ints,
+        metavar="N[,N...]",
+        help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
     )
 
     # Logging
@@ -608,14 +632,6 @@ def parse_cli_args():
         help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()} or NEMORUN_HOME envvar",
         required=False,
         default=None,
-    )
-
-    parser.add_argument(
-        "-d",
-        "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
-        required=False,
-        action="store_true",
     )
 
     # Testing parameters

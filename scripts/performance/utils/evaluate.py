@@ -51,7 +51,13 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     Returns:
         Dictionary with format: {step: value}
     """
-    metrics = {"elapsed time per iteration (ms)": {}, "lm loss": {}, "GPU utilization": {}, "step time": {}}
+    metrics = {
+        "elapsed time per iteration (ms)": {},
+        "lm loss": {},
+        "GPU utilization": {},
+        "step time": {},
+        "grad norm": {},
+    }
 
     content = ""
     for log_path in log_paths:
@@ -65,6 +71,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "lm loss": r"lm loss:\s+([\d.E+\-]+)",
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
         "step time": r"Step Time :\s+([\d.]+)s",
+        "grad norm": r"grad norm:\s+([\d.]+|nan|inf)",
     }
 
     pending_step_time = None
@@ -74,6 +81,9 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         # Check for step time and GPU utilization
         if match := re.search(patterns["step time"], line):
             pending_step_time = float(match.group(1))
+
+        if match := re.search(patterns["grad norm"], line):
+            pending_grad_norm = float(match.group(1))
 
         if match := re.search(patterns["GPU utilization"], line):
             pending_gpu_util = float(match.group(1))
@@ -89,6 +99,10 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
             if pending_step_time is not None:
                 metrics["step time"][completed_step] = pending_step_time
                 pending_step_time = None
+
+            if pending_grad_norm is not None:
+                metrics["grad norm"][completed_step] = pending_grad_norm
+                pending_grad_norm = None
 
             if pending_gpu_util is not None:
                 metrics["GPU utilization"][completed_step] = pending_gpu_util
@@ -423,6 +437,7 @@ def calc_convergence_and_performance(
 
     current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
     current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
+    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm")
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
@@ -467,6 +482,14 @@ def calc_convergence_and_performance(
     # Extract golden_lm_loss and golden_iter_time lists
     logger.info(f"Comparing {len(steps)} training steps for convergence")
     steps = sorted(golden_train_loss.keys(), key=int)
+
+    # check for grad norm
+    has_nan_grad_norm = any(str(current_grad_norm[str(s)]) == "nan" for s in steps)
+    has_inf_grad_norm = any(str(current_grad_norm[str(s)]) == "inf" for s in steps)
+    if has_nan_grad_norm or has_inf_grad_norm:
+        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
+        error_msg += f"Grad norm values: {current_grad_norm}\n"
+        return len(error_msg) == 0, error_msg
 
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
@@ -513,6 +536,7 @@ def calc_convergence_and_performance(
                 "compare/current_iter_time": current_iter_time_values[i],
                 "compare/golden_lm_loss": golden_train_loss_values[i],
                 "compare/golden_iter_time": golden_iter_time_values[i],
+                "compare/current_grad_norm": current_grad_norm[str(i)],
             }
         )
 

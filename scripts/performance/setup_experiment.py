@@ -187,6 +187,7 @@ def main(
     wandb_entity_name: str,
     profiling_start_step: int,
     profiling_stop_step: int,
+    record_memory_history: bool,
     profiling_gpu_metrics: bool,
     profiling_ranks: Optional[List[int]],
     nemo_home: str,
@@ -197,8 +198,9 @@ def main(
     time_limit: str,
     container_image: str,
     custom_mounts: List[str],
-    custom_env_vars: List[str],
+    custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -264,6 +266,9 @@ def main(
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
         ]
     )
+
+    if nccl_ub:
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -334,6 +339,8 @@ def main(
             PyTorchProfilerPlugin(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
+                profile_ranks=profiling_ranks,
+                record_memory_history=record_memory_history,
             )
         )
 
@@ -481,6 +488,10 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
 
+    assert not (args.enable_nsys and args.pytorch_profiler), (
+        "Both NSys and PyTorch profiler cannot be enabled at the same time"
+    )
+
     # probably better to use parser.parse_args() and make unknowns an error,
     # but for now we'll just issue a warning.
     if unknown_args:
@@ -509,6 +520,7 @@ if __name__ == "__main__":
         wandb_entity_name=args.wandb_entity_name,
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
+        record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         profiling_ranks=args.profiling_ranks,
         nemo_home=args.nemo_home,
@@ -521,6 +533,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,

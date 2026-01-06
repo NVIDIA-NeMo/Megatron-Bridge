@@ -276,13 +276,19 @@ class TestGetAdapterAttributes:
         mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
 
-        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-            get_adapter_attributes_from_linear(linear)
-        )
+        (
+            input_is_parallel,
+            in_features,
+            out_features,
+            disable_tp_comm,
+            disable_sp_comm,
+            base_linear_is_parallel,
+        ) = get_adapter_attributes_from_linear(linear)
 
         assert not input_is_parallel
         assert in_features == 100
         assert out_features == 50
+        assert not disable_tp_comm
         assert disable_sp_comm  # Should be True when sequence_parallel is False
         assert base_linear_is_parallel  # Should be True for parallel linear layers
 
@@ -292,13 +298,19 @@ class TestGetAdapterAttributes:
         mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockRowParallelLinear(input_size=100, output_size=50)
 
-        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-            get_adapter_attributes_from_linear(linear)
-        )
+        (
+            input_is_parallel,
+            in_features,
+            out_features,
+            disable_tp_comm,
+            disable_sp_comm,
+            base_linear_is_parallel,
+        ) = get_adapter_attributes_from_linear(linear)
 
         assert input_is_parallel
         assert in_features == 100
         assert out_features == 50
+        assert not disable_tp_comm
         assert disable_sp_comm
         assert base_linear_is_parallel  # Should be True for parallel linear layers
 
@@ -309,10 +321,16 @@ class TestGetAdapterAttributes:
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
         linear.config.sequence_parallel = True
 
-        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-            get_adapter_attributes_from_linear(linear)
-        )
+        (
+            input_is_parallel,
+            in_features,
+            out_features,
+            disable_tp_comm,
+            disable_sp_comm,
+            base_linear_is_parallel,
+        ) = get_adapter_attributes_from_linear(linear)
 
+        assert not disable_tp_comm
         assert not disable_sp_comm  # Should be False when sequence_parallel is True
         assert base_linear_is_parallel  # Should be True for parallel linear layers
 
@@ -332,12 +350,12 @@ class TestGetAdapterAttributes:
         mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         # Test with ColumnParallelLinear - should return True for base_linear_is_parallel
         column_linear = MockColumnParallelLinear(input_size=100, output_size=50)
-        _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(column_linear)
+        _, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(column_linear)
         assert base_linear_is_parallel  # Should be True for parallel linear layers
 
         # Test with RowParallelLinear - should return True for base_linear_is_parallel
         row_linear = MockRowParallelLinear(input_size=100, output_size=50)
-        _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(row_linear)
+        _, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(row_linear)
         assert base_linear_is_parallel  # Should be True for parallel linear layers
 
 
@@ -517,7 +535,7 @@ class TestParallelLinearAdapter:
             dropout=0.0,
             model_parallel_config=mock_config,
         )
-        assert adapter1.dropout is None
+        assert isinstance(adapter1.dropout, nn.Identity)
 
         # Reset mocks
         mock_col_linear.reset_mock()
