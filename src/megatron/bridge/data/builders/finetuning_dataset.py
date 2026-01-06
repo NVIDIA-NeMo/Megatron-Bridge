@@ -77,6 +77,7 @@ class FinetuningDatasetBuilder:
         self.packed_sequence_size = -1 if not packed_sequence_specs else packed_sequence_specs.packed_sequence_size
         self.dataset_kwargs = dataset_kwargs or {}
         self._pad_cu_seqlens = False if not packed_sequence_specs else packed_sequence_specs.pad_cu_seqlens
+        self._context_parallel_size = 1 if not packed_sequence_specs else packed_sequence_specs.context_parallel_size
 
         self.do_validation = do_validation
         self.do_test = do_test
@@ -106,6 +107,7 @@ class FinetuningDatasetBuilder:
                     seed=self.seed,
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
+                    context_parallel_size=self._context_parallel_size,
                 )
 
             if self.do_validation and not self.validation_path_packed.is_file():
@@ -119,6 +121,7 @@ class FinetuningDatasetBuilder:
                     seed=self.seed,
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
+                    context_parallel_size=self._context_parallel_size,
                 )
 
     def build(self) -> list[Optional[Any]]:
