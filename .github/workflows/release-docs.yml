@@ -49,13 +49,18 @@ jobs:
           path: FW-CI-templates
 
       - uses: ./FW-CI-templates/.github/actions/publish-docs
+        # This workflow runs either on main, or on a version tag. Any other git ref will lead
+        # to an error.
+        # If its on main, it will publish to "latest" directory in Akamai.
+        # If its on a versioned tag, it will extract the version number from the tag (strip `v` prefix)
+        # and publish to the versioned directory in Akamai.
         with:
           dry-run: ${{ inputs.dry-run }}
           artifacts-name: docs-html
           artifacts-path: _build/html
-          publish-version: ${{ inputs.version-number }}
           emails-csv: ${{ inputs.notify-emails }}
-          overwrite-latest-on-tag: ${{ github.ref_name == 'main' }}
+          overwrite-latest-on-tag: false
+          run-on-version-tag-only: ${{ github.ref_name != 'main' }}
           request-name: megatron-bridge-publish-docs-${{ github.run_id }}
           aws-region: ${{ inputs.aws-region }}
           aws-role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
