@@ -488,10 +488,6 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
 
-    assert not (args.enable_nsys and args.pytorch_profiler), (
-        "Both NSys and PyTorch profiler cannot be enabled at the same time"
-    )
-
     # probably better to use parser.parse_args() and make unknowns an error,
     # but for now we'll just issue a warning.
     if unknown_args:
