@@ -602,7 +602,7 @@ def _nemotronh_finetune_common(
             overlap_param_gather=False,
             use_distributed_optimizer=True,
         ),
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, model_cfg.context_parallel_size),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

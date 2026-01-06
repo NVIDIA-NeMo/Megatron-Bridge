@@ -557,7 +557,9 @@ def _qwen3_moe_finetune_common(
     )
 
     # Dataset configuration (SQuAD by default)
-    dataset_config = default_squad_config(seq_length=seq_length, packed_sequence=packed_sequence)
+    dataset_config = default_squad_config(
+        seq_length=seq_length, packed_sequence=packed_sequence, context_parallel_size=model_cfg.context_parallel_size
+    )
 
     # W&B logger configuration
     logger_config = LoggerConfig(

@@ -1006,7 +1006,7 @@ def _llama3_finetune_common(
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
         ddp=ddp_cfg,
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, model_cfg.context_parallel_size),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

@@ -664,7 +664,7 @@ def _qwen2_finetune_common(
     peft_config = default_peft_config(peft) if not is_full_sft else None
 
     # Dataset config
-    dataset_config = default_squad_config(seq_length, packed_sequence)
+    dataset_config = default_squad_config(seq_length, packed_sequence, context_parallel_size)
 
     # Logger
     logger_cfg = LoggerConfig(

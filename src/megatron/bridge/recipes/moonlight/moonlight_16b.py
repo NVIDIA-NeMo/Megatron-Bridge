@@ -679,7 +679,7 @@ def _moonlight_finetune_common(
             average_in_collective=True,
             use_distributed_optimizer=True,
         ),
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, context_parallel_size),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

@@ -423,7 +423,7 @@ def _gemma2_finetune_common(
         opt_cfg.use_distributed_optimizer = False
 
     # Dataset config
-    dataset_config = default_squad_config(seq_length, packed_sequence)
+    dataset_config = default_squad_config(seq_length, packed_sequence, context_parallel_size)
 
     # Logger
     logger_cfg = LoggerConfig(

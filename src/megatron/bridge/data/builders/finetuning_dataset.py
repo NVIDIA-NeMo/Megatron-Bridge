@@ -238,7 +238,7 @@ class FinetuningDatasetBuilder:
             The Path object for the default packing directory.
         """
         tokenizer_model_name = self._extract_tokenizer_model_name()
-        default_pack_path = self.dataset_root / "packed" / tokenizer_model_name
+        default_pack_path = self.dataset_root / "packed" / f"{tokenizer_model_name}_cp{self._context_parallel_size}"
         if not default_pack_path.exists():
             default_pack_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Using default path for packing files: {str(default_pack_path)}")

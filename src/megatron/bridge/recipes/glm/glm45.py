@@ -498,7 +498,7 @@ def _glm45_finetune_common(
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
         ddp=DistributedDataParallelConfig(check_for_nan_in_grad=True, use_megatron_fsdp=use_megatron_fsdp),
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, context_parallel_size),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(
