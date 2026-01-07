@@ -434,8 +434,7 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
                 base_name = name[: -len(".gate")]
                 gate_tensor = tensor
                 up_tensor = converted.get(f"{base_name}.up")
-                if up_tensor is None:
-                    continue
+                assert up_tensor is not None
                 # Back to HF layout.
                 gate_tensor = gate_tensor.transpose(0, 1).contiguous()
                 up_tensor = up_tensor.transpose(0, 1).contiguous()
