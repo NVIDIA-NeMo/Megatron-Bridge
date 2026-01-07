@@ -14,6 +14,7 @@
 
 import inspect
 import math
+import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -35,7 +36,7 @@ from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0, print_rank_last
 
 
 if TYPE_CHECKING:
@@ -438,14 +439,21 @@ def training_log(
         if hasattr(timers, "write_to_wandb"):
             timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
 
-    if writer and (iteration % logger_config.tensorboard_log_interval == 0):
-        if config.profiling:
-            if config.profiling.record_memory_history and is_last_rank():
-                snapshot = torch.cuda.memory._snapshot()
-                from pickle import dump
+    if config.profiling:
+        if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
+            assert config.logger.tensorboard_dir is not None, (
+                "Tensorboard directory must be set when profiling memory history"
+            )
+            snapshot = torch.cuda.memory._snapshot()
+            from pickle import dump
 
-                with open(config.profiling.memory_snapshot_path, "wb") as f:
-                    dump(snapshot, f)
+            filename, ext = os.path.splitext(config.profiling.memory_snapshot_path)
+            filename = f"{filename}_{get_rank_safe()}{ext}"
+            with open(filename, "wb") as f:
+                dump(snapshot, f)
+                print_rank_0(f"Saved memory snapshot to {filename}")
+
+    if writer and (iteration % logger_config.tensorboard_log_interval == 0):
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
                 iteration=iteration,

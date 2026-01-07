@@ -81,7 +81,7 @@ dependencies = [
     "hydra-core>1.3,<=1.3.2",
     "megatron-core[dev,mlm]>=0.15.0a0,<0.17.0",
     "qwen-vl-utils",
-    "transformer-engine[pytorch]>=2.9.0a0,<2.10.0",
+    "transformer-engine[pytorch]>=2.10.0a0,<2.12.0",
     "mamba-ssm",
     "nvidia-resiliency-ext",
     "causal-conv1d",
@@ -117,7 +117,7 @@ override-dependencies = [
 # uv.sources allows us to override dependencies with VCS commits.
 # Lets use this only for debugging purposes, but not for production (main).
 [tool.uv.sources]
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "release_v2.9" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "release_v2.11" }
 megatron-core = { path = "3rdparty/Megatron-LM/" }
 nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "54f85fe422d296cf04ea524130014bd3a2c3add1" }
 nvidia-modelopt = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git", rev = "0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }

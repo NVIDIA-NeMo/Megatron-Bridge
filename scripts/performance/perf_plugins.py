@@ -390,7 +390,7 @@ class PerfEnvPlugin(Plugin):
             cp_size,
             moe_a2a_overlap=moe_a2a_overlap,
             moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
-            gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
+            gpu_sm100_or_newer=self.gpu in ["b300", "b200", "gb200", "gb300"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
@@ -432,3 +432,81 @@ class PerfEnvPlugin(Plugin):
             self.compute_dtype,
             self.train_task,
         )
+
+
+@dataclass
+class PyTorchProfilerPluginScriptArgs:
+    """Arguments for PyTorchProfilerPlugin to pass to run.Script."""
+
+    profile_step_start: int
+    profile_step_end: int
+    profile_ranks: List[int]
+    record_memory_history: bool
+    memory_snapshot_path: str
+    record_shapes: bool
+
+
+def _default_pytorch_profiler_converter(args: PyTorchProfilerPluginScriptArgs) -> List[str]:
+    """Default converter for PyTorchProfilerPlugin that generates hydra-style overrides."""
+    return [
+        "profiling.use_pytorch_profiler=true",
+        f"profiling.profile_step_start={args.profile_step_start}",
+        f"profiling.profile_step_end={args.profile_step_end}",
+        f"profiling.profile_ranks={_format_list_for_override(args.profile_ranks)}",
+        f"profiling.record_memory_history={str(args.record_memory_history).lower()}",
+        f"profiling.memory_snapshot_path={args.memory_snapshot_path}",
+        f"profiling.record_shapes={str(args.record_shapes).lower()}",
+    ]
+
+
+@dataclass(kw_only=True)
+class PyTorchProfilerPlugin(Plugin):
+    """
+    A plugin for PyTorch profiler configuration.
+
+    The PyTorchProfilerPlugin allows you to use the built-in PyTorch profiler
+    which can be viewed in TensorBoard.
+
+    Args:
+        profile_step_start (int): The step at which to start profiling.
+        profile_step_end (int): The step at which to end profiling.
+        profile_ranks (Optional[list[int]]): The ranks on which to run the profiling. If not specified,
+            profiling will be run on rank 0.
+        record_memory_history (bool): Whether to record memory history. Default is False.
+        memory_snapshot_path (str): Path to save memory snapshots. Default is "snapshot.pickle".
+        record_shapes (bool): Whether to record tensor shapes. Default is False.
+        script_args_converter_fn (Optional[Callable]): A function that takes PyTorchProfilerPluginScriptArgs
+                                                        and returns a list of CLI arguments. If not provided,
+                                                        uses the default hydra-style converter.
+    """
+
+    profile_step_start: int
+    profile_step_end: int
+    profile_ranks: Optional[list[int]] = None
+    record_memory_history: bool = True
+    memory_snapshot_path: str = "/nemo_run/pytorch_profile/snapshot.pickle"
+    record_shapes: bool = False
+    script_args_converter_fn: Optional[Callable[[PyTorchProfilerPluginScriptArgs], List[str]]] = None
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        """Set up the PyTorch profiler plugin."""
+        if isinstance(task, Script):
+            # For run.Script, append CLI overrides to the script arguments
+            # Create args dataclass
+            script_args = PyTorchProfilerPluginScriptArgs(
+                profile_step_start=self.profile_step_start,
+                profile_step_end=self.profile_step_end,
+                profile_ranks=self.profile_ranks or [0],
+                record_memory_history=self.record_memory_history,
+                memory_snapshot_path=self.memory_snapshot_path,
+                record_shapes=self.record_shapes,
+            )
+
+            # Use custom converter or default
+            converter = self.script_args_converter_fn or _default_pytorch_profiler_converter
+            cli_overrides = converter(script_args)
+
+            task.args.extend(cli_overrides)
+            logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+        else:
+            raise NotImplementedError("PyTorchProfilerPlugin is only supported for run.Script tasks")

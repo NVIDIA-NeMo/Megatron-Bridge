@@ -45,6 +45,7 @@ class WorkloadBaseConfig:
     micro_batch_size: int = 1
 
     use_megatron_fsdp: Optional[bool] = None
+    nccl_ub: Optional[bool] = None
     cuda_graph_impl: Optional[str] = None
     cuda_graph_scope: Optional[str] = None
     cpu_offloading_num_layers: Optional[int] = None

@@ -70,7 +70,9 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     return recipe
 
 
-def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: bool = False) -> ConfigContainer:
+def _set_megatron_fsdp_overrides(
+    recipe: ConfigContainer, use_megatron_fsdp: bool = False, nccl_ub: bool = False
+) -> ConfigContainer:
     """Set the Megatron FSDP overrides."""
     if not use_megatron_fsdp:
         return
@@ -80,6 +82,10 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
     recipe.ddp.keep_fp8_transpose_cache = False
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
+
+    if nccl_ub:
+        recipe.ddp.nccl_ub = True
+        recipe.ddp.fsdp_manual_registration = True
 
     recipe.model.init_model_with_meta_device = True
     recipe.model.gradient_accumulation_fusion = True
@@ -166,7 +172,7 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
 
-    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp)
+    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp, nccl_ub=settings.nccl_ub)
     _set_cuda_graph_overrides(
         cfg,
         cuda_graph_impl=settings.cuda_graph_impl,
@@ -206,7 +212,7 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
 
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
-    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
         cuda_graph_impl=args.cuda_graph_impl,
@@ -300,6 +306,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     vp_size = args.virtual_pipeline_model_parallel_size
     if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+
+    if args.pytorch_profiler:
+        recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
 
     return recipe
 

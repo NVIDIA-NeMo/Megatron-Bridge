@@ -22,6 +22,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 from .nemotronh_workload_base_configs import (
     NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_B300_FP8_CS,
     NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS,
     NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS,
     NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS,
@@ -55,6 +56,21 @@ def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16", mock: bool = Tr
 def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
     base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS
+    precision_config = get_precision_config(precision)
+
+    cfg = nemotronh_56b_pretrain_config(
+        mock=mock,
+        precision_config=precision_config,
+    )
+    set_nemotronh_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def nemotronh_56b_pretrain_config_b300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """B300, baseline config."""
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_B300_FP8_CS
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(

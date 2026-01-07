@@ -168,7 +168,7 @@ def dgxc_executor(
     num_gpus_per_node: int,
     wandb_key: str = None,
     hf_token: str = None,
-    custom_env_vars: List[str] = None,
+    custom_env_vars: Dict[str, str] = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):

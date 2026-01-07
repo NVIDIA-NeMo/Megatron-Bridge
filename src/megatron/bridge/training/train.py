@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -393,6 +394,11 @@ def train(
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
+
+        # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
+        if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
+            _maybe_register_fsdp_buffers(config, model)
+
         dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
@@ -1320,3 +1326,25 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     # Run GC to collect the freshed object
     gc.collect()
+
+
+def _maybe_register_fsdp_buffers(
+    config: ConfigContainer,
+    model: list[MegatronModule],
+) -> None:
+    """Manually register FSDP communication buffers if enabled."""
+    # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
+    if (
+        config.ddp.use_megatron_fsdp
+        and hasattr(config.ddp, "fsdp_manual_registration")
+        and config.ddp.fsdp_manual_registration
+    ):
+        print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
+        for model_chunk in model:
+            if isinstance(model_chunk, megatron_FSDP) and getattr(
+                model_chunk.ddp_config, "fsdp_manual_registration", False
+            ):
+                fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)
+                if fsdp_param_and_grad_buffer is not None:
+                    fsdp_param_and_grad_buffer.manual_buffer_registration()
+        print_rank_0("[Megatron-FSDP] Buffer registered")
