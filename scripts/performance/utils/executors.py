@@ -45,26 +45,7 @@ PERF_ENV_VARS = {
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",
-    "MBRIDGE_NUMA_DEBUG": "1",
 }
-
-
-def get_numa_cmd(gpu: str) -> str:
-    """Get the NUMA command for the given GPU."""
-    numa_divisor = 4
-    if gpu.lower() == "gb200":
-        numa_divisor = 2
-    elif gpu.lower() == "b300":
-        numa_cmd = f"""if [ $SLURM_LOCALID -lt 4 ]; then
-        CPUSET=0,1,16,17,32,33,48,49
-        else
-        CPUSET=64,65,80,81,96,97,112,113
-        fi
-        echo "DEBUG_NUMA: SLURM_LOCALID=$SLURM_LOCALID CPUSET=$CPUSET NUMA_DIVISOR={numa_divisor} MEMBIND=$((SLURM_LOCALID/{numa_divisor}))"
-        numactl --physcpubind=$CPUSET --membind=$((SLURM_LOCALID/{numa_divisor}))"""
-        return numa_cmd
-
-    return f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
 
 
 def slurm_executor(
