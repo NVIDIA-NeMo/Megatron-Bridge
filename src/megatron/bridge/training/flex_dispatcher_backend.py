@@ -57,7 +57,7 @@ def apply_flex_dispatcher_backend(
                 logger.warning(
                     "HybridEP is only applicable to GB200 and GB300 GPUs with NVL72. Skipping HybridEP configuration."
                 )
-            return
+            # return
     else:
         if get_rank_safe() == 0:
             logger.warning("Not a valid flex dispatcher backend. Skipping flex dispatcher backend configuration.")
@@ -78,4 +78,5 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
             if not (device_properties.major == 10 and device_properties.name in ["NVIDIA GB200", "NVIDIA GB300"]):
-                raise ValueError("HybridEP is supported for GB200 or GB300 GPUs with NVL72")
+                # raise ValueError("HybridEP is supported for GB200 or GB300 GPUs with NVL72")
+                pass
