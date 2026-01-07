@@ -21,7 +21,12 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
+from megatron.core.utils import (
+    get_batch_on_this_cp_rank,
+    get_model_config,
+    is_te_min_version,
+    unwrap_model,
+)
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
@@ -42,14 +47,22 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
     `get_batch_on_this_cp_rank` slicing which assumes contiguous sequence tokens.
     """
 
+    err_msg = "Please update Transformer Engine to >= 1.10 to use Context Parallel with THD format data"
     try:
         import transformer_engine_torch as tex
+
+        if not is_te_min_version("1.10.0"):
+            logger.error(err_msg)
+            raise RuntimeError(err_msg)
     except ModuleNotFoundError as e:
-        logger.error("Please update Transformer Engine to >= 1.10 to use Context Parallel with THD format data")
+        logger.error(err_msg)
         raise e
 
     cp_rank = parallel_state.get_context_parallel_rank()
-    cu_seqlens = batch["cu_seqlens"].squeeze()
+    cu_seqlens = batch["cu_seqlens"]
+    if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
+        raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
+    cu_seqlens = cu_seqlens.squeeze()
     cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")
     if cu_seqlens_unpadded is not None:
         batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded.squeeze()
