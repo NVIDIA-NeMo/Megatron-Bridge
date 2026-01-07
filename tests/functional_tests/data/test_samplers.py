@@ -51,7 +51,9 @@ class TestDataSamplers:
         cfg.train.train_iters = 1000
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None
+        )
 
         # Build dataloader with drop_last=True
         dataloader = build_pretraining_data_loader(
@@ -94,7 +96,9 @@ class TestDataSamplers:
         cfg.train.train_iters = 1000
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None
+        )
 
         # Build dataloader with data_sharding=True
         dataloader = build_pretraining_data_loader(
@@ -146,7 +150,9 @@ class TestDataSamplers:
         cfg.train.train_iters = 1000
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None
+        )
 
         # Build dataloader with dataloader_type="external"
         dataloader = build_pretraining_data_loader(
@@ -606,7 +612,9 @@ class TestBatchDataloaderIntegration:
         cfg.train.train_iters = 1000
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None
+        )
 
         with pytest.raises(RuntimeError, match="global_batch_size must be provided"):
             build_pretraining_data_loader(
