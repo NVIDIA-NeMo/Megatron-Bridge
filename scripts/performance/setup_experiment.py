@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import nemo_run as run
 from nemo_run.config import get_nemorun_home
 
 
@@ -34,9 +35,6 @@ except (ImportError, ModuleNotFoundError):
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
 
-import nemo_run as run
-
-
 try:
     import wandb
 
@@ -45,9 +43,11 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from .resiliency_plugins import FaultTolerancePlugin
 
 import logging
 
@@ -176,6 +176,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     enable_nsys: bool,
+    pytorch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
     pp_size: Optional[int],
@@ -186,7 +187,9 @@ def main(
     wandb_entity_name: str,
     profiling_start_step: int,
     profiling_stop_step: int,
+    record_memory_history: bool,
     profiling_gpu_metrics: bool,
+    profiling_ranks: Optional[List[int]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -195,8 +198,9 @@ def main(
     time_limit: str,
     container_image: str,
     custom_mounts: List[str],
-    custom_env_vars: List[str],
+    custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -263,6 +267,9 @@ def main(
         ]
     )
 
+    if nccl_ub:
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
+
     if not dgxc_cluster:
         executor = slurm_executor(
             gpu=gpu,
@@ -324,6 +331,28 @@ def main(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
+                profile_ranks=profiling_ranks,
+            )
+        )
+    if pytorch_profiler:
+        plugins.append(
+            PyTorchProfilerPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                profile_ranks=profiling_ranks,
+                record_memory_history=record_memory_history,
+            )
+        )
+
+    if use_recipes and dgxc_cluster is not None:
+        plugins.append(
+            FaultTolerancePlugin(
+                enable_ft_package=True,
+                calc_ft_timeouts=True,
+                num_in_job_restarts=10,
+                num_job_retries_on_failure=10,
+                initial_rank_heartbeat_timeout=1800,
+                rank_heartbeat_timeout=300,
             )
         )
 
@@ -381,7 +410,7 @@ def main(
                 is_testing_passed = True
                 break
 
-            log_file_paths = [str(Path(f"{job_dir}/log-*_0.out"))]
+            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
@@ -451,13 +480,17 @@ def main(
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
-
-    logger.info("Megatron-Bridge CI test job completed successfully!")
+    elif is_finished_experiment and not detach:
+        logger.info("Megatron-Bridge CI test job completed successfully!")
 
 
 if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
+
+    assert not (args.enable_nsys and args.pytorch_profiler), (
+        "Both NSys and PyTorch profiler cannot be enabled at the same time"
+    )
 
     # probably better to use parser.parse_args() and make unknowns an error,
     # but for now we'll just issue a warning.
@@ -476,6 +509,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
+        pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
@@ -486,7 +520,9 @@ if __name__ == "__main__":
         wandb_entity_name=args.wandb_entity_name,
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
+        record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
+        profiling_ranks=args.profiling_ranks,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
@@ -497,6 +533,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,

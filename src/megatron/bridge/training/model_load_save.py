@@ -377,6 +377,9 @@ def load_megatron_model(
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    if use_cpu_init:
+        model_cfg.fp8 = None
+        model_cfg.fp8_param = False
 
     # Apply model-parallel overrides if provided
     if mp_overrides:

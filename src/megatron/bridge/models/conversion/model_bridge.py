@@ -446,7 +446,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 if isinstance(adapter, ModuleDict):
                     adapter_name = local_param_name.removeprefix(local_base_prefix + ".adapter.").split(".")[0]
                     adapter = adapter[adapter_name]
-                input_is_parallel, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
+                input_is_parallel, _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(to_wrap)
                 global_param_objects.append(
                     (
                         global_base_name,
@@ -687,15 +687,19 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return hf_weights
 
     def maybe_modify_converted_hf_weight(
-        self, task: WeightConversionTask, converted_weights_dict: Dict[str, torch.Tensor]
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         """Modify the converted weights after conversion. By default, no modification is done.
         This function can be overridden by subclasses to postprocess the converted weights, such as merging the
         weights of multiple experts or quantizing the weights.
 
         Args:
-            task: The WeightConversionTask object
+            task: The WeightConversionTask object.
             converted_weights_dict: The converted weights dictionary.
+            hf_state_dict: The HuggingFace state dict accessor for expected-key checks.
 
         Returns:
             The modified weights dictionary.
@@ -947,10 +951,15 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+
+        hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
+
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
-                task, converted_weights_dict
+                task,
+                converted_weights_dict,
+                hf_state_dict,
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
