@@ -33,7 +33,7 @@ def tokenize_dataset(
     max_seq_length: int,
     seed: int,
     dataset_kwargs: dict | None = None,
-    context_parallel_size: int = 1,
+    pad_seq_to_mult: int | None = 1,
 ):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
@@ -46,8 +46,8 @@ def tokenize_dataset(
         seed (int): Random seed for shuffling the dataset.
         dataset_kwargs (dict | None): Additional keyword arguments to pass to create_sft_dataset.
             Can include 'chat', 'use_hf_tokenizer_chat_template', 'tool_schemas', etc.
-        context_parallel_size (int): Context parallel world size. When >1, samples are
-            pre-padded to keep lengths divisible by (context_parallel_size * 2) for THD.
+        pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
+            preparation (e.g., set to 2 * context_parallel_size for THD CP).
 
     Returns:
         np.ndarray: A NumPy array containing the tokenized data.
@@ -69,12 +69,11 @@ def tokenize_dataset(
         if hasattr(tokenizer, "_tokenizer"):
             tokenizer._tokenizer.chat_template = chat_template
 
-    cp_size = max(1, context_parallel_size)
-    pad_seq_length_to_mult = 16
-    if cp_size > 1:
-        # For THD/context-parallel, each packed sample needs to align to 2 * cp_size
-        # to satisfy tex.thd_get_partitioned_indices requirements.
-        pad_seq_length_to_mult = max(pad_seq_length_to_mult, cp_size * 2)
+    if pad_seq_to_mult is not None and pad_seq_to_mult <= 0:
+        raise ValueError("pad_seq_to_mult must be a positive integer when provided.")
+
+    # Keep the historical minimum of 16 unless a larger multiple is requested.
+    pad_seq_length_to_mult = 1 if pad_seq_to_mult is None else max(1, pad_seq_to_mult)
 
     dataset = create_sft_dataset(
         path=path,
@@ -91,13 +90,12 @@ def tokenize_dataset(
     max_seq_length = dataset.max_seq_length
     dataset = np.array([dataset[i] for i in range(len(dataset))])
 
-    if cp_size > 1:
+    if pad_seq_to_mult > 1:
 
         def pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id):
             """
             Pad each individual data point to the length of max_length_to_pad.
-            This keeps packed samples divisible by (cp_size * 2) so CP slicing works
-            with THD kernels.
+            This keeps packed samples divisible by the requested multiple (used for CP/THD).
             """
             assert max_seq_length >= max_length_to_pad
             for key, val in data.items():
@@ -133,7 +131,7 @@ def prepare_packed_sequence_data(
     seed: int | None = 0,
     packing_algorithm: str = "first_fit_shuffle",
     dataset_kwargs: dict | None = None,
-    context_parallel_size: int = 1,
+    pad_seq_to_mult: int | None = 1,
 ):
     """
     Prepares a packed sequence dataset from a given input file and saves it to an output file.
@@ -150,8 +148,8 @@ def prepare_packed_sequence_data(
                 currently supports "first_fit_shuffle" and "first_fit_decreasing".
         dataset_kwargs (dict | None): Additional keyword arguments to pass to create_sft_dataset.
             Enables packing with chat templates, tool schemas, etc.
-        context_parallel_size (int): Context parallel world size. When >1, samples are
-            pre-padded for THD/context-parallel alignment.
+        pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
+            preparation (e.g., set to 2 * context_parallel_size for THD CP).
 
     Returns:
         None: Saves the packed sequence data to the specified output path.
@@ -163,7 +161,7 @@ def prepare_packed_sequence_data(
         max_seq_length,
         seed,
         dataset_kwargs,
-        context_parallel_size=context_parallel_size,
+        pad_seq_to_mult=pad_seq_to_mult,
     )
     sequences, histogram = create_hist(dataset, max_seq_length)
 
@@ -241,11 +239,10 @@ class PackedSequenceSpecs:
     """
     If True, pad cu_seqlens to a constant size, which is required for use with cudagraphs.
     """
-
-    context_parallel_size: int = 1
+    pad_seq_to_mult: int | None = 1
     """
-    Context parallel world size. When >1, packed data is pre-padded to keep each
-    packed sample length divisible by (context_parallel_size * 2) for THD kernels.
+    Optional multiple to pad each sample to when generating packed datasets.
+    For THD/context parallel, set to (context_parallel_size * 2) to keep samples divisible.
     """
 
     def __post_init__(self):
@@ -274,3 +271,6 @@ class PackedSequenceSpecs:
             assert self.packed_val_data_path.exists(), (
                 f"packed validation data file does not exist: {self.packed_val_data_path}"
             )
+
+        if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:
+            raise ValueError("pad_seq_to_mult must be a positive integer when provided.")

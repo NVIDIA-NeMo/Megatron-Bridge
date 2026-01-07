@@ -86,7 +86,7 @@ class TestPeftSftExample:
             packed_sequence_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
-                context_parallel_size=cfg.model.context_parallel_size,
+                pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
         )
 
