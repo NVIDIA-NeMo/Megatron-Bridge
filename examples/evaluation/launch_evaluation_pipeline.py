@@ -40,7 +40,7 @@ def get_parser():
     )
     parser.add_argument("--port", type=int, help="Server port to use for evaluation", default=8000)
     parser.add_argument("--gpus_per_node", type=int, help="Number of GPUs per node", default=8)
-    parser.add_argument("--nodes", type=int, help="Number of nodes to use for evaluation", default=1)
+    parser.add_argument("--num_gpus", type=int, help="Number of nodes to use for evaluation", default=8)
     parser.add_argument("--num_replicas", type=int, default=1, help="Num of replicas for Ray server")
     parser.add_argument(
         "--tensor_model_parallel_size",
@@ -123,17 +123,22 @@ def get_parser():
         help="Dry run the experiment.",
         default=False,
     )
+    parser.add_argument(
+        "--custom_mounts", type=list_of_strings, help="Comma separated string of mounts", default=[], required=False
+    )
+    parser.add_argument(
+        "--custom_env_vars",
+        type=to_dict,
+        help="Comma separated string of environment variables",
+        default={},
+        required=False,
+    )
     parser.add_argument("--account", type=str, help="Cluster account to run test")
     parser.add_argument("--partition", type=str, help="Cluster partition to run test")
     parser.add_argument("--time_limit", type=str, default="04:00:00", help="Time limit of run")
     parser.add_argument("--container_image", type=str, default="", help="Container image to run")
-    parser.add_argument("--custom_mounts", type=list_of_strings, help="Comma separated string of mounts", default=[])
-    parser.add_argument(
-        "custom_env_vars",
-        type=to_dict,
-        help="Comma separated string of environment variables",
-        default={},
-    )
+    parser.add_argument("--hf_token", type=str, help="HuggingFace token", default=None)
+    parser.add_argument("--wandb_key", type=str, help="WandB key", default=None)
     return parser
 
 
@@ -251,7 +256,7 @@ def main(args):
         "megatron_checkpoint": args.megatron_checkpoint,
         "host": args.host,
         "port": args.port,
-        "num_gpus": args.devices,
+        "num_gpus": args.num_gpus,
         "num_replicas": args.num_replicas,
         "tensor_model_parallel_size": args.tensor_model_parallel_size,
         "pipeline_model_parallel_size": args.pipeline_model_parallel_size,
@@ -280,17 +285,18 @@ def main(args):
     executor = slurm_executor(
         account=args.account,
         partition=args.partition,
-        log_dir=args.log_dir,
         nodes=-(args.num_gpus // -args.gpus_per_node),
         num_gpus_per_node=args.gpus_per_node,
-        time_limit=args.time,
+        time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
-        custom_srun_args=args.custom_srun_args,
         hf_token=args.hf_token,
         wandb_key=args.wandb_key,
     )
+
+    print(executor)
+    print(deploy_run_script)
 
     executor_eval = executor.clone()
     executor_eval.srun_args = [
