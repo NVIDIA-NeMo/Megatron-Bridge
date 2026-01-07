@@ -17,6 +17,7 @@ import tempfile
 from unittest.mock import patch
 
 import pytest
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.nemotronh import (
     NemotronHModelProvider4B,
@@ -199,6 +200,7 @@ class TestNemotronH56B:
         assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
+        assert config.model.attention_backend == AttnBackend.auto
 
         # Check tokenizer (default is NullTokenizer for pretraining)
         assert config.tokenizer.tokenizer_type == "NullTokenizer"

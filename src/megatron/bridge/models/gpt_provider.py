@@ -95,9 +95,13 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
-    use_arbitrary_attention_mask = parallel_state.get_context_parallel_world_size() == 1
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
+    use_arbitrary_attention_mask = (
+        config.use_arbitrary_attention_mask
+        if config.use_arbitrary_attention_mask is not None
+        else parallel_state.get_context_parallel_world_size() == 1
+    )
     return get_gpt_modelopt_spec(
         config=config,
         local_core_attention=False,
@@ -183,6 +187,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
     # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
     restore_modelopt_state: bool = False
+
+    # Whether to use AttnMaskType.arbitrary in the ModelOpt spec.
+    # If None, it will be determined by the default behavior (arbitrary only when context_parallel==1).
+    # Set to False when using packed/remove-padding (THD) data format.
+    use_arbitrary_attention_mask: Optional[bool] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
@@ -337,7 +346,8 @@ class GPTDistillationProvider(GPTModelProvider):
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
 
         student_model = super().provide(pre_process, post_process, vp_stage)
-        teacher_model = self.teacher.provide(pre_process, post_process, vp_stage)
+        # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
+        teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
 
         kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
         modelopt_cfg = {

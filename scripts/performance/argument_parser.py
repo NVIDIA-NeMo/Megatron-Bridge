@@ -32,9 +32,21 @@ def list_of_strings(arg):
     return arg.split(",")
 
 
+def list_of_ints(arg):
+    """Split a comma-separated string into a list of integers."""
+    if arg is None:
+        raise argparse.ArgumentTypeError("empty argument list")
+    try:
+        result = [int(p, 10) for p in list_of_strings(arg)]
+    except Exception:
+        raise argparse.ArgumentTypeError(f"invalid comma-separated integer list: {arg!r}") from None
+
+    return result
+
+
 def to_dict(arg):
     """Split a comma-separated string into a dictionary of key-value pairs."""
-    return dict(item.split("=") for item in arg.split(";"))
+    return dict(item.split("=") for item in arg.split(","))
 
 
 def lower_str(arg):
@@ -119,6 +131,8 @@ def parse_additional_slurm_params(params_str):
             # Boolean flag (no value)
             params[part] = True
 
+    return params if params else None
+
 
 def parse_cli_args():
     """
@@ -147,12 +161,6 @@ def parse_cli_args():
         action="store_true",
         help="Use library recipes. Disabled by default.",
         default=False,
-    )
-    parser.add_argument(
-        "-hf",
-        "--hf_token",
-        type=str,
-        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
     )
     parser.add_argument(
         "-nh",
@@ -185,6 +193,13 @@ def parse_cli_args():
         type=int,
         help="Number of gpus.",
         required=True,
+    )
+    parser.add_argument(
+        "-d",
+        "--dryrun",
+        help="If true, prints sbatch script to terminal without launching experiment.",
+        required=False,
+        action="store_true",
     )
 
     # Training
@@ -245,14 +260,14 @@ def parse_cli_args():
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
-    parser.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
+    data_args.add_argument("--index_mapping_dir", type=str, help="Index mapping directory (for rp2 dataset)")
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
-    data_args.add_argument(
+    tokenizer_args.add_argument(
         "--tokenizer_type",
         type=str,
         choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
@@ -261,6 +276,12 @@ def parse_cli_args():
         "--tokenizer_model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     tokenizer_args.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
+    tokenizer_args.add_argument(
+        "-hf",
+        "--hf_token",
+        type=str,
+        help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
+    )
 
     # Parallelism
     parallelism_args = parser.add_argument_group("Parallelism arguments")
@@ -285,8 +306,9 @@ def parse_cli_args():
     parallelism_args.add_argument(
         "-vp",
         "--virtual_pipeline_model_parallel_size",
-        type=int,
+        type=lambda x: None if x == "None" else int(x),
         help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
+        default=-1,
     )
     parallelism_args.add_argument(
         "-ep",
@@ -356,7 +378,7 @@ def parse_cli_args():
         "--custom_env_vars",
         type=to_dict,
         help="Comma separated string of environment variables",
-        default=[],
+        default={},
     )
     slurm_args.add_argument(
         "-cs",
@@ -364,6 +386,13 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated string of srun arguments",
         default=[],
+    )
+    slurm_args.add_argument(
+        "--gres",
+        type=str,
+        help="Slurm generic resources to request (e.g., 'gpu:4').",
+        required=False,
+        default=None,
     )
     slurm_args.add_argument(
         "--additional_slurm_params",
@@ -433,7 +462,7 @@ def parse_cli_args():
         type=str,
         choices=["h100", "b200", "gb200", "gb300"],
         help="Target gpu type.",
-        required=False,
+        required=True,
     )
     performance_args.add_argument(
         "-c",
@@ -458,15 +487,47 @@ def parse_cli_args():
         action="store_true",
     )
     performance_args.add_argument(
-        "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=10
+        "-pyp",
+        "--pytorch_profiler",
+        type=bool_arg,
+        help="Enable PyTorch profiler. Disabled by default",
+        required=False,
+        default=False,
     )
     performance_args.add_argument(
-        "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
+        "--profiling_start_step",
+        type=int,
+        help="Defines start step for profiling",
+        required=False,
+        default=10,
+    )
+    performance_args.add_argument(
+        "--profiling_stop_step",
+        type=int,
+        help="Defines stop step for profiling",
+        required=False,
+        default=11,
+    )
+    performance_args.add_argument(
+        "-mh",
+        "--record_memory_history",
+        type=bool_arg,
+        help="Enable PyTorch profiler memory history recording. Enabled by default (if pytorch_profiler is enabled)",
+        required=False,
+        default=True,
     )
     performance_args.add_argument(
         "--profiling_gpu_metrics",
         help="Enable nsys gpu metrics. Disabled by default.",
         action="store_true",
+    )
+    performance_args.add_argument(
+        "--profiling_ranks",
+        type=list_of_ints,
+        metavar="N[,N...]",
+        help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
     )
     performance_args.add_argument(
         "--use_tokendrop",
@@ -477,6 +538,12 @@ def parse_cli_args():
     performance_args.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
+        type=bool_arg,
+        required=False,
+    )
+    performance_args.add_argument(
+        "--nccl_ub",
+        help="Enable NCCL user buffer for FSDP communication. Disabled by default.",
         type=bool_arg,
         required=False,
     )
@@ -525,7 +592,7 @@ def parse_cli_args():
         "-wdk",
         "--wandb_key",
         type=str,
-        help="wandb key. Needed for wandb logger projetion to server",
+        help="wandb key. Needed for wandb logger projection to server",
         required=False,
     )
     logging_args.add_argument(
@@ -560,17 +627,9 @@ def parse_cli_args():
         "-l",
         "--log_dir",
         type=str,
-        help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()}",
+        help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()} or NEMORUN_HOME envvar",
         required=False,
-        default=get_nemorun_home(),
-    )
-
-    parser.add_argument(
-        "-d",
-        "--dryrun",
-        help="If true, prints sbatch script to terminal without launching experiment.",
-        required=False,
-        action="store_true",
+        default=None,
     )
 
     # Testing parameters

@@ -376,6 +376,7 @@ def _mamba2_common(
             else TokenizerConfig(
                 tokenizer_type="HuggingFaceTokenizer",
                 tokenizer_model=tokenizer_model or "EleutherAI/gpt-neox-20b",
+                hf_tokenizer_kwargs={"use_fast": True},
             )
         ),
         checkpoint=CheckpointConfig(
