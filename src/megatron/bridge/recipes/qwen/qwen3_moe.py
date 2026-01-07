@@ -556,9 +556,12 @@ def _qwen3_moe_finetune_common(
         min_lr=min_lr,
     )
 
+    pad_seq_to_mult = (
+        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
+    )
     # Dataset configuration (SQuAD by default)
     dataset_config = default_squad_config(
-        seq_length=seq_length, packed_sequence=packed_sequence, context_parallel_size=model_cfg.context_parallel_size
+        seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
     )
 
     # W&B logger configuration

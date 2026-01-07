@@ -454,7 +454,8 @@ def _qwen3_next_finetune_common(
             do_test=True,
         )
     else:
-        dataset = default_squad_config(seq_length, packed_sequence, context_parallel_size)
+        pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
+        dataset = default_squad_config(seq_length, packed_sequence, pad_seq_to_mult)
 
     # Create model config
     bridge = AutoBridge.from_hf_pretrained(hf_path)

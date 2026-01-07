@@ -281,20 +281,24 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root,
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=False,
-            context_parallel_size=recipe.model.context_parallel_size,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root,
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=True,
-            context_parallel_size=recipe.model.context_parallel_size,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
