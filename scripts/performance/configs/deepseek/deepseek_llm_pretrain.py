@@ -155,16 +155,6 @@ def deepseek_v3_pretrain_config_b300(precision: str = "bf16", mock: bool = True)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
-
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
