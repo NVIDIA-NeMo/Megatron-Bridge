@@ -52,7 +52,7 @@ def slurm_executor(
         ntasks_per_node=num_gpus_per_node,
         container_image=container_image,
         container_mounts=custom_mounts,
-        # env_vars=env_vars,
+        env_vars=env_vars,
         srun_args=[
             "--mpi=pmix",
             "--no-container-mount-home",
