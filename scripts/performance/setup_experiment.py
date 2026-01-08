@@ -269,7 +269,7 @@ def main(
     )
 
     if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1", "NCCL_DEBUG": "INFO", "NCCL_DEBUG_SUBSYS": "TUNING"})
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
     if use_sharp:
         custom_env_vars.update({"NCCL_SHARP_GROUP_SIZE_THRESH": "1"})
