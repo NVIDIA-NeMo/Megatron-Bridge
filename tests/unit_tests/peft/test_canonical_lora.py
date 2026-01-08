@@ -308,9 +308,10 @@ class TestCanonicalLoRA:
         # Check adapter properties
         adapter = transformed_model.linear_proj
         assert hasattr(adapter, "dim")
+        assert hasattr(adapter, "alpha")
         assert hasattr(adapter, "scale")
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert hasattr(adapter, "dropout")
 
         assert adapter.dim == 16
@@ -332,8 +333,8 @@ class TestCanonicalLoRA:
             assert not linear_adapter.bias.requires_grad
 
         # Check that LoRA parameters are trainable
-        assert linear_adapter.lora_a.weight.requires_grad
-        assert linear_adapter.lora_b.weight.requires_grad
+        assert linear_adapter.linear_in.weight.requires_grad
+        assert linear_adapter.linear_out.weight.requires_grad
 
     def test_canonical_lora_forward_pass(self):
         """Test that CanonicalLoRA adapted models can perform forward passes."""
@@ -433,13 +434,13 @@ class TestCanonicalLoRA:
         adapted_model2 = lora2(model2, training=True)
 
         # LoRA weights should be identical with same seed
-        lora_a_1 = adapted_model1.linear_proj.lora_a.weight.data
-        lora_a_2 = adapted_model2.linear_proj.lora_a.weight.data
-        assert torch.equal(lora_a_1, lora_a_2)
+        linear_in_1 = adapted_model1.linear_proj.linear_in.weight.data
+        linear_in_2 = adapted_model2.linear_proj.linear_in.weight.data
+        assert torch.equal(linear_in_1, linear_in_2)
 
-        lora_b_1 = adapted_model1.linear_proj.lora_b.weight.data
-        lora_b_2 = adapted_model2.linear_proj.lora_b.weight.data
-        assert torch.equal(lora_b_1, lora_b_2)
+        linear_out_1 = adapted_model1.linear_proj.linear_out.weight.data
+        linear_out_2 = adapted_model2.linear_proj.linear_out.weight.data
+        assert torch.equal(linear_out_1, linear_out_2)
 
     def test_canonical_lora_transform_idempotent(self):
         """Test that CanonicalLoRA transform is idempotent (applying twice has same effect as applying once)."""
@@ -474,10 +475,10 @@ class TestCanonicalLoRA:
 
         # Verify the LoRA parameters are identical
         assert torch.equal(
-            first_transform.linear_proj.lora_a.weight.data, second_transform.linear_proj.lora_a.weight.data
+            first_transform.linear_proj.linear_in.weight.data, second_transform.linear_proj.linear_in.weight.data
         )
         assert torch.equal(
-            first_transform.linear_proj.lora_b.weight.data, second_transform.linear_proj.lora_b.weight.data
+            first_transform.linear_proj.linear_out.weight.data, second_transform.linear_proj.linear_out.weight.data
         )
 
     def test_canonical_lora_transform_idempotent_fused_layers(self):

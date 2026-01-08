@@ -47,6 +47,15 @@ GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16 = replace(
 )
 
 
+GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16 = replace(
+    BASE_GPT_OSS_120B_CONFIG,
+    expert_model_parallel_size=64,
+    micro_batch_size=4,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+)
+
+
 GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16 = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
@@ -65,6 +74,7 @@ GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16 = replace(
 __all__ = [
     "GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16",
     "GPT_OSS_120B_PRETRAIN_CONFIG_GB200_BF16",
+    "GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16",
     "GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16",
     "GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16",
 ]
