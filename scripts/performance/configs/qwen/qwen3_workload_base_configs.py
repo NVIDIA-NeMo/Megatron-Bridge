@@ -27,7 +27,6 @@ BASE_QWEN3_235B_A22B_CONFIG = WorkloadBaseConfig(
 BASE_QWEN3_30B_A3B_CONFIG = WorkloadBaseConfig(
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
-    global_batch_size=512,
 )
 
 BASE_QWEN3_NEXT_80B_A3B_CONFIG = WorkloadBaseConfig(
@@ -44,7 +43,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_BF16 = replace(
     num_gpus=64,
     tensor_model_parallel_size=1,
     expert_model_parallel_size=64,
-    global_batch_size=1024,
+    global_batch_size=512,
     micro_batch_size=2,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
@@ -57,7 +56,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS = replace(
     num_gpus=64,
     tensor_model_parallel_size=1,
     expert_model_parallel_size=64,
-    global_batch_size=1024,
+    global_batch_size=512,
     micro_batch_size=2,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
@@ -73,7 +72,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     num_gpus=64,
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
-    global_batch_size=1024,
+    global_batch_size=512,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
@@ -85,7 +84,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_CS = replace(
     num_gpus=64,
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
-    global_batch_size=1024,
+    global_batch_size=512,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
@@ -101,7 +100,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_BF16 = replace(
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
-    global_batch_size=1024,
+    global_batch_size=512,
     moe_a2a_overlap=True,
 )
 
@@ -112,7 +111,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
-    global_batch_size=1024,
+    global_batch_size=512,
     moe_a2a_overlap=True,
 )
 
@@ -126,7 +125,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_BF16 = replace(
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
-    global_batch_size=1024,
+    global_batch_size=512,
     moe_a2a_overlap=True,
 )
 
@@ -137,7 +136,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_CS = replace(
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=8,
-    global_batch_size=1024,
+    global_batch_size=512,
     moe_a2a_overlap=True,
 )
 
@@ -176,6 +175,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_BF16 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=8,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
@@ -186,6 +186,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_FP8_CS = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=8,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
@@ -199,6 +200,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=4,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
@@ -209,6 +211,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_FP8_CS = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=4,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
@@ -219,6 +222,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=4,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
@@ -229,6 +233,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_BF16 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=8,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
@@ -239,6 +244,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_FP8_CS = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     micro_batch_size=8,
+    global_batch_size=256,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
@@ -251,6 +257,8 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_FP8_MX = QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_F
 QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_BF16 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
+    micro_batch_size=4,
+    global_batch_size=256,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
@@ -259,6 +267,8 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_BF16 = replace(
 QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_FP8_CS = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
+    micro_batch_size=4,
+    global_batch_size=256,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
@@ -270,6 +280,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_FP8_MX = QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_F
 QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_BF16 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=16,
+    global_batch_size=512,
     pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=12,
     moe_a2a_overlap=True,
@@ -281,6 +292,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_BF16 = replace(
 QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_FP8_CS = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=16,
+    global_batch_size=512,
     pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=12,
     moe_a2a_overlap=True,
