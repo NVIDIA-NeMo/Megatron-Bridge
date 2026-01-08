@@ -79,19 +79,19 @@ class TestGPTModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
+        # Provide minimal pg_collection for provider
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+
         # Mock dependencies
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    result = provider.provide()
+                result = provider.provide(pre_process=True, post_process=True)
 
-                    assert result == mock_instance
-                    mock_model.assert_called_once()
+                assert result == mock_instance
+                mock_model.assert_called_once()
 
     def test_provide_method_with_vocab_padding(self):
         """Test provide method calculates padded vocab size when padding is enabled."""
@@ -105,23 +105,22 @@ class TestGPTModelProvider:
             should_pad_vocab=True,  # Enable padding
         )
 
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch(
-                "megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=50176
-            ) as mock_calc_vocab:
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
-                    _ = provider.provide()
+        with patch(
+            "megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=50176
+        ) as mock_calc_vocab:
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    # Verify calculate_padded_vocab_size was called with correct parameters
-                    mock_calc_vocab.assert_called_once_with(50000, 128, 8)
-                    # Verify model was created with padded vocab size
-                    call_kwargs = mock_model.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 50176
+                _ = provider.provide(pre_process=True, post_process=True)
+
+                # Verify calculate_padded_vocab_size was called with correct parameters
+                mock_calc_vocab.assert_called_once_with(50000, 128, 8)
+                # Verify model was created with padded vocab size
+                call_kwargs = mock_model.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 50176
 
     def test_provide_method_no_vocab_padding(self):
         """Test provide method uses original vocab size when padding is disabled."""
@@ -135,21 +134,20 @@ class TestGPTModelProvider:
             should_pad_vocab=False,  # Disable padding
         )
 
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size") as mock_calc_vocab:
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
-                    _ = provider.provide()
+        with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size") as mock_calc_vocab:
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    # Verify calculate_padded_vocab_size was NOT called
-                    mock_calc_vocab.assert_not_called()
-                    # Verify model was created with original vocab size
-                    call_kwargs = mock_model.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 50000
+                _ = provider.provide(pre_process=True, post_process=True)
+
+                # Verify calculate_padded_vocab_size was NOT called
+                mock_calc_vocab.assert_not_called()
+                # Verify model was created with original vocab size
+                call_kwargs = mock_model.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 50000
 
     def test_provide_method_pipeline_stages(self):
         """Test provide method respects pipeline stage arguments."""
@@ -162,21 +160,19 @@ class TestGPTModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_gpt:
-                    # Test default behavior - uses parallel_state
-                    mock_ps.is_pipeline_first_stage.return_value = False
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_gpt.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
-                    provider.provide()
+        with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_gpt:
+                mock_instance = Mock()
+                mock_gpt.return_value = mock_instance
 
-                    # Check the model was called with pipeline stages from parallel_state
-                    call_kwargs = mock_gpt.call_args.kwargs
-                    assert call_kwargs["pre_process"] is False
-                    assert call_kwargs["post_process"] is True
+                provider.provide(pre_process=False, post_process=True)
+
+                # Check the model was called with provided pipeline stages
+                call_kwargs = mock_gpt.call_args.kwargs
+                assert call_kwargs["pre_process"] is False
+                assert call_kwargs["post_process"] is True
 
     def test_fp8_configuration(self):
         """Test GPTModelProvider with FP8 configuration."""
@@ -272,11 +268,8 @@ class TestGPTModelProvider:
 
         assert provider.attention_softmax_in_fp32 is True
 
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
-    def test_provide_with_generation_config(self, mock_parallel_state):
+    def test_provide_with_generation_config(self):
         """Test provide method with generation configuration."""
-        mock_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_parallel_state.is_pipeline_last_stage.return_value = True
 
         generation_config = {"max_length": 100, "temperature": 0.7}
 
@@ -290,7 +283,7 @@ class TestGPTModelProvider:
 
         assert provider.generation_config == generation_config
 
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
+    @patch("megatron.core.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
     def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
         """Test quantization_layer_spec function."""
@@ -523,19 +516,15 @@ class TestGPTDistillationProvider:
             )
 
     @patch("modelopt.torch.distill.plugins.megatron.parallel_state")
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024)
     @patch("megatron.bridge.models.gpt_provider.MCoreGPTModel")
     def test_provide_method_creates_distillation_model(
         self,
         mock_mcore_gpt,
         mock_calc_vocab,
-        mock_parallel_state,
         mock_mtd_parallel_state,
     ):
         """Test provide method creates a ModelOpt DistillationModel."""
-        mock_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_parallel_state.is_pipeline_last_stage.return_value = True
         mock_mtd_parallel_state.is_pipeline_first_stage.return_value = True
         mock_mtd_parallel_state.is_pipeline_last_stage.return_value = True
 
@@ -563,6 +552,11 @@ class TestGPTDistillationProvider:
             teacher=teacher,
             kd_config=ModelOptDistillConfig(),
         )
+
+        # Attach minimal pg_collection needed by provider.provide
+        pg = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+        teacher._pg_collection = pg
+        student._pg_collection = pg
 
         # Mock the provide method calls and modelopt functions
         mock_student_model = Mock()
