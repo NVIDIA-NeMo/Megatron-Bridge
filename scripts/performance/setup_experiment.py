@@ -273,8 +273,8 @@ def main(
 
     if use_sharp:
         custom_env_vars.update({"NCCL_SHARP_GROUP_SIZE_THRESH": "1"})
-    
-    slurm_network = 'sharp' if use_sharp else None
+
+    slurm_network = "sharp" if use_sharp else None
 
     if not dgxc_cluster:
         executor = slurm_executor(
