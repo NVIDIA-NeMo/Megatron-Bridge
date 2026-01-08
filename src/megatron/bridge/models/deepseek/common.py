@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKLayerNormMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
