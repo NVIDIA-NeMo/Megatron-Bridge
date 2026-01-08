@@ -24,6 +24,18 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def _is_hybridep_supported_gpu(device_name: str) -> bool:
+    """Check if the GPU supports HybridEP."""
+    supported_gpus = ["NVIDIA GB200", "NVIDIA GB300", "NVIDIA B200"]
+    # Check exact match first
+    if device_name in supported_gpus:
+        return True
+    # Check for H100 variants (e.g., "NVIDIA H100 80GB HBM3", "NVIDIA H100 PCIe", etc.)
+    if "H100" in device_name:
+        return True
+    return False
+
+
 def apply_flex_dispatcher_backend(
     model_config: TransformerConfig,
     moe_flex_dispatcher_backend: str | None = None,
@@ -31,9 +43,10 @@ def apply_flex_dispatcher_backend(
     """Apply DeepEP or HybridEP optimizations to the model config.
 
     DeepEP is applicable only to MoE models on Ampere, Hopper, and Blackwell GPUs.
-    HybridEP is applicable to MoE models on Blackwell GPUs with NVLink:
+    HybridEP is applicable to MoE models on GPUs with NVLink:
       - GB200/GB300 with NVL72 topology
       - B200 with NVL8 topology
+      - H100 with NVL8 topology
     """
     num_moe_experts = getattr(model_config, "num_moe_experts", None)
     if num_moe_experts is None or num_moe_experts == 0:
@@ -54,11 +67,10 @@ def apply_flex_dispatcher_backend(
                 )
             return
     elif moe_flex_dispatcher_backend == "hybridep":
-        supported_hybridep_gpus = ["NVIDIA GB200", "NVIDIA GB300", "NVIDIA B200"]
-        if device_properties.name not in supported_hybridep_gpus:
+        if not _is_hybridep_supported_gpu(device_properties.name):
             if get_rank_safe() == 0:
                 logger.warning(
-                    f"HybridEP is only applicable to {supported_hybridep_gpus}. "
+                    f"HybridEP is only applicable to GB200, GB300, B200, and H100 GPUs. "
                     f"Current GPU: {device_properties.name}. Skipping HybridEP configuration."
                 )
             return
@@ -81,6 +93,5 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
                 raise ValueError("DeepEP is supported for Ampere, Hopper, and Blackwell (only B200 and B300) GPUs")
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
-            supported_hybridep_gpus = ["NVIDIA GB200", "NVIDIA GB300", "NVIDIA B200"]
-            if device_properties.name not in supported_hybridep_gpus:
-                raise ValueError(f"HybridEP is supported for {supported_hybridep_gpus}")
+            if not _is_hybridep_supported_gpu(device_properties.name):
+                raise ValueError("HybridEP is supported for GB200, GB300, B200, and H100 GPUs")

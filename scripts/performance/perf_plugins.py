@@ -296,8 +296,8 @@ class PerfEnvPlugin(Plugin):
         ep_size: int,
     ):
         if moe_flex_dispatcher_backend == "hybridep":
-            # B200 uses NVL8 topology, GB200/GB300 use NVL72 topology
-            if gpu == "b200":
+            # B200/H100 use NVL8 topology, GB200/GB300 use NVL72 topology
+            if gpu in ["b200", "h100"]:
                 nvl_domain_size = 8
                 use_mnnvl = "0"
             else:
