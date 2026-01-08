@@ -296,10 +296,18 @@ class PerfEnvPlugin(Plugin):
         ep_size: int,
     ):
         if moe_flex_dispatcher_backend == "hybridep":
-            assert ep_size <= 72, "ep_size must be less than or equal to 72"
-            executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
+            # B200 uses NVL8 topology, GB200/GB300 use NVL72 topology
+            if gpu == "b200":
+                nvl_domain_size = 8
+                use_mnnvl = "0"
+            else:
+                # GB200/GB300 use NVL72 topology
+                nvl_domain_size = 72
+                use_mnnvl = "1"
+            assert ep_size <= nvl_domain_size, f"ep_size must be less than or equal to {nvl_domain_size}"
+            executor.env_vars["NVLINK_DOMAIN_SIZE"] = str(nvl_domain_size)
             executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
-            executor.env_vars["USE_MNNVL"] = "1"
+            executor.env_vars["USE_MNNVL"] = use_mnnvl
 
     def _set_nccl_pp_comm_chunksize(
         self,
