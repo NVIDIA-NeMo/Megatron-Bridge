@@ -355,12 +355,12 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
             field_path = f"{path}.{field_name}" if path else field_name
             field_value = getattr(obj, field_name)
 
-            if _is_omegaconf_problematic(field_value):
-                excluded_fields[field_path] = field_value
-                logger.debug(f"Tracking excluded callable: {field_path}")
-            elif dataclasses.is_dataclass(field_value):
+            if dataclasses.is_dataclass(field_value):
                 nested_excluded = _track_excluded_fields(field_value, field_path)
                 excluded_fields.update(nested_excluded)
+            elif _is_omegaconf_problematic(field_value):
+                excluded_fields[field_path] = field_value
+                logger.debug(f"Tracking excluded callable: {field_path}")
             elif isinstance(field_value, dict):
                 for key, value in field_value.items():
                     if _is_omegaconf_problematic(value):
