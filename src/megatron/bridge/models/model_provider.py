@@ -444,6 +444,8 @@ class ModelParallelKwargs(TypedDict, total=False):
 
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
+    num_layers_in_first_pipeline_stage: int | None
+    num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
@@ -678,7 +680,11 @@ def _ddp_wrap(
         DP = DistributedDataParallel
 
     # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
-    with torch.cuda.stream(torch.cuda.Stream()):
+    #  this side-stream may be nested if being called from within the get_model function, but it
+    #  is here in case someone wants to use this directly outside of get_model.
+    ddp_stream = torch.cuda.Stream()
+    ddp_stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(ddp_stream):
         model = [
             DP(
                 config=get_model_config(model_chunk),
@@ -690,6 +696,8 @@ def _ddp_wrap(
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
+    # Critical: ensure side-stream work completes before touching params on default stream
+    torch.cuda.current_stream().wait_stream(ddp_stream)
 
     # Broadcast params from data parallel src rank to other data parallel ranks.
     if data_parallel_random_init:

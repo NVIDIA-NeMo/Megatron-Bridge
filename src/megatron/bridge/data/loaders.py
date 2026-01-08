@@ -334,7 +334,8 @@ def build_train_valid_test_data_iterators(
         train_data_iterator = None
 
     if valid_dataloader is not None:
-        valid_data_iterator = _get_iterator("cyclic", valid_dataloader)
+        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+        valid_data_iterator = _get_iterator(val_dataloader_type, valid_dataloader)
     else:
         valid_data_iterator = None
 
@@ -374,7 +375,7 @@ def setup_data_iterators(
         Each element can be a single iterator or a list of iterators if virtual
         pipeline parallelism is enabled.
     """
-    if cfg.model.virtual_pipeline_model_parallel_size is not None:
+    if cfg.model.virtual_pipeline_model_parallel_size is not None and cfg.dataset.dataloader_type != "batch":
         train_data_iterator = []
         valid_data_iterator = []
         test_data_iterator = []

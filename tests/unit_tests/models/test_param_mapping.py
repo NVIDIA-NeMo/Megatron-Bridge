@@ -23,11 +23,16 @@ from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     DirectMapping,
     GatedMLPMapping,
+    KVMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    merge_kv_biases,
+    merge_kv_weights,
     merge_qkv_biases,
     merge_qkv_weights,
+    split_kv_biases,
+    split_kv_weights,
     split_qkv_biases,
     split_qkv_weights,
 )
@@ -281,6 +286,19 @@ class TestHelperFunctions:
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
 
+    def test_kv_merge_split(self, transformer_config):
+        # k, v each [16, hidden_size] with hidden_size=32 in fixture
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+
+        merged = merge_kv_weights(transformer_config, k, v)
+        # Expect stacked along dim 0: (16 + 16, 32)
+        assert merged.shape == (32, 32)
+
+        k_s, v_s = split_kv_weights(transformer_config, merged)
+        assert torch.equal(k, k_s)
+        assert torch.equal(v, v_s)
+
 
 class TestQKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
@@ -298,6 +316,44 @@ class TestQKVMapping:
             mock_hf_to_megatron.assert_called_once()
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
+
+
+class TestKVMapping:
+    def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = KVMapping(megatron_param="kv.weight", k="k.weight", v="v.weight")
+        weights = {
+            "k": torch.randn(16, 32),
+            "v": torch.randn(16, 32),
+        }
+        megatron_module = MockModule(transformer_config, weight_shape=(32, 32))
+
+        with patch.object(mapping._tp_mapping, "hf_to_megatron") as mock_hf_to_megatron:
+            mapping.hf_to_megatron(weights, megatron_module)
+            mock_hf_to_megatron.assert_called_once()
+            merged_weight = mock_hf_to_megatron.call_args[0][0]
+            # Should match merge_kv_weights result and shape
+            expected = merge_kv_weights(transformer_config, weights["k"], weights["v"])
+            assert merged_weight.shape == (32, 32)
+            assert torch.equal(merged_weight, expected)
+
+    def test_megatron_to_hf(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = KVMapping(megatron_param="kv.weight", k="k.weight", v="v.weight")
+        # Construct packed KV via helper to guarantee split reversibility
+        k = torch.randn(16, 32)
+        v = torch.randn(16, 32)
+        packed_kv = merge_kv_weights(transformer_config, k, v)
+        megatron_module = MockModule(transformer_config, weight_shape=(32, 32))
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"kv.weight": packed_kv}):
+            result = mapping.megatron_to_hf(packed_kv, megatron_module)
+
+        assert "k.weight" in result and "v.weight" in result
+        assert result["k.weight"].shape == (16, 32)
+        assert result["v.weight"].shape == (16, 32)
+        assert torch.equal(result["k.weight"], k)
+        assert torch.equal(result["v.weight"], v)
 
 
 class TestGatedMLPMapping:
@@ -443,6 +499,19 @@ class TestMappingEdgeCases:
         # Test bias splitting
         q_split, k_split, v_split = split_qkv_biases(transformer_config, merged)
         assert torch.equal(q_bias, q_split)
+        assert torch.equal(k_bias, k_split)
+        assert torch.equal(v_bias, v_split)
+
+    def test_kv_bias_handling(self, transformer_config):
+        """Test KV helpers handle biases correctly."""
+        # num_query_groups=2, kv_channels=8 -> each bias length 16
+        k_bias = torch.randn(16)
+        v_bias = torch.randn(16)
+
+        merged = merge_kv_biases(transformer_config, k_bias, v_bias)
+        assert merged.shape == (32,)
+
+        k_split, v_split = split_kv_biases(transformer_config, merged)
         assert torch.equal(k_bias, k_split)
         assert torch.equal(v_bias, v_split)
 

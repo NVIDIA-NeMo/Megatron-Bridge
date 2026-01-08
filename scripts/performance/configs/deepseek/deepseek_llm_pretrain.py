@@ -14,22 +14,35 @@
 
 import logging
 
-from utils.helpers import (
-    get_precision_config,
-    set_moe_a2a_overlap_overrides,
-    set_workload_base_configs,
-)
+from utils.overrides import set_workload_base_configs
+from utils.precision import get_precision_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from . import workload_base_configs as base_cfgs
+from .deepseek_workload_base_configs import (
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-def set_deepseek_v3_common_configs(cfg: ConfigContainer) -> None:
+def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool = False) -> None:
     """Set common performance configurations for all DeepSeek-V3 configs."""
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
@@ -44,23 +57,23 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB300, 256xGPU, baseline config."""
+def deepseek_v3_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """GB300, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_CS_PARALLEL_CONFIG
-        if fp8_recipe == "mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_MX_PARALLEL_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS
+        if precision == "fp8_mx":
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
-        enable_deepep=False,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
     set_deepseek_v3_common_configs(cfg)
@@ -73,26 +86,31 @@ def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
-def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 256xGPU, baseline config."""
+def deepseek_v3_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """GB200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_CS_PARALLEL_CONFIG
-        if fp8_recipe == "mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_MX_PARALLEL_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS
+        if precision == "fp8_mx":
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
-        enable_deepep=False,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
     set_deepseek_v3_common_configs(cfg)
@@ -105,26 +123,31 @@ def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
-def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """B200, 256xGPU, baseline config."""
+def deepseek_v3_pretrain_config_b300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """B300, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_CS_PARALLEL_CONFIG
-        if fp8_recipe == "mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_MX_PARALLEL_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS
+        if precision == "fp8_mx":
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
-        enable_deepep=False,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
     set_deepseek_v3_common_configs(cfg)
@@ -135,29 +158,54 @@ def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "
     return cfg
 
 
-def deepseek_v3_h100_1024gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 1024xGPU, baseline config."""
+def deepseek_v3_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """B200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG
-        if fp8_recipe == "sc":
-            base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_SC_PARALLEL_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS
+        if precision == "fp8_mx":
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
-        mock=True,
+        mock=mock,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
-        enable_deepep=True,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    return cfg
+
+
+def deepseek_v3_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """H100, baseline config."""
+    if precision == "bf16":
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS
+        if precision == "fp8_sc":
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC
+        precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config(
+        mock=mock,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout="Et|(tt|)*30mL",
     )
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-
-    set_moe_a2a_overlap_overrides(cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False

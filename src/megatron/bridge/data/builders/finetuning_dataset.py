@@ -18,6 +18,7 @@ from typing import Any, Optional, Union
 
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
@@ -107,7 +108,7 @@ class FinetuningDatasetBuilder:
                     dataset_kwargs=self.dataset_kwargs,
                 )
 
-            if not self.validation_path_packed.is_file():
+            if self.do_validation and not self.validation_path_packed.is_file():
                 print_rank_0(f"Preparing packed validation data at {self.validation_path_packed}")
                 prepare_packed_sequence_data(
                     input_path=self.validation_path,
@@ -313,10 +314,23 @@ class FinetuningDatasetBuilder:
 
     def _extract_tokenizer_model_name(self) -> str:
         """Automatically get the model name from model path."""
+        # Legacy tokenizer compatibility
+        if getattr(self.tokenizer, "legacy", False):
+            tokenizer_cls = _HuggingFaceTokenizer
+            tokenizer_instance = self.tokenizer
+        else:
+            tokenizer_cls = HuggingFaceTokenizer
+            tokenizer_instance = self.tokenizer._tokenizer
+
         if self.packed_sequence_specs and self.packed_sequence_specs.tokenizer_model_name is not None:
             return self.packed_sequence_specs.tokenizer_model_name
-        elif isinstance(self.tokenizer, _HuggingFaceTokenizer):
-            name = self.tokenizer._tokenizer.name_or_path
+        elif isinstance(tokenizer_instance, tokenizer_cls):
+            # Legacy tokenizer compatibility
+            if getattr(self.tokenizer, "legacy", False):
+                name = self.tokenizer._tokenizer.name_or_path
+            else:
+                name = self.tokenizer.path
+
             if name.endswith("context/nemo_tokenizer"):
                 # NEMO_HOME/hf_org/hf_model/context/nemo_tokenizer => hf_org--hf_model
                 tokenizer_model_name = "--".join(name.split("/")[-4:-2])
