@@ -147,9 +147,9 @@ def main() -> None:
 
     # Load base configurations as recipes and wrap provider for distillation mode
     cfg: ConfigContainer = llama32_1b_pretrain_config(load_weights=True)
-    teacher = llama32_3b_pretrain_config(load_weights=True).model
+    teacher_cfg = llama32_3b_pretrain_config(load_weights=True)
     kd_config = ModelOptDistillConfig()
-    cfg.model = convert_to_distillation_provider(cfg.model, teacher, kd_config)
+    cfg.model = convert_to_distillation_provider(cfg.model, teacher_cfg.model, kd_config)
     logger.info("Loaded base student and teacher configurations")
 
     # Print configuration on rank 0
