@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 from megatron.bridge.models.sarvam.sarvam_mla_bridge import SarvamMLABridge
-
+from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 
 __all__ = [
     "SarvamMoEBridge",

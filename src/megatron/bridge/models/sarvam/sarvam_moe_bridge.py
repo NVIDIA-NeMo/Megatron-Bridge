@@ -61,7 +61,6 @@ class SarvamMoEBridge(MegatronModelBridge):
         param_mappings = {
             # Embed
             "embedding.word_embeddings.weight": "model.word_embeddings.weight",
-
             # Attention
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             #  In sarvam, HF weight `model.layers.*.post_attention_layernorm.weight` is mapped to the following mcore weights depending on the layer type:
@@ -72,16 +71,13 @@ class SarvamMoEBridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.attention.query_layernorm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.attention.key_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.attention.dense.weight",
-
             # Dense MLP
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-
             # MoE
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.expert_bias",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
-
             # LM Head
             "decoder.final_layernorm.weight": "model.norm.weight",
             "output_layer.weight": "lm_head.weight",
