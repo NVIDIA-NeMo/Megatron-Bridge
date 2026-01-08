@@ -454,13 +454,13 @@ class TestDoRA:
         with patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
 
             def mock_get_attributes_func(module):
-                return (
-                    False,
-                    module.in_features,
-                    module.out_features,
-                    False,
-                    not module.config.sequence_parallel,
-                    True,
+                return AdapterAttributes(
+                    input_is_parallel=False,
+                    in_features=module.in_features,
+                    out_features=module.out_features,
+                    disable_tensor_parallel_comm=False,
+                    disable_sequence_parallel_comm=not module.config.sequence_parallel,
+                    base_linear_is_parallel=True,
                 )
 
             mock_get_attrs.side_effect = mock_get_attributes_func
