@@ -59,12 +59,10 @@ class SarvamMoEModelProvider(GPTModelProvider):
     make_vocab_size_divisible_by: int = 128
     add_qkv_bias: bool = False
     qk_layernorm: bool = True
-    bf16: bool = True
 
     init_method_std: float = 0.006
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
-
     layernorm_epsilon: float = 1e-6
 
     moe_aux_loss_coeff: float = 0
@@ -80,7 +78,6 @@ class SarvamMoEModelProvider(GPTModelProvider):
     moe_router_score_function: str = "sigmoid"
     moe_token_dispatcher_type: str = "alltoall"
 
-    seq_length: int = 65536
     attention_softmax_in_fp32: bool = True
     persist_layer_norm: bool = True
 
@@ -139,7 +136,6 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     init_method_std: float = 0.006
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
-
     layernorm_epsilon: float = 1e-6
 
     moe_aux_loss_coeff: float = 0
@@ -155,7 +151,6 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     moe_router_score_function: str = "sigmoid"
     moe_token_dispatcher_type: str = "alltoall"
 
-    seq_length: int = 65536
     attention_softmax_in_fp32: bool = True
     persist_layer_norm: bool = True
 
