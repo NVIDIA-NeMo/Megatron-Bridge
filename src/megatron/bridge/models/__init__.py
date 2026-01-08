@@ -196,6 +196,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.models.sarvam import (
     SarvamMoEBridge,
+    SarvamMLABridge,
 )
 
 
@@ -349,4 +350,5 @@ __all__ = [
     "NemotronNano12Bv2Provider",
     "NemotronNano12Bv2VLModelProvider",
     "SarvamMoEBridge",
+    "SarvamMLABridge",
 ]

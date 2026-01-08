@@ -13,8 +13,10 @@
 # limitations under the License.
 
 from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
+from megatron.bridge.models.sarvam.sarvam_mla_bridge import SarvamMLABridge
 
 
 __all__ = [
     "SarvamMoEBridge",
+    "SarvamMLABridge",
 ]
