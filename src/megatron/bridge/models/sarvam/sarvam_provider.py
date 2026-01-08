@@ -164,7 +164,7 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     multi_latent_attention: bool = True
 
     # Configured through hf config
-    
+
     kv_channels: Optional[int] = 64
     seq_length: int = 131072
     rotary_base: float = 8_000_000.0
@@ -191,5 +191,3 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     rotary_scaling_factor: float = 40
     mscale: float = 1.0
     mscale_all_dim: float = 1.0
-
-    

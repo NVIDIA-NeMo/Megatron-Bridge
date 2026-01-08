@@ -15,10 +15,7 @@
 import torch
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import (
-    AutoMapping,
-    GatedMLPMapping,
-)
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.sarvam.common import get_common_config
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMLAModelProvider
@@ -55,7 +52,7 @@ class SarvamMLABridge(MegatronModelBridge):
         config["qk_head_dim"] = hf_config.qk_nope_head_dim
         config["qk_pos_emb_head_dim"] = hf_config.qk_rope_head_dim
         config["v_head_dim"] = hf_config.v_head_dim
-        
+
         if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling is not None:
             config["rotary_scaling_factor"] = hf_config.rope_scaling["factor"]
             config["mscale"] = hf_config.rope_scaling["mscale"]
@@ -72,7 +69,6 @@ class SarvamMLABridge(MegatronModelBridge):
         param_mappings = {
             # Embed
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-
             # Attention
             "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
@@ -87,16 +83,13 @@ class SarvamMLABridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.linear_kv_up_proj.layer_norm_weight": "model.layers.*.self_attn.kv_a_layernorm.weight",
             # Mcore local spec
             "decoder.layers.*.self_attention.kv_layernorm.weight": "model.layers.*.self_attn.kv_a_layernorm.weight",
-
             # Dense MLP
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-
             # Moe
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-
             # LM Head
             "decoder.final_layernorm.weight": "model.norm.weight",
             "output_layer.weight": "lm_head.weight",
