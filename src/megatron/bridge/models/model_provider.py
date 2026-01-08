@@ -518,71 +518,65 @@ def get_model(
         model_provider.bf16 = bf16
 
     model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
-    create_model_stream = torch.cuda.Stream()
-    # make sure current stream is complete before starting create_model_stream
-    create_model_stream.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(create_model_stream):
-        if init_model_with_meta_device:
-            model_provider.init_model_with_meta_device = True
-            with torch.device("meta"):
-                model = _create_model(model_provider, model_type)
-        else:
+    if init_model_with_meta_device:
+        model_provider.init_model_with_meta_device = True
+        with torch.device("meta"):
             model = _create_model(model_provider, model_type)
+    else:
+        model = _create_model(model_provider, model_type)
 
-        if pre_wrap_hook:
-            if isinstance(pre_wrap_hook, list):
-                # Execute hooks in order
-                for hook in pre_wrap_hook:
-                    if not callable(hook):
-                        raise RuntimeError("All elements in pre_wrap_hook list must be callable")
-                    _model = hook(model)
-                    if _model is not None:
-                        model = _model
-            else:
-                if not callable(pre_wrap_hook):
-                    raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
-                _model = pre_wrap_hook(model)
+    if pre_wrap_hook:
+        if isinstance(pre_wrap_hook, list):
+            # Execute hooks in order
+            for hook in pre_wrap_hook:
+                if not callable(hook):
+                    raise RuntimeError("All elements in pre_wrap_hook list must be callable")
+                _model = hook(model)
                 if _model is not None:
                     model = _model
+        else:
+            if not callable(pre_wrap_hook):
+                raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
+            _model = pre_wrap_hook(model)
+            if _model is not None:
+                model = _model
 
-        # Set tensor model parallel attributes if not set
-        # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
+    # Set tensor model parallel attributes if not set
+    # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+    _print_num_params(model)
+
+    model_config = get_model_config(model[0])
+
+    # GPU allocation.
+    # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
+    # in the fully_shard function of FSDP2 instead.
+    if (
+        not use_torch_fsdp2
+        and not model_config.use_cpu_initialization
+        and not model_config.init_model_with_meta_device
+    ):
         for model_module in model:
-            for param in model_module.parameters():
-                tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+            model_module.cuda(torch.cuda.current_device())
 
-        _print_num_params(model)
+    if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
+        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
 
-        model_config = get_model_config(model[0])
+    if correct_amax_history_if_needed is not None:
+        correct_amax_history_if_needed(model)
 
-        # GPU allocation.
-        # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
-        # in the fully_shard function of FSDP2 instead.
-        if (
-            not use_torch_fsdp2
-            and not model_config.use_cpu_initialization
-            and not model_config.init_model_with_meta_device
-        ):
-            for model_module in model:
-                model_module.cuda(torch.cuda.current_device())
-
-        if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-            model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
-
-        if correct_amax_history_if_needed is not None:
-            correct_amax_history_if_needed(model)
-
-        if wrap_with_ddp:
-            model = _ddp_wrap(
-                model,
-                data_parallel_random_init,
-                ddp_config,
-                overlap_param_gather_with_optimizer_step,
-                use_megatron_fsdp=use_megatron_fsdp,
-                use_torch_fsdp2=use_torch_fsdp2,
-            )
-    # Critical: ensure side-stream work completes before touching params on default stream
-    torch.cuda.current_stream().wait_stream(create_model_stream)
+    if wrap_with_ddp:
+        model = _ddp_wrap(
+            model,
+            data_parallel_random_init,
+            ddp_config,
+            overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=use_megatron_fsdp,
+            use_torch_fsdp2=use_torch_fsdp2,
+        )
 
     return model
 
