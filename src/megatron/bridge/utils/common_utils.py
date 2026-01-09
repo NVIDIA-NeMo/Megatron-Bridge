@@ -298,19 +298,15 @@ def merge_expert_weights_for_hf_export(
         f"There should be only one key in the converted_weights_dict, got keys: {converted_weights_dict.keys()}"
     )
 
+    # EP > 1
     for key, value in converted_weights_dict.items():
         cache = hf_weights_cache.setdefault(key, {})
 
-        if ep_size == 1:
-            cache[local_expert_number] = value
-        else:
-            # Value is gathered from TP already; first dim should match ep_size.
-            assert value.shape[0] == ep_size, (
-                f"Expected expert dimension {ep_size} for {key}, but got shape {value.shape}"
-            )
-            for i, exp_val in enumerate(value):
-                global_expert_number = local_expert_number + (i * experts_per_rank)
-                cache[global_expert_number] = exp_val
+        # Value is gathered from TP already; first dim should match ep_size.
+        assert value.shape[0] == ep_size, f"Expected expert dimension {ep_size} for {key}, but got shape {value.shape}"
+        for i, exp_val in enumerate(value):
+            global_expert_number = local_expert_number + (i * experts_per_rank)
+            cache[global_expert_number] = exp_val
 
         if len(cache) == num_experts:
             merged = torch.cat([cache[i].unsqueeze(0) for i in range(num_experts)], dim=0)
