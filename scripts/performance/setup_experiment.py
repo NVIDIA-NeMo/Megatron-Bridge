@@ -30,12 +30,12 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
-    from utils.utils import list_available_config_variants
+    from utils.utils import get_workload_base_config, list_available_config_variants
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
-    from .utils.utils import list_available_config_variants
+    from .utils.utils import get_workload_base_config, list_available_config_variants
 
 try:
     import wandb
@@ -102,14 +102,27 @@ def select_config_variant_interactive(
         )
         sys.exit(1)
 
-    print(f"\n{'=' * 60}")
+    print(f"\n{'=' * 80}")
     print(f"Available config variants for {model_recipe_name}/{task}/{gpu}/{compute_dtype}:")
-    print(f"{'=' * 60}")
+    print(f"{'=' * 80}")
     for i, variant in enumerate(variants, 1):
         default_marker = " (default)" if i == 1 else ""
         config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{variant}".upper()
-        print(f"  [{i}] {variant}{default_marker} - {config_name}")
-    print(f"{'=' * 60}")
+        print(f"\n  [{i}] {variant}{default_marker} - {config_name}")
+        print(f"  {'-' * 76}")
+        # Fetch and display the WorkloadBaseConfig for this variant
+        try:
+            config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, variant)
+            # Print each non-None field of the config, indented
+            from dataclasses import fields
+
+            for field in fields(config):
+                value = getattr(config, field.name)
+                if value is not None:
+                    print(f"      {field.name}: {value}")
+        except ValueError:
+            print("      (config not found)")
+    print(f"\n{'=' * 80}")
     print(f"\nSelect [1-{len(variants)}] (default: 1, timeout: {timeout}s): ", end="", flush=True)
 
     # Use select for cross-platform timeout (Unix/Linux/macOS)
