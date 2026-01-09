@@ -90,13 +90,11 @@ class DoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(m, name, prefix)) is not None:
             (match, full_name) = ans
-            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(m)
-            )
+            attrs = get_adapter_attributes_from_linear(m)
             logger.info(f"Adding DoRA to: {full_name}")
             adapter = ParallelLinearDoRAAdapter(
-                in_features,
-                out_features,
+                attrs.in_features,
+                attrs.out_features,
                 self.dim,
                 base_linear_name=full_name,
                 activation="identity",
@@ -104,14 +102,14 @@ class DoRA(PEFT, ModuleMatcher):
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
                 gather_output=False,
-                input_is_parallel=input_is_parallel,
+                input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
-                disable_tensor_parallel_comm=disable_tp_comm,
-                disable_sequence_parallel_comm=disable_sp_comm,
-                base_linear_is_parallel=base_linear_is_parallel,
+                disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
+                disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
             return DoRALinear(m, adapter)
         return m

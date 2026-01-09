@@ -14,6 +14,7 @@
 
 import math
 import re
+from dataclasses import dataclass
 from importlib.metadata import version
 from typing import Callable, Dict, Optional, Tuple
 
@@ -66,12 +67,23 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(
-    m: nn.Module, is_expert: bool = False
-) -> Tuple[bool, int, int, bool, bool, bool]:
-    """Returns attributes from the base layer.
+@dataclass(frozen=True)
+class AdapterAttributes:
+    """Container for base linear adapter attributes."""
 
-    input_is_parallel, in_features, out_features, disable_tensor_parallel_comm, disable_sequence_parallel_comm, base_linear_is_parallel
+    input_is_parallel: bool
+    in_features: int
+    out_features: int
+    disable_tensor_parallel_comm: bool
+    disable_sequence_parallel_comm: bool
+    base_linear_is_parallel: bool
+
+
+def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) -> AdapterAttributes:
+    """Returns attributes from the base layer as an AdapterAttributes dataclass.
+
+    input_is_parallel, in_features, out_features, disable_tensor_parallel_comm,
+    disable_sequence_parallel_comm, base_linear_is_parallel
 
     This function analyzes a linear module and extracts key attributes needed for adapter configuration,
     particularly for PEFT adapters in distributed training scenarios.
@@ -80,7 +92,7 @@ def get_adapter_attributes_from_linear(
         m: The linear module to analyze (should have a config attribute).
 
     Returns:
-        A tuple containing:
+        AdapterAttributes containing:
             - input_is_parallel: Whether the input is already parallelized
             - in_features: Input feature dimension
             - out_features: Output feature dimension
@@ -155,13 +167,13 @@ def get_adapter_attributes_from_linear(
     else:
         raise NotImplementedError(f"Layer type is unrecognized for LoRA: {type(m)}")
 
-    return (
-        input_is_parallel,
-        in_features,
-        out_features,
-        disable_tensor_parallel_comm,
-        disable_sequence_parallel_comm,
-        base_linear_is_parallel,
+    return AdapterAttributes(
+        input_is_parallel=input_is_parallel,
+        in_features=in_features,
+        out_features=out_features,
+        disable_tensor_parallel_comm=disable_tensor_parallel_comm,
+        disable_sequence_parallel_comm=disable_sequence_parallel_comm,
+        base_linear_is_parallel=base_linear_is_parallel,
     )
 
 

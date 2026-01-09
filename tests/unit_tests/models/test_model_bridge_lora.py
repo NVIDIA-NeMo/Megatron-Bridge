@@ -19,13 +19,14 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import (
-    AdapterWeight,
     AdapterWeightConversionTask,
     MegatronModelBridge,
     MegatronWeightTuple,
     WeightConversionTask,
 )
-from megatron.bridge.models.conversion.param_mapping import ColumnParallelMapping, merge_qkv_weights
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, ColumnParallelMapping, merge_qkv_weights
+from megatron.bridge.models.conversion.peft_bridge import AdapterWeight
+from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class DummyBridge(MegatronModelBridge):
@@ -49,7 +50,11 @@ def test_merge_lora_adapter_weights_merges(monkeypatch):
         linear_out_weight=MegatronWeightTuple("out", torch.eye(4), vp_stage=0),
     )
 
-    updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
+    updated = bridge._merge_lora_adapter_weights(
+        [Mock(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_weight],
+    )
     expected = base_weight + torch.eye(4)
     torch.testing.assert_close(updated["hf.weight"], expected)
 
@@ -85,9 +90,56 @@ def test_merge_lora_adapter_weights_fused_fc1(monkeypatch):
         linear_out_weight=MegatronWeightTuple("out", linear_out, vp_stage=0),
     )
 
-    updated = bridge._merge_lora_adapter_weights([Mock(config=SimpleNamespace())], converted, [adapter_weight])
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [Mock(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_weight],
+    )
     torch.testing.assert_close(updated["decoder.layers.0.mlp.gate_proj.weight"], torch.eye(4))
     torch.testing.assert_close(updated["decoder.layers.0.mlp.up_proj.weight"], 2 * torch.eye(4))
+
+
+def test_merge_lora_adapter_weights_fused_fc1_tp_aware(monkeypatch):
+    bridge = DummyBridge()
+    base = torch.zeros(4, 4)
+    converted = {
+        "decoder.layers.0.mlp.gate_proj.weight": base.clone(),
+        "decoder.layers.0.mlp.up_proj.weight": base.clone(),
+    }
+
+    gate0 = torch.arange(0, 8, dtype=base.dtype).reshape(2, 4)
+    up0 = torch.arange(100, 108, dtype=base.dtype).reshape(2, 4)
+    gate1 = torch.arange(200, 208, dtype=base.dtype).reshape(2, 4)
+    up1 = torch.arange(300, 308, dtype=base.dtype).reshape(2, 4)
+    linear_out = torch.cat([gate0, up0, gate1, up1], dim=0)
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(4), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", linear_out, vp_stage=0),
+    )
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 2,
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [Mock(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_weight],
+    )
+    expected_gate = torch.cat([gate0, gate1], dim=0)
+    expected_up = torch.cat([up0, up1], dim=0)
+    torch.testing.assert_close(updated["decoder.layers.0.mlp.gate_proj.weight"], expected_gate)
+    torch.testing.assert_close(updated["decoder.layers.0.mlp.up_proj.weight"], expected_up)
 
 
 def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
@@ -98,6 +150,7 @@ def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
         kv_channels=None,
         hidden_size=4,
         attention_output_gate=False,
+        num_moe_experts=0,
     )
     megatron_model = [SimpleNamespace(config=config)]
     converted = {
@@ -159,7 +212,12 @@ def test_merge_canonical_adapter_from_weights(monkeypatch):
         linear_out_weight=MegatronWeightTuple("out_v", 3 * torch.ones(1, 2), vp_stage=0),
     )
 
-    updated = bridge._merge_canonical_adapter_from_weights(converted, [adapter_q, adapter_k, adapter_v])
+    megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
+    updated = bridge._merge_canonical_adapter_from_weights(
+        megatron_model,
+        converted,
+        [adapter_q, adapter_k, adapter_v],
+    )
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.q_proj.weight"], torch.ones(2, 2))
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.k_proj.weight"], 2 * torch.ones(1, 2))
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.v_proj.weight"], 3 * torch.ones(1, 2))
@@ -171,6 +229,9 @@ def test_global_param_names_skip_adapter(monkeypatch):
     class DummyGroup:
         def size(self):
             return 1
+
+        def rank(self):
+            return 0
 
     fake_param = torch.nn.Parameter(torch.zeros(1, 1))
 
@@ -216,6 +277,9 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
         def size(self):
             return 1
 
+        def rank(self):
+            return 0
+
     class FakeAdapter:
         def __init__(self):
             self.linear_in = SimpleNamespace(weight=torch.ones(2, 2))
@@ -235,6 +299,10 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
         def named_parameters(self):
             return self._params
 
+        def named_modules(self):
+            # No submodules required for this test
+            return []
+
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.model_bridge.parallel_state.get_pipeline_model_parallel_group",
         lambda: DummyGroup(),
@@ -248,6 +316,10 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
         lambda *_: [],
     )
     monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.persistent_buffers",
+        lambda *_: [],
+    )
+    monkeypatch.setattr(
         "megatron.bridge.models.conversion.model_bridge._megatron_local_name_to_global",
         lambda *_args, **_kwargs: _args[2],
     )
@@ -256,8 +328,15 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
         lambda models: models if isinstance(models, list) else [models],
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.model_bridge.get_adapter_attributes_from_linear",
-        lambda *_args, **_kwargs: (True, None, None, None, None, False),
+        "megatron.bridge.models.conversion.peft_bridge.get_adapter_attributes_from_linear",
+        lambda *_args, **_kwargs: AdapterAttributes(
+            input_is_parallel=True,
+            in_features=0,
+            out_features=0,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=False,
+            base_linear_is_parallel=False,
+        ),
     )
     monkeypatch.setattr(
         "torch.distributed.all_gather_object",
@@ -326,6 +405,15 @@ def test_build_adapter_conversion_tasks(monkeypatch):
         lambda: 0,
     )
 
+    # Provide a minimal mapping so adapter base lookups succeed during task construction.
+    registry = MegatronMappingRegistry(
+        AutoMapping(
+            megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+            hf_param="decoder.layers.*.mlp.linear_fc1.weight",
+        )
+    )
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: registry)
+
     tasks_by_base = bridge.build_adapter_conversion_tasks([Mock()])
     assert "decoder.layers.0.mlp.linear_fc1" in tasks_by_base
     tasks = tasks_by_base["decoder.layers.0.mlp.linear_fc1"]
@@ -373,6 +461,266 @@ def test_materialize_adapter_weights(monkeypatch):
     assert len(materials) == 1
     assert torch.all(materials[0].linear_in_weight.weight == torch.ones(2, 2))
     assert torch.all(materials[0].linear_out_weight.weight == 2 * torch.ones(2, 2))
+
+
+def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
+    bridge = DummyBridge()
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", torch.ones(2, 2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", 2 * torch.ones(2, 2), vp_stage=0),
+    )
+
+    monkeypatch.setattr(
+        bridge,
+        "build_adapter_conversion_tasks",
+        lambda *_: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+    )
+    monkeypatch.setattr(
+        bridge,
+        "materialize_adapter_weights",
+        lambda *_: [adapter_weight],
+    )
+
+    # Provide a base HF weight name so stream_adapter_weights_megatron_to_hf can
+    # translate it into lora_A/lora_B names.
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_param_names_for_adapter",
+        lambda *_args, **_kwargs: ["model.layers.0.mlp.linear_fc1.weight"],
+    )
+
+    megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
+    weights = list(bridge.stream_adapter_weights_megatron_to_hf(megatron_model, cpu=False, show_progress=False))
+    assert len(weights) == 2
+    assert weights[0].param_name.endswith("lora_A.weight")
+    assert weights[1].param_name.endswith("lora_B.weight")
+    torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
+    torch.testing.assert_close(weights[1].weight, 2 * torch.ones(2, 2))
+
+
+def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
+    bridge = DummyBridge()
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.self_attn.linear_qkv",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.self_attn.linear_qkv.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.self_attn.linear_qkv.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.self_attn.linear_qkv",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", torch.ones(2, 2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", torch.ones(6, 2), vp_stage=0),
+    )
+
+    monkeypatch.setattr(
+        bridge,
+        "build_adapter_conversion_tasks",
+        lambda *_: {"decoder.layers.0.self_attn.linear_qkv": [adapter_task]},
+    )
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_param_names_for_adapter",
+        lambda *_: [
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.layers.0.self_attn.k_proj.weight",
+            "model.layers.0.self_attn.v_proj.weight",
+        ],
+    )
+
+    qkv_slices = {
+        "q_proj": torch.full((2, 2), 1.0),
+        "k_proj": torch.full((2, 2), 2.0),
+        "v_proj": torch.full((2, 2), 3.0),
+    }
+    monkeypatch.setattr(bridge, "_split_qkv_linear_out_weight", lambda *_: qkv_slices)
+
+    weights = list(
+        bridge.stream_adapter_weights_megatron_to_hf(
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
+            cpu=False,
+            show_progress=False,
+        )
+    )
+
+    assert len(weights) == 6
+    names = [w.param_name for w in weights]
+    assert names[0].endswith("q_proj.lora_A.weight")
+    assert names[1].endswith("q_proj.lora_B.weight")
+    assert names[2].endswith("k_proj.lora_A.weight")
+    assert names[3].endswith("k_proj.lora_B.weight")
+    assert names[4].endswith("v_proj.lora_A.weight")
+    assert names[5].endswith("v_proj.lora_B.weight")
+
+    torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
+    torch.testing.assert_close(weights[1].weight, qkv_slices["q_proj"])
+    torch.testing.assert_close(weights[3].weight, qkv_slices["k_proj"])
+
+
+def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
+    bridge = DummyBridge()
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+
+    # Megatron stores fused FC1 as [gate; up] along dim=0. Streaming should split B
+    # and duplicate A for gate_proj and up_proj.
+    linear_out = torch.cat([torch.full((2, 2), 1.0), torch.full((2, 2), 2.0)], dim=0)
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", torch.ones(2, 2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", linear_out, vp_stage=0),
+    )
+
+    monkeypatch.setattr(
+        bridge,
+        "build_adapter_conversion_tasks",
+        lambda *_: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+    )
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_param_names_for_adapter",
+        lambda *_: [
+            "model.layers.0.mlp.gate_proj.weight",
+            "model.layers.0.mlp.up_proj.weight",
+        ],
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    weights = list(
+        bridge.stream_adapter_weights_megatron_to_hf(
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
+            cpu=False,
+            show_progress=False,
+        )
+    )
+
+    assert len(weights) == 4
+    names = [w.param_name for w in weights]
+    assert names[0].endswith("gate_proj.lora_A.weight")
+    assert names[1].endswith("gate_proj.lora_B.weight")
+    assert names[2].endswith("up_proj.lora_A.weight")
+    assert names[3].endswith("up_proj.lora_B.weight")
+
+    torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
+    torch.testing.assert_close(weights[1].weight, torch.full((2, 2), 1.0))
+    torch.testing.assert_close(weights[2].weight, torch.ones(2, 2))
+    torch.testing.assert_close(weights[3].weight, torch.full((2, 2), 2.0))
+
+
+def test_stream_weights_megatron_to_hf_skips_merge_when_disabled(monkeypatch):
+    bridge = DummyBridge()
+
+    class DummyMapping:
+        def megatron_to_hf(self, weight, module):
+            return {"hf.weight": torch.ones(1)}
+
+    task = WeightConversionTask(
+        param_name="decoder.layers.0.mlp.linear_fc1.to_wrap.weight",
+        global_param_name="decoder.layers.0.mlp.linear_fc1.to_wrap.weight",
+        mapping=DummyMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=torch.ones(1),
+    )
+
+    monkeypatch.setattr(
+        DummyBridge,
+        "_with_progress_tracking",
+        lambda self, tasks, *_args, **_kwargs: tasks,
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "_share_embeddings_and_output_weights",
+        lambda self, *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        lambda *_args, **_kwargs: [SimpleNamespace(config=SimpleNamespace(pipeline_model_parallel_size=1))],
+    )
+
+    def _raise_on_build(*_args, **_kwargs):
+        raise AssertionError("Adapter tasks should not be built when merge_adapter_weights=False")
+
+    monkeypatch.setattr(DummyBridge, "build_adapter_conversion_tasks", _raise_on_build)
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=False,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert len(weights) == 1
+    assert weights[0].param_name in {"hf.weight", "hf.base_layer.weight"}
 
 
 def test_column_parallel_mapping_skips_ep_gather_for_adapters(monkeypatch):
