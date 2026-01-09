@@ -14,11 +14,16 @@
 
 import importlib
 import logging
-from dataclasses import dataclass
+import select
+import sys
+from dataclasses import dataclass, fields
 from typing import Dict, List, Optional
 
 
 logger = logging.getLogger(__name__)
+
+# Default timeout for interactive config variant selection (in seconds)
+CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 
 
 @dataclass
@@ -214,3 +219,152 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
     return recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
+
+
+class _Colors:
+    """ANSI color codes for terminal output."""
+
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    MAGENTA = "\033[35m"
+    BLUE = "\033[34m"
+    WHITE = "\033[37m"
+
+
+def _display_config_variants(
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
+    variants: List[str],
+    timeout: int,
+) -> None:
+    """Display available config variants with their configurations.
+
+    Args:
+        model_family_name: Model family name (e.g., 'llama')
+        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
+        gpu: Target GPU type (e.g., 'gb300', 'h100')
+        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
+        task: Training task (e.g., 'pretrain', 'sft', 'lora')
+        variants: List of available variant names
+        timeout: Timeout in seconds for user input
+    """
+    c = _Colors
+
+    print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
+    print(
+        f"{c.BOLD}{c.WHITE}Available config variants for {c.CYAN}{model_recipe_name}{c.WHITE}/{c.MAGENTA}{task}{c.WHITE}/{c.YELLOW}{gpu}{c.WHITE}/{c.GREEN}{compute_dtype}{c.WHITE}:{c.RESET}"
+    )
+    print(f"{c.DIM}{'=' * 80}{c.RESET}")
+
+    # Fields to highlight in cyan (important config differences)
+    highlight_fields = {"num_gpus", "global_batch_size"}
+
+    for i, variant in enumerate(variants, 1):
+        default_marker = f" {c.GREEN}(default){c.RESET}" if i == 1 else ""
+        config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{variant}".upper()
+        print(
+            f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant}{c.RESET} {c.DIM}-{c.RESET} {c.YELLOW}{config_name}{c.RESET}{default_marker}"
+        )
+        print(f"  {c.DIM}{'-' * 76}{c.RESET}")
+
+        # Fetch and display the WorkloadBaseConfig for this variant
+        try:
+            config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, variant)
+            for field in fields(config):
+                value = getattr(config, field.name)
+                if value is not None:
+                    if field.name in highlight_fields:
+                        print(f"      {c.CYAN}{field.name}: {value}{c.RESET}")
+                    else:
+                        print(f"      {field.name}: {value}")
+        except ValueError:
+            print(f"      {c.DIM}(config not found){c.RESET}")
+
+    print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
+    print(f"\nSelect [1-{len(variants)}] (default: 1, timeout: {timeout}s): ", end="", flush=True)
+
+
+def _get_user_selection_with_timeout(num_variants: int, timeout: int) -> int:
+    """Get user selection with timeout, returning 1-based choice index.
+
+    Args:
+        num_variants: Number of available variants to choose from
+        timeout: Timeout in seconds for user input
+
+    Returns:
+        1-based index of the selected variant (defaults to 1 on timeout/invalid input)
+    """
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], float(timeout))
+        if ready:
+            user_input = sys.stdin.readline().strip()
+            if user_input == "":
+                return 1
+            try:
+                choice = int(user_input)
+                if choice < 1 or choice > num_variants:
+                    print("Invalid choice. Using default (1).")
+                    return 1
+                return choice
+            except ValueError:
+                print("Invalid input. Using default (1).")
+                return 1
+        else:
+            print("\n⏱ Timeout - proceeding with default (1)")
+            return 1
+    except (OSError, AttributeError):
+        # select.select doesn't work on Windows, fall back to default
+        logger.warning("Interactive selection not available on this platform. Using default variant.")
+        return 1
+
+
+def select_config_variant_interactive(
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
+    timeout: int = CONFIG_VARIANT_SELECTION_TIMEOUT,
+) -> str:
+    """Interactively select a config variant with timeout.
+
+    Args:
+        model_family_name: Model family name (e.g., 'llama')
+        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
+        gpu: Target GPU type (e.g., 'gb300', 'h100')
+        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
+        task: Training task (e.g., 'pretrain', 'sft', 'lora')
+        timeout: Timeout in seconds for user input (default: 15)
+
+    Returns:
+        Selected config variant name (e.g., 'v1', 'v2')
+    """
+    try:
+        variants = list_available_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task)
+    except ValueError as e:
+        logger.error(f"Failed to list config variants: {e}")
+        sys.exit(1)
+
+    if not variants:
+        logger.error(
+            f"No config variants found for {model_recipe_name}/{task}/{gpu}/{compute_dtype}. "
+            f"Please add configs with naming pattern: {model_recipe_name.upper()}_{task.upper()}_CONFIG_{gpu.upper()}_{compute_dtype.upper()}_V1"
+        )
+        sys.exit(1)
+
+    # Display available variants
+    _display_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task, variants, timeout)
+
+    # Get user selection
+    choice = _get_user_selection_with_timeout(len(variants), timeout)
+
+    selected_variant = variants[choice - 1]
+    print(f"\nUsing config variant: {selected_variant}")
+    return selected_variant

@@ -30,12 +30,12 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
-    from utils.utils import get_workload_base_config, list_available_config_variants
+    from utils.utils import select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
-    from .utils.utils import get_workload_base_config, list_available_config_variants
+    from .utils.utils import select_config_variant_interactive
 
 try:
     import wandb
@@ -60,121 +60,6 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-# Default timeout for interactive config variant selection (in seconds)
-CONFIG_VARIANT_SELECTION_TIMEOUT = 15
-
-
-def select_config_variant_interactive(
-    model_family_name: str,
-    model_recipe_name: str,
-    gpu: str,
-    compute_dtype: str,
-    task: str,
-    timeout: int = CONFIG_VARIANT_SELECTION_TIMEOUT,
-) -> str:
-    """Interactively select a config variant with timeout.
-
-    Args:
-        model_family_name: Model family name (e.g., 'llama')
-        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
-        gpu: Target GPU type (e.g., 'gb300', 'h100')
-        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
-        task: Training task (e.g., 'pretrain', 'sft', 'lora')
-        timeout: Timeout in seconds for user input (default: 15)
-
-    Returns:
-        Selected config variant name (e.g., 'v1', 'v2')
-    """
-    import select
-    import sys
-
-    try:
-        variants = list_available_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task)
-    except ValueError as e:
-        logger.error(f"Failed to list config variants: {e}")
-        sys.exit(1)
-
-    if not variants:
-        logger.error(
-            f"No config variants found for {model_recipe_name}/{task}/{gpu}/{compute_dtype}. "
-            f"Please add configs with naming pattern: {model_recipe_name.upper()}_{task.upper()}_CONFIG_{gpu.upper()}_{compute_dtype.upper()}_V1"
-        )
-        sys.exit(1)
-
-    # ANSI color codes for terminal output
-    class Colors:
-        RESET = "\033[0m"
-        BOLD = "\033[1m"
-        DIM = "\033[2m"
-        CYAN = "\033[36m"
-        GREEN = "\033[32m"
-        YELLOW = "\033[33m"
-        MAGENTA = "\033[35m"
-        BLUE = "\033[34m"
-        WHITE = "\033[37m"
-
-    c = Colors
-
-    print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
-    print(
-        f"{c.BOLD}{c.WHITE}Available config variants for {c.CYAN}{model_recipe_name}{c.WHITE}/{c.MAGENTA}{task}{c.WHITE}/{c.YELLOW}{gpu}{c.WHITE}/{c.GREEN}{compute_dtype}{c.WHITE}:{c.RESET}"
-    )
-    print(f"{c.DIM}{'=' * 80}{c.RESET}")
-    for i, variant in enumerate(variants, 1):
-        default_marker = f" {c.GREEN}(default){c.RESET}" if i == 1 else ""
-        config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{variant}".upper()
-        print(
-            f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant}{c.RESET} {c.DIM}-{c.RESET} {c.YELLOW}{config_name}{c.RESET}{default_marker}"
-        )
-        print(f"  {c.DIM}{'-' * 76}{c.RESET}")
-        # Fetch and display the WorkloadBaseConfig for this variant
-        try:
-            config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, variant)
-            # Print each non-None field of the config, indented
-            from dataclasses import fields
-
-            # Fields to highlight in cyan (important config differences)
-            highlight_fields = {"num_gpus", "global_batch_size"}
-            for field in fields(config):
-                value = getattr(config, field.name)
-                if value is not None:
-                    if field.name in highlight_fields:
-                        print(f"      {c.CYAN}{field.name}: {value}{c.RESET}")
-                    else:
-                        print(f"      {field.name}: {value}")
-        except ValueError:
-            print(f"      {c.DIM}(config not found){c.RESET}")
-    print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
-    print(f"\nSelect [1-{len(variants)}] (default: 1, timeout: {timeout}s): ", end="", flush=True)
-
-    # Use select for cross-platform timeout (Unix/Linux/macOS)
-    try:
-        ready, _, _ = select.select([sys.stdin], [], [], float(timeout))
-        if ready:
-            user_input = sys.stdin.readline().strip()
-            if user_input == "":
-                choice = 1
-            else:
-                try:
-                    choice = int(user_input)
-                    if choice < 1 or choice > len(variants):
-                        print("Invalid choice. Using default (1).")
-                        choice = 1
-                except ValueError:
-                    print("Invalid input. Using default (1).")
-                    choice = 1
-        else:
-            print("\n⏱ Timeout - proceeding with default (1)")
-            choice = 1
-    except (OSError, AttributeError):
-        # select.select doesn't work on Windows, fall back to default
-        logger.warning("Interactive selection not available on this platform. Using default variant.")
-        choice = 1
-
-    selected_variant = variants[choice - 1]
-    print(f"\nUsing config variant: {selected_variant}")
-    return selected_variant
 
 
 def check_training_finished(log_file_path: str) -> bool:
