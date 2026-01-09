@@ -106,7 +106,8 @@ def get_workload_base_config(
     # Try versioned name first
     workload_base_config = getattr(module, versioned_config_name, None)
     if workload_base_config is not None:
-        logger.info(f"Loaded versioned config: {versioned_config_name}")
+        logger.info(f"Loaded config: {versioned_config_name}")
+        logger.info(f"{workload_base_config}")
         return workload_base_config
 
     # Fall back to non-versioned name (backward compatibility)
