@@ -1,5 +1,16 @@
 # Changelog
 
+## NVIDIA Megatron-Bridge 0.2.1
+
+* Performance  
+  * Activation offloading to host memory support with pipelining  
+    * Supports the high activation memory needs of MoE models training with dynamic shapes  
+    * Fixed Nemotron FLOPS calculation model  
+* Model Collection Support  
+  * Ministral 3  
+* Enhanced LoRA support  
+  * LoRA support for Mamba layers (for Nemotron Nano V2 and NemotronH finetuning)
+
 ## NVIDIA Megatron-Bridge 0.2.0
 
 * [Model Collection Support](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models)
