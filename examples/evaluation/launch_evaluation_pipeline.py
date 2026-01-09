@@ -7,9 +7,23 @@ Parse arguments early to catch unknown args before other libraries
 """
 
 import logging
+import os
+import signal
+import sys
+from dataclasses import dataclass
 
 import nemo_run as run
+import yaml
+from nemo_run.core.execution.slurm import SlurmJobDetails
 
+
+try:
+    import wandb
+
+    HAVE_WANDB = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_WANDB = False
+    wandb = None
 
 try:
     from argument_parser import ENDPOINT_TYPES, parse_cli_args
@@ -20,6 +34,31 @@ except (ImportError, ModuleNotFoundError):
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+def register_pipeline_terminator(exp: run.Experiment, job_id: str):
+    def sigterm_handler(_signo, _stack_frame):
+        logger.info(f"Trying to terminate job {job_id}")
+        exp.cancel(job_id=job_id)
+        logger.info(f"Job {job_id} terminated")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, sigterm_handler)
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
+
+@dataclass(kw_only=True)
+class CustomJobDetailsRay(SlurmJobDetails):
+    # ray jobs have a custom logs structure
+
+    @property
+    def ls_term(self) -> str:
+        """This term will be used to fetch the logs.
+
+        The command used to list the files is ls -1 {ls_term} 2> /dev/null
+        """
+        assert self.folder
+        return os.path.join(self.folder, "ray-overlap-*")
 
 
 RAY_DEPLOY_SCRIPT = """
@@ -151,7 +190,7 @@ def main(args):
             top_k=args.top_k if args.top_k is not None else "None",
         )
     )
-    logger.info("Evaluation script: %s", deploy_run_script)
+    logger.info("Evaluation script: %s", eval_run_script)
 
     if not args.dgxc_cluster:
         deploy_executor = slurm_executor(
@@ -188,17 +227,56 @@ def main(args):
         "--nodes=1",
     ]
 
+    deploy_executor.job_details = CustomJobDetailsRay()
+    eval_executor.job_details = CustomJobDetailsRay()
+
     with run.Experiment(args.experiment_name) as exp:
         exp.add(
             [deploy_run_script, eval_run_script],
             executor=[deploy_executor, eval_executor],
             name=args.experiment_name,
-            tail_logs=True,
         )
         if args.dryrun:
             exp.dryrun()
         else:
-            exp.run(tail_logs=True)
+            exp.run(detach=True)
+
+    register_pipeline_terminator(exp=exp, job_id=exp.jobs[0].id)
+
+    exp.logs(job_id=exp.jobs[0].id)
+
+    result_dict = exp.status(return_dict=True)
+    _, job_dict = list(result_dict.items())[0]
+
+    with open(os.path.join(job_dict["local_dir"], "results", "results.yml"), "r") as f:
+        results = yaml.safe_load(f)
+
+    logger.info("Results: %s", results)
+
+    if HAVE_WANDB and args.wandb_key:
+        wandb_run = wandb.init(
+            project=args.wandb_project_name,
+            entity=args.wandb_entity_name,
+            id=args.wandb_experiment_name,
+            resume="allow",
+        )
+        artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
+        artifact.add_file(
+            local_path=os.path.join(job_dict["local_dir"], "results", "results.json"), name="results.json"
+        )
+        wandb_run.log_artifact(artifact)
+
+        for category in ["tasks", "groups"]:
+            for name, result in results[category].items():
+                metrics = result["metrics"]["exact_match"]["scores"]
+                wandb_run.log(
+                    {
+                        f"{category.rstrip('s')}/{name}/value": metrics["value"],
+                        f"{category.rstrip('s')}/{name}/stderr": metrics["stats"]["stderr"],
+                    }
+                )
+
+        wandb_run.finish()
 
 
 if __name__ == "__main__":

@@ -136,6 +136,30 @@ def parse_cli_args():
         help="wandb job name",
         required=False,
     )
+    logging_args.add_argument(
+        "--wandb_key",
+        type=str,
+        help="wandb key. Needed for wandb logger projection to server",
+        required=False,
+    )
+    logging_args.add_argument(
+        "--wandb_project_name",
+        type=str,
+        help="wandb project name",
+        required=False,
+    )
+    logging_args.add_argument(
+        "--wandb_entity_name",
+        type=str,
+        help="wandb project name",
+        required=False,
+    )
+    logging_args.add_argument(
+        "--wandb_experiment_name",
+        type=str,
+        help="wandb job name",
+        required=False,
+    )
 
     # Tokenizer args
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
