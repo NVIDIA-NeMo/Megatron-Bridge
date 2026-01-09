@@ -29,7 +29,7 @@ from utils.utils import WorkloadBaseConfig
 BASE_LLAMA31_405B_CONFIG = WorkloadBaseConfig()
 
 
-# Llama3.1 405B presets - V1 ---------------------------------------------------------
+# Llama3.1 405B presets - V1 --------------------------------------------------------
 
 LLAMA31_405B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     BASE_LLAMA31_405B_CONFIG,
