@@ -125,7 +125,7 @@ def select_config_variant_interactive(
         default_marker = f" {c.GREEN}(default){c.RESET}" if i == 1 else ""
         config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{variant}".upper()
         print(
-            f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant}{c.RESET}{default_marker} {c.DIM}-{c.RESET} {c.YELLOW}{config_name}{c.RESET}"
+            f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant}{c.RESET} {c.DIM}-{c.RESET} {c.YELLOW}{config_name}{c.RESET}{default_marker}"
         )
         print(f"  {c.DIM}{'-' * 76}{c.RESET}")
         # Fetch and display the WorkloadBaseConfig for this variant
