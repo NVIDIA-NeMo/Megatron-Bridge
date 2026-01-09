@@ -32,7 +32,7 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import WorkloadBaseConfig, get_workload_base_config
+from utils.utils import WorkloadBaseConfig, get_workload_base_config, list_available_config_variants
 
 
 logger = logging.getLogger(__name__)
@@ -322,9 +322,12 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
+    config_variant: str = "v1",
 ) -> ConfigContainer:
     """Set the post overrides."""
-    workload_base_config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task)
+    workload_base_config = get_workload_base_config(
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+    )
 
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
