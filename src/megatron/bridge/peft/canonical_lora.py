@@ -18,11 +18,12 @@ from typing import Any, List, Literal, Optional, Tuple
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.transformer.moe.router import TopKRouter
 from torch import nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, LoRATopKRouter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -269,7 +270,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         """
 
         # Skip already transformed modules
-        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate)):
+        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
@@ -329,6 +330,8 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
 
             adapter = ParallelLinearAdapter(in_features, out_features, **adapter_kwargs)
             logger.info(f"Adding lora to: {full_name}")
+            if isinstance(m, TopKRouter):
+                return LoRATopKRouter(m, adapter)
             return LoRALinear(m, adapter)
 
         return m
