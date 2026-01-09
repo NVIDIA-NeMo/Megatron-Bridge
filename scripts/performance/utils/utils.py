@@ -81,19 +81,7 @@ def get_workload_base_config(
     task: str,
     config_variant: str = "v1",
 ) -> Dict[str, int]:
-    """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe.
-
-    Args:
-        model_family_name: Model family name (e.g., 'llama')
-        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
-        gpu: Target GPU type (e.g., 'gb300', 'h100')
-        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
-        task: Training task (e.g., 'pretrain', 'sft', 'lora')
-        config_variant: Config variant suffix (e.g., 'v1', 'v2'). Defaults to 'v1'.
-
-    Returns:
-        WorkloadBaseConfig object with parallelism and batch size settings.
-    """
+    """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
     module_name = f"configs.{model_family_name}"
     try:
         module = importlib.import_module(module_name)
@@ -138,13 +126,6 @@ def list_available_config_variants(
     task: str,
 ) -> List[str]:
     """List all available config variants for a given model/task/gpu/dtype combination.
-
-    Args:
-        model_family_name: Model family name (e.g., 'llama')
-        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
-        gpu: Target GPU type (e.g., 'gb300', 'h100')
-        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
-        task: Training task (e.g., 'pretrain', 'sft', 'lora')
 
     Returns:
         List of available variant names (e.g., ['v1', 'v2']) or ['(default)'] for non-versioned configs.
@@ -247,11 +228,6 @@ def _display_config_variants(
     """Display available config variants with their configurations.
 
     Args:
-        model_family_name: Model family name (e.g., 'llama')
-        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
-        gpu: Target GPU type (e.g., 'gb300', 'h100')
-        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
-        task: Training task (e.g., 'pretrain', 'sft', 'lora')
         variants: List of available variant names
         timeout: Timeout in seconds for user input
     """
@@ -336,11 +312,6 @@ def select_config_variant_interactive(
     """Interactively select a config variant with timeout.
 
     Args:
-        model_family_name: Model family name (e.g., 'llama')
-        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
-        gpu: Target GPU type (e.g., 'gb300', 'h100')
-        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
-        task: Training task (e.g., 'pretrain', 'sft', 'lora')
         timeout: Timeout in seconds for user input (default: 15)
 
     Returns:
