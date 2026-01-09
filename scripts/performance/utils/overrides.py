@@ -172,6 +172,10 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
 
+    cfg.dist.use_sharp = settings.use_sharp
+    if settings.use_megatron_fsdp and settings.use_sharp:
+        cfg.dist.sharp_enabled_group = "dp_replica"
+
     _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp, nccl_ub=settings.nccl_ub)
     _set_cuda_graph_overrides(
         cfg,
@@ -212,6 +216,9 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
 
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
+    recipe.dist.use_sharp = args.use_sharp
+    if args.use_megatron_fsdp and args.use_sharp:
+        recipe.dist.sharp_enabled_group = "dp_replica"
     _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
