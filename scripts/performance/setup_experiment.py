@@ -102,14 +102,32 @@ def select_config_variant_interactive(
         )
         sys.exit(1)
 
-    print(f"\n{'=' * 80}")
-    print(f"Available config variants for {model_recipe_name}/{task}/{gpu}/{compute_dtype}:")
-    print(f"{'=' * 80}")
+    # ANSI color codes for terminal output
+    class Colors:
+        RESET = "\033[0m"
+        BOLD = "\033[1m"
+        DIM = "\033[2m"
+        CYAN = "\033[36m"
+        GREEN = "\033[32m"
+        YELLOW = "\033[33m"
+        MAGENTA = "\033[35m"
+        BLUE = "\033[34m"
+        WHITE = "\033[37m"
+
+    c = Colors
+
+    print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
+    print(
+        f"{c.BOLD}{c.WHITE}Available config variants for {c.CYAN}{model_recipe_name}{c.WHITE}/{c.MAGENTA}{task}{c.WHITE}/{c.YELLOW}{gpu}{c.WHITE}/{c.GREEN}{compute_dtype}{c.WHITE}:{c.RESET}"
+    )
+    print(f"{c.DIM}{'=' * 80}{c.RESET}")
     for i, variant in enumerate(variants, 1):
-        default_marker = " (default)" if i == 1 else ""
+        default_marker = f" {c.GREEN}(default){c.RESET}" if i == 1 else ""
         config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{variant}".upper()
-        print(f"\n  [{i}] {variant}{default_marker} - {config_name}")
-        print(f"  {'-' * 76}")
+        print(
+            f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant}{c.RESET}{default_marker} {c.DIM}-{c.RESET} {c.YELLOW}{config_name}{c.RESET}"
+        )
+        print(f"  {c.DIM}{'-' * 76}{c.RESET}")
         # Fetch and display the WorkloadBaseConfig for this variant
         try:
             config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, variant)
@@ -119,10 +137,10 @@ def select_config_variant_interactive(
             for field in fields(config):
                 value = getattr(config, field.name)
                 if value is not None:
-                    print(f"      {field.name}: {value}")
+                    print(f"      {c.CYAN}{field.name}{c.RESET}: {c.WHITE}{value}{c.RESET}")
         except ValueError:
-            print("      (config not found)")
-    print(f"\n{'=' * 80}")
+            print(f"      {c.DIM}(config not found){c.RESET}")
+    print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
     print(f"\nSelect [1-{len(variants)}] (default: 1, timeout: {timeout}s): ", end="", flush=True)
 
     # Use select for cross-platform timeout (Unix/Linux/macOS)
