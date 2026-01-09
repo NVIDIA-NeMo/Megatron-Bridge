@@ -29,14 +29,12 @@ def slurm_executor(
     custom_mounts: List[str] = [],
     custom_env_vars: Dict[str, str] = {},
     hf_token: str = None,
-    wandb_key: str = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
     and fine-tuning experiments
     """
     env_vars = {
-        "WANDB_API_KEY": wandb_key,
         "HF_TOKEN": hf_token,
         "HF_DATASETS_TRUST_REMOTE_CODE": "1",
         "TRANSFORMERS_OFFLINE": "0",
@@ -76,7 +74,6 @@ def dgxc_executor(
     dgxc_pvc_claim_name: str,
     nodes: int,
     num_gpus_per_node: int,
-    wandb_key: str = None,
     hf_token: str = None,
     custom_env_vars: Dict[str, str] = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
@@ -93,7 +90,6 @@ def dgxc_executor(
         "NCCL_BUFFSIZE": "8388608",
         "NCCL_P2P_NET_CHUNKSIZE": "524288",
         "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
-        "WANDB_API_KEY": wandb_key,
         "HF_TOKEN": hf_token,
         "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
         "NCCL_NVLS_ENABLE": "0",
@@ -142,17 +138,4 @@ def dgxc_executor(
         env_vars=env_vars,
         launcher="torchrun",
     )
-    return executor
-
-
-def local_executor(hf_token: str) -> run.LocalExecutor:
-    # [snippet-local-executor-start]
-    env_vars = {
-        # required for some eval benchmarks from lm-eval-harness
-        "HF_DATASETS_TRUST_REMOTE_CODE": "1",
-        "HF_TOKEN": hf_token,  # [hf-token-local]
-    }
-
-    executor = run.LocalExecutor(env_vars=env_vars)
-    # [snippet-local-executor-end]
     return executor
