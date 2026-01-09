@@ -380,7 +380,7 @@ class PerfEnvPlugin(Plugin):
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
-        ep_size = self.ep_size if self.ep_size is not None else workload_base_config.ep_size
+        ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
 
         # Force program order kernel launch for TP, CP overlap
         moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)

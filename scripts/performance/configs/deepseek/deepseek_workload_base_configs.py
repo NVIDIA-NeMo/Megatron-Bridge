@@ -79,9 +79,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
     pipeline_model_parallel_size=16,
-    expert_model_parallel_size=8,
+    expert_model_parallel_size=16,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
+    moe_flex_dispatcher_backend="deepep",
     moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200
