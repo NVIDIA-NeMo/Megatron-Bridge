@@ -123,6 +123,11 @@ def slurm_executor(
                     segment = segment_candidate
                     break
 
+    if network == 'sharp':
+        # Append sharp related env var directly to the bash command
+        sharp_env = "NCCL_SHARP_GROUP_SIZE_THRESH=1"
+        custom_bash_cmds.append(sharp_env)
+    
     numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
