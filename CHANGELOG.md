@@ -1,5 +1,9 @@
 # Changelog
 
+## NVIDIA Megatron-Bridge 0.2.2
+
+* This release addresses known security issues. For the latest NVIDIA Vulnerability Disclosure Information visit <https://www.nvidia.com/en-us/security/>, for acknowledgement please reach out to the NVIDIA PSIRT team at <PSIRT@nvidia.com>
+
 ## NVIDIA Megatron-Bridge 0.2.1
 
 * Performance  
