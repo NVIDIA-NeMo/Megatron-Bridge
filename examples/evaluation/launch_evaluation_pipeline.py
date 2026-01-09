@@ -267,14 +267,15 @@ def main(args):
         wandb_run.log_artifact(artifact)
 
         for category in ["tasks", "groups"]:
-            for name, result in results[category].items():
-                metrics = result["metrics"]["exact_match"]["scores"]
-                wandb_run.log(
-                    {
-                        f"{category.rstrip('s')}/{name}/value": metrics["value"],
-                        f"{category.rstrip('s')}/{name}/stderr": metrics["stats"]["stderr"],
-                    }
-                )
+            for task_or_group_name, result in results[category].items():
+                for metric_name, metric_result in result["metrics"].items():
+                    field_key = f"{category.rstrip('s')}/{task_or_group_name}/{metric_name}"
+                    wandb_run.log(
+                        {
+                            f"{field_key}/value": metric_result["scores"][metric_name]["value"],
+                            f"{field_key}/stderr": metric_result["scores"][metric_name]["stats"]["stderr"],
+                        }
+                    )
 
         wandb_run.finish()
 
