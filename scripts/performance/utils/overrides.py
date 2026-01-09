@@ -292,6 +292,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+    if args.hidden_size is not None:
+        recipe.model.hidden_size = args.hidden_size
 
     # Reconfigure the DeepSeek-V3 pipeline model parallel layout
     # if the user has provided a custom PP and VP sizes
