@@ -719,6 +719,44 @@ class TestLoRATopKRouter:
         assert torch.allclose(logits, expected_logits)
         assert routing_map.shape == expected_logits.shape
 
+    def test_forward_skips_adapter_when_disabled(self) -> None:
+        hidden_size = 6
+        num_experts = 2
+        router = DummyRouter(hidden_size=hidden_size, num_experts=num_experts)
+        adapter = nn.Linear(hidden_size, num_experts, bias=False)
+        wrapper = LoRATopKRouter(router, adapter)
+        wrapper.disable_adapter_layers()
+
+        x = torch.randn(2, hidden_size)
+        expected_logits = router.gating(x)
+
+        logits, routing_map = wrapper(x)
+
+        assert torch.allclose(logits, expected_logits)
+        assert routing_map.shape == expected_logits.shape
+
+    def test_forward_applies_force_load_balancing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import lora_layers as lora_layers_module
+
+        hidden_size = 4
+        num_experts = 3
+        router = DummyRouter(hidden_size=hidden_size, num_experts=num_experts)
+        router.config.moe_router_force_load_balancing = True
+        adapter = nn.Linear(hidden_size, num_experts, bias=False)
+        wrapper = LoRATopKRouter(router, adapter)
+
+        x = torch.randn(2, hidden_size)
+        expected_logits = router.gating(x) + adapter(x)
+
+        def fake_random_logits(logits: torch.Tensor) -> torch.Tensor:
+            return logits + 1.0
+
+        monkeypatch.setattr(lora_layers_module, "apply_random_logits", fake_random_logits, raising=True)
+
+        logits, _ = wrapper(x)
+
+        assert torch.allclose(logits, expected_logits + 1.0)
+
     def test_lora_wraps_router_with_lora_topk(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from megatron.bridge.peft import lora as lora_module
 
@@ -737,6 +775,60 @@ class TestLoRATopKRouter:
 
         model = RouterModel(DummyTopKRouter)
         lora = LoRA(target_modules=["router"])
+        transformed = lora(model, training=True)
+
+        assert isinstance(transformed.mlp.router, LoRATopKRouter)
+
+
+class TestLoRATopKRouterAdapters:
+    def test_get_adapter_attributes_topkrouter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import utils as peft_utils
+
+        class DummyTopKRouter(DummyRouter):
+            pass
+
+        router = DummyTopKRouter(hidden_size=7, num_experts=5)
+        router.config.sequence_parallel = True
+        router.parallel_mode = "test"
+
+        monkeypatch.setattr(peft_utils, "TopKRouter", DummyTopKRouter, raising=True)
+        monkeypatch.setattr(
+            peft_utils.parallel_state,
+            "get_tensor_model_parallel_world_size",
+            lambda: 1,
+            raising=True,
+        )
+
+        attrs = peft_utils.get_adapter_attributes_from_linear(router)
+        input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = attrs
+
+        assert input_is_parallel is False
+        assert in_features == router.weight.shape[1]
+        assert out_features == router.weight.shape[0]
+        assert disable_tp_comm is False
+        assert disable_sp_comm is True
+        assert base_linear_is_parallel is False
+
+
+class TestCanonicalLoRATopKRouter:
+    def test_canonical_lora_wraps_router_with_lora_topk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import canonical_lora as canonical_module
+
+        class DummyTopKRouter(DummyRouter):
+            pass
+
+        def fake_adapter(in_features, out_features, *args, **kwargs):
+            return nn.Linear(in_features, out_features, bias=False)
+
+        def fake_attrs(*args, **kwargs):
+            return False, 4, 3, False, True, False
+
+        monkeypatch.setattr(canonical_module, "TopKRouter", DummyTopKRouter, raising=True)
+        monkeypatch.setattr(canonical_module, "ParallelLinearAdapter", fake_adapter, raising=True)
+        monkeypatch.setattr(canonical_module, "get_adapter_attributes_from_linear", fake_attrs, raising=True)
+
+        model = RouterModel(DummyTopKRouter)
+        lora = canonical_module.CanonicalLoRA(target_modules=["router"])
         transformed = lora(model, training=True)
 
         assert isinstance(transformed.mlp.router, LoRATopKRouter)
