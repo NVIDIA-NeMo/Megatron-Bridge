@@ -134,10 +134,15 @@ def select_config_variant_interactive(
             # Print each non-None field of the config, indented
             from dataclasses import fields
 
+            # Fields to highlight in cyan (important config differences)
+            highlight_fields = {"num_gpus", "global_batch_size"}
             for field in fields(config):
                 value = getattr(config, field.name)
                 if value is not None:
-                    print(f"      {c.CYAN}{field.name}{c.RESET}: {c.WHITE}{value}{c.RESET}")
+                    if field.name in highlight_fields:
+                        print(f"      {c.CYAN}{field.name}: {value}{c.RESET}")
+                    else:
+                        print(f"      {field.name}: {value}")
         except ValueError:
             print(f"      {c.DIM}(config not found){c.RESET}")
     print(f"\n{c.DIM}{'=' * 80}{c.RESET}")
