@@ -74,11 +74,21 @@ def get_workload_base_config(
     gpu: str,
     compute_dtype: str,
     task: str,
+    config_variant: str = "v1",
 ) -> Dict[str, int]:
-    """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
-    workload_base_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}"
-    workload_base_config_name = workload_base_config_name.upper()
+    """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe.
 
+    Args:
+        model_family_name: Model family name (e.g., 'llama')
+        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
+        gpu: Target GPU type (e.g., 'gb300', 'h100')
+        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
+        task: Training task (e.g., 'pretrain', 'sft', 'lora')
+        config_variant: Config variant suffix (e.g., 'v1', 'v2'). Defaults to 'v1'.
+
+    Returns:
+        WorkloadBaseConfig object with parallelism and batch size settings.
+    """
     module_name = f"configs.{model_family_name}"
     try:
         module = importlib.import_module(module_name)
@@ -86,13 +96,79 @@ def get_workload_base_config(
     except ModuleNotFoundError as exc:
         raise ValueError(f"Failed to import module '{module_name}'") from exc
 
-    try:
-        workload_base_config = getattr(module, workload_base_config_name)
-        logger.info(f"Loaded {workload_base_config=}")
-    except AttributeError:
-        raise ValueError(f"Failed to get {workload_base_config_name=} from {module_name=}")
+    # Try versioned config name first (e.g., LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V1)
+    versioned_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{config_variant}".upper()
 
-    return workload_base_config
+    # Fallback to non-versioned config name for backward compatibility
+    # (e.g., DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16)
+    base_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}".upper()
+
+    # Try versioned name first
+    workload_base_config = getattr(module, versioned_config_name, None)
+    if workload_base_config is not None:
+        logger.info(f"Loaded versioned config: {versioned_config_name}")
+        return workload_base_config
+
+    # Fall back to non-versioned name (backward compatibility)
+    workload_base_config = getattr(module, base_config_name, None)
+    if workload_base_config is not None:
+        logger.info(f"Loaded non-versioned config (fallback): {base_config_name}")
+        return workload_base_config
+
+    # Neither found - show helpful error with available variants
+    available_variants = list_available_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task)
+    raise ValueError(
+        f"Failed to get config from {module_name=}. "
+        f"Tried: {versioned_config_name}, {base_config_name}. "
+        f"Available variants: {available_variants}"
+    )
+
+
+def list_available_config_variants(
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
+) -> List[str]:
+    """List all available config variants for a given model/task/gpu/dtype combination.
+
+    Args:
+        model_family_name: Model family name (e.g., 'llama')
+        model_recipe_name: Model recipe name (e.g., 'llama3_70b')
+        gpu: Target GPU type (e.g., 'gb300', 'h100')
+        compute_dtype: Compute precision (e.g., 'bf16', 'fp8_cs')
+        task: Training task (e.g., 'pretrain', 'sft', 'lora')
+
+    Returns:
+        List of available variant names (e.g., ['v1', 'v2']) or ['(default)'] for non-versioned configs.
+    """
+    base_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}".upper()
+
+    module_name = f"configs.{model_family_name}"
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        raise ValueError(f"Failed to import module '{module_name}'") from exc
+
+    variants = []
+
+    # Check for versioned configs (e.g., *_V1, *_V2)
+    for name in dir(module):
+        if name.startswith(base_name + "_"):
+            obj = getattr(module, name)
+            if isinstance(obj, WorkloadBaseConfig):
+                # Extract variant suffix (e.g., "LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V1" -> "v1")
+                suffix = name[len(base_name) + 1 :]  # +1 for the underscore
+                variants.append(suffix.lower())
+
+    # Check for non-versioned config (backward compatibility)
+    if hasattr(module, base_name):
+        obj = getattr(module, base_name)
+        if isinstance(obj, WorkloadBaseConfig):
+            variants.append("(default)")
+
+    return sorted(variants)
 
 
 def get_perf_optimized_recipe(
