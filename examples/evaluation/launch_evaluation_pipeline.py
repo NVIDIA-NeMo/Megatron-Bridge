@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 def register_pipeline_terminator(exp: run.Experiment, job_id: str):
+    """Register a signal handler to terminate the job."""
+
     def sigterm_handler(_signo, _stack_frame):
         logger.info(f"Trying to terminate job {job_id}")
         exp.cancel(job_id=job_id)
@@ -49,7 +51,7 @@ def register_pipeline_terminator(exp: run.Experiment, job_id: str):
 
 @dataclass(kw_only=True)
 class CustomJobDetailsRay(SlurmJobDetails):
-    # ray jobs have a custom logs structure
+    """Custom job details for Ray jobs."""
 
     @property
     def ls_term(self) -> str:
