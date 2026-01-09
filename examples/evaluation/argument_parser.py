@@ -1,7 +1,5 @@
 import argparse
 
-from nemo_run.config import get_nemorun_home
-
 
 def list_of_strings(arg):
     """Split a comma-separated string into a list of substrings."""
