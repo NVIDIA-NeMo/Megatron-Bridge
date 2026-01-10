@@ -92,16 +92,24 @@ class NemotronHModelProvider47B(NemotronHModelProvider):
 class NemotronHModelProvider56B(NemotronHModelProvider):
     """Configuration for a 56B parameter Nemotron-H model."""
 
-    hybrid_override_pattern: str = (
-        "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
-        "M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
-    )
-    num_layers: int = 118
-    hidden_size: int = 8192
-    mamba_state_dim: int = 256
-    mamba_num_heads: int = 256
-    ffn_hidden_size: int = 32768
-    num_attention_heads: int = 64
+    # hybrid_override_pattern: str = (
+    #     "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
+    #     "M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
+    # )
+    # num_layers: int = 118
+    # hidden_size: int = 8192
+    # mamba_state_dim: int = 256
+    # mamba_num_heads: int = 256
+    # ffn_hidden_size: int = 32768
+    # num_attention_heads: int = 64
+
+    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
+    num_layers: int = 52
+    hidden_size: int = 4096
+    mamba_state_dim: int = 128
+    mamba_num_heads: int = 128
+    ffn_hidden_size: int = 21504
+    num_attention_heads: int = 32
 
     attention_backend: AttnBackend = AttnBackend.auto
 

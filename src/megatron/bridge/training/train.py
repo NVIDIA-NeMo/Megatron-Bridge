@@ -501,6 +501,20 @@ def train(
 
     _delete_cuda_graphs(cuda_graph_helper)
 
+    def delete_cuda_graphs():
+        if cuda_graph_helper is not None:
+            print("Deleting CUDA graphs")
+            for layers in cuda_graph_helper.callables_per_chunk:
+                for layer_number, layer in enumerate(layers):
+                    for cuda_graph in layer.cuda_graphs:
+                        print_rank_0(f"Del {cuda_graph}")
+                        del cuda_graph
+                    del layer.cuda_graphs
+        gc.collect()
+        torch.cuda.empty_cache()
+    
+    delete_cuda_graphs()        
+
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
     if writer:
@@ -1144,6 +1158,8 @@ def _finish_train(global_state: GlobalState):
 
     if global_state.wandb_logger:
         global_state.wandb_logger.finish()
+
+    print("Radioactive : Before destroy_global_state")
 
     destroy_global_state()
 
