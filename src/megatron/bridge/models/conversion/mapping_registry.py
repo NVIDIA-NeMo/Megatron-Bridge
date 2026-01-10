@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
 from typing import List, Optional
 
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
 
 
 class MegatronMappingRegistry:
@@ -100,7 +102,11 @@ class MegatronMappingRegistry:
         Args:
             *mappings: MegatronParamMapping objects
         """
-        self.mappings = list(mappings)
+        if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
+            mappings = list(mappings) 
+            mappings.extend(convert_to_amax_map(mappings, ".weight_quantizer._amax"))
+            mappings.extend(convert_to_amax_map(mappings, ".input_quantizer._amax"))
+        self.mappings = mappings
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []

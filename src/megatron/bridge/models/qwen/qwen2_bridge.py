@@ -23,7 +23,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
@@ -117,8 +116,8 @@ class Qwen2Bridge(MegatronModelBridge):
                 ),
             ]
         )
-        mapping_list.extend(convert_to_amax_map(mapping_list, ".weight_quantizer._amax"))
-        mapping_list.extend(convert_to_amax_map(mapping_list, ".input_quantizer._amax"))
+        # mapping_list.extend(convert_to_amax_map(mapping_list, ".weight_quantizer._amax"))
+        # mapping_list.extend(convert_to_amax_map(mapping_list, ".input_quantizer._amax"))
 
 
         return MegatronMappingRegistry(*mapping_list)
