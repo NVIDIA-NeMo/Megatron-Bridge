@@ -3,10 +3,63 @@ from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 
 class AmaxMapping(ReplicatedMapping):
     """Amax mapping for quantization."""
+
     def __init__(self, megatron_param: str, hf_param: str):
         """Initialize the Amax mapping."""
         super().__init__(megatron_param, hf_param)
         self.allow_hf_name_mismatch = True
+
+
+class AmaxFanoutMapping(AmaxMapping):
+    """Replicated amax mapping that fans out one Megatron amax to multiple HF targets.
+
+    Used for QKV and gate/up where the amax values are shared but need to be
+    written/read under multiple HF parameter names.
+    """
+
+    def __init__(self, megatron_param: str, hf_params: list[str]):
+        assert hf_params, "hf_params must be non-empty"
+        self.hf_targets = hf_params
+        # Use the first target as the canonical HF name for HF->Megatron loading
+        super().__init__(megatron_param, hf_params[0])
+
+    def megatron_to_hf(
+        self, megatron_weights, megatron_module
+    ):
+        base = super().megatron_to_hf(megatron_weights, megatron_module)
+        if not base:
+            return {}
+        weight = next(iter(base.values()))
+        return {t: weight for t in self.hf_targets}
+
+    def resolve(self, captures: tuple[str, ...]):
+        """Resolve wildcards for both megatron_param and all HF targets."""
+        resolved_megatron_param = self.megatron_param
+        capture_index = 0
+        # Resolve ** then * in megatron_param
+        while "**" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("**", captures[capture_index], 1)
+            capture_index += 1
+        while "*" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("*", captures[capture_index], 1)
+            capture_index += 1
+
+        # Resolve HF targets separately with a fresh capture index
+        resolved_hf_targets = []
+        for target in self.hf_targets:
+            t = target
+            ci = 0
+            while "**" in t and ci < len(captures):
+                t = t.replace("**", captures[ci], 1)
+                ci += 1
+            while "*" in t and ci < len(captures):
+                t = t.replace("*", captures[ci], 1)
+                ci += 1
+            resolved_hf_targets.append(t)
+
+        new_mapping = type(self)(resolved_megatron_param, resolved_hf_targets)
+        new_mapping.allow_hf_name_mismatch = self.allow_hf_name_mismatch
+        return new_mapping
 
 
 def convert_to_amax_map(mappings: list[MegatronParamMapping], mapped_name='.weight_quantizer._amax') -> list[MegatronParamMapping]:
@@ -29,48 +82,43 @@ def convert_to_amax_map(mappings: list[MegatronParamMapping], mapped_name='.weig
     extended_mapping = []
     
     for mapping in mappings:
-        # Check if megatron_param ends with .weight
         if not mapping.megatron_param.endswith('.weight'):
             continue
-            
-        # Convert megatron_param: replace '.weight' with '.weight_quantizer._amax'
+        
         new_megatron_param = mapping.megatron_param.replace('.weight', mapped_name)
         
-        # Convert hf_param based on its type
         if isinstance(mapping.hf_param, dict):
             # For dict-based hf_param (e.g., QKVMapping, GatedMLPMapping)
-            # Convert each value in the dictionary
             new_hf_param = {
                 key: value.replace('.weight', mapped_name) if value.endswith('.weight') else value
                 for key, value in mapping.hf_param.items()
             }
         elif isinstance(mapping.hf_param, str):
-            # For string-based hf_param
             if mapping.hf_param.endswith('.weight'):
                 new_hf_param = mapping.hf_param.replace('.weight', mapped_name)
             else:
-                # If hf_param doesn't end with .weight, skip this mapping
                 continue
         else:
-            # Unknown hf_param type, skip
             print(f"Unknown hf_param type: {type(mapping.hf_param)}")
             continue
         
         # Amax tensors are small scalars and should not be TP-sharded. Always map
         # them as replicated parameters to avoid any TP chunking logic.
-        # If hf_param is a dict (e.g., QKV/Gate-Up), pick the first entry; these
-        # amax values are expected to be identical, so any entry works.
+        # For dict-based mappings (e.g., QKV or gate/up), emit one fan-out mapping
+        # so each of q/k/v (or gate/up) receives the same amax in Megatron->HF.
         if isinstance(new_hf_param, dict):
             if not new_hf_param:
                 continue
-            _, picked_hf_param = next(iter(new_hf_param.items()))
+            new_mapping = AmaxFanoutMapping(
+                megatron_param=new_megatron_param,
+                hf_params=list(new_hf_param.values()),
+            )
+            extended_mapping.append(new_mapping)
         else:
-            picked_hf_param = new_hf_param
-
-        new_mapping = AmaxMapping(
-            megatron_param=new_megatron_param,
-            hf_param=picked_hf_param,
-        )
-        extended_mapping.append(new_mapping)
+            new_mapping = AmaxMapping(
+                megatron_param=new_megatron_param,
+                hf_param=new_hf_param,
+            )
+            extended_mapping.append(new_mapping)
     
     return extended_mapping
