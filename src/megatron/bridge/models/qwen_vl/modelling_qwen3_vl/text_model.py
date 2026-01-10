@@ -137,7 +137,7 @@ class Qwen3VLGPTModel(GPTModel):
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
 
-        decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = self._preprocess(
+        decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset, *_ = self._preprocess(
             input_ids=input_ids,
             position_ids=position_ids,
             decoder_input=decoder_input,
