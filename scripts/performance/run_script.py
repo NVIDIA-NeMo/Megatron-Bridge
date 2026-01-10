@@ -53,6 +53,7 @@ def main():
         args.compute_dtype,
         args.task,
         user_gbs=args.global_batch_size,
+        config_variant=args.config_variant,
     )
 
     pretrain(config=recipe, forward_step_func=forward_step)
