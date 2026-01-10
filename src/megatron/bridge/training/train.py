@@ -17,7 +17,7 @@ import os
 import sys
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Union
 
 import torch
@@ -265,7 +265,6 @@ def train(
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
-        """
         nvtx_ctx = handle_profiling_step(
             prof_config,
             global_state.train_state.step,
@@ -274,23 +273,18 @@ def train(
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
-        """
 
-        """
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
-        """
 
         # Update the timeout for all process groups after initialization
         # We update the timeout after the first successful iteration,
         # which takes longer than others usually
-        """
         if global_state.train_state.step == start_iteration + 1:
             distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
             if distributed_timeout_seconds_after_init is not None:
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
-        """
 
         # Update number of microbatches first without consistency check to decide if a
         # checkpoint should be saved. If the number of microbatches is different
@@ -316,11 +310,9 @@ def train(
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
-        """
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
-        """
 
         # Capture CUDA Graphs after warmup.
         if (
@@ -358,7 +350,6 @@ def train(
             forward_backward_func,
         )
 
-        """
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -380,7 +371,6 @@ def train(
             )
         if should_exit:
             break
-        #"""
 
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
@@ -484,7 +474,6 @@ def train(
                 gc.collect()
             prefix = f"iteration {global_state.train_state.step}"
             timers("eval-time", log_level=0).start(barrier=True)
-            """
             evaluate_and_print_results(
                 global_state,
                 prefix,
@@ -497,7 +486,6 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
             )
-            """
 
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
