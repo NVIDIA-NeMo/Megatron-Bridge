@@ -125,7 +125,7 @@ def get_batch(
         batch["tokens"],
         batch["labels"],
         batch["loss_mask"],
-        batch["attention_mask"],
+        batch.get("attention_mask"),
         batch["position_ids"],
         batch.get("cu_seqlens"),
         batch.get("cu_seqlens_argmin"),

@@ -17,7 +17,7 @@ import os
 import sys
 import time
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
 import torch
@@ -143,10 +143,12 @@ def train(
     total_loss_dict = {}
 
     # Make sure rerun_state_machine has the right iteration loaded from checkpoint.
+    """
     rerun_state_machine = get_rerun_state_machine()
     if rerun_state_machine.current_iteration != global_state.train_state.step:
         print_rank_0(f"Setting rerun_state_machine.current_iteration to {global_state.train_state.step}...")
         rerun_state_machine.current_iteration = global_state.train_state.step
+    """
 
     num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
     num_floating_point_operations_since_last_log_event = 0.0
@@ -167,8 +169,9 @@ def train(
         assert train_config.manual_gc_interval >= 0, (
             "Manual garbage collection interval should be larger than or equal to 0"
         )
+        print("GC disabled")
         gc.disable()
-        gc.collect()
+        # gc.collect()
 
     if config.straggler and config.straggler.log_straggler:
         world = torch.distributed.get_world_size()
@@ -214,6 +217,7 @@ def train(
         config.optimizer.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
+    should_toggle_forward_pre_hook = False
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -261,6 +265,7 @@ def train(
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
+        """
         nvtx_ctx = handle_profiling_step(
             prof_config,
             global_state.train_state.step,
@@ -269,18 +274,23 @@ def train(
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
+        """
 
+        """
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
+        """
 
         # Update the timeout for all process groups after initialization
         # We update the timeout after the first successful iteration,
         # which takes longer than others usually
+        """
         if global_state.train_state.step == start_iteration + 1:
             distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
             if distributed_timeout_seconds_after_init is not None:
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
+        """
 
         # Update number of microbatches first without consistency check to decide if a
         # checkpoint should be saved. If the number of microbatches is different
@@ -306,9 +316,11 @@ def train(
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
+        """
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
+        """
 
         # Capture CUDA Graphs after warmup.
         if (
@@ -346,6 +358,7 @@ def train(
             forward_backward_func,
         )
 
+        """
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -367,6 +380,7 @@ def train(
             )
         if should_exit:
             break
+        #"""
 
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
@@ -399,6 +413,7 @@ def train(
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
+        """
         dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
@@ -408,11 +423,13 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(config, batch_size)
+        num_floating_point_operations_in_batch = 0  # flop_utils.num_floating_point_operations(config, batch_size)
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
+        """
 
+        """
         # Logging.
         if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
             loss_scale = optimizer.get_loss_scale().item()
@@ -431,6 +448,7 @@ def train(
                 decoupled_learning_rate = param_group["lr"]
             else:
                 learning_rate = param_group["lr"]
+                     
         report_memory_flag = training_log(
             loss_dict,
             total_loss_dict,
@@ -448,6 +466,7 @@ def train(
             model,
             log_max_attention_logit,
         )
+        """
 
         if (
             global_state.train_state.do_valid
@@ -465,6 +484,7 @@ def train(
                 gc.collect()
             prefix = f"iteration {global_state.train_state.step}"
             timers("eval-time", log_level=0).start(barrier=True)
+            """
             evaluate_and_print_results(
                 global_state,
                 prefix,
@@ -477,6 +497,8 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
             )
+            """
+
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
             timers("eval-time").stop()
@@ -613,8 +635,9 @@ def train_step(
     train_config = cfg.train
     optim_config = cfg.optimizer
 
-    rerun_state_machine = get_rerun_state_machine()
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
+    # rerun_state_machine = get_rerun_state_machine()
+    # while rerun_state_machine.should_run_forward_backward(data_iterator):
+    if True:
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -650,13 +673,24 @@ def train_step(
                 data_iterator=forward_backward_data_iterator,
             )
 
+        elif len(model) > 1:
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
+
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
+            )
+
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
+        print("no modelopt stuff")
+        """
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
             seq_length=model_config.seq_length,
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=model_config.seq_length,
         )
+        """
 
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
@@ -667,9 +701,9 @@ def train_step(
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,
             forward_only=False,
-            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            #adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
         )
-    should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
+    should_checkpoint, should_exit, exit_code = False, False, 0  # rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
 
@@ -678,7 +712,7 @@ def train_step(
         torch.cuda.empty_cache()
 
     # Update parameters.
-    timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
+    # timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     # get max attention logit for logging and run clip_qk()
@@ -687,16 +721,20 @@ def train_step(
     if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
         log_max_attention_logit = clip_qk(model)
 
-    timers("optimizer").stop()
+    # timers("optimizer").stop()
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
-    # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
-    # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
-    if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
+    numeric_checks = False
+    if numeric_checks:
+        update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+        # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
+        # so we must gather across mp ranks
+        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+        if optim_config.log_num_zeros_in_grad:
+            num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(
+                num_zeros_in_grad, mp_group=pg_collection.mp
+            )
 
     # Update learning rate.
     if update_successful:
@@ -1084,6 +1122,9 @@ def checkpoint_and_decide_exit(
     Returns:
         True if the training loop should exit, False otherwise.
     """
+    if not state.cfg.checkpoint.save:
+        return False
+
     saved_checkpoint = False
 
     # Exit based on signal handler.
