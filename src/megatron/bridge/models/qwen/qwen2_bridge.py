@@ -116,8 +116,5 @@ class Qwen2Bridge(MegatronModelBridge):
                 ),
             ]
         )
-        # mapping_list.extend(convert_to_amax_map(mapping_list, ".weight_quantizer._amax"))
-        # mapping_list.extend(convert_to_amax_map(mapping_list, ".input_quantizer._amax"))
-
 
         return MegatronMappingRegistry(*mapping_list)
