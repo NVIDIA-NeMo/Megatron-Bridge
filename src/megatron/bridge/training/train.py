@@ -513,6 +513,7 @@ def train(
             if energy_monitor is not None:
                 energy_monitor.resume()
 
+        """
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
@@ -554,6 +555,7 @@ def train(
         )
         if should_exit:
             break
+        """
 
     _delete_cuda_graphs(cuda_graph_helper)
 
