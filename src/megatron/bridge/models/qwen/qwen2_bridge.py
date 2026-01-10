@@ -23,6 +23,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
@@ -79,7 +80,9 @@ class Qwen2Bridge(MegatronModelBridge):
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
@@ -114,5 +117,8 @@ class Qwen2Bridge(MegatronModelBridge):
                 ),
             ]
         )
+        mapping_list.extend(convert_to_amax_map(mapping_list, ".weight_quantizer._amax"))
+        mapping_list.extend(convert_to_amax_map(mapping_list, ".input_quantizer._amax"))
+
 
         return MegatronMappingRegistry(*mapping_list)
