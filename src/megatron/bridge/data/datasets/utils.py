@@ -29,7 +29,6 @@ from typing import Any, Callable, Optional, Pattern, Type
 import numpy as np
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tokenizers import MegatronTokenizer
 from torch.utils.data import Dataset
 
@@ -732,11 +731,10 @@ def _get_samples_mapping(
     binary_head,
     index_mapping_dir: str = None,
     samples_mapping: Any = None,
-    sanity_check_dist_workers: bool = True,
-    *,
-    pg_collection: ProcessGroupCollection,
 ):
     """Get a list that maps a sample index to a starting sentence index, end sentence index, and length"""
+    is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
+    rank = torch.distributed.get_rank() if is_distributed else 0
 
     if not num_epochs:
         if not max_num_samples:
@@ -761,7 +759,7 @@ def _get_samples_mapping(
     indexmap_filename += ".npy"
 
     # Build the indexed mapping if not exist and not provided externally.
-    if samples_mapping is None and torch.distributed.get_rank() == 0 and not os.path.isfile(indexmap_filename):
+    if samples_mapping is None and rank == 0 and not os.path.isfile(indexmap_filename):
         # Fake index mapping if missing
         if (getattr(indexed_dataset, "doc_idx", None) is None) and (getattr(indexed_dataset, "sizes", None) is None):
             _make_indexed_dataset_compatibility(indexed_dataset)
@@ -777,7 +775,7 @@ def _get_samples_mapping(
         assert indexed_dataset.sizes.dtype == np.int32
 
         # Build samples mapping
-        verbose = torch.distributed.get_rank() == 0
+        verbose = rank == 0
         start_time = time.time()
         logger.info(" > building samples index mapping for {} ...".format(name))
         # First compile and then import.
@@ -807,15 +805,11 @@ def _get_samples_mapping(
             " > elasped time to build and save samples mapping (seconds): {:4f}".format(time.time() - start_time)
         )
 
-    if sanity_check_dist_workers:
+    # Ensure the mapping exists before all ranks attempt to load it.
+    # Skip barrier when invoked from a rank-0-only data preparation flow (see `rank_0_prepare_data()`).
+    if is_distributed and not rank_0_prepare_data():
         torch.distributed.barrier()
-        counts = torch.cuda.LongTensor([1])
-        # First reduce across data-parallel-with-context group, then pipeline-parallel group
-        torch.distributed.all_reduce(counts, group=pg_collection.dp_cp)
-        torch.distributed.all_reduce(counts, group=pg_collection.pp)
-        assert counts[0].item() == (
-            torch.distributed.get_world_size() // torch.distributed.get_world_size(group=pg_collection.tp)
-        )
+
     # Load indexed dataset if not given externally.
     if samples_mapping is None:
         logger.info(" > loading indexed mapping from {}".format(indexmap_filename))

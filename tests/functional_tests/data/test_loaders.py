@@ -143,23 +143,25 @@ class TestDataLoaders:
             ([data_path], None),
         ]
 
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
-    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
-    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
-    def test_build_train_valid_test_data_loaders(
-        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
-    ):
-        mock_get_data_parallel_rank.return_value = 0
-        mock_get_data_parallel_world_size.return_value = 1
+    def test_build_train_valid_test_data_loaders(self, mock_broadcast, mock_get_rank, mock_get_world_size):
+        mock_get_rank.return_value = 0
+        mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
+        dp_group = object()
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
-            cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
         )
 
-        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        mock_broadcast.assert_called_once_with(mock.ANY, 0, group=dp_group)
         actual_flags = mock_broadcast.call_args[0][0]
         expected_flags = torch.tensor([1, 1, 1], dtype=torch.long, device="cuda")
         assert torch.equal(actual_flags, expected_flags)
@@ -167,24 +169,28 @@ class TestDataLoaders:
         assert valid_dataloader is not None
         assert test_dataloader is not None
 
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
-    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
-    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
     def test_build_train_valid_test_data_loaders_eval_iters_0(
-        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
+        self, mock_broadcast, mock_get_rank, mock_get_world_size
     ):
-        mock_get_data_parallel_rank.return_value = 0
-        mock_get_data_parallel_world_size.return_value = 1
+        mock_get_rank.return_value = 0
+        mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
         cfg.train.eval_iters = 0
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
+        dp_group = object()
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
-            cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
         )
 
-        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        mock_broadcast.assert_called_once_with(mock.ANY, 0, group=dp_group)
         actual_flags = mock_broadcast.call_args[0][0]
         expected_flags = torch.tensor([1, 0, 0], dtype=torch.long, device="cuda")
         assert torch.equal(actual_flags, expected_flags)

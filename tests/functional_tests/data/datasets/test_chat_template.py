@@ -23,7 +23,6 @@ import megatron.core.parallel_state as parallel_state
 import pytest
 import torch
 import torch.distributed as dist
-from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, create_sft_dataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -217,7 +216,6 @@ class TestChatTemplateWithRealTokenizer:
             chat=True,
             use_hf_tokenizer_chat_template=True,
             tool_schemas=tool_schemas,
-            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
         )
 
         assert isinstance(dataset, GPTSFTChatDataset)
@@ -290,7 +288,6 @@ class TestChatTemplateWithRealTokenizer:
             chat=True,
             use_hf_tokenizer_chat_template=True,
             tool_schemas=tool_schemas,
-            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
         )
 
         item = dataset[0]
@@ -330,7 +327,6 @@ class TestChatTemplateWithRealTokenizer:
             tokenizer=chat_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
-            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
         )
 
         # Test that dataset can be loaded
@@ -378,7 +374,6 @@ class TestChatTemplateWithRealTokenizer:
             tokenizer=chat_tokenizer,
             max_seq_length=512,
             use_hf_tokenizer_chat_template=True,
-            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
         )
 
         # Create a batch
@@ -453,7 +448,6 @@ class TestChatTemplateWithRealTokenizer:
             chat=True,
             use_hf_tokenizer_chat_template=True,
             tool_schemas=global_tool_schemas,  # These should be overridden
-            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
         )
 
         item = dataset[0]

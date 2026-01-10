@@ -17,7 +17,6 @@ from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
 import torch
 from megatron.core.datasets.utils import get_blend_from_list
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
@@ -161,7 +160,7 @@ def build_train_valid_test_data_loaders(
     cfg: ConfigContainer,
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
-    pg_collection: ProcessGroupCollection,
+    dp_group: torch.distributed.ProcessGroup,
 ) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build train, validation, and test data loaders.
 
@@ -193,9 +192,9 @@ def build_train_valid_test_data_loaders(
 
     maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
 
-    # Resolve DP rank/size from provided process group collection
-    dp_rank = torch.distributed.get_rank(group=pg_collection.dp)
-    dp_size = torch.distributed.get_world_size(group=pg_collection.dp)
+    # Resolve DP rank/size from provided data-parallel process group
+    dp_rank = torch.distributed.get_rank(group=dp_group)
+    dp_size = torch.distributed.get_world_size(group=dp_group)
 
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
@@ -270,7 +269,7 @@ def build_train_valid_test_data_loaders(
     do_test = test_dataloader is not None and cfg.train.eval_iters > 0
     flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
 
-    torch.distributed.broadcast(flags, 0)
+    torch.distributed.broadcast(flags, 0, group=dp_group)
 
     train_state.do_train = flags[0].item()
     train_state.do_valid = flags[1].item()
@@ -283,7 +282,7 @@ def build_train_valid_test_data_iterators(
     cfg: ConfigContainer,
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
-    pg_collection: ProcessGroupCollection,
+    dp_group: torch.distributed.ProcessGroup,
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
     """Build train, validation, and test data iterators.
 
@@ -304,7 +303,7 @@ def build_train_valid_test_data_iterators(
         cfg=cfg,
         train_state=train_state,
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
-        pg_collection=pg_collection,
+        dp_group=dp_group,
     )
 
     # Build iterators.
@@ -352,7 +351,7 @@ def setup_data_iterators(
     train_state: TrainState,
     model_length: int,
     train_valid_test_datasets_provider: Callable,
-    pg_collection: ProcessGroupCollection,
+    dp_group: torch.distributed.ProcessGroup,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -384,7 +383,7 @@ def setup_data_iterators(
                 cfg=cfg,
                 train_state=train_state,
                 build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-                pg_collection=pg_collection,
+                dp_group=dp_group,
             )
             train_data_iterator.append(iterators[0])
             valid_data_iterator.append(iterators[1])
@@ -394,7 +393,7 @@ def setup_data_iterators(
             cfg=cfg,
             train_state=train_state,
             build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-            pg_collection=pg_collection,
+            dp_group=dp_group,
         )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator

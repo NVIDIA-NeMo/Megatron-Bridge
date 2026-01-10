@@ -25,7 +25,6 @@ import numpy as np
 import torch
 from datasets import load_dataset
 from megatron.core.msc_utils import MultiStorageClientFeature
-from megatron.core.process_groups_config import ProcessGroupCollection
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.datasets.utils import (
@@ -102,8 +101,6 @@ def create_sft_dataset(
     chat: bool = False,
     use_hf_tokenizer_chat_template: bool = False,
     tool_schemas: str | dict | None = None,
-    *,
-    pg_collection: ProcessGroupCollection,
     **kwargs,
 ) -> "GPTSFTDataset":
     """
@@ -172,7 +169,6 @@ def create_sft_dataset(
         "prompt_template": prompt_template,
         "truncation_method": truncation_method,
         "get_attention_mask_from_fusion": get_attention_mask_from_fusion,
-        "pg_collection": pg_collection,
     }
 
     if path.suffix == ".npy":
@@ -229,9 +225,6 @@ class GPTSFTDataset(Dataset):
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
         get_attention_mask_from_fusion: bool = True,
-        sanity_check_dist_workers: bool = True,
-        *,
-        pg_collection: ProcessGroupCollection,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -280,7 +273,6 @@ class GPTSFTDataset(Dataset):
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
         get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
             of adding it to the batch dict.
-        sanity_check_dist_workers (bool): if true, will run sanity check across workers when making mapping.
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
@@ -309,8 +301,6 @@ class GPTSFTDataset(Dataset):
         self.output_original_text = output_original_text
         self.ceil_to_power_2 = ceil_to_power_2
         self.get_attention_mask_from_fusion = get_attention_mask_from_fusion
-        self.sanity_check_dist_workers = sanity_check_dist_workers
-        self.pg_collection = pg_collection
 
         if special_tokens is None:
             self.special_tokens = {
@@ -392,8 +382,6 @@ class GPTSFTDataset(Dataset):
                 binary_head=False,
                 index_mapping_dir=self.index_mapping_dir,
                 samples_mapping=osm,
-                sanity_check_dist_workers=self.sanity_check_dist_workers,
-                pg_collection=self.pg_collection,
             )
         else:
             self.samples_mapping = None
