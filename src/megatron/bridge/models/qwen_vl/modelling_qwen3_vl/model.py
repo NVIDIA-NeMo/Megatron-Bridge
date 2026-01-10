@@ -277,6 +277,7 @@ class Qwen3VLModel(MegatronModule):
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
                 attention_mask=attention_mask,
+                packed_seq_params=packed_seq_params,
             )
 
         visual_pos_masks = image_mask
