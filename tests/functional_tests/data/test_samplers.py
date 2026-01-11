@@ -576,7 +576,9 @@ class TestBatchDataloaderIntegration:
         cfg.train.global_batch_size = 16
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider, train_state=None
+        )
 
         # Build dataloader with dataloader_type="batch"
         dataloader = build_pretraining_data_loader(
