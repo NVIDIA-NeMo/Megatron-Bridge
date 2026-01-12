@@ -36,6 +36,7 @@ from typing import (
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -940,6 +941,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
+        if use_megatron_fsdp:
+            megatron_model = [megatron_model[0].module.module]
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
@@ -955,7 +959,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
+            if use_megatron_fsdp:
+                converted_weights_dict = task.mapping.megatron_fsdp_to_hf(task.param_weight, task.megatron_module) 
+            else:
+                converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module) 
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,

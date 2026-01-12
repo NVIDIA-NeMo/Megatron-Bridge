@@ -20,6 +20,7 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 import torch
 import torch.distributed
 import torch.nn as nn
+from torch.distributed._tensor import DTensor
 from megatron.core import mpu
 from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
@@ -28,6 +29,7 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
+from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
 
@@ -289,6 +291,39 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 TP rank 0).
         """
         ...
+
+    def megatron_fsdp_to_hf(
+        self,
+        dtensor_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron FSDP format.
+        Args:
+            dtensor_weights (Optional[torch.Tensor]): Weight tensor from current rank. 
+            megatron_module (Optional[nn.Module]): Module for config access
+
+        Returns:
+            Dict[str, torch.Tensor]: Converted weights (empty dict if not on
+                TP rank 0).
+        """
+        megatron_weights: Optional[torch.Tensor] = None
+
+        if dtensor_weights is not None:
+            if isinstance(dtensor_weights, DTensor):
+                # Gather FSDP-sharded DTensor to a replicated DTensor, then
+                # work with the local full tensor.
+                full_dtensor = gather_uneven_dtensor_to_full_tensor(dtensor_weights)
+                megatron_weights = full_dtensor.to_local()
+            else:
+                megatron_weights = dtensor_weights
+
+            # Preserve TP metadata if it was attached to the original tensor.
+            for attr in ("tensor_model_parallel", "partition_dim"):
+                if hasattr(dtensor_weights, attr) and getattr(dtensor_weights, attr) is not None:
+                    setattr(megatron_weights, attr, getattr(dtensor_weights, attr))
+        
+        # Reuse existing Megatron → HF logic (handles PP/TP/EP and format tweaks).
+        return self.megatron_to_hf(megatron_weights, megatron_module)
 
     def broadcast_from_pp_rank(
         self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None
