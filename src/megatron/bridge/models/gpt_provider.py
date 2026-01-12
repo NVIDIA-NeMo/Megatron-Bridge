@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
-# import modelopt.torch.distill as mtd
-# import modelopt.torch.distill.plugins.megatron as mtd_mcore
+import modelopt.torch.distill as mtd
+import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel

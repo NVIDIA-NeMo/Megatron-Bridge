@@ -138,6 +138,7 @@ def _nemotron_3_nano_common(
     lr_decay_iters: Optional[int] = None,
     # Tokenizer
     tokenizer_model: Optional[str] = None,
+    vocab_size: Optional[int] = 131072,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
@@ -231,11 +232,12 @@ def _nemotron_3_nano_common(
         end_weight_decay=0.1,
         lr_decay_style="cosine",
     )
-    #FIXME: HF tokenizer or TikTokenizer?
-    if tokenizer_model is not None:
-        tokenizer_config = TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model=tokenizer_model)
-    else:
-        tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE)
+
+    tokenizer_config=TokenizerConfig(
+            tokenizer_type= "HuggingFaceTokenizer",
+            tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+            vocab_size=None
+        )
 
     # Config Container
     cfg = ConfigContainer(
