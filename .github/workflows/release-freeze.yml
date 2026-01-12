@@ -60,6 +60,11 @@ jobs:
           ref: main
           token: ${{ secrets.PAT }}
 
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Update versions1.json
         run: |
           version_number=$(echo ${VERSION} | sed 's/^r//')
