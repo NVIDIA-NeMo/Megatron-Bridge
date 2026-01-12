@@ -30,10 +30,12 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
+    from utils.utils import select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
+    from .utils.utils import select_config_variant_interactive
 
 try:
     import wandb
@@ -198,8 +200,9 @@ def main(
     time_limit: str,
     container_image: str,
     custom_mounts: List[str],
-    custom_env_vars: List[str],
+    custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -216,6 +219,7 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
+    config_variant: str = "v1",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -265,6 +269,9 @@ def main(
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
         ]
     )
+
+    if nccl_ub:
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -318,6 +325,7 @@ def main(
                 gpu=gpu,
                 compute_dtype=compute_dtype,
                 train_task=task,
+                config_variant=config_variant,
             )
         )
 
@@ -493,6 +501,17 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
+    # Handle --list_config_variants: show available variants and interactively select
+    config_variant = args.config_variant
+    if args.list_config_variants:
+        config_variant = select_config_variant_interactive(
+            model_family_name=args.model_family_name,
+            model_recipe_name=args.model_recipe_name,
+            gpu=args.gpu,
+            compute_dtype=args.compute_dtype,
+            task=args.task,
+        )
+
     main(
         use_recipes=args.use_recipes,
         model_family_name=args.model_family_name,
@@ -529,6 +548,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
@@ -557,4 +577,5 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        config_variant=config_variant,
     )

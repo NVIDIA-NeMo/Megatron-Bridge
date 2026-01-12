@@ -18,11 +18,13 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.train import (
     _dummy_train_step,
     _handle_mxfp8_param_buffer_copy,
+    _maybe_register_fsdp_buffers,
     _should_skip_and_handle_iteration,
     checkpoint_and_decide_exit,
     force_param_sync,
@@ -34,6 +36,36 @@ from megatron.bridge.training.train import (
     should_disable_forward_pre_hook,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
+
+
+class TestFSDPRegistration:
+    """Unit tests for FSDP buffer manual registration."""
+
+    def test_maybe_register_fsdp_buffers_execution(self):
+        """Test that manual registration is called when conditions are met."""
+        # Setup mocks
+        config = Mock()
+        config.ddp.use_megatron_fsdp = True
+        config.ddp.fsdp_manual_registration = True
+
+        # Mock model chunk
+        model_chunk = Mock(spec=megatron_FSDP)
+        # Mock ddp_config on the chunk
+        model_chunk.ddp_config = Mock()
+        model_chunk.ddp_config.fsdp_manual_registration = True
+
+        # Mock the buffer and its method
+        fsdp_buffer = Mock()
+        # Mock the manual_buffer_registration method which might be missing
+        fsdp_buffer.manual_buffer_registration = Mock()
+        model_chunk.param_and_grad_buffer = fsdp_buffer
+        model = [model_chunk]
+
+        # Run function
+        _maybe_register_fsdp_buffers(config, model)
+
+        # Verify registration was called
+        fsdp_buffer.manual_buffer_registration.assert_called_once()
 
 
 class TestPostTrainingStepHelpers:

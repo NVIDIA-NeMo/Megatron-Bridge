@@ -495,7 +495,11 @@ class AutoBridge(Generic[MegatronModelT]):
             dist.barrier()
 
     def save_megatron_model(
-        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
+        self,
+        model: list[MegatronModule],
+        path: str | Path,
+        hf_tokenizer_path: Optional[str | Path] = None,
+        hf_tokenizer_kwargs: Optional[dict] = None,
     ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
@@ -511,6 +515,9 @@ class AutoBridge(Generic[MegatronModelT]):
             path: Directory path where the checkpoint will be saved
             hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
                 If provided, the tokenizer metadata will be included in the checkpoint.
+            hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
+                Common options include trust_remote_code=True for models with custom tokenizers,
+                or use_fast=True for models that require the fast tokenizer.
 
         Example:
             >>> # Save model checkpoint after conversion
@@ -532,7 +539,7 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
-        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
+        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path, hf_tokenizer_kwargs=hf_tokenizer_kwargs)
 
     def load_megatron_model(
         self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
@@ -648,7 +655,12 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        bridge.save_megatron_model(megatron_model, megatron_path, hf_tokenizer_path=hf_model_id)
+        hf_tokenizer_kwargs = None
+        if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
+            hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+        bridge.save_megatron_model(
+            megatron_model, megatron_path, hf_tokenizer_path=hf_model_id, hf_tokenizer_kwargs=hf_tokenizer_kwargs
+        )
 
     def export_ckpt(
         self,
