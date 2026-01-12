@@ -49,6 +49,7 @@ jobs:
   bump-docs-versions:
     needs: [code-freeze]
     runs-on: ubuntu-latest
+    environment: main
     env:
       VERSION: ${{ needs.code-freeze.outputs.release-branch }}
     steps:
@@ -56,6 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ secrets.PAT }}
 
       - name: Update versions1.json
         run: |
