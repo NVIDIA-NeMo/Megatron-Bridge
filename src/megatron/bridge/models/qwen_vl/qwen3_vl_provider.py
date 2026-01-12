@@ -119,7 +119,6 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             num_experts=None,
             moe_grouped_gemm=False,
             qk_layernorm=self.qk_layernorm,
-            normalization="RMSNorm",
             fp8=False,
         )
 
@@ -277,7 +276,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             moe_grouped_gemm=True,
             qk_layernorm=self.qk_layernorm,
             fp8=False,
-            normalization="RMSNorm",
         )
 
         # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
