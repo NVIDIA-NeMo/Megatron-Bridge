@@ -121,7 +121,7 @@ transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", 
 megatron-core = { path = "3rdparty/Megatron-LM/" }
 nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "54f85fe422d296cf04ea524130014bd3a2c3add1" }
 nvidia-modelopt = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git", rev = "0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }
-mamba-ssm = { git = "https://github.com/yfw/mamba", branch = "general_stride_fix" }
+# mamba-ssm = { git = "https://github.com/yfw/mamba", branch = "general_stride_fix" }
 
 [project.optional-dependencies]
 recipes = [
