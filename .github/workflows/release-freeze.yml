@@ -93,7 +93,7 @@ jobs:
       - name: Update conf.py
         run: |
           version_number=$(echo ${VERSION} | sed 's/^r//')
-          sed -i "s/release = .*/release = ${version_number}/" docs/conf.py
+          sed -i "s/release = .*/release = \"${version_number}\"/" docs/conf.py
 
       - name: Commit changes
         run: |
