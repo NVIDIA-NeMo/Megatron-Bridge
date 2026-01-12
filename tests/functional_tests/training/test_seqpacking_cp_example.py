@@ -90,6 +90,7 @@ class TestPeftSftExample:
             ),
         )
 
+        cfg.model.seq_length = 256
         cfg.checkpoint.save_interval = cfg.train.train_iters
         cfg.checkpoint.save = checkpoint_dir
         cfg.checkpoint.pretrained_checkpoint = None

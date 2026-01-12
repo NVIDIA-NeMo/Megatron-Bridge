@@ -85,7 +85,7 @@ def tokenize_dataset(
         **dataset_kwargs,
     )
 
-    pad_id = dataset.tokenizer.eos_id
+    pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
     max_seq_length = dataset.max_seq_length
     dataset = np.array([dataset[i] for i in range(len(dataset))])
