@@ -109,7 +109,6 @@ jobs:
       - name: Commit changes
         run: |
           git add docs/project.json
-          git add docs/versions1.json
           git add docs/conf.py
           git commit -m "Bump docs version to ${VERSION}"
 
