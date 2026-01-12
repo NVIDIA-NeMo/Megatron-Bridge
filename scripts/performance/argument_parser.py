@@ -216,6 +216,13 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--first_k_dense_replace",
+        type=int,
+        help="Number of MoE layers to be converted to dense layers. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "-d",
         "--dryrun",
         help="If true, prints sbatch script to terminal without launching experiment.",
