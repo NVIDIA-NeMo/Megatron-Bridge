@@ -195,9 +195,10 @@ class TestLoRA:
         # Check adapter properties
         adapter = transformed_model.linear_qkv
         assert hasattr(adapter, "dim")
+        assert hasattr(adapter, "alpha")
         assert hasattr(adapter, "scale")
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert hasattr(adapter, "dropout")
 
         assert adapter.dim == 16
@@ -219,8 +220,8 @@ class TestLoRA:
             assert not linear_adapter.bias.requires_grad
 
         # Check that LoRA parameters are trainable
-        assert linear_adapter.lora_a.weight.requires_grad
-        assert linear_adapter.lora_b.weight.requires_grad
+        assert linear_adapter.linear_in.weight.requires_grad
+        assert linear_adapter.linear_out.weight.requires_grad
 
     def test_lora_forward_pass(self):
         """Test that LoRA adapted models can perform forward passes."""
@@ -494,13 +495,13 @@ class TestLoRAIntegration:
         adapted_model2 = lora2(model2, training=True)
 
         # LoRA weights should be identical with same seed
-        lora_a_1 = adapted_model1.linear_qkv.lora_a.weight.data
-        lora_a_2 = adapted_model2.linear_qkv.lora_a.weight.data
-        assert torch.equal(lora_a_1, lora_a_2)
+        linear_in_1 = adapted_model1.linear_qkv.linear_in.weight.data
+        linear_in_2 = adapted_model2.linear_qkv.linear_in.weight.data
+        assert torch.equal(linear_in_1, linear_in_2)
 
-        lora_b_1 = adapted_model1.linear_qkv.lora_b.weight.data
-        lora_b_2 = adapted_model2.linear_qkv.lora_b.weight.data
-        assert torch.equal(lora_b_1, lora_b_2)
+        linear_out_1 = adapted_model1.linear_qkv.linear_out.weight.data
+        linear_out_2 = adapted_model2.linear_qkv.linear_out.weight.data
+        assert torch.equal(linear_out_1, linear_out_2)
 
     def test_lora_transform_idempotent(self):
         """Test that LoRA transform is idempotent (applying twice has same effect as applying once)."""
@@ -535,10 +536,10 @@ class TestLoRAIntegration:
 
         # Verify the LoRA parameters are identical
         assert torch.equal(
-            first_transform.linear_qkv.lora_a.weight.data, second_transform.linear_qkv.lora_a.weight.data
+            first_transform.linear_qkv.linear_in.weight.data, second_transform.linear_qkv.linear_in.weight.data
         )
         assert torch.equal(
-            first_transform.linear_qkv.lora_b.weight.data, second_transform.linear_qkv.lora_b.weight.data
+            first_transform.linear_qkv.linear_out.weight.data, second_transform.linear_qkv.linear_out.weight.data
         )
 
 
@@ -636,6 +637,11 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
+        # Attach real pg_collection from initialized parallel state
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
         # Create LoRA instance targeting linear layers
         lora = LoRA(
             target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"], dim=8, alpha=16, dropout=0.0
@@ -691,6 +697,10 @@ class TestLoRAMegatronIntegration:
             vocab_size=100,
             ffn_hidden_size=128,
         )
+
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create LoRA and register hook
         lora = LoRA(dim=4, alpha=8)
@@ -765,6 +775,10 @@ class TestLoRAMegatronIntegration:
                 ffn_hidden_size=128,
             )
 
+            from megatron.core.process_groups_config import ProcessGroupCollection
+
+            model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
             # Create LoRA and register hook
             lora = LoRA(target_modules=targets, dim=4, alpha=8)
             lora_hook = self._create_lora_pre_wrap_hook(lora)
@@ -793,6 +807,10 @@ class TestLoRAMegatronIntegration:
             vocab_size=100,
             ffn_hidden_size=128,
         )
+
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create LoRA instance
         lora = LoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)

@@ -28,6 +28,7 @@ from megatron.core.tensor_parallel.mappings import (
     scatter_to_sequence_parallel_region,
 )
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.utils.import_utils import safe_import_from
 
@@ -107,7 +108,13 @@ def get_adapter_attributes_from_linear(
         tp_size = parallel_state.get_expert_tensor_parallel_world_size()
     else:
         tp_size = parallel_state.get_tensor_model_parallel_world_size()
-    if HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
+    if isinstance(m, TopKRouter):
+        input_is_parallel = False
+        in_features = m.weight.shape[1]
+        out_features = m.weight.shape[0]
+        base_linear_is_parallel = False
+        disable_sequence_parallel_comm = True
+    elif HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
         input_is_parallel = False
         # m.in_features and m.out_features are divided by tp_size already,
         # but in_features and out_features passed to ParallelLinearAdapter are not.
@@ -386,7 +393,7 @@ class ParallelLinearAdapter(nn.Module):
         dropout: Dropout probability (default: 0.0).
         model_parallel_config: Configuration for model parallelism (default: None).
         alpha: Scaling factor for adapter output (default: None, uses dim).
-        dropout_position: Where to apply dropout ('pre' or 'post', default: 'post').
+        dropout_position: Where to apply dropout ('pre' or 'post', default: 'pre').
         a2a_experimental: Whether to use experimental all-to-all communication (default: False).
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
@@ -406,7 +413,7 @@ class ParallelLinearAdapter(nn.Module):
         dropout: float = 0.0,
         model_parallel_config: Optional[ModelParallelConfig] = None,
         alpha: Optional[float] = None,
-        dropout_position: str = "post",
+        dropout_position: str = "pre",
         a2a_experimental: bool = False,
         is_expert: bool = False,
         disable_tensor_parallel_comm: bool = False,
@@ -456,7 +463,6 @@ class ParallelLinearAdapter(nn.Module):
 
         # Ensure adapter parameters are initialized when creating adapter layers.
         # In some flows (e.g., after import), perform_initialization may be False to skip heavy init.
-        _prev_perform_initialization = getattr(model_parallel_config, "perform_initialization", True)
         if hasattr(model_parallel_config, "perform_initialization"):
             model_parallel_config.perform_initialization = True
 
@@ -512,7 +518,7 @@ class ParallelLinearAdapter(nn.Module):
         if dropout > 0.0:
             self.dropout = nn.Dropout(dropout)
         else:
-            self.dropout = None
+            self.dropout = nn.Identity()
 
         # cast all parameters when using amp O2 training
         if model_parallel_config.bf16:
@@ -588,7 +594,7 @@ class ParallelLinearAdapter(nn.Module):
         Returns:
             Adapted output tensor with scaling applied.
         """
-        if self.dropout is not None and self.dropout_position == "pre":
+        if self.dropout_position == "pre":
             x = self.dropout(x)
 
         pad_len = 0
@@ -624,7 +630,7 @@ class ParallelLinearAdapter(nn.Module):
                 x = scatter_to_sequence_parallel_region(x)
 
         # Add dropout if available
-        if self.dropout is not None and self.dropout_position == "post":
+        if self.dropout_position == "post":
             x = self.dropout(x)
 
         x = x * (self.alpha / self.dim)

@@ -18,10 +18,11 @@ from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
@@ -125,6 +126,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
+    _pg_collection: Optional[ProcessGroupCollection] = None
     """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
@@ -180,8 +182,9 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             rotary_percent=self.rotary_percent,
             rotary_base=self.rotary_base,
             seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
-            post_process=post_process or parallel_state.is_pipeline_last_stage(),
+            pre_process=pre_process or is_pp_first_stage(self._pg_collection.pp),
+            post_process=post_process or is_pp_last_stage(self._pg_collection.pp),
+            pg_collection=self._pg_collection,
         )
 
 

@@ -18,11 +18,12 @@ from typing import Any, List, Literal, Optional, Tuple
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.transformer.moe.router import TopKRouter
 from torch import nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, LoRATopKRouter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -129,6 +130,8 @@ class LoRALinearSplitQKV(AdapterWrapper):
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         query = self.adapter.adapter_q(layernorm_output)
         key = self.adapter.adapter_k(layernorm_output)
         value = self.adapter.adapter_v(layernorm_output)
@@ -150,6 +153,8 @@ class LoRALinearSplitFC1UpGate(AdapterWrapper):
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         adapter_output_gate = self.adapter.adapter_gate(layernorm_output)
         adapter_output_up = self.adapter.adapter_up(layernorm_output)
         adapter_output = torch.cat([adapter_output_gate, adapter_output_up], dim=-1)
@@ -265,7 +270,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         """
 
         # Skip already transformed modules
-        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate)):
+        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
@@ -325,6 +330,8 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
 
             adapter = ParallelLinearAdapter(in_features, out_features, **adapter_kwargs)
             logger.info(f"Adding lora to: {full_name}")
+            if isinstance(m, TopKRouter):
+                return LoRATopKRouter(m, adapter)
             return LoRALinear(m, adapter)
 
         return m
