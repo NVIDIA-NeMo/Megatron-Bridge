@@ -52,6 +52,7 @@ jobs:
     environment: main
     env:
       VERSION: ${{ needs.code-freeze.outputs.release-branch }}
+      DRY_RUN: ${{ inputs.dry-run }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,7 +75,10 @@ jobs:
           git commit -m "[🤖]: Update docs-versions after code-freeze for ${VERSION}"
           commit_hash=$(git rev-parse HEAD)
           echo "commit_hash=${commit_hash}" | tee -a $GITHUB_OUTPUT
-          git push
+
+          if [[ "$DRY_RUN" != "true" ]]; then
+            git push
+          fi
 
       - name: Switch to release branch
         run: |
@@ -103,4 +107,7 @@ jobs:
           git add docs/versions1.json
           git add docs/conf.py
           git commit -m "Bump docs version to ${VERSION}"
-          git push
+
+          if [[ "$DRY_RUN" != "true" ]]; then
+            git push
+          fi
