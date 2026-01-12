@@ -552,6 +552,7 @@ def parse_cli_args():
         help="Enable IB-SHARP for FSDP communication. Disabled by default.",
         type=bool_arg,
         required=False,
+        default=False,
     )
     performance_args.add_argument(
         "--cuda_graph_impl",
