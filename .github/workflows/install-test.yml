@@ -57,11 +57,10 @@ concurrency:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@4cf3fb936f9c74f3a8c721b958c6bafed6565ed8
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.69.0
     with:
       default_runner_prefix: ${{ vars.INSTALL_TEST_DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.INSTALL_TEST_NON_NVIDIA_RUNNER_PREFIX }}
-      workflow_ref: 4cf3fb936f9c74f3a8c721b958c6bafed6565ed8
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
