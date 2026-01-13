@@ -30,6 +30,7 @@ from megatron.core.utils import (
 )
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
@@ -558,16 +559,16 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         if isinstance(self.hf_param, str):
             hf_param_wildcards = self._count_wildcard_groups(self.hf_param)
             if megatron_param_wildcards != hf_param_wildcards:
-                raise ValueError(
-                    f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
+                print_rank_0(
+                    f"WARNING: Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
                     f"{megatron_param_wildcards} wildcards, hf_param='{self.hf_param}' has {hf_param_wildcards}"
                 )
         else:
             for key, pattern in self.hf_param.items():
                 hf_param_wildcards = self._count_wildcard_groups(pattern)
                 if megatron_param_wildcards != hf_param_wildcards:
-                    raise ValueError(
-                        f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
+                    print_rank_0(
+                        f"WARNING: Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
                         f"{megatron_param_wildcards} wildcards, hf_param['{key}']='{pattern}' has {hf_param_wildcards}"
                     )
 

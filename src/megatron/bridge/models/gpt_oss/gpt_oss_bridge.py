@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 from typing import Dict, Mapping, Optional, Tuple, Union
 
@@ -29,10 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
-from megatron.bridge.utils.common_utils import (
-    extract_expert_number_from_param,
-    merge_expert_weights_for_hf_export,
-)
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 @MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel)
@@ -116,13 +114,44 @@ class GPTOSSBridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        return merge_expert_weights_for_hf_export(
-            task=task,
-            converted_weights_dict=converted_weights_dict,
-            num_experts=self.hf_config.num_local_experts,
-            ep_size=parallel_state.get_expert_model_parallel_world_size(),
-            hf_weights_cache=self.hf_weights_cache,
+        num_experts = self.hf_config.num_local_experts
+        ep_size = parallel_state.get_expert_model_parallel_world_size()
+        experts_per_rank = num_experts // ep_size
+
+        try:
+            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
+        except ValueError:
+            # not an expert weight
+            return converted_weights_dict
+
+        assert len(converted_weights_dict) == 1, (
+            f"There should be only one key in the converted_weights_dict, got keys: {converted_weights_dict.keys()}"
         )
+        for key, value in converted_weights_dict.items():
+            if key not in self.hf_weights_cache:
+                self.hf_weights_cache[key] = {}
+
+            # we end up with ep_size many weights to add to the cache
+            # unpack the weights and re-index
+            if ep_size == 1:
+                self.hf_weights_cache[key][local_expert_number] = value
+            else:
+                assert value.shape[0] == ep_size
+                for i, exp_val in enumerate(value):
+                    global_expert_number = local_expert_number + (i * experts_per_rank)
+                    self.hf_weights_cache[key][global_expert_number] = exp_val
+            if len(self.hf_weights_cache[key]) == num_experts:
+                logging.debug(f"All experts are loaded for {key}")
+                # all experts are loaded
+                merged_hf_weights = torch.cat(
+                    [self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0
+                )
+                del self.hf_weights_cache[key]
+                return {key: merged_hf_weights}
+            else:
+                # not all experts are loaded yet, return empty dict
+                logging.debug(f"{len(self.hf_weights_cache[key])}/{num_experts} experts are loaded for {key}")
+                return {}
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -211,10 +240,6 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
             megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
 
-    def _validate_patterns(self, *args, **kwargs):
-        # allow number of wildcards to mismatch in this mapping
-        pass
-
 
 class GPTOSSMLPGateUpProjMapping(AutoMapping):
     """
@@ -249,10 +274,6 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         if len(megatron_weights.shape) == 2:
             megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
-
-    def _validate_patterns(self, *args, **kwargs):
-        # allow number of wildcards to mismatch in this mapping
-        pass
 
 
 def _dequantize_mxfp4(
