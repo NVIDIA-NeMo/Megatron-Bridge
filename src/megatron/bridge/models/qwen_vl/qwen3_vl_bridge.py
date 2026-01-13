@@ -442,7 +442,7 @@ class ExpertMLPDownProjMapping(AutoMapping):
         # experts need subsequently merged by maybe_modify_converted_hf_weight
         converted_weights_dict = super().megatron_to_hf(megatron_weights, megatron_module)
         for key in converted_weights_dict:
-            converted_weights_dict[key] = converted_weights_dict[key].transpose(1, 2).contiguous()
+            converted_weights_dict[key] = converted_weights_dict[key].transpose(-1, -2).contiguous()
         return converted_weights_dict
 
 
@@ -481,9 +481,9 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
             if name.endswith(".gate"):
                 base_name = name[: -len(".gate")]
                 # [ep_size, mlp_in, gate_out]
-                gate_tensor = tensor.transpose(1, 2).contiguous()
+                gate_tensor = tensor.transpose(-1, -2).contiguous()
                 # [ep_size, mlp_in, up_out]
-                up_tensor = converted.get(f"{base_name}.up").transpose(1, 2).contiguous()
+                up_tensor = converted.get(f"{base_name}.up").transpose(-1, -2).contiguous()
                 assert up_tensor is not None
                 # Back to HF fused layout: stack [gate; up] along dim 0.
                 # [ep_size, 2, mlp_in, gate_out/up_out]
