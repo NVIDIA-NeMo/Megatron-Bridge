@@ -50,7 +50,10 @@ from tqdm import tqdm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.gpt_provider import modelopt_transformer_layer_spec
+from megatron.bridge.models.gpt_provider import (
+    _supports_modelopt_te_spec,
+    modelopt_transformer_layer_spec,
+)
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, modelopt_mamba_stack_spec
 
@@ -81,7 +84,6 @@ def _hf_dataset_forward_loop_func(model, tokenizer, calib_size, force_all_expert
 
     for prompt in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank()):
         tokens = tokenizer(prompt, return_tensors="pt")
-        # Use megatron_generate for calibration (same as quantize.py)
         megatron_generate(model, tokens.input_ids.cuda(), osl=1)
 
         if force_all_expert_routing:
@@ -140,17 +142,23 @@ def main(
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = torch.bfloat16
-    # Disable MoE permute fusion for SequentialMLP (used by modelopt_transformer_layer_spec)
-    # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
-    model_provider.moe_permute_fusion = False
 
     # Set the correct layer spec for quantization based on model type
-    if isinstance(model_provider, MambaModelProvider):
-        # For Mamba/Nemotron-H models: use modelopt_mamba_stack_spec
-        model_provider.mamba_stack_spec = modelopt_mamba_stack_spec
+    # Only certain models support TE spec; others use quantization_layer_spec
+    if _supports_modelopt_te_spec(hf_model_id):
+        # Model supports TE spec, use default (TE) layer spec
+        _layer_spec_used = "TE spec (default)"
     else:
-        # For GPT/Llama models: use the standard quantization layer spec
-        model_provider.transformer_layer_spec = modelopt_transformer_layer_spec
+        # For models that don't support TE spec: use quantization layer specs
+        # Disable MoE permute fusion for SequentialMLP (used by quantization specs)
+        # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
+        model_provider.moe_permute_fusion = False
+        if isinstance(model_provider, MambaModelProvider):
+            model_provider.mamba_stack_spec = modelopt_mamba_stack_spec
+            _layer_spec_used = "quantization_mamba_stack_spec"
+        else:
+            model_provider.transformer_layer_spec = modelopt_transformer_layer_spec
+            _layer_spec_used = "quantization_layer_spec"
 
     # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
     model_provider.finalize()
@@ -165,6 +173,7 @@ def main(
         console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
         console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
         console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
+        console.print(f"[green]Layer spec used: {_layer_spec_used}[/green]")
 
     # Formatting
     if is_rank_0:
@@ -257,7 +266,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable HF datasets file lock. This is only needed when testing with data in a read-only directory.",
     )
-    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
     if args.disable_hf_datasets_file_lock:
