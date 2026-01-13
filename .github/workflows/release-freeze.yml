@@ -34,13 +34,84 @@ on:
         default: true
 jobs:
   code-freeze:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@v0.22.5
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@v0.69.0
     with:
       library-name: Megatron-Bridge
       python-package: megatron.bridge
+      has-src-dir: true
       release-type: ${{ inputs.release-type }}
       freeze-commit: ${{ inputs.freeze-commit }}
       dry-run: ${{ inputs.dry-run }}
     secrets:
       SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
       SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
+
+  bump-docs-versions:
+    needs: [code-freeze]
+    runs-on: ubuntu-latest
+    environment: main
+    env:
+      VERSION: ${{ needs.code-freeze.outputs.release-branch }}
+      DRY_RUN: ${{ inputs.dry-run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.PAT }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update versions1.json
+        run: |
+          version_number=$(echo ${VERSION} | sed 's/^r//')
+
+          jq --arg ver "$version_number" \
+            '. += [{"version": $ver, "url": "https://docs.nvidia.com/nemo/megatron-bridge/\($ver)/"}] | sort_by(.version) | reverse' \
+            docs/versions1.json > tmp.json && mv tmp.json docs/versions1.json
+
+      - name: Commit changes
+        id: commit-versions1
+        run: |
+          git add docs/versions1.json
+          git commit -m "[🤖]: Update docs-versions after code-freeze for ${VERSION}"
+          commit_hash=$(git rev-parse HEAD)
+          echo "commit_hash=${commit_hash}" | tee -a $GITHUB_OUTPUT
+
+          if [[ "$DRY_RUN" != "true" ]]; then
+            git push
+          fi
+
+      - name: Switch to release branch
+        run: |
+          git checkout ${{ needs.code-freeze.outputs.release-branch }}
+
+      - name: Cherry-pick docs-versions commit
+        run: |
+          git cherry-pick ${{ steps.commit-versions1.outputs.commit_hash }}
+
+      - name: Update project.json
+        run: |
+          version_number=$(echo ${VERSION} | sed 's/^r//')
+
+          jq --arg ver "$version_number" \
+            '. = {"version": $ver, "name": "megatron-bridge"}' \
+            docs/project.json > tmp.json && mv tmp.json docs/project.json
+
+      - name: Update conf.py
+        run: |
+          version_number=$(echo ${VERSION} | sed 's/^r//')
+          sed -i "s/release = .*/release = \"${version_number}\"/" docs/conf.py
+
+      - name: Commit changes
+        run: |
+          git add docs/project.json
+          git add docs/conf.py
+          git commit -m "Bump docs version to ${VERSION}"
+
+          if [[ "$DRY_RUN" != "true" ]]; then
+            git push
+          fi
