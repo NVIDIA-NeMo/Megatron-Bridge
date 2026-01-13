@@ -24,6 +24,9 @@ from .deepseek_workload_base_configs import (
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16,
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS,
     DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS,
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX,
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16,
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS,
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX,
@@ -124,6 +127,33 @@ def deepseek_v3_pretrain_config_gb200(precision: str = "bf16", mock: bool = True
         cfg.comm_overlap.overlap_param_gather = False
         cfg.ddp.overlap_param_gather = False
         cfg.optimizer.overlap_param_gather = False
+
+    return cfg
+
+
+def deepseek_v3_pretrain_config_b300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+    """B300, baseline config."""
+    if precision == "bf16":
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS
+        if precision == "fp8_mx":
+            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX
+        precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config(
+        mock=mock,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     return cfg
 

@@ -20,12 +20,14 @@ import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
 from megatron.core import parallel_state
+from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import (
     LinearAdapter,
     LoRALinear,
+    LoRATopKRouter,
     TEFusedLoRALinear,
     TELinearAdapter,
     patch_linear_module,
@@ -102,7 +104,7 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         adapter_types = adapter_types + (TELinearAdapter,)
         if isinstance(module, adapter_types):
             return module
@@ -135,9 +137,7 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(module, is_expert=is_expert)
-            )
+            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
 
             enable_op_fuser = (
                 hasattr(module, "config")
@@ -148,8 +148,8 @@ class LoRA(PEFT, ModuleMatcher):
 
             logging.info(f"Adding lora to: {full_name}")
             adapter = ParallelLinearAdapter(
-                in_features,
-                out_features,
+                attrs.in_features,
+                attrs.out_features,
                 self.dim,
                 base_linear_name=full_name,
                 activation="identity",
@@ -157,17 +157,19 @@ class LoRA(PEFT, ModuleMatcher):
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
                 gather_output=False,
-                input_is_parallel=input_is_parallel,
+                input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(module, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert,
                 a2a_experimental=self.a2a_experimental,
-                disable_tensor_parallel_comm=disable_tp_comm,
-                disable_sequence_parallel_comm=disable_sp_comm,
-                base_linear_is_parallel=base_linear_is_parallel,
+                disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
+                disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
+            if isinstance(module, TopKRouter):
+                return LoRATopKRouter(module, adapter)
             if enable_op_fuser:
                 return TEFusedLoRALinear(module, adapter)
             else:

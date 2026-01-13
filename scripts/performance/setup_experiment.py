@@ -30,10 +30,12 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
+    from utils.utils import select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
+    from .utils.utils import select_config_variant_interactive
 
 try:
     import wandb
@@ -43,10 +45,10 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from .resiliency_plugins import FaultTolerancePlugin
 
 import logging
@@ -176,6 +178,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     enable_nsys: bool,
+    pytorch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
     pp_size: Optional[int],
@@ -186,6 +189,7 @@ def main(
     wandb_entity_name: str,
     profiling_start_step: int,
     profiling_stop_step: int,
+    record_memory_history: bool,
     profiling_gpu_metrics: bool,
     profiling_ranks: Optional[List[int]],
     nemo_home: str,
@@ -196,8 +200,9 @@ def main(
     time_limit: str,
     container_image: str,
     custom_mounts: List[str],
-    custom_env_vars: List[str],
+    custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -214,6 +219,7 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
+    config_variant: str = "v1",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -263,6 +269,9 @@ def main(
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
         ]
     )
+
+    if nccl_ub:
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -316,6 +325,7 @@ def main(
                 gpu=gpu,
                 compute_dtype=compute_dtype,
                 train_task=task,
+                config_variant=config_variant,
             )
         )
 
@@ -326,6 +336,15 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
+            )
+        )
+    if pytorch_profiler:
+        plugins.append(
+            PyTorchProfilerPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                profile_ranks=profiling_ranks,
+                record_memory_history=record_memory_history,
             )
         )
 
@@ -473,10 +492,25 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
 
+    assert not (args.enable_nsys and args.pytorch_profiler), (
+        "Both NSys and PyTorch profiler cannot be enabled at the same time"
+    )
+
     # probably better to use parser.parse_args() and make unknowns an error,
     # but for now we'll just issue a warning.
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
+
+    # Handle --list_config_variants: show available variants and interactively select
+    config_variant = args.config_variant
+    if args.list_config_variants:
+        config_variant = select_config_variant_interactive(
+            model_family_name=args.model_family_name,
+            model_recipe_name=args.model_recipe_name,
+            gpu=args.gpu,
+            compute_dtype=args.compute_dtype,
+            task=args.task,
+        )
 
     main(
         use_recipes=args.use_recipes,
@@ -490,6 +524,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
+        pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
@@ -500,6 +535,7 @@ if __name__ == "__main__":
         wandb_entity_name=args.wandb_entity_name,
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
+        record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         profiling_ranks=args.profiling_ranks,
         nemo_home=args.nemo_home,
@@ -512,6 +548,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
@@ -540,4 +577,5 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        config_variant=config_variant,
     )

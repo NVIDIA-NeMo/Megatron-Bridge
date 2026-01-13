@@ -46,7 +46,8 @@ def build_new_tokenizer(config: TokenizerConfig) -> MegatronTokenizer:
             kwargs = special_tokens
         kwargs["vocab_file"] = config.vocab_file
         kwargs["merges_file"] = config.merge_file
-        kwargs.update(config.hf_tokenizer_kwargs)
+        if config.hf_tokenizer_kwargs:
+            kwargs.update(config.hf_tokenizer_kwargs)
     elif config.tokenizer_type in SP_TOKENIZERS:
         tokenizer_library = "sentencepiece"
         tokenizer_path = config.tokenizer_model
@@ -71,7 +72,8 @@ def build_new_tokenizer(config: TokenizerConfig) -> MegatronTokenizer:
         kwargs["vocab_file"] = config.vocab_file
         kwargs["merges_file"] = config.merge_file
         kwargs["additional_special_tokens"] = config.special_tokens if config.special_tokens else []
-        kwargs.update(config.hf_tokenizer_kwargs)
+        if config.hf_tokenizer_kwargs:
+            kwargs.update(config.hf_tokenizer_kwargs)
     elif config.tokenizer_type == "NullTokenizer":
         tokenizer_library = "null"
         metadata = {"library": tokenizer_library}
