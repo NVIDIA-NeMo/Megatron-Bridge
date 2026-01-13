@@ -139,9 +139,12 @@ class Qwen3VLBridge(MegatronModelBridge):
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.output_layer.weight": "lm_head.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-            # Layer normalization for attention and MLP
+            # Layer normalization for attention and MLP (TE format - fused into linear layers)
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
             "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
+            # Layer normalization (non-TE/quantization format - separate modules)
+            "language_model.decoder.layers.*.input_layernorm.weight": "model.language_model.layers.*.input_layernorm.weight",
+            "language_model.decoder.layers.*.pre_mlp_layernorm.weight": "model.language_model.layers.*.post_attention_layernorm.weight",
             # Attention output projection
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
             # MLP output projection
@@ -305,9 +308,11 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.output_layer.weight": "lm_head.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-            # Layer normalization for attention
+            # Layer normalization for attention (TE format - fused into linear)
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
-            # MoE-specific: pre-MLP layernorm
+            # Layer normalization (non-TE/quantization format - separate modules)
+            "language_model.decoder.layers.*.input_layernorm.weight": "model.language_model.layers.*.input_layernorm.weight",
+            # MoE-specific: pre-MLP layernorm (already in non-TE format for MoE)
             "language_model.decoder.layers.*.pre_mlp_layernorm.weight": "model.language_model.layers.*.post_attention_layernorm.weight",
             # Attention output projection
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
