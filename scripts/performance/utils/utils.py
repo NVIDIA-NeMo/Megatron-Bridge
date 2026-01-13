@@ -165,6 +165,7 @@ def get_perf_optimized_recipe(
     gpu: str,
     compute_dtype: str,
     mock: bool = True,
+    config_variant: str = "v1",
 ):
     """Get the performance optimized recipe."""
     module_name = f"configs.{model_family_name}"
@@ -181,7 +182,7 @@ def get_perf_optimized_recipe(
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
     if train_task == "pretrain":
-        return recipe_builder(precision=compute_dtype, mock=mock)
+        return recipe_builder(precision=compute_dtype, mock=mock, config_variant=config_variant)
     else:
         return recipe_builder(precision=compute_dtype)
 
