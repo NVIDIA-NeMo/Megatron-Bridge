@@ -487,7 +487,7 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
                 assert up_tensor is not None
                 # Back to HF fused layout: stack [gate; up] along dim 0.
                 # [ep_size, 2, mlp_in, gate_out/up_out]
-                fused[base_name] = torch.stack([gate_tensor, up_tensor], dim=1)
+                fused[base_name] = torch.stack([gate_tensor, up_tensor], dim=0 if up_tensor.ndim == 2 else 1)
 
         # experts need subsequently merged by maybe_modify_converted_hf_weight
         return fused
