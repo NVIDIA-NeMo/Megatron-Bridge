@@ -40,10 +40,10 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     from argument_parser import ENDPOINT_TYPES, parse_cli_args
-    from utils.executors import dgxc_executor, slurm_executor
+    from utils.executors import kuberay_executor, slurm_executor
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import ENDPOINT_TYPES, parse_cli_args
-    from .utils.executors import dgxc_executor, slurm_executor
+    from .utils.executors import kuberay_executor, slurm_executor
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -220,19 +220,14 @@ def main(args):
             hf_token=args.hf_token,
         )
     else:
-        deploy_executor = dgxc_executor(
-            dgxc_base_url=args.dgxc_base_url,
-            dgxc_cluster=args.dgxc_cluster,
-            dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
-            dgxc_app_id=args.dgxc_app_id,
-            dgxc_app_secret=args.dgxc_app_secret,
-            dgxc_project_name=args.dgxc_project_name,
+        deploy_executor = kuberay_executor(
+            nodes=-(args.num_gpus // -args.gpus_per_node),
+            num_gpus_per_node=args.gpus_per_node,
             dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
             dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
             custom_env_vars=args.custom_env_vars,
-            nodes=-(args.num_gpus // -args.gpus_per_node),
-            num_gpus_per_node=args.gpus_per_node,
             container_image=args.container_image,
+            namespace=args.dgxc_namespace,
         )
 
     eval_executor = deploy_executor.clone()

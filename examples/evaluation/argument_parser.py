@@ -231,5 +231,11 @@ def parse_cli_args():
         help="DGXCloud pvc mount path",
         required=False,
     )
+    dgxc_args.add_argument(
+        "--dgxc_namespace",
+        type=str,
+        help="DGXCloud namespace",
+        required=False,
+    )
 
     return parser

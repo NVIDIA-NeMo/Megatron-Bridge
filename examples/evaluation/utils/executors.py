@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import os
-from typing import Dict, List
+from dataclasses import field
+from typing import Any, Dict, List
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
+from nemo_run.core.execution.kuberay import KubeRayExecutor, KubeRayWorkerGroup
 
 
 def slurm_executor(
@@ -61,6 +63,75 @@ def slurm_executor(
         packager=run.GitArchivePackager(),
     )
 
+    return executor
+
+
+def kuberay_executor(
+    nodes: int,
+    num_gpus_per_node: int,
+    dgxc_pvc_mount_path: str,
+    dgxc_pvc_claim_name: str,
+    namespace: str = "default",
+    ray_version: str = "2.43.0",
+    container_image: str = "",  # Will be set in __post_init__ if empty
+    head_cpu: str = "1",
+    head_memory: str = "2Gi",
+    hf_token: str = None,
+    custom_env_vars: Dict[str, str] = None,
+):
+    """
+    Kuberay cluster definition with appropriate cluster params and NeMo container params needed for pre-training
+    and fine-tuning experiments
+    """
+
+    env_vars = {
+        "TORCH_HOME": "/nemo-workspace/.cache",
+        "FI_EFA_USE_HUGE_PAGE": "0",
+        "NCCL_BUFFSIZE": "8388608",
+        "NCCL_P2P_NET_CHUNKSIZE": "524288",
+        "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
+        "HF_TOKEN": hf_token,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+        "NCCL_NVLS_ENABLE": "0",
+        "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
+        "NVTE_ASYNC_AMAX_REDUCTION": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TOKENIZERS_PARALLELISM": "False",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
+    }
+    if custom_env_vars:
+        env_vars.update(custom_env_vars)
+
+    executor = run.KuberayExecutor(
+        namespace=namespace,
+        ray_version=ray_version,
+        image=container_image,
+        head_cpu=head_cpu,
+        head_memory=head_memory,
+        worker_groups=[
+            KubeRayWorkerGroup(
+                group_name="worker",  # arbitrary string
+                replicas=nodes,  # two worker pods
+                gpus_per_worker=num_gpus_per_node,
+            )
+        ],
+        spec_kwargs={"schedulerName": "runai-scheduler"},  # e.g. Run:ai
+        volume_mounts=[{"name": "workspace", "mountPath": dgxc_pvc_mount_path}],
+        volumes=[
+            {
+                "name": "workspace",
+                "persistentVolumeClaim": {"claimName": dgxc_pvc_claim_name},
+            }
+        ],
+        env_vars=env_vars,
+        container_kwargs={
+            "securityContext": {
+                "allowPrivilegeEscalation": False,
+                "runAsUser": 0,
+            }
+        },
+    )
     return executor
 
 
