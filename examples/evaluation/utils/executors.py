@@ -103,7 +103,7 @@ def kuberay_executor(
     if custom_env_vars:
         env_vars.update(custom_env_vars)
 
-    executor = run.KuberayExecutor(
+    executor = run.KubeRayExecutor(
         namespace=namespace,
         ray_version=ray_version,
         image=container_image,
