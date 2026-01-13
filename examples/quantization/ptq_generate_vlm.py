@@ -13,21 +13,30 @@
 # limitations under the License.
 
 """
-This example demonstrates how to load a quantized Megatron-LM checkpoint
-and perform text generation using the AutoBridge on multiple GPUs.
+This example demonstrates how to load a quantized Megatron-LM VLM checkpoint
+and perform image+text generation using the AutoBridge on multiple GPUs.
 
 Prerequisites:
 First, you must run the quantization process to create a quantized checkpoint:
-    torchrun --nproc_per_node 2 examples/quantization/quantize.py --megatron-save-path ./quantized_megatron_checkpoint --tp 2
+    torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
+        --hf-model-id Qwen/Qwen3-VL-8B-Instruct \
+        --export-quant-cfg fp8 \
+        --megatron-save-path ./qwen3_vl_quantized \
+        --tp 8
 
 The process is as follows:
-1. An AutoBridge is initialized from a pretrained Hugging Face model
-    to get the tokenizer and model structure.
+1. An AutoBridge is initialized from a pretrained Hugging Face VLM model
+    to get the processor and model structure.
 2. The quantized Megatron-LM model is loaded from the checkpoint using the specified path.
-3. Text generation is performed using the loaded quantized model.
+3. Image+text generation is performed using the loaded quantized model.
 
 Usage:
-torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py --megatron-load-path ./quantized_megatron_checkpoint --tp 2
+torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
+    --hf-model-id Qwen/Qwen3-VL-8B-Instruct \
+    --megatron-load-path ./qwen3_vl_quantized \
+    --tp 8 \
+    --image-path /path/to/image.jpg \
+    --prompts "Describe this image."
 """
 
 import argparse
@@ -37,8 +46,9 @@ import warnings
 
 import torch
 from megatron.core.utils import unwrap_model
-from quantize import _custom_prompt_forward_loop_func
-from rich.console import Console
+from quantize_utils import console
+from quantize_vlm import _custom_prompt_forward_loop_func
+from transformers import AutoProcessor
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -47,8 +57,8 @@ from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 warnings.filterwarnings("ignore")
 
-HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
-console = Console()
+HF_MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+DEFAULT_IMAGE_PATH = "/models/demo.jpeg"
 
 
 def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
@@ -58,9 +68,8 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
     If someone accidentally breaks the quantization loading logic (e.g., in
     has_modelopt_state or build_and_load_model), this check will catch it.
 
-    We check for quantized layer types that indicate successful quantization:
-    - Local spec: QuantRowParallelLinear, QuantColumnParallelLinear
-    - TE spec: QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear
+    For VLM models, we only check for TE spec quantized layers since all supported
+    VLM models (Qwen3-VL) use TE spec.
 
     Args:
         model: The unwrapped model to validate
@@ -71,34 +80,39 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
     """
     model_str = str(model)
 
-    # Local spec quantized layers
-    local_spec_layers = [
-        "QuantRowParallelLinear",
-        "QuantColumnParallelLinear",
-    ]
+    # DEBUG: Print full model structure to diagnose CI vs local differences
+    if is_rank_0:
+        console.print(f"\n{'=' * 80}")
+        console.print("[yellow]DEBUG: Full model structure:[/yellow]")
+        console.print(f"{'=' * 80}")
+        console.print(model_str)
+        console.print(f"{'=' * 80}\n")
 
-    # TE spec quantized layers
+    # TE spec quantized layers (VLM models always use TE spec)
     te_spec_layers = [
         "QuantTERowParallelLinear",
         "QuantTELayerNormColumnParallelLinear",
     ]
 
-    # Check if model has local spec quantized layers
-    has_local_spec = all(layer in model_str for layer in local_spec_layers)
+    # DEBUG: Check each layer individually
+    if is_rank_0:
+        console.print("[yellow]DEBUG: Checking for quantized layers:[/yellow]")
+        for layer in te_spec_layers:
+            found = layer in model_str
+            status = "[green]FOUND[/green]" if found else "[red]NOT FOUND[/red]"
+            console.print(f"  {layer}: {status}")
 
     # Check if model has TE spec quantized layers
     has_te_spec = all(layer in model_str for layer in te_spec_layers)
 
-    if not has_local_spec and not has_te_spec:
+    if not has_te_spec:
         error_msg = (
             f"\n{'=' * 80}\n"
             f"QUANTIZATION VALIDATION FAILED!\n"
             f"{'=' * 80}\n"
             f"Expected quantized layers not found in the loaded model.\n"
             f"This indicates the quantized checkpoint was not loaded correctly.\n\n"
-            f"Expected one of:\n"
-            f"  - Local spec: {local_spec_layers}\n"
-            f"  - TE spec: {te_spec_layers}\n\n"
+            f"Expected TE spec layers: {te_spec_layers}\n\n"
             f"This is likely due to a bug in the checkpoint loading logic.\n"
             f"{'=' * 80}\n"
         )
@@ -107,16 +121,10 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
         raise RuntimeError(error_msg)
 
     if is_rank_0:
-        if has_te_spec:
-            console.print(
-                "[green]✓ Quantization validation passed: Found TE spec quantized layers "
-                "(QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear)[/green]"
-            )
-        else:
-            console.print(
-                "[green]✓ Quantization validation passed: Found local spec quantized layers "
-                "(QuantRowParallelLinear, QuantColumnParallelLinear)[/green]"
-            )
+        console.print(
+            "[green]✓ Quantization validation passed: Found TE spec quantized layers "
+            "(QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear)[/green]"
+        )
 
 
 @torchrun_main
@@ -127,11 +135,12 @@ def main(
     ep: int = 1,
     etp: int = 1,
     megatron_load_path: str = "./quantized_megatron_checkpoint",
-    prompts: str = "Hello!|Born in California, Soyer trained as a",
+    prompts: str = "Describe this image.",
     osl: int = 32,
-    trust_remote_code: bool | None = None,
+    image_path: str = DEFAULT_IMAGE_PATH,
+    trust_remote_code: bool = True,
 ) -> None:
-    """Load a quantized Megatron-LM checkpoint and perform text generation on multiple GPUs."""
+    """Load a quantized Megatron-LM VLM checkpoint and perform image+text generation on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
         console.print("This script must be launched with torchrun. Please run:")
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
@@ -142,11 +151,18 @@ def main(
         console.print(f"[red]Error: Quantized checkpoint path {megatron_load_path} does not exist![/red]")
         console.print("[yellow]Please run the quantization process first:[/yellow]")
         console.print(
-            f"[yellow]torchrun --nproc_per_node {tp} examples/models/quantize.py --megatron-save-path {megatron_load_path} --tp {tp}[/yellow]"
+            f"[yellow]torchrun --nproc_per_node {tp} examples/quantization/quantize_vlm.py "
+            f"--hf-model-id {hf_model_id} --megatron-save-path {megatron_load_path} --tp {tp}[/yellow]"
         )
         sys.exit(1)
 
-    # Initialize bridge from HF model to get tokenizer and model structure
+    # Check if the image path exists (skip check for URLs)
+    is_url = image_path.startswith("http://") or image_path.startswith("https://")
+    if not is_url and not os.path.exists(image_path):
+        console.print(f"[red]Error: Image path {image_path} does not exist![/red]")
+        sys.exit(1)
+
+    # Initialize bridge from HF model to get processor and model structure
     bridge = AutoBridge.from_hf_pretrained(
         hf_model_id,
         trust_remote_code=is_safe_repo(
@@ -154,6 +170,9 @@ def main(
             hf_path=hf_model_id,
         ),
     )
+
+    # Load processor for VLM
+    processor = AutoProcessor.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
 
     # Get model provider and configure for multi-GPU execution
     model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -198,9 +217,9 @@ def main(
     # Test quantized model with custom prompts
     if is_rank_0:
         console.print(f"[green]Loaded Quantized Model:\n {unwrapped_model}[/green]")
-        console.print("[green]Testing quantized model with custom prompts...[/green]")
+        console.print("[green]Testing quantized VLM model with image and prompt...[/green]")
 
-    _custom_prompt_forward_loop_func(unwrapped_model, prompts, bridge.hf_pretrained.tokenizer, is_rank_0, osl)
+    _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts, osl, test_image_path=image_path)
 
     if is_rank_0:
         console.print("[green]Generation completed successfully![/green]")
@@ -208,10 +227,13 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Load a quantized Megatron-LM checkpoint and perform text generation on multiple GPUs"
+        description="Load a quantized Megatron-LM VLM checkpoint and perform image+text generation on multiple GPUs"
     )
     parser.add_argument(
-        "--hf-model-id", type=str, default=HF_MODEL_ID, help="HuggingFace model ID for tokenizer and model structure"
+        "--hf-model-id",
+        type=str,
+        default=HF_MODEL_ID,
+        help="HuggingFace model ID for processor and model structure (e.g., Qwen/Qwen3-VL-8B-Instruct)",
     )
 
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
@@ -222,13 +244,13 @@ if __name__ == "__main__":
         "--megatron-load-path",
         type=str,
         default="./quantized_megatron_checkpoint",
-        help="Path to the quantized Megatron checkpoint to load (must be created first using quantize.py)",
+        help="Path to the quantized Megatron checkpoint to load (must be created first using quantize_vlm.py)",
     )
     parser.add_argument(
         "--prompts",
         type=str,
-        default="Hello!|Born in California, Soyer trained as a",
-        help="Input texts for testing quantized model. Please use | to separate different batches.",
+        default="Describe this image.",
+        help="Text prompt for testing quantized VLM model.",
     )
     parser.add_argument(
         "--osl",
@@ -236,7 +258,13 @@ if __name__ == "__main__":
         default=32,
         help="Output sequence length for generation.",
     )
-    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
+    parser.add_argument(
+        "--image-path",
+        type=str,
+        default=DEFAULT_IMAGE_PATH,
+        help="Path to the image file for VLM generation.",
+    )
+    parser.add_argument("--trust-remote-code", action="store_true", default=True, help="if trust_remote_code")
 
     args = parser.parse_args()
     main(
@@ -248,6 +276,7 @@ if __name__ == "__main__":
         args.megatron_load_path,
         args.prompts,
         args.osl,
+        args.image_path,
         args.trust_remote_code,
     )
 

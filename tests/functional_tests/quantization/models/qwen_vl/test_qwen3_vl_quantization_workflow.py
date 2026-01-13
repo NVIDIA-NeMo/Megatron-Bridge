@@ -12,65 +12,99 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Functional tests for Qwen3 VL (Vision-Language) quantization workflow.
+
+This module tests the complete quantization workflow for dense Qwen3 VL models:
+1. Create a tiny toy model for fast testing
+2. Run quantization using quantize_vlm.py
+3. Run generation using ptq_generate_vlm.py
+
+Example run commands:
+    # Run all quantization workflow tests
+    pytest tests/functional_tests/quantization/models/qwen_vl/test_qwen3_vl_quantization_workflow.py
+
+    # Run specific test
+    pytest tests/functional_tests/quantization/models/qwen_vl/test_qwen3_vl_quantization_workflow.py::TestQwen3VLQuantizationWorkflow::test_qwen3_vl_quantization_and_generation
+
+Note: These tests use small toy models for fast testing.
+"""
+
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoTokenizer, Qwen3MoeConfig, Qwen3MoeForCausalLM
+from transformers import AutoTokenizer, Qwen3VLForConditionalGeneration
+from transformers.models.qwen3_vl import Qwen3VLConfig
 
 
-HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
-    "architectures": ["Qwen3MoeForCausalLM"],
-    "attention_bias": False,
+HF_QWEN3_VL_TOY_MODEL_CONFIG = {
+    "architectures": ["Qwen3VLForConditionalGeneration"],
     "attention_dropout": 0.0,
     "bos_token_id": 151643,
-    "decoder_sparse_step": 1,
     "eos_token_id": 151645,
-    "head_dim": 128,
+    "vision_start_token_id": 151652,
+    "vision_end_token_id": 151653,
+    "vision_token_id": 151654,
+    "image_token_id": 151655,
+    "video_token_id": 151656,
     "hidden_act": "silu",
-    "hidden_size": 2048,
+    "hidden_size": 256,
     "initializer_range": 0.02,
-    "intermediate_size": 6144,
-    "max_position_embeddings": 262144,
-    "max_window_layers": 48,
-    "mlp_only_layers": [],
-    "model_type": "qwen3_moe",
-    "moe_intermediate_size": 768,
-    "norm_topk_prob": True,
-    "num_attention_heads": 32,
-    "num_experts": 4,
-    "num_experts_per_tok": 4,
-    "num_hidden_layers": 2,
-    "num_key_value_heads": 4,
-    "output_router_logits": False,
+    "intermediate_size": 512,
+    "max_position_embeddings": 32768,
+    "model_type": "qwen3_vl",
+    "num_attention_heads": 4,
+    "num_hidden_layers": 4,
+    "num_key_value_heads": 2,
     "rms_norm_eps": 1e-06,
-    "rope_scaling": None,
-    "rope_theta": 10000000,
-    "router_aux_loss_coef": 0.001,
-    "sliding_window": None,
+    "rope_theta": 1000000.0,
     "tie_word_embeddings": False,
     "torch_dtype": "bfloat16",
-    "transformers_version": "4.51.0",
     "use_cache": True,
-    "use_sliding_window": False,
-    "vocab_size": 151936,
+    "vision_config": {
+        "depth": 27,
+        "hidden_size": 1152,
+        "hidden_act": "gelu_pytorch_tanh",
+        "intermediate_size": 4304,
+        "in_channels": 3,
+        "num_heads": 16,
+        "patch_size": 16,
+        "spatial_merge_size": 2,
+        "temporal_patch_size": 2,
+        "out_hidden_size": 256,
+        "deepstack_visual_indexes": [1, 2, 3],
+    },
+    "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+    "text_config": {
+        "hidden_size": 256,
+        "intermediate_size": 512,
+        "num_hidden_layers": 4,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "vocab_size": 152064,
+        "max_position_embeddings": 32768,
+        "rope_theta": 1000000.0,
+        "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "torch_dtype": "bfloat16",
+    },
+    "vocab_size": 152064,
 }
 
 
-@pytest.mark.pleasefixme
-class TestQwen3MoeQuantizationWorkflow:
+class TestQwen3VLQuantizationWorkflow:
     """
-    Test complete Qwen3 MoE quantization workflow: quantize HuggingFace Qwen3 MoE models
-    to Megatron format with expert parallelism, then test text generation from the
+    Test complete Qwen3 VL (dense) quantization workflow: quantize HuggingFace Qwen3 VL models
+    to Megatron format with tensor parallelism, then test image+text generation from the
     quantized checkpoints.
     """
 
     @pytest.fixture(scope="class")
-    def qwen3_moe_toy_model_path(self, tmp_path_factory):
+    def qwen3_vl_toy_model_path(self, tmp_path_factory):
         """
-        Create and save a HuggingFace Qwen3 MoE toy model from config to a temporary directory.
+        Create and save a HuggingFace Qwen3 VL toy model to a temporary directory.
 
         Args:
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
@@ -79,35 +113,70 @@ class TestQwen3MoeQuantizationWorkflow:
             str: Path to the saved HuggingFace model directory
         """
         # Create a temporary directory for this test class
-        temp_dir = tmp_path_factory.mktemp("qwen3_moe_toy_model")
-        model_dir = temp_dir / "qwen3_moe_toy"
+        temp_dir = tmp_path_factory.mktemp("qwen3_vl_quantization_toy_model")
+        model_dir = temp_dir / "qwen3_vl_toy"
 
-        # Create Qwen3 MoE config from the toy model config
-        config = Qwen3MoeConfig(**HF_QWEN3_MOE_TOY_MODEL_CONFIG)
-        config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
+        # Create Qwen3 VL config from the toy model config
+        config = Qwen3VLConfig(**HF_QWEN3_VL_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16
+
+        # Set rope_scaling on text_config
+        if hasattr(config, "text_config") and config.text_config is not None:
+            config.text_config.rope_scaling = {"type": "mrope", "mrope_section": [16, 24, 24]}
 
         # Create model with random weights and convert to bfloat16
-        model = Qwen3MoeForCausalLM(config)
-        model = model.bfloat16()  # Use .bfloat16() method instead of .to()
+        model = Qwen3VLForConditionalGeneration(config)
+        model = model.to(dtype=torch.bfloat16)
 
-        # Download and save tokenizer from a reference Qwen model
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-        tokenizer.save_pretrained(model_dir)
+        # Download and save tokenizer and processor from a reference Qwen3 VL model
+        try:
+            from transformers import AutoProcessor
+
+            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+            tokenizer.save_pretrained(model_dir)
+
+            # Also save the image processor
+            processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+            processor.save_pretrained(model_dir)
+        except Exception as e:
+            print(f"Warning: Could not download tokenizer/processor, creating minimal files: {e}")
+            # Create minimal tokenizer files if download fails
+            tokenizer_config = {
+                "tokenizer_class": "Qwen2Tokenizer",
+                "vocab_size": 152064,
+                "bos_token": "<|endoftext|>",
+                "eos_token": "<|endoftext|>",
+                "pad_token": "<|endoftext|>",
+                "unk_token": "<|endoftext|>",
+            }
+            with open(model_dir / "tokenizer_config.json", "w") as f:
+                json.dump(tokenizer_config, f, indent=2)
+            preprocessor_config = {
+                "image_processor_type": "Qwen2VLImageProcessor",
+                "do_resize": True,
+                "size": {"height": 224, "width": 224},
+                "do_normalize": True,
+                "image_mean": [0.48145466, 0.4578275, 0.40821073],
+                "image_std": [0.26862954, 0.26130258, 0.27577711],
+                "do_convert_rgb": True,
+            }
+            with open(model_dir / "preprocessor_config.json", "w") as f:
+                json.dump(preprocessor_config, f, indent=2)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
 
-        # Also save config.json explicitly to ensure compatibility with correct torch_dtype
-        config_to_save = HF_QWEN3_MOE_TOY_MODEL_CONFIG.copy()
+        # Also save config.json explicitly
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
-            json.dump(config_to_save, f, indent=2)
+            json.dump(HF_QWEN3_VL_TOY_MODEL_CONFIG, f, indent=2)
 
+        print(f"Created toy model at: {model_dir}")
         return str(model_dir)
 
-    def _run_quantization(self, model_path, base_dir, quant_cfg="fp8", tp=1, pp=1, etp=1):
+    def _run_quantization(self, model_path, base_dir, quant_cfg="fp8", tp=1, pp=1):
         """
-        Helper method to run quantization step for Qwen3 MoE models.
+        Helper method to run quantization step for Qwen3 VL models.
 
         Args:
             model_path: Path to the HuggingFace model directory
@@ -115,25 +184,23 @@ class TestQwen3MoeQuantizationWorkflow:
             quant_cfg: Quantization configuration to use
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
-            etp: Expert tensor parallelism size
 
         Returns:
             tuple: (subprocess.CompletedProcess, actual_output_path)
         """
         # Create descriptive checkpoint name including configuration
-        checkpoint_name = f"qwen3_moe_quantized_{quant_cfg}_tp{tp}_pp{pp}_etp{etp}"
+        checkpoint_name = f"qwen3_vl_quantized_{quant_cfg}_tp{tp}_pp{pp}"
         output_dir = base_dir / checkpoint_name
         output_dir.mkdir(exist_ok=True)
+
         # Calculate total number of processes needed
-        # For MoE models: etp is a special case of tp (experts split across same TP GPUs)
-        # So total_procs = tp * pp (etp doesn't multiply)
         total_procs = max(tp * pp, 1)
 
         import sys
 
         python_executable = sys.executable
 
-        # Base command following the user's format
+        # Base command for VLM quantization
         cmd = [
             python_executable,
             "-m",
@@ -145,14 +212,18 @@ class TestQwen3MoeQuantizationWorkflow:
             "--data-file=/opt/Megatron-Bridge/.coverage",
             "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
-            "examples/quantization/quantize.py",
+            "examples/quantization/quantize_vlm.py",
             "--hf-model-id",
-            model_path,  # Use local toy model path instead of downloading
+            model_path,
             "--export-quant-cfg",
             quant_cfg,
             "--megatron-save-path",
             str(output_dir),
-            "--disable-hf-datasets-file-lock",
+            "--calib-size",
+            "8",  # Use small calib size for testing
+            "--test-image-path",
+            "https://picsum.photos/id/237/400/300",  # Reliable placeholder image service
+            "--use-random-calib",  # Use random images for offline CI environments
         ]
 
         # Add parallelism arguments only if > 1
@@ -160,38 +231,33 @@ class TestQwen3MoeQuantizationWorkflow:
             cmd.extend(["--tp", str(tp)])
         if pp > 1:
             cmd.extend(["--pp", str(pp)])
-        if etp > 1:
-            cmd.extend(["--etp", str(etp)])
 
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
         )
         return result, output_dir
 
-    def _run_generation(self, model_path, checkpoint_dir, tp=1, pp=1, etp=1):
+    def _run_generation(self, model_path, checkpoint_dir, tp=1, pp=1):
         """
-        Helper method to run generation step for Qwen3 MoE models.
+        Helper method to run generation step for Qwen3 VL models.
 
         Args:
             model_path: Path to the HuggingFace model directory
             checkpoint_dir: Directory containing the quantized checkpoint
             tp: Tensor parallelism size for generation
             pp: Pipeline parallelism size for generation
-            etp: Expert tensor parallelism size for generation
 
         Returns:
             subprocess.CompletedProcess: Result of generation process
         """
         # Calculate total number of processes needed
-        # For MoE models: etp is a special case of tp (experts split across same TP GPUs)
-        # So total_procs = tp * pp (etp doesn't multiply)
         total_procs = max(tp * pp, 1)
 
         import sys
 
         python_executable = sys.executable
 
-        # Base command following the user's format
+        # Base command for VLM generation
         cmd = [
             python_executable,
             "-m",
@@ -203,11 +269,17 @@ class TestQwen3MoeQuantizationWorkflow:
             "--data-file=/opt/Megatron-Bridge/.coverage",
             "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
-            "examples/quantization/ptq_generate.py",
+            "examples/quantization/ptq_generate_vlm.py",
             "--hf-model-id",
-            model_path,  # Use local toy model path instead of downloading
+            model_path,
             "--megatron-load-path",
             str(checkpoint_dir),
+            "--image-path",
+            "https://picsum.photos/id/237/400/300",  # Reliable placeholder image service
+            "--prompts",
+            "Describe this image.",
+            "--osl",
+            "16",  # Short output for testing
         ]
 
         # Add parallelism arguments only if > 1
@@ -215,43 +287,40 @@ class TestQwen3MoeQuantizationWorkflow:
             cmd.extend(["--tp", str(tp)])
         if pp > 1:
             cmd.extend(["--pp", str(pp)])
-        if etp > 1:
-            cmd.extend(["--etp", str(etp)])
 
         return subprocess.run(
             cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
         )
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.xfail(
-        reason="mcore bump: TransformerLayer now passes padding_mask to MoE MLP, "
-        "but modelopt's _QuantMoELayer.forward() does not accept it yet.",
-        strict=False,
-    )
-    def test_qwen3_moe_quantization_and_generation_with_expert_parallelism(self, qwen3_moe_toy_model_path, tmp_path):
+    def test_qwen3_vl_quantization_and_generation(self, qwen3_vl_toy_model_path, tmp_path):
         """
-        Test complete Qwen3 MoE workflow: quantize with expert tensor parallelism (tp=2, etp=2),
-        then generate with pipeline parallelism (pp=2).
+        Test complete Qwen3 VL workflow: quantize with tensor parallelism (tp=2),
+        then generate with tensor parallelism (tp=2).
 
-        This test uses a toy Qwen3 MoE model with:
-        - 2 layers, 4 experts, hidden_size 2048
-        - Quantization: torchrun --nproc_per_node 2 with --tp 2 --etp 2 (2*1=2 processes, etp uses same TP GPUs)
-        - Generation: torchrun --nproc_per_node 2 with --pp 2 (1*2=2 processes)
+        This test uses a toy Qwen3 VL model with:
+        - 4 layers, hidden_size 256
+        - Quantization: torchrun --nproc_per_node 2 with --tp 2
+        - Generation: torchrun --nproc_per_node 2 with --tp 2
+
+        Note: PP (pipeline parallelism) is not used because the toy model's
+        deepstack_visual_indexes [1, 2, 3] requires all visual embeds to be
+        on the first pipeline stage, which is incompatible with PP > 1
+        when there are only 4 layers.
 
         Args:
-            qwen3_moe_toy_model_path: Path to the toy Qwen3 MoE model (from fixture)
+            qwen3_vl_toy_model_path: Path to the toy Qwen3 VL model (from fixture)
             tmp_path: Pytest temporary path fixture
         """
         # Create temporary base directory for quantized checkpoint
-        base_dir = tmp_path / "checkpoints_qwen3_moe_expert_parallel"
+        base_dir = tmp_path / "checkpoints_qwen3_vl"
         base_dir.mkdir(exist_ok=True)
 
         try:
-            print("=== STEP 1: Quantizing Qwen3 MoE toy model with TP=2, ETP=2, PP=1 ===")
-            # Step 1: Quantize the model with expert tensor parallelism
-            # tp=2, etp=2, pp=1 gives 2 total processes (2*1=2, etp shares TP GPUs)
+            print("=== STEP 1: Quantizing Qwen3 VL toy model with TP=2, PP=1 ===")
+            # Step 1: Quantize the model with tensor parallelism
             quantize_result, quantized_checkpoint_dir = self._run_quantization(
-                qwen3_moe_toy_model_path, base_dir, quant_cfg="fp8", tp=2, pp=1, etp=2
+                qwen3_vl_toy_model_path, base_dir, quant_cfg="fp8", tp=2, pp=1
             )
 
             if quantize_result.returncode != 0:
@@ -274,12 +343,9 @@ class TestQwen3MoeQuantizationWorkflow:
             print(f"  Checkpoint saved at: {quantized_checkpoint_dir}")
             print(f"  Checkpoint contents: {[item.name for item in checkpoint_contents]}")
 
-            print("=== STEP 2: Testing generation from quantized Qwen3 MoE checkpoint with TP=1, ETP=1, PP=2 ===")
-            # Step 2: Test generation from the quantized checkpoint with different parallelism
-            # tp=1, pp=2 gives 2 total processes (1*2=2)
-            generation_result = self._run_generation(
-                qwen3_moe_toy_model_path, quantized_checkpoint_dir, tp=1, pp=2, etp=1
-            )
+            print("=== STEP 2: Testing generation from quantized Qwen3 VL checkpoint with TP=2, PP=1 ===")
+            # Step 2: Test generation from the quantized checkpoint with same parallelism
+            generation_result = self._run_generation(qwen3_vl_toy_model_path, quantized_checkpoint_dir, tp=2, pp=1)
 
             if generation_result.returncode != 0:
                 print(f"Generation STDOUT: {generation_result.stdout}")
@@ -287,13 +353,12 @@ class TestQwen3MoeQuantizationWorkflow:
                 assert False, f"Generation step failed with return code {generation_result.returncode}"
 
             # Verify generation succeeded
-            # Note: stdout may have line wrapping, so we normalize it by removing newlines within the output
             stdout_normalized = generation_result.stdout.replace("\n", "")
             assert (
                 "Loaded quantized model from:" in generation_result.stdout
                 and str(quantized_checkpoint_dir) in stdout_normalized
             ), f"Checkpoint loading message not found. Output: {generation_result.stdout}"
-            assert "Testing quantized model with custom prompts" in generation_result.stdout, (
+            assert "Testing quantized VLM model with image and prompt" in generation_result.stdout, (
                 f"Generation test message not found. Output: {generation_result.stdout}"
             )
             assert "Generation completed successfully!" in generation_result.stdout, (
@@ -301,50 +366,43 @@ class TestQwen3MoeQuantizationWorkflow:
             )
 
             print("✓ Generation completed successfully")
-            print("SUCCESS: Complete Qwen3 MoE quantization and generation workflow test passed")
+            print("SUCCESS: Complete Qwen3 VL quantization and generation workflow test passed")
 
         except Exception as e:
-            print(f"Error during Qwen3 MoE quantization workflow test: {e}")
+            print(f"Error during Qwen3 VL quantization workflow test: {e}")
             raise
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.xfail(
-        reason="mcore bump: TransformerLayer now passes padding_mask to MoE MLP, "
-        "but modelopt's _QuantMoELayer.forward() does not accept it yet.",
-        strict=False,
-    )
     @pytest.mark.parametrize(
-        "quant_tp,quant_pp,quant_etp,gen_tp,gen_pp,gen_etp,test_name",
+        "quant_tp,quant_pp,gen_tp,gen_pp,test_name",
         [
-            (2, 1, 2, 1, 2, 1, "TP2_ETP2_to_PP2"),  # quantize with tp=2,etp=2,pp=1, generate with tp=1,pp=2,etp=1
+            (2, 1, 1, 1, "TP2_to_TP1"),  # quantize with tp=2,pp=1, generate with tp=1,pp=1
         ],
     )
-    def test_qwen3_moe_quantization_and_generation_parallelism(
-        self, qwen3_moe_toy_model_path, tmp_path, quant_tp, quant_pp, quant_etp, gen_tp, gen_pp, gen_etp, test_name
+    def test_qwen3_vl_quantization_and_generation_parallelism(
+        self, qwen3_vl_toy_model_path, tmp_path, quant_tp, quant_pp, gen_tp, gen_pp, test_name
     ):
         """
-        Test Qwen3 MoE quantization and generation with different parallelism configurations.
+        Test Qwen3 VL quantization and generation with different parallelism configurations.
 
         Args:
-            qwen3_moe_toy_model_path: Path to the toy Qwen3 MoE model (from fixture)
+            qwen3_vl_toy_model_path: Path to the toy Qwen3 VL model (from fixture)
             tmp_path: Pytest temporary path fixture
             quant_tp: Tensor parallelism size for quantization
             quant_pp: Pipeline parallelism size for quantization
-            quant_etp: Expert tensor parallelism size for quantization
             gen_tp: Tensor parallelism size for generation
             gen_pp: Pipeline parallelism size for generation
-            gen_etp: Expert tensor parallelism size for generation
             test_name: Name of the test for identification
         """
         # Create temporary base directory for quantized checkpoint
-        base_dir = tmp_path / f"checkpoints_qwen3_moe_{test_name.lower()}"
+        base_dir = tmp_path / f"checkpoints_qwen3_vl_{test_name.lower()}"
         base_dir.mkdir(exist_ok=True)
 
         try:
-            print(f"=== STEP 1: Quantizing Qwen3 MoE toy model with TP={quant_tp}, PP={quant_pp}, ETP={quant_etp} ===")
+            print(f"=== STEP 1: Quantizing Qwen3 VL toy model with TP={quant_tp}, PP={quant_pp} ===")
             # Step 1: Quantize the model with specified parallelism
             quantize_result, quantized_checkpoint_dir = self._run_quantization(
-                qwen3_moe_toy_model_path, base_dir, quant_cfg="fp8", tp=quant_tp, pp=quant_pp, etp=quant_etp
+                qwen3_vl_toy_model_path, base_dir, quant_cfg="fp8", tp=quant_tp, pp=quant_pp
             )
 
             if quantize_result.returncode != 0:
@@ -369,12 +427,12 @@ class TestQwen3MoeQuantizationWorkflow:
             checkpoint_contents = list(quantized_checkpoint_dir.iterdir())
             assert len(checkpoint_contents) > 0, f"Quantized checkpoint directory is empty: {quantized_checkpoint_dir}"
 
-            print(f"✓ Quantization completed with TP={quant_tp}, PP={quant_pp}, ETP={quant_etp}")
+            print(f"✓ Quantization completed with TP={quant_tp}, PP={quant_pp}")
 
-            print(f"=== STEP 2: Testing generation with TP={gen_tp}, PP={gen_pp}, ETP={gen_etp} ===")
+            print(f"=== STEP 2: Testing generation with TP={gen_tp}, PP={gen_pp} ===")
             # Step 2: Test generation with different parallelism configuration
             generation_result = self._run_generation(
-                qwen3_moe_toy_model_path, quantized_checkpoint_dir, tp=gen_tp, pp=gen_pp, etp=gen_etp
+                qwen3_vl_toy_model_path, quantized_checkpoint_dir, tp=gen_tp, pp=gen_pp
             )
 
             if generation_result.returncode != 0:
@@ -383,7 +441,6 @@ class TestQwen3MoeQuantizationWorkflow:
                 assert False, f"Generation step for {test_name} failed with return code {generation_result.returncode}"
 
             # Verify generation succeeded with correct parallelism
-            # Note: stdout may have line wrapping, so we normalize it by removing newlines within the output
             stdout_normalized = generation_result.stdout.replace("\n", "")
             assert (
                 "Loaded quantized model from:" in generation_result.stdout
@@ -395,16 +452,16 @@ class TestQwen3MoeQuantizationWorkflow:
             assert f"Pipeline parallel size: {gen_pp}" in generation_result.stdout, (
                 f"Generation PP setting not found in {test_name}. Output: {generation_result.stdout}"
             )
-            assert "Testing quantized model with custom prompts" in generation_result.stdout, (
+            assert "Testing quantized VLM model with image and prompt" in generation_result.stdout, (
                 f"Generation test message not found in {test_name}. Output: {generation_result.stdout}"
             )
             assert "Generation completed successfully!" in generation_result.stdout, (
                 f"Generation completion message not found in {test_name}. Output: {generation_result.stdout}"
             )
 
-            print(f"✓ Generation completed with TP={gen_tp}, PP={gen_pp}, ETP={gen_etp}")
-            print(f"SUCCESS: {test_name} Qwen3 MoE quantization and generation workflow test passed")
+            print(f"✓ Generation completed with TP={gen_tp}, PP={gen_pp}")
+            print(f"SUCCESS: {test_name} Qwen3 VL quantization and generation workflow test passed")
 
         except Exception as e:
-            print(f"Error during {test_name} Qwen3 MoE quantization workflow test: {e}")
+            print(f"Error during {test_name} Qwen3 VL quantization workflow test: {e}")
             raise

@@ -58,7 +58,6 @@ from transformers import AutoProcessor
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.gpt_provider import quantization_layer_spec
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
@@ -97,14 +96,50 @@ def get_coco_dataloader(
     dataset = load_dataset(
         dataset_name,
         split="train",
-        trust_remote_code=True,
-    )
+        streaming=True,
+    ).take(calib_size)  # Only download calib_size samples
 
-    calib_size = min(len(dataset), calib_size)
-    for i in range(calib_size):
-        image = dataset[i]["image"]
+    for i, sample in enumerate(dataset):
+        image = sample["image"]
         if image.mode != "RGB":
             image = image.convert("RGB")
+        prompt = CALIBRATION_PROMPTS[i % len(CALIBRATION_PROMPTS)]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        yield messages
+
+
+def get_random_calib_dataloader(
+    calib_size: int = 512,
+    image_size: tuple = (224, 224),
+) -> Generator[dict, None, None]:
+    """Generate random calibration data for offline CICD testing.
+
+    This function creates synthetic images for calibration when
+    HuggingFace datasets are not available (e.g., in offline CI environments).
+
+    Args:
+        calib_size: Number of samples to generate for calibration.
+        image_size: Size of the generated random images (height, width).
+
+    Yields:
+        List of messages in OpenAI format with random images.
+    """
+    import numpy as np
+    from PIL import Image
+
+    for i in range(calib_size):
+        # Generate a random RGB image
+        random_array = np.random.randint(0, 255, (*image_size, 3), dtype=np.uint8)
+        image = Image.fromarray(random_array, mode="RGB")
+
         prompt = CALIBRATION_PROMPTS[i % len(CALIBRATION_PROMPTS)]
         messages = [
             {
@@ -124,6 +159,7 @@ def _hf_dataset_forward_loop_func(
     calib_size: int,
     force_all_expert_routing: bool = False,
     calib_dataset: str = "detection-datasets/coco",
+    use_random_calib: bool = False,
 ):
     """Forward loop function for calibration using HuggingFace dataset.
 
@@ -133,6 +169,7 @@ def _hf_dataset_forward_loop_func(
         calib_size: Number of calibration samples.
         force_all_expert_routing: Force all experts during MoE calibration.
         calib_dataset: HuggingFace dataset name for calibration.
+        use_random_calib: Use random synthetic images instead of downloading from HuggingFace.
     """
     # Force all expert routing for MoE models during calibration
     if force_all_expert_routing:
@@ -140,7 +177,10 @@ def _hf_dataset_forward_loop_func(
             if isinstance(module, TopKRouter):
                 module.topk = module.num_experts
 
-    dataloader = get_coco_dataloader(calib_dataset, calib_size)
+    if use_random_calib:
+        dataloader = get_random_calib_dataloader(calib_size)
+    else:
+        dataloader = get_coco_dataloader(calib_dataset, calib_size)
 
     for messages in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank(), desc="Calibration"):
         image_inputs, video_inputs = process_vision_info(messages)
@@ -150,16 +190,20 @@ def _hf_dataset_forward_loop_func(
         input_ids = inputs.input_ids.cuda()
         pixel_values = getattr(inputs, "pixel_values", None)
         image_grid_thw = getattr(inputs, "image_grid_thw", None)
+        image_sizes = getattr(inputs, "image_sizes", None)
         if pixel_values is not None:
             pixel_values = pixel_values.cuda()
         if image_grid_thw is not None:
             image_grid_thw = image_grid_thw.cuda()
+        if image_sizes is not None:
+            image_sizes = image_sizes.cuda()
 
         megatron_generate(
             model=model,
             input_ids=input_ids,
             pixel_values=pixel_values,
             image_grid_thw=image_grid_thw,
+            image_sizes=image_sizes,
             osl=1,
             enable_kv_cache=False,
             disable_tqdm=True,
@@ -177,14 +221,14 @@ def _custom_prompt_forward_loop_func(
     is_rank_0: bool,
     prompts: str,
     osl: int = 32,
-    test_image_url: str = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+    test_image_path: str = "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
 ):
     """Test the quantized VLM model with an image and prompt."""
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "image", "image": test_image_url},
+                {"type": "image", "image": test_image_path},
                 {"type": "text", "text": prompts},
             ],
         }
@@ -197,10 +241,13 @@ def _custom_prompt_forward_loop_func(
     input_ids = inputs.input_ids.cuda()
     pixel_values = getattr(inputs, "pixel_values", None)
     image_grid_thw = getattr(inputs, "image_grid_thw", None)
+    image_sizes = getattr(inputs, "image_sizes", None)
     if pixel_values is not None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
+    if image_sizes is not None:
+        image_sizes = image_sizes.cuda()
 
     eos_token_id = getattr(processor.tokenizer, "eos_token_id", None)
     eos_token_ids = [eos_token_id] if eos_token_id else []
@@ -210,6 +257,7 @@ def _custom_prompt_forward_loop_func(
         input_ids=input_ids,
         pixel_values=pixel_values,
         image_grid_thw=image_grid_thw,
+        image_sizes=image_sizes,
         osl=osl,
         eos_token_id=eos_token_ids,
         enable_kv_cache=False,
@@ -217,7 +265,7 @@ def _custom_prompt_forward_loop_func(
     )
 
     if is_rank_0:
-        console.print(f"[green]Image:[/green] {test_image_url}")
+        console.print(f"[green]Image:[/green] {test_image_path}")
         console.print(f"[green]Prompt:[/green] {prompts}")
         console.print(
             f"[green]Generated:[/green] {processor.tokenizer.decode(generated_ids[0], skip_special_tokens=False)}"
@@ -240,6 +288,9 @@ def main(
     force_all_expert_routing: bool = False,
     trust_remote_code: bool = True,
     prompts: str = "Describe this image.",
+    skip_quantization: bool = False,
+    test_image_path: Optional[str] = None,
+    use_random_calib: bool = False,
 ) -> None:
     """Perform quantization from HuggingFace VLM model to quantized Megatron-LM model on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -263,10 +314,7 @@ def main(
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = torch.bfloat16
-    # Disable MoE permute fusion for SequentialMLP (used by quantization_layer_spec)
-    # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
-    model_provider.moe_permute_fusion = False
-    model_provider.language_transformer_layer_spec = quantization_layer_spec
+
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
@@ -284,8 +332,7 @@ def main(
     if is_rank_0:
         table = create_quantization_stats_table()
 
-    # Apply quantization
-    if export_quant_cfg in QUANT_CFG_CHOICES:
+    if export_quant_cfg in QUANT_CFG_CHOICES and not skip_quantization:
         if is_rank_0:
             console.print(f"[green]Quantizing the model with {export_quant_cfg} configuration...[/green]")
 
@@ -305,6 +352,7 @@ def main(
                 processor,
                 calib_size,
                 force_all_expert_routing,
+                use_random_calib=use_random_calib,
             )
 
         # Apply quantization
@@ -335,17 +383,27 @@ def main(
                     table.add_row(k, "", "")
 
             console.print(table)
+    elif skip_quantization:
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        if is_rank_0:
+            console.print(f"[green]Not Quantized Model:\n {unwrapped_model}[/green]")
+            console.print("[yellow]⚠ Skipping quantization (--skip-quantization flag set)[/yellow]")
 
     # Save quantized model
     if megatron_save_path is None:
         model_name = hf_model_id.replace("/", "_")
         megatron_save_path = f"./{model_name}_quantized_{export_quant_cfg}"
 
-    # Test quantized model
     if is_rank_0:
-        console.print("[green]Testing quantized model with custom prompt...[/green]")
+        console.print("[green]Testing model AFTER quantization...[/green]")
 
-    _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
+    # Use provided test image path or fall back to default
+    if test_image_path:
+        _custom_prompt_forward_loop_func(
+            unwrapped_model, processor, is_rank_0, prompts, test_image_path=test_image_path
+        )
+    else:
+        _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
 
     # Save quantized model in Megatron format
     if megatron_save_path:
@@ -381,6 +439,25 @@ if __name__ == "__main__":
         default="Describe this image.",
         help="Text prompt for testing quantized model.",
     )
+    parser.add_argument(
+        "--skip-quantization",
+        action="store_true",
+        default=False,
+        help="Skip quantization (use default layer spec, useful for debugging)",
+    )
+    parser.add_argument(
+        "--test-image-path",
+        type=str,
+        default=None,
+        help="Path or URL to test image for post-quantization testing. If not provided, uses default remote URL.",
+    )
+    parser.add_argument(
+        "--use-random-calib",
+        action="store_true",
+        default=False,
+        help="Use random synthetic images for calibration instead of downloading from HuggingFace. "
+        "Useful for offline CI environments.",
+    )
     args = parser.parse_args()
     main(
         args.hf_model_id,
@@ -397,6 +474,9 @@ if __name__ == "__main__":
         args.force_all_expert_routing,
         args.trust_remote_code,
         args.prompts,
+        args.skip_quantization,
+        args.test_image_path,
+        args.use_random_calib,
     )
 
     if torch.distributed.is_initialized():
