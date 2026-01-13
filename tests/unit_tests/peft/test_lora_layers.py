@@ -808,14 +808,13 @@ class TestLoRATopKRouterAdapters:
         )
 
         attrs = peft_utils.get_adapter_attributes_from_linear(router)
-        input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = attrs
 
-        assert input_is_parallel is False
-        assert in_features == router.weight.shape[1]
-        assert out_features == router.weight.shape[0]
-        assert disable_tp_comm is False
-        assert disable_sp_comm is True
-        assert base_linear_is_parallel is False
+        assert attrs.input_is_parallel is False
+        assert attrs.in_features == router.weight.shape[1]
+        assert attrs.out_features == router.weight.shape[0]
+        assert attrs.disable_tensor_parallel_comm is False
+        assert attrs.disable_sequence_parallel_comm is True
+        assert attrs.base_linear_is_parallel is False
 
 
 class TestCanonicalLoRATopKRouter:
