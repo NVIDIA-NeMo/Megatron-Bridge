@@ -74,8 +74,8 @@ def kuberay_executor(
     namespace: str = "default",
     ray_version: str = "2.43.0",
     container_image: str = "",  # Will be set in __post_init__ if empty
-    head_cpu: str = "1",
-    head_memory: str = "2Gi",
+    head_cpu: str = "8",
+    head_memory: str = "32Gi",
     hf_token: str = None,
     custom_env_vars: Dict[str, str] = None,
 ):
@@ -109,20 +109,31 @@ def kuberay_executor(
         image=container_image,
         head_cpu=head_cpu,
         head_memory=head_memory,
+        ray_head_start_params={"num-gpus": "0"},
+        ray_worker_start_params={"num-gpus": "8"},
         worker_groups=[
             KubeRayWorkerGroup(
                 group_name="worker",  # arbitrary string
-                replicas=nodes,  # two worker pods
+                min_replicas=nodes,  # two worker pods
+                max_replicas=nodes,  # two worker pods
+                replicas=nodes,
                 gpus_per_worker=num_gpus_per_node,
+                cpu_requests="64",
+                memory_requests="512Gi",
+                cpu_limits="64",
+                memory_limits="512Gi",
             )
         ],
-        spec_kwargs={"schedulerName": "runai-scheduler"},  # e.g. Run:ai
+        spec_kwargs={
+            "schedulerName": "runai-scheduler",
+            "image_pull_secrets": ["dockerregistry-dockerregistry-pagaray-ngc"],
+        },  # e.g. Run:ai
         volume_mounts=[{"name": "workspace", "mountPath": dgxc_pvc_mount_path}],
         volumes=[
             {
                 "name": "workspace",
                 "persistentVolumeClaim": {"claimName": dgxc_pvc_claim_name},
-            }
+            },
         ],
         env_vars=env_vars,
         container_kwargs={
@@ -132,6 +143,10 @@ def kuberay_executor(
             }
         },
     )
+
+    executor.volumes.append({"name": "dshm", "emptyDir": {"medium": "Memory"}})
+    executor.volume_mounts.append({"name": "dshm", "mountPath": "/dev/shm"})
+
     return executor
 
 
