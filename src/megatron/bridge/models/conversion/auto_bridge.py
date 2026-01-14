@@ -319,10 +319,11 @@ class AutoBridge(Generic[MegatronModelT]):
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-        self._model_bridge.load_weights_hf_to_megatron(
+        _, unquantized_state_dict = self._model_bridge.load_weights_hf_to_megatron(
             pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
         )
-
+        # Get unquantized_state_dict from the same instance that was used for loading
+        self.unquantized_state_dict = unquantized_state_dict
         return model
 
     def export_hf_weights(

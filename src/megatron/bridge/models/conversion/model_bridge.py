@@ -20,6 +20,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import (
+    Any,
     Callable,
     Dict,
     Generic,
@@ -28,6 +29,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -115,6 +117,73 @@ class WeightConversionTask(Generic[MappingT]):
     vp_stage: Optional[int] = None
     megatron_module: Optional[torch.nn.Module] = None
     param_weight: Optional[torch.Tensor] = None
+
+
+class _HFNameSuffixMapping:
+    """A lightweight wrapper mapping that appends a suffix to all HF param names on export.
+
+    This is used by FP8 scale tasks: the task's `param_name/global_param_name` may carry
+    `*_scale_inv`, but the exported output names come from `mapping.megatron_to_hf()`.
+    Reusing the base mapping would otherwise emit the original HF weight names (no suffix).
+    """
+
+    def __init__(self, base_mapping: Any, suffix: str):
+        self._base_mapping = base_mapping
+        self._suffix = suffix
+
+    def __getattr__(self, name: str) -> Any:
+        # Delegate everything else (e.g., broadcast/gather helpers, megatron_param, etc.)
+        return getattr(self._base_mapping, name)
+
+    def resolve(self, captures: Tuple[str, ...]) -> "_HFNameSuffixMapping":
+        # Preserve wildcard resolution behavior if the base mapping supports it.
+        if hasattr(self._base_mapping, "resolve"):
+            return _HFNameSuffixMapping(self._base_mapping.resolve(captures), self._suffix)
+        return _HFNameSuffixMapping(self._base_mapping, self._suffix)
+
+    def hf_to_megatron(self, hf_weights: Any, megatron_module: torch.nn.Module) -> torch.Tensor:
+        # Pass-through (not used by our export path, but keeps the wrapper mapping "complete").
+        return self._base_mapping.hf_to_megatron(hf_weights, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[torch.nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        out = self._base_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not out:
+            return out
+        # Append suffix to every exported HF parameter name.
+        return {f"{k}{self._suffix}": v for k, v in out.items()}
+
+
+@dataclass(frozen=True)
+class AdapterWeightConversionTask:
+    """Task describing an adapter's LoRA weights for conversion or merging.
+
+    The task reuses :class:`WeightConversionTask` to gather the adapter's
+    linear_in/linear_out weights (if they are tensor-parallel) and carries the
+    adapter metadata required by the merge step.
+    """
+
+    global_base_prefix: str
+    adapter_key: Optional[str]  # For canonical LoRA only
+    alpha: int
+    dim: int
+    linear_in_task: WeightConversionTask
+    linear_out_task: WeightConversionTask
+
+
+@dataclass(frozen=True)
+class AdapterWeight:
+    """Materialized adapter weights ready for merge."""
+
+    global_base_prefix: str
+    adapter_key: Optional[str]  # For canonical LoRA only
+    alpha: int
+    dim: int
+    linear_in_weight: MegatronWeightTuple
+    linear_out_weight: MegatronWeightTuple
 
 
 def _megatron_local_name_to_global(
@@ -483,6 +552,14 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
+
+        capture_unquantized_state_dict = True
+        # Optional: capture per-rank, per-parameter unquantized shards for initializing
+        # for loading original weights when fp8_param=True.
+        captured_state_dicts: dict[str, torch.Tensor] | None = (
+            {} if capture_unquantized_state_dict else None
+        )
+        self.unquantized_state_dict = None
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
@@ -523,10 +600,19 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                         f"  Bridge type: {type(task.mapping).__name__}\n"
                         f"  HF mapping: {task.mapping.hf_param}"
                     )
-                task.param_weight.data.copy_(converted_weights)
-
+                if capture_unquantized_state_dict:
+                    captured_state_dicts[task.param_name] = converted_weights.detach()
+                # NOTE:
+                # For fp8_param (blockwise), `task.param_weight` can be a TransformerEngine
+                # Float8BlockwiseQTensor) that is a leaf with requires_grad=True.
+                # In-place updates under grad mode will raise:
+                # "a leaf Variable that requires grad is being used in an in-place operation."
+                with torch.no_grad():
+                    task.param_weight.copy_(converted_weights)
         self._broadcast_shared_embeddings(megatron_model)
-        return megatron_model
+        if capture_unquantized_state_dict:
+            self.unquantized_state_dict = captured_state_dicts
+        return megatron_model, self.unquantized_state_dict
 
     def stream_weights_hf_to_megatron(
         self,
@@ -661,7 +747,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+            # NOTE: temporarily use our fp8 export tasks
+            # TODO: need a param from caller to control which tasks to use
+            # conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+            conversion_tasks = self.build_export_fp8_tasks(hf_pretrained, megatron_model)
 
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
@@ -999,6 +1088,210 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     param_weight=None,
                     mapping=mapping,
                 )
+
+        return tasks
+
+    def build_export_fp8_tasks(
+        self,
+        hf_pretrained: HFPreTrained,
+        megatron_model: List[MegatronModel],
+        *,
+        # NOTE: follow the export naming convention used by downstream (e.g., verl/rollout engine):
+        #   weight name:  model.layers.0.self_attn.q_proj.weight
+        #   scale name:   model.layers.0.self_attn.q_proj.weight_scale_inv
+        scale_inv_suffix: str = "_scale_inv",
+        fp8_scale_inv_attr: str = "_rowwise_scale_inv",
+    ) -> List[None | WeightConversionTask]:
+        """Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for blockwise FP8 params.
+
+        Design goals:
+        - Deterministic: every rank gets the exact same task list length and ordering.
+        - Non-invasive: does not modify existing mappings; scale_inv tasks reuse the original mapping type.
+
+        Notes:
+        - This method only *builds* tasks. The caller is responsible for interpreting
+          the `scale_inv_suffix` naming convention and exporting the actual fp8 payload.
+        - For now we only attach the rowwise scale_inv tensor (default: `_rowwise_scale_inv`)
+          as requested.
+        """
+
+        # Ensure hf_pretrained has the required state structure (reuse existing ordering assumptions)
+        if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
+            raise ValueError("hf_pretrained.state.source is required for weight ordering")
+
+        mapping_registry = self.mapping_registry()
+        unwrapped_model = unwrap_model(megatron_model)[0]
+        model_config = unwrapped_model.config
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
+
+        # Filter out output_layer related parameters if embeddings are tied
+        if embeddings_are_tied:
+            sorted_global_param_names_all_pp_ranks = [
+                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+            ]
+
+        # ------------------------------------------------------------
+        # 1) Determine which global params are blockwise FP8 and thus
+        #    should have an additional `*.scale_inv` export task.
+        #    We need a *global* decision, so we gather flags across PP ranks.
+        # ------------------------------------------------------------
+        local_fp8_flags: Dict[str, bool] = {}
+        global_name_set = set(sorted_global_param_names_all_pp_ranks)
+        try:
+            from transformer_engine.pytorch.tensor import Float8BlockwiseQTensor
+        except Exception:
+            Float8BlockwiseQTensor = None
+
+        for vp_stage, model in enumerate(megatron_model):
+            for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+                if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
+                    continue
+
+                local_name = self._unwrap_name(local_name)
+                global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
+                if global_name not in global_name_set:
+                    continue
+
+                _, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
+                if local_weights is None:
+                    continue
+
+                # Determine if this is a blockwise FP8 tensor and has the requested scale_inv attr.
+                # We intentionally require the scale_inv attribute to be non-None:
+                # - Some initialization paths may leave scale tensors unset; we should not emit
+                #   a scale task in that case (would break deterministic export/consumer assumptions).
+                is_blockwise_fp8 = False
+                if Float8BlockwiseQTensor is not None:
+                    try:
+                        is_blockwise_fp8 = isinstance(local_weights, Float8BlockwiseQTensor)
+                    except Exception:
+                        is_blockwise_fp8 = False
+                
+                # Float8BlockwiseQTensor should have the scale_inv attribute, but check if it's set (not None)
+                if is_blockwise_fp8 and getattr(local_weights, fp8_scale_inv_attr, None) is not None:
+                    local_fp8_flags[global_name] = True
+
+        # Gather across PP ranks to ensure consistent insertion decisions
+        fp8_flags_list: list[Dict[str, bool]] = [None] * get_pg_size(pp_group)
+        torch.distributed.all_gather_object(fp8_flags_list, local_fp8_flags, group=pp_group)
+        global_fp8_flags: Dict[str, bool] = {}
+        for d in fp8_flags_list:
+            if not d:
+                continue
+            for k, v in d.items():
+                if v:
+                    global_fp8_flags[k] = True
+
+        # ------------------------------------------------------------
+        # 2) Expand the global name list with `*.scale_inv` entries.
+        #    This defines the final deterministic task ordering.
+        # ------------------------------------------------------------
+        expanded_global_names: list[str] = []
+        for global_name in sorted_global_param_names_all_pp_ranks:
+            expanded_global_names.append(global_name)
+            if global_fp8_flags.get(global_name, False):
+                expanded_global_names.append(f"{global_name}{scale_inv_suffix}")
+
+        global_names_index_dict = {name: idx for idx, name in enumerate(expanded_global_names)}
+
+        tasks: list[None | WeightConversionTask] = [None] * len(expanded_global_names)
+
+        # ------------------------------------------------------------
+        # 3) Fill tasks for params that are local to this rank.
+        # ------------------------------------------------------------
+        for vp_stage, model in enumerate(megatron_model):
+            for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+                if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
+                    continue
+
+                local_name = self._unwrap_name(local_name)
+                global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
+                if global_name not in global_names_index_dict:
+                    continue
+
+                mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
+                if not mapping:
+                    logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
+                    continue
+
+                local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
+                if local_module is not None and not hasattr(local_module, "config"):
+                    setattr(local_module, "config", model_config)
+
+                # Main (weight/bias) task
+                export_weight_tensor = local_weights
+                if global_fp8_flags.get(global_name, False):
+                    if local_weights is not None and hasattr(local_weights, "_rowwise_data"):
+                        rd = getattr(local_weights, "_rowwise_data")
+                        if rd is not None:
+                            export_weight_tensor = rd
+                tasks[global_names_index_dict[global_name]] = WeightConversionTask(
+                    pp_rank=pp_rank,
+                    vp_stage=vp_stage,
+                    param_name=local_name,
+                    global_param_name=global_name,
+                    megatron_module=local_module,
+                    param_weight=export_weight_tensor,
+                    mapping=mapping,
+                )
+
+                # Optional scale_inv task (only for globally-detected FP8 params)
+                if global_fp8_flags.get(global_name, False):
+                    scale_global_name = f"{global_name}{scale_inv_suffix}"
+                    scale_local_name = f"{local_name}{scale_inv_suffix}"
+                    scale_tensor = None
+                    if local_weights is not None and hasattr(local_weights, fp8_scale_inv_attr):
+                        scale_tensor = getattr(local_weights, fp8_scale_inv_attr)
+
+                    # Note:
+                    # Do NOT reuse the same mapping instance as the base weight task.
+                    # We clone via `resolve(())` which returns a new mapping instance
+                    base_mapping_for_scale = mapping.resolve(())
+                    tasks[global_names_index_dict[scale_global_name]] = WeightConversionTask(
+                        pp_rank=pp_rank,
+                        vp_stage=vp_stage,
+                        param_name=scale_local_name,
+                        global_param_name=scale_global_name,
+                        megatron_module=local_module,
+                        param_weight=scale_tensor,
+                        mapping=_HFNameSuffixMapping(base_mapping_for_scale, scale_inv_suffix),
+                    )
+
+        # ------------------------------------------------------------
+        # 4) Fill remaining placeholders (for PP ranks that don't own certain params).
+        #    This keeps the tasks list aligned across all ranks.
+        # ------------------------------------------------------------
+        for idx, global_name in enumerate(expanded_global_names):
+            if tasks[idx] is not None:
+                continue
+
+            # For scale_inv entries, reuse the base param's mapping type.
+            if global_name.endswith(scale_inv_suffix):
+                base_global_name = global_name[: -len(scale_inv_suffix)]
+                base_mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(base_global_name))
+                if base_mapping is not None:
+                    # See note above: clone mapping instance to avoid sharing state across tasks.
+                    mapping = _HFNameSuffixMapping(base_mapping.resolve(()), scale_inv_suffix)
+                else:
+                    mapping = None
+            else:
+                mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
+            if mapping is None:
+                logger.warning(f"No mapping found for global_name: {global_name}")
+                continue
+
+            tasks[idx] = WeightConversionTask(
+                pp_rank=pp_rank,
+                vp_stage=None,
+                param_name=global_name,
+                global_param_name=global_name,
+                megatron_module=None,
+                param_weight=None,
+                mapping=mapping,
+            )
 
         return tasks
 
