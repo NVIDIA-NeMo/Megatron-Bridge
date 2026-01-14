@@ -106,10 +106,19 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
-    if backend == "nccl":
-        from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+    # Initialize RNG tracker for model initialization
+    # This is needed even for CPU/gloo backend as some model components
+    # (like MambaMixer) may use get_cuda_rng_tracker().fork() during __init__
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        try:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
 
-        model_parallel_cuda_manual_seed(0)
+            model_parallel_cuda_manual_seed(0)
+        except Exception:
+            # If RNG tracker initialization fails (e.g., in test environments
+            # or when parallel groups aren't fully initialized), continue anyway.
+            # Models that need the RNG tracker will fail later with a clearer error.
+            pass
 
     try:
         yield
@@ -358,13 +367,19 @@ def load_megatron_model(
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
     model_cfg.moe_extended_tp = False
     model_cfg.sequence_parallel = False
+    model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    if use_cpu_init:
+        model_cfg.fp8 = None
+        model_cfg.fp8_param = False
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
@@ -382,6 +397,7 @@ def save_megatron_model(
     path: Union[str, Path],
     ckpt_format: str = "torch_dist",
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
+    hf_tokenizer_kwargs: Optional[dict] = None,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
@@ -396,6 +412,8 @@ def save_megatron_model(
         ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
         hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
             If provided, the tokenizer metadata will be included in the checkpoint.
+        hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
+            Common options include trust_remote_code=True for models with custom tokenizers.
 
     Example:
         >>> # Save model checkpoint
@@ -406,6 +424,14 @@ def save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
         ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+        ... )
+
+        >>> # Save model checkpoint with custom tokenizer kwargs
+        >>> save_megatron_model(
+        ...     megatron_model,
+        ...     "./megatron_checkpoint",
+        ...     hf_tokenizer_path="THUDM/glm-4-9b-chat",
+        ...     hf_tokenizer_kwargs={"trust_remote_code": True}
         ... )
 
     Note:
@@ -421,6 +447,7 @@ def save_megatron_model(
         tokenizer_config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model=str(hf_tokenizer_path),
+            hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
     # Get model config from the first model instance
@@ -452,6 +479,7 @@ def save_megatron_model(
             save_optim=False,
             save_rng=False,
             ckpt_format=ckpt_format,
+            dist_ckpt_optim_fully_reshardable=True,
         ),
         dist=None,
     )

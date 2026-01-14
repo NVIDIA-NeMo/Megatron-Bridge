@@ -17,12 +17,13 @@ import tempfile
 from unittest.mock import patch
 
 import pytest
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.nemotronh import (
-    NemotronHModel4BProvider,
-    NemotronHModel8BProvider,
-    NemotronHModel47BProvider,
-    NemotronHModel56BProvider,
+    NemotronHModelProvider4B,
+    NemotronHModelProvider8B,
+    NemotronHModelProvider47B,
+    NemotronHModelProvider56B,
 )
 from megatron.bridge.recipes.nemotronh import (
     nemotronh_4b_pretrain_config,
@@ -43,7 +44,7 @@ class TestNemotronH4B:
         config = nemotronh_4b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel4BProvider)
+        assert isinstance(config.model, NemotronHModelProvider4B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 1
@@ -56,7 +57,7 @@ class TestNemotronH4B:
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration (should be in mock mode)
-        assert config.dataset.sequence_length == 8192
+        assert config.dataset.seq_length == 8192
         assert config.dataset.split == "1,1,1"
 
         # Check tokenizer (default is NullTokenizer for pretraining)
@@ -66,14 +67,15 @@ class TestNemotronH4B:
         # Check comm overlap
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_4b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            context_parallelism=8,
-            sequence_parallelism=True,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=8,
+            sequence_parallel=True,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -112,7 +114,7 @@ class TestNemotronH8B:
         config = nemotronh_8b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel8BProvider)
+        assert isinstance(config.model, NemotronHModelProvider8B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 2
@@ -126,13 +128,14 @@ class TestNemotronH8B:
         # Check comm overlap
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_8b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            sequence_parallelism=False,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            sequence_parallel=False,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -149,7 +152,7 @@ class TestNemotronH47B:
         config = nemotronh_47b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel47BProvider)
+        assert isinstance(config.model, NemotronHModelProvider47B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 8
@@ -166,15 +169,16 @@ class TestNemotronH47B:
         # Check logger config
         assert config.logger.log_interval == 10
 
-        # Check comm overlap is not set by default for 47B
-        # (due to issues with fp8 current scaling)
-        assert config.comm_overlap is None
+        # Check comm overlap
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_47b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -190,12 +194,13 @@ class TestNemotronH56B:
         config = nemotronh_56b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel56BProvider)
+        assert isinstance(config.model, NemotronHModelProvider56B)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
+        assert config.model.attention_backend == AttnBackend.auto
 
         # Check tokenizer (default is NullTokenizer for pretraining)
         assert config.tokenizer.tokenizer_type == "NullTokenizer"
@@ -207,14 +212,16 @@ class TestNemotronH56B:
         # Check logger config
         assert config.logger.log_interval == 10
 
-        # Check comm overlap is not set by default for 56B
-        assert config.comm_overlap is None
+        # Check comm overlap
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_56b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -228,10 +235,10 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn,provider_cls",
         [
-            (nemotronh_4b_pretrain_config, NemotronHModel4BProvider),
-            (nemotronh_8b_pretrain_config, NemotronHModel8BProvider),
-            (nemotronh_47b_pretrain_config, NemotronHModel47BProvider),
-            (nemotronh_56b_pretrain_config, NemotronHModel56BProvider),
+            (nemotronh_4b_pretrain_config, NemotronHModelProvider4B),
+            (nemotronh_8b_pretrain_config, NemotronHModelProvider8B),
+            (nemotronh_47b_pretrain_config, NemotronHModelProvider47B),
+            (nemotronh_56b_pretrain_config, NemotronHModelProvider56B),
         ],
     )
     def test_config_container_structure(self, recipe_fn, provider_cls):
@@ -265,7 +272,7 @@ class TestNemotronHCommon:
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2
-        assert config.dataset.sequence_length == 4096
+        assert config.dataset.seq_length == 4096
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
 

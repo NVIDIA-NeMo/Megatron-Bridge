@@ -39,7 +39,6 @@ from megatron.bridge.training.checkpointing import (
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
     get_rng_state,
-    has_nvidia_modelopt,
     init_checkpointing_context,
     load_checkpoint,
     read_metadata,
@@ -364,13 +363,6 @@ def save_checkpoint_fixtures():
     }
 
 
-def _patch_modelopt_state_saver():
-    """Conditionally patch modelopt state saving function."""
-    if has_nvidia_modelopt:
-        return patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
-    return patch.object(_dummy_obj, "save_sharded_modelopt_state")
-
-
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
@@ -379,7 +371,7 @@ class TestSaveCheckpoint:
     @patch("builtins.open", new_callable=mock_open)
     @patch("torch.save")
     @patch("shutil.copy")
-    @_patch_modelopt_state_saver()
+    @patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing.get_rng_state")
     @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
@@ -1541,6 +1533,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.checkpoint.finetune = False
         mock_cfg.checkpoint.load_optim = True
         mock_cfg.checkpoint.load_rng = False  # Skip RNG loading for this test
+        mock_cfg.checkpoint.ckpt_format = "torch_dist"  # Set format explicitly
         mock_cfg.model = Mock()
         mock_cfg.model.fp16 = False
         mock_cfg.model.bf16 = False
@@ -2081,9 +2074,8 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for fsdp_dtensor format."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        result = _build_sharded_state_dict_metadata(
-            use_distributed_optimizer=True, ckpt_fully_parallel_save=False, ckpt_format="fsdp_dtensor"
-        )
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="fsdp_dtensor")
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "fsdp_dtensor"
         assert result["chained_optim_avoid_prefix"] is True
@@ -2093,21 +2085,19 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for torch_dist with fully parallel save."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        result = _build_sharded_state_dict_metadata(
-            use_distributed_optimizer=True, ckpt_fully_parallel_save=True, ckpt_format="torch_dist"
-        )
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=True, ckpt_format="torch_dist")
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
-        assert result["distrib_optim_sharding_type"] == "fully_sharded_model_space"
+        assert result["distrib_optim_sharding_type"] == "dp_reshardable"
 
     def test_build_sharded_state_dict_metadata_torch_dist_dp_zero(self):
         """Test _build_sharded_state_dict_metadata for torch_dist with dp_zero_gather_scatter."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        result = _build_sharded_state_dict_metadata(
-            use_distributed_optimizer=True, ckpt_fully_parallel_save=False, ckpt_format="torch_dist"
-        )
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="torch_dist")
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
-        assert result["distrib_optim_sharding_type"] == "dp_zero_gather_scatter"
+        assert result["distrib_optim_sharding_type"] == "dp_reshardable"
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     @patch("torch.distributed.checkpoint.FileSystemReader")
@@ -2156,22 +2146,55 @@ class TestFSDPDTensorFunctionality:
             )
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
-    def test_generate_state_dict_fsdp_dtensor_preprocessing(self):
-        """Test generate_state_dict applies FSDP DTensor preprocessing."""
+    def test_generate_state_dict_fsdp_dtensor_no_preprocessing(self):
+        """Test generate_state_dict does NOT apply FSDP DTensor preprocessing."""
         from unittest.mock import Mock
 
         from megatron.bridge.training.checkpointing import generate_state_dict
         from megatron.bridge.training.config import CheckpointConfig
 
-        # Create mock model with no swiglu flag (to avoid SWiGLU handler)
+        # Create mock model
         mock_model = Mock()
         mock_model.state_dict_for_save_checkpoint.return_value = {"test_param": torch.tensor([1.0])}
 
-        # Mock get_model_config to return config without swiglu
+        with (
+            patch("megatron.bridge.training.checkpointing.handle_fp8_extra_state_case") as mock_fp8,
+            patch("megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor") as mock_uneven,
+        ):
+            ckpt_cfg = CheckpointConfig(ckpt_format="fsdp_dtensor", save_rng=False)
+            result = generate_state_dict(
+                ckpt_cfg=ckpt_cfg,
+                model=[mock_model],
+                optimizer=None,
+                opt_param_scheduler=None,
+                rng_state=None,
+            )
+
+            # Should NOT call FSDP preprocessing functions (moved to preprocess_fsdp_dtensor_state_dict)
+            mock_fp8.assert_not_called()
+            mock_uneven.assert_not_called()
+            # Should use state_dict_for_save_checkpoint for fsdp_dtensor
+            mock_model.state_dict_for_save_checkpoint.assert_called_once()
+            assert "model" in result
+            assert result["checkpoint_version"] == 3.0
+
+    @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
+    def test_preprocess_fsdp_dtensor_state_dict(self):
+        """Test preprocess_fsdp_dtensor_state_dict applies all preprocessing steps."""
+        from unittest.mock import Mock
+
+        from megatron.bridge.training.checkpointing import preprocess_fsdp_dtensor_state_dict
+
+        # Create mock model and config
+        mock_model = Mock()
+        mock_cfg = Mock()
+
+        # Mock model config without swiglu or experts
         with patch("megatron.core.utils.get_model_config") as mock_get_config:
-            mock_config = Mock()
-            mock_config.swiglu = False  # No swiglu flag
-            mock_get_config.return_value = mock_config
+            mock_model_config = Mock()
+            mock_model_config.gated_linear_unit = False
+            mock_model_config.num_moe_experts = None
+            mock_get_config.return_value = mock_model_config
 
             with (
                 patch("megatron.bridge.training.checkpointing.handle_fp8_extra_state_case") as mock_fp8,
@@ -2179,22 +2202,13 @@ class TestFSDPDTensorFunctionality:
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
             ):
-                ckpt_cfg = CheckpointConfig(ckpt_format="fsdp_dtensor", save_rng=False)
-                result = generate_state_dict(
-                    ckpt_cfg=ckpt_cfg,
-                    model=[mock_model],
-                    optimizer=None,
-                    opt_param_scheduler=None,
-                    rng_state=None,
-                )
+                raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
+                result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
 
-                # Should call FSDP preprocessing functions
+                # Should call FP8 and uneven dtensor preprocessing
                 mock_fp8.assert_called_once()
                 mock_uneven.assert_called_once()
-                # Should use state_dict_for_save_checkpoint for fsdp_dtensor
-                mock_model.state_dict_for_save_checkpoint.assert_called_once()
                 assert "model" in result
-                assert result["checkpoint_version"] == 3.0
 
     def test_generate_state_dict_torch_dist_no_preprocessing(self):
         """Test generate_state_dict skips FSDP preprocessing for torch_dist."""

@@ -80,7 +80,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | `--moe-grouped-gemm` | `model.moe_grouped_gemm` | Grouped GEMM for MoE. |
 | `--moe-aux-loss-coeff` | `model.moe_aux_loss_coeff` | Aux loss coefficient. |
 | `--moe-token-dispatcher-type` | `model.moe_token_dispatcher_type` | Token dispatcher: alltoall or flex. |
-| `--moe-enable-deepep` | `model.moe_enable_deepep` | Enable DeepEP optimizations. |
+| `--moe-flex-dispatcher-backend` | `model.moe_flex_dispatcher_backend` | MoE token dispatcher: deepep or hybridep |
 | `--moe-permute-fusion` | `model.moe_permute_fusion` | Enable MoE permute fusion. |
 | `--moe-router-fusion` | `model.moe_router_fusion` | Enable MoE router fusion. |
 | `--moe-router-dtype` | `model.moe_router_dtype` | Router dtype (e.g., fp32). |

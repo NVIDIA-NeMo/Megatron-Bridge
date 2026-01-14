@@ -61,9 +61,12 @@ from typing import Iterable, Iterator
 
 import torch
 import torch.nn.functional as F
+from megatron.core.pipeline_parallel import get_forward_backward_func
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -75,13 +78,13 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.optim import setup_optimizer
-from megatron.core.pipeline_parallel import get_forward_backward_func
 
 
 @dataclass
 class Args:
+    """Dataclass configuration for training."""
+
     hf_policy_model: str
     hf_reward_model: str
     prompts: list[str]
@@ -94,6 +97,7 @@ class Args:
 
 
 def build_config(provider, args: Args) -> ConfigContainer:
+    """Build a config for the training."""
     provider.tensor_model_parallel_size = 1
     provider.pipeline_model_parallel_size = 1
     provider.context_parallel_size = 1
@@ -160,15 +164,24 @@ def build_config(provider, args: Args) -> ConfigContainer:
 
 
 def make_microbatch_iterator(batch: dict, num_microbatches: int) -> Iterator[dict]:
+    """Make a microbatch iterator from a batch."""
+
     def _gen() -> Iterable[dict]:
         for _ in range(num_microbatches):
             yield batch
+
     return iter(_gen())
 
 
 @torch.no_grad()
-def refit_hf_from_megatron(bridge: AutoBridge, megatron_models: list, hf_model: AutoModelForCausalLM,
-                           *, show_progress: bool = False, cpu: bool = False) -> None:
+def refit_hf_from_megatron(
+    bridge: AutoBridge,
+    megatron_models: list,
+    hf_model: AutoModelForCausalLM,
+    *,
+    show_progress: bool = False,
+    cpu: bool = False,
+) -> None:
     """Update the in-memory HF policy with current Megatron weights.
 
     This avoids writing to disk and lets the next rollout use the latest policy.
@@ -183,9 +196,11 @@ def refit_hf_from_megatron(bridge: AutoBridge, megatron_models: list, hf_model: 
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build a parser for the command line arguments."""
     p = argparse.ArgumentParser(description="Dummy RLHF: HF inference + Megatron training via Bridge")
     p.add_argument("--hf-policy-model", type=str, default="Qwen/Qwen3-0.6B")
     p.add_argument("--hf-reward-model", type=str, default="distilbert-base-uncased-finetuned-sst-2-english")
+    p.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     p.add_argument("--max-new-tokens", type=int, default=32)
     p.add_argument("--lr", type=float, default=5e-5)
     p.add_argument("--mbs", type=int, default=1)
@@ -205,6 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Main function."""
     parser = build_parser()
     ns = parser.parse_args()
     args = Args(
@@ -228,18 +244,32 @@ def main() -> None:
         local_device = torch.device("cpu")
 
     # HF tokenizer/model for generation (policy sampling) and HF reward pipeline
-    gen_tokenizer = AutoTokenizer.from_pretrained(args.hf_policy_model, trust_remote_code=True)
+    hf_policy_model = args.hf_policy_model
+    gen_tokenizer = AutoTokenizer.from_pretrained(
+        hf_policy_model,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=hf_policy_model,
+        ),
+    )
     # Use left padding for decoder-only models to avoid generation warnings and ensure correctness
     gen_tokenizer.padding_side = "left"
     if gen_tokenizer.pad_token_id is None:
         gen_tokenizer.pad_token = gen_tokenizer.eos_token
-    hf_gen_model = AutoModelForCausalLM.from_pretrained(args.hf_policy_model, trust_remote_code=True)
+    hf_gen_model = AutoModelForCausalLM.from_pretrained(
+        hf_policy_model,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=hf_policy_model,
+        ),
+    )
     # Ensure pad_token_id is set on model config/generation config
     if getattr(hf_gen_model.config, "pad_token_id", None) is None:
         hf_gen_model.config.pad_token_id = gen_tokenizer.pad_token_id
-    if getattr(hf_gen_model, "generation_config", None) is not None and getattr(
-        hf_gen_model.generation_config, "pad_token_id", None
-    ) is None:
+    if (
+        getattr(hf_gen_model, "generation_config", None) is not None
+        and getattr(hf_gen_model.generation_config, "pad_token_id", None) is None
+    ):
         hf_gen_model.generation_config.pad_token_id = gen_tokenizer.pad_token_id
     hf_gen_model.to(local_device)
 
@@ -251,7 +281,13 @@ def main() -> None:
     )
 
     # Bridge: load HF, create Megatron provider and training stack
-    bridge = AutoBridge.from_hf_pretrained(args.hf_policy_model, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_policy_model,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=hf_policy_model,
+        ),
+    )
     provider = bridge.to_megatron_provider(load_weights=True)
 
     cfg = build_config(provider, args)
@@ -375,12 +411,10 @@ def main() -> None:
         refit_hf_from_megatron(bridge, model_list, hf_gen_model, show_progress=False, cpu=True)
 
         if (step + 1) % 1 == 0:
-            print(f"Step {step+1}/{args.train_iters} | mean reward: {rewards_t.mean().item():.4f}")
+            print(f"Step {step + 1}/{args.train_iters} | mean reward: {rewards_t.mean().item():.4f}")
 
 
 if __name__ == "__main__":
     # Helpful default when running locally without torchrun
     os.environ.setdefault("WORLD_SIZE", "1")
     main()
-
-

@@ -15,6 +15,7 @@
 import logging
 import os
 import tempfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -147,3 +148,27 @@ def reset_env_vars():
     # After the test, restore the original environment
     os.environ.clear()
     os.environ.update(original_env)
+
+
+@pytest.fixture(autouse=True)
+def reset_te_debug_state():
+    """Ensure Transformer Engine debug state is reset after each test."""
+    try:
+        from transformer_engine.debug.pytorch.debug_state import TEDebugState
+    except (ImportError, ModuleNotFoundError):
+        yield
+        return
+
+    yield
+
+    try:
+        TEDebugState._reset()
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_datasets_file_lock():
+    """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
+    with patch("datasets.builder.FileLock", return_value=MagicMock()):
+        yield

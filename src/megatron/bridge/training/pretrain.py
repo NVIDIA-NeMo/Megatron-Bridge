@@ -126,10 +126,10 @@ def _pretrain(
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
     ckpt_context = setup_output.checkpointing_context
+    pg_collection = setup_output.pg_collection
 
     # TRAINING
     if not config.train.skip_train:
-        print_rank_0("Training ...")
         if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
@@ -140,6 +140,7 @@ def _pretrain(
                 valid_data_iterator,
                 state,
                 ckpt_context,
+                pg_collection,
             )
 
         barrier_and_log("after training is done")

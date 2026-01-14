@@ -164,8 +164,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
     @property
     def is_expert(self) -> bool:
-        """Check if this mapping is for an expert parameter."""
-        return ".mlp.experts.linear_fc" in self.megatron_param
+        """Check if this mapping is for an expert parameter.
+
+        Matches both TEGroupedMLP (.mlp.experts.linear_fc) and
+        SequentialMLP (.mlp.experts.local_experts.*.linear_fc) patterns.
+        """
+        return ".mlp.experts.linear_fc" in self.megatron_param or ".mlp.experts.local_experts." in self.megatron_param
+
+    @property
+    def is_adapter(self) -> bool:
+        """Check if this mapping is for an adapter parameter."""
+        return ".adapter." in self.megatron_param
 
     def _resolve_names(self, captures: Tuple[str, ...]) -> Tuple[str, Union[str, Dict[str, str]]]:
         """Resolve wildcard patterns with captured values.
@@ -483,14 +492,14 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             torch.Tensor: The scattered tensor shard on the current rank.
         """
         if self.tp_size == 1:
-            return splits[0].to(device=device) if splits else None
+            return splits[0].to(device=device, dtype=dtype) if splits else None
 
         output = torch.empty(output_shape, dtype=dtype, device=device)
         global_src = torch.distributed.get_global_rank(group=self.tp_group, group_rank=src_rank)
 
         scatter_list = None
         if self.tp_rank == src_rank and splits:
-            scatter_list = [s.to(device=device) for s in splits]
+            scatter_list = [s.to(device=device, dtype=dtype) for s in splits]
 
         torch.distributed.scatter(
             output,
@@ -848,7 +857,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=0)
 
-        if self.is_expert:
+        if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
@@ -941,7 +950,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=1)
 
-        if self.is_expert:
+        if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
@@ -1361,8 +1370,8 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
 
         # Delegate TP/PP gathering.
@@ -1394,6 +1403,90 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         return type(self)(
             resolved_megatron_param,
             resolved_hf_param["q"],
+            resolved_hf_param["k"],
+            resolved_hf_param["v"],
+        )
+
+
+class KVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """
+    Mapping for interleaved Key/Value projection weights.
+
+    This mapping converts between separate K and V tensors used in external
+    checkpoints and Megatron's interleaved KV format following grouped-query
+    attention semantics.
+
+    External format (HF)
+    - Separate tensors: k_proj, v_proj
+    - Shapes mirror QKV mappings but without Q
+
+    Megatron format
+    - Single interleaved tensor with order: [k1, v1, k2, v2, ...]
+      where index corresponds to query-group id
+
+    Tensor-parallel distribution is delegated to AutoMapping.
+    """
+
+    def __init__(self, megatron_param: str, k: str, v: str):
+        super().__init__(megatron_param, {"k": k, "v": v})
+        # Delegate TP sharding/broadcasting
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: Dict[str, torch.Tensor],
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Merge K and V into interleaved format and distribute across TP."""
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+
+            if hf_weights["k"].ndim == 1:
+                merged = merge_kv_biases(config, hf_weights["k"], hf_weights["v"])
+            else:
+                merged = merge_kv_weights(config, hf_weights["k"], hf_weights["v"])
+        else:
+            merged = None
+
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather KV shards and split into separate K and V tensors."""
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        # Ensure all PP ranks participate in config broadcast
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "kv_config")
+        else:
+            config = self._get_config(megatron_module)
+            config = remove_non_pickleables(config, max_depth=2)
+            config = self.broadcast_obj_from_pp_rank(config, "kv_config")
+
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not packed_dict:
+            return {}
+
+        packed_kv = next(iter(packed_dict.values()))
+
+        if packed_kv.ndim == 1:
+            k, v = split_kv_biases(config, packed_kv)
+        else:
+            k, v = split_kv_weights(config, packed_kv)
+
+        return {
+            self.hf_param["k"]: k,
+            self.hf_param["v"]: v,
+        }
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            resolved_megatron_param,
             resolved_hf_param["k"],
             resolved_hf_param["v"],
         )
@@ -1469,8 +1562,8 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None)
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config)
 
         d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
@@ -1577,8 +1670,8 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None)
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config)
 
         d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
@@ -1606,6 +1699,221 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             full_weights.append(full_weight)
 
         return {self.hf_param: torch.cat(full_weights, dim=0)}
+
+
+class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """
+    TODO: Add comments
+    """
+
+    def __init__(self, megatron_param: str, qkvz: str, ba: str):
+        """Initialize GDN input linear projection mapping.
+        Args:
+            megatron_param (str): Megatron inut projection parameter name pattern.
+            qkvz (str): QKVZ weight name pattern.
+            ba (str): BA weight name pattern.
+        """
+        super().__init__(megatron_param, {"qkvz": qkvz, "ba": ba})
+        # Delegate all tensor-parallel logic to the smart TP-aware mapping so we
+        # do not hard-code the assumption that input projections are column-parallel.
+        # This keeps the format-handling (merge/split) concerns separate from
+        # TP/PP distribution mechanics.
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: Dict[str, torch.Tensor],
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Merge QKVZ, BA."""
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            merged = merge_gdn_linear_weights(config, hf_weights["qkvz"], hf_weights["ba"])
+        else:
+            merged = None
+
+        # Delegate the actual sharding/broadcasting to the TP-aware mapping.
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather QKVZBA shards and split into QKVZ and BA."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        # ------------------------------------------------------------------
+        # Broadcast / retrieve the transformer configuration so that every PP
+        # rank (also the ones that will early-return) participates in the
+        # collective communication.
+        # ------------------------------------------------------------------
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None)
+        else:
+            config = self._get_config(megatron_module)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config)
+
+        # Delegate TP/PP gathering.
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+
+        if not packed_dict:
+            return {}
+
+        packed_qkvzba = next(iter(packed_dict.values()))
+        qkvz, ba = split_gdn_linear_weights(config, packed_qkvzba)
+
+        return {
+            self.hf_param["qkvz"]: qkvz,
+            self.hf_param["ba"]: ba,
+        }
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        """Return a new *resolved* GDNLinearMapping instance."""
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+
+        return type(self)(
+            resolved_megatron_param,
+            resolved_hf_param["qkvz"],
+            resolved_hf_param["ba"],
+        )
+
+
+class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """
+    Mapping for interleaved Query/Key/Value attention projection weights.
+
+    This mapping handles the conversion between Concatenated Q, K, V matrices used in
+    some transformers models and Megatron's optimized interleaved format. The
+    interleaving pattern groups queries with their corresponding key-value pairs
+    to maximize GEMM efficiency during attention computation.
+
+    **External format (HuggingFace)**
+    -   One tensor with concatenated query, key, value: `qkv`, with shape
+        `[hidden_size, head_dim * num_heads + 2 * head_dim * num_query_groups]`
+
+    **Megatron format**
+    -   Single interleaved tensor following grouped query attention (GQA) pattern
+    -   Interleaving order: `[q1...qn, k1, v1, q1...qn, k2, v2, ...]`
+    -   Where `n = num_attention_heads / num_query_groups`
+
+    **Key features**
+    1.  Format conversion: Handles merging/splitting with proper interleaving
+    2.  Grouped Query Attention: Supports different numbers of Q and KV heads
+    3.  Tensor parallelism: Delegates to AutoMapping for distribution
+
+    Example:
+        .. code-block:: python
+
+            # Create mapping for attention weights
+            mapping = QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                qkv="model.layers.*.self_attn.qkv.weight",
+            )
+
+            # Convert from HuggingFace to Megatron
+            megatron_qkv = mapping.hf_to_megatron(qkv_weights, megatron_module)
+
+            # Convert from Megatron to HuggingFace
+            hf_weights = mapping.megatron_to_hf(megatron_qkv, megatron_module)
+
+    Note:
+        This mapping automatically handles both regular multi-head attention
+        (same number of Q, K, V heads) and grouped query attention (fewer
+        KV heads than Q heads) based on the model configuration.
+    """
+
+    def __init__(self, megatron_param: str, hf_param: str):
+        """Initialize QKV mapping.
+
+        Args:
+            megatron_param (str): Megatron interleaved QKV parameter name pattern.
+            hf_param (str): HF concatenated QKV parameter name pattern.
+        """
+        super().__init__(megatron_param, hf_param)
+        # Delegate all tensor-parallel logic to the smart TP-aware mapping so we
+        # do not hard-code the assumption that QKV projections are column-parallel.
+        # This keeps the format-handling (merge/split) concerns separate from
+        # TP/PP distribution mechanics.
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: torch.Tensor,
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Merge Q, K, V into interleaved format and distribute."""
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            head_num = config.num_attention_heads
+            head_size = config.kv_channels
+            num_query_groups = config.num_query_groups
+            q, k, v = hf_weights.split(
+                [head_num * head_size, num_query_groups * head_size, num_query_groups * head_size], dim=0
+            )
+            # Check if we're dealing with biases (1D tensors) or hf_weights (2D tensors)
+            if q.ndim == 1:
+                # For biases, use the bias-specific merge function
+                merged = merge_qkv_biases(config, q, k, v)
+            else:
+                # For hf_weights, use the standard merge function
+                merged = merge_qkv_weights(config, q, k, v)
+        else:
+            merged = None
+
+        # Delegate the actual sharding/broadcasting to the TP-aware mapping.
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather QKV shards and split into Q, K, V."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        # ------------------------------------------------------------------
+        # Broadcast / retrieve the transformer configuration so that every PP
+        # rank (also the ones that will early-return) participates in the
+        # collective communication.
+        # ------------------------------------------------------------------
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
+        else:
+            config = self._get_config(megatron_module)
+            # create shallow copy and remove non-picklable objects with max depth=2
+            config = remove_non_pickleables(config, max_depth=2)
+            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+
+        # Delegate TP/PP gathering.
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+
+        if not packed_dict:
+            return {}
+
+        packed_qkv = next(iter(packed_dict.values()))
+
+        # Check if we're dealing with biases (1D) or weights (2D)
+        if packed_qkv.ndim == 1:
+            # Split biases
+            q, k, v = split_qkv_biases(config, packed_qkv)
+        else:
+            # Split weights
+            q, k, v = split_qkv_weights(config, packed_qkv)
+
+        return {str(self.hf_param): torch.cat((q, k, v), dim=0)}
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        """Return a new *resolved* QKVMapping instance."""
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+
+        return type(self)(resolved_megatron_param, resolved_hf_param)
 
 
 class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
@@ -1750,6 +2058,25 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         )
 
 
+class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
+    """
+    Mapping for zero-centered RMSNorm to standard RMSNorm.
+    """
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        hf_weights.data = hf_weights.data - 1
+        return super().hf_to_megatron(hf_weights, megatron_module)
+
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        hf_weights = super().megatron_to_hf(megatron_weights, megatron_module)
+        assert isinstance(hf_weights, dict) and len(hf_weights) == 1, (
+            f"Expected a dictionary with one element, got {hf_weights.keys()=}"
+        )
+        inner_hf_weight = list(hf_weights.values())[0]
+        inner_hf_weight.data = inner_hf_weight.data + 1
+        return hf_weights
+
+
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     """Merge separate Q, K, V bias vectors into Megatron's interleaved QKV format.
 
@@ -1768,7 +2095,10 @@ def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor
     head_size = config.kv_channels or (config.hidden_size // head_num)
 
     # Reshape biases to expose head dimension
-    q = q.view(head_num, head_size)
+    if getattr(config, "attention_output_gate", False):
+        q, z = torch.chunk(q.view(head_num, head_size * 2), 2, dim=-1)
+    else:
+        q = q.view(head_num, head_size)
     k = k.view(num_query_groups, head_size)
     v = v.view(num_query_groups, head_size)
 
@@ -1776,6 +2106,8 @@ def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor
     qkv_biases = []
     for i in range(num_query_groups):
         qkv_biases.append(q[i * heads_per_group : (i + 1) * heads_per_group, :])
+        if getattr(config, "attention_output_gate", False):
+            qkv_biases.append(z[i * heads_per_group : (i + 1) * heads_per_group, :])
         qkv_biases.append(k[i : i + 1, :])
         qkv_biases.append(v[i : i + 1, :])
 
@@ -1799,7 +2131,12 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     num_query_groups = config.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = config.kv_channels or (config.hidden_size // head_num)
-    qkv_total_dim = head_num + 2 * num_query_groups
+    if getattr(config, "attention_output_gate", False):
+        qkv_total_dim = 2 * head_num + 2 * num_query_groups
+        total_heads_per_group = 2 * heads_per_group + 2
+    else:
+        qkv_total_dim = head_num + 2 * num_query_groups
+        total_heads_per_group = heads_per_group + 2
 
     # Reshape to expose interleaved structure
     qkv = qkv.reshape(qkv_total_dim, head_size)
@@ -1807,14 +2144,27 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange((heads_per_group + 2) * i, (heads_per_group + 2) * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(heads_per_group, qkv_total_dim, heads_per_group + 2)
-    v_slice = torch.arange(heads_per_group + 1, qkv_total_dim, heads_per_group + 2)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    q = qkv[q_slice].flatten()
+    if getattr(config, "attention_output_gate", False):
+        z_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
+        q = torch.cat([qkv[q_slice], qkv[z_slice]], dim=1).flatten()
+    else:
+        q = qkv[q_slice].flatten()
     k = qkv[k_slice].flatten()
     v = qkv[v_slice].flatten()
 
@@ -1842,16 +2192,19 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
     head_size = provider.kv_channels or (provider.hidden_size // head_num)
     hidden_size = provider.hidden_size
     is_bias = q.ndim == 1
+    q_head_size = head_size * 2 if getattr(provider, "attention_output_gate", False) else head_size
 
     # Reshape to expose head dimension
     if is_bias:
-        q_reshaped = q.view(head_num, head_size)
+        q_reshaped = q.view(head_num, q_head_size)
         k_reshaped = k.view(num_query_groups, head_size)
         v_reshaped = v.view(num_query_groups, head_size)
     else:
-        q_reshaped = q.view(head_num, head_size, hidden_size)
+        q_reshaped = q.view(head_num, q_head_size, hidden_size)
         k_reshaped = k.view(num_query_groups, head_size, hidden_size)
         v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+    if getattr(provider, "attention_output_gate", False):
+        q_reshaped, z_reshaped = torch.chunk(q_reshaped, 2, dim=1)
 
     # Interleave in Megatron pattern: [q1...qn, k1, v1, q1...qn, k2, v2, ...]
     qkv_weights = []
@@ -1859,9 +2212,17 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         q_group = q_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
         k_group = k_reshaped[i : i + 1]
         v_group = v_reshaped[i : i + 1]
-        qkv_weights.extend([q_group, k_group, v_group])
+        if getattr(provider, "attention_output_gate", False):
+            z_group = z_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            qkv_weights.extend([q_group, z_group, k_group, v_group])
+        else:
+            qkv_weights.extend([q_group, k_group, v_group])
 
     qkv = torch.cat(qkv_weights, dim=0)
+
+    assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
+        f"QKV weights are not correctly merged, {q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
+    )
 
     # Final reshape
     if is_bias:
@@ -1887,7 +2248,12 @@ def split_qkv_weights(
     num_query_groups = provider.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = provider.kv_channels or (provider.hidden_size // head_num)
-    qkv_total_dim = head_num + 2 * num_query_groups
+    if getattr(provider, "attention_output_gate", False):
+        qkv_total_dim = 2 * head_num + 2 * num_query_groups
+        total_heads_per_group = 2 * heads_per_group + 2
+    else:
+        qkv_total_dim = head_num + 2 * num_query_groups
+        total_heads_per_group = heads_per_group + 2
     is_bias = qkv.ndim == 1
 
     if is_bias:
@@ -1900,16 +2266,33 @@ def split_qkv_weights(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange((heads_per_group + 2) * i, (heads_per_group + 2) * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(heads_per_group, qkv_total_dim, heads_per_group + 2)
-    v_slice = torch.arange(heads_per_group + 1, qkv_total_dim, heads_per_group + 2)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    q = qkv_reshaped[q_slice]
+    if getattr(provider, "attention_output_gate", False):
+        z_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
+        q = torch.cat([qkv_reshaped[q_slice], qkv_reshaped[z_slice]], dim=1)
+    else:
+        q = qkv_reshaped[q_slice]
     k = qkv_reshaped[k_slice]
     v = qkv_reshaped[v_slice]
+
+    assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
+        f"QKV weights are not correctly merged, {q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
+    )
 
     if is_bias:
         q = q.reshape(-1)
@@ -1921,3 +2304,150 @@ def split_qkv_weights(
         v = v.reshape(-1, hidden_size)
 
     return q, k, v
+
+
+def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba: torch.Tensor) -> torch.Tensor:
+    """merge gdn linear weights"""
+    hidden_size = provider.hidden_size
+    qk_head_dim = provider.linear_key_head_dim
+    v_head_dim = provider.linear_value_head_dim
+    num_qk_heads = provider.linear_num_key_heads
+    num_v_heads = provider.linear_num_value_heads
+    qk_dim = qk_head_dim * num_qk_heads
+    v_dim = v_head_dim * num_v_heads
+
+    # Reshape to expose head dimension
+    qkvz_reshaped = qkvz.reshape(num_qk_heads, (qk_dim * 2 + v_dim * 2) // num_qk_heads, hidden_size)
+    ba_reshaped = ba.reshape(num_qk_heads, 2 * num_v_heads // num_qk_heads, hidden_size)
+    q, k, v, z = torch.split(
+        qkvz_reshaped,
+        [
+            qk_head_dim,
+            qk_head_dim,
+            num_v_heads // num_qk_heads * v_head_dim,
+            num_v_heads // num_qk_heads * v_head_dim,
+        ],
+        dim=1,
+    )
+    b, a = torch.split(
+        ba_reshaped,
+        [
+            num_v_heads // num_qk_heads,
+            num_v_heads // num_qk_heads,
+        ],
+        dim=1,
+    )
+
+    q, k, v, z, b, a = [weight.reshape(-1, hidden_size) for weight in [q, k, v, z, b, a]]
+    in_proj = torch.cat([q, k, v, z, b, a], dim=0)
+
+    assert in_proj.numel() == qkvz.numel() + ba.numel(), (
+        f"QKVZBA weights are not correctly merged, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
+    )
+
+    return in_proj
+
+
+def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor) -> torch.Tensor:
+    """TODO: add comments"""
+    hidden_size = provider.hidden_size
+    qk_head_dim = provider.linear_key_head_dim
+    v_head_dim = provider.linear_value_head_dim
+    num_qk_heads = provider.linear_num_key_heads
+    num_v_heads = provider.linear_num_value_heads
+    qk_dim = qk_head_dim * num_qk_heads
+    v_dim = v_head_dim * num_v_heads
+
+    q, k, v, z, b, a = torch.split(
+        in_proj,
+        [
+            qk_dim,
+            qk_dim,
+            v_dim,
+            v_dim,
+            num_v_heads,
+            num_v_heads,
+        ],
+        dim=0,
+    )
+
+    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
+    qkvz = torch.cat([q, k, v, z], dim=1)
+    ba = torch.cat([b, a], dim=1)
+
+    qkvz = qkvz.reshape(-1, hidden_size)
+    ba = ba.reshape(-1, hidden_size)
+
+    assert qkvz.numel() + ba.numel() == in_proj.numel(), (
+        f"QKVZBA weights are not correctly split, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
+    )
+
+    return qkvz, ba
+
+
+def merge_kv_biases(config: TransformerConfig, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Merge separate K, V bias vectors into Megatron's interleaved KV format (1D)."""
+    num_query_groups = config.num_query_groups
+    head_size = config.kv_channels or (config.hidden_size // config.num_attention_heads)
+
+    k = k.view(num_query_groups, head_size)
+    v = v.view(num_query_groups, head_size)
+
+    pieces: List[torch.Tensor] = []
+    for i in range(num_query_groups):
+        pieces.append(k[i : i + 1, :])
+        pieces.append(v[i : i + 1, :])
+
+    kv = torch.cat(pieces, dim=0)
+    return kv.reshape(-1)
+
+
+def split_kv_biases(config: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split Megatron's interleaved KV bias (1D) into separate K and V biases."""
+    num_query_groups = config.num_query_groups
+    head_size = config.kv_channels or (config.hidden_size // config.num_attention_heads)
+    kv_total_dim = 2 * num_query_groups
+
+    kv_reshaped = kv.view(kv_total_dim, head_size)
+
+    k_slice = torch.arange(0, kv_total_dim, 2)
+    v_slice = torch.arange(1, kv_total_dim, 2)
+
+    k = kv_reshaped[k_slice].reshape(-1)
+    v = kv_reshaped[v_slice].reshape(-1)
+    return k, v
+
+
+def merge_kv_weights(provider: TransformerConfig, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Merge separate K, V weights into Megatron's interleaved KV format (2D)."""
+    num_query_groups = provider.num_query_groups
+    head_size = provider.kv_channels or (provider.hidden_size // provider.num_attention_heads)
+    hidden_size = provider.hidden_size
+
+    k_reshaped = k.view(num_query_groups, head_size, hidden_size)
+    v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+
+    pieces: List[torch.Tensor] = []
+    for i in range(num_query_groups):
+        pieces.append(k_reshaped[i : i + 1])
+        pieces.append(v_reshaped[i : i + 1])
+
+    kv = torch.cat(pieces, dim=0)
+    return kv.view(-1, hidden_size)
+
+
+def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Split Megatron's interleaved KV weights (2D) into separate K and V matrices."""
+    num_query_groups = provider.num_query_groups
+    head_size = provider.kv_channels or (provider.hidden_size // provider.num_attention_heads)
+    hidden_size = kv.shape[-1]
+    kv_total_dim = 2 * num_query_groups
+
+    kv_reshaped = kv.view(kv_total_dim, head_size, hidden_size)
+
+    k_slice = torch.arange(0, kv_total_dim, 2)
+    v_slice = torch.arange(1, kv_total_dim, 2)
+
+    k = kv_reshaped[k_slice].reshape(-1, hidden_size)
+    v = kv_reshaped[v_slice].reshape(-1, hidden_size)
+    return k, v

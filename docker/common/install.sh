@@ -60,7 +60,7 @@ main() {
     add-apt-repository ppa:deadsnakes/ppa -y
     apt-get install -y python$PYTHON_VERSION-dev python$PYTHON_VERSION-venv
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python$PYTHON_VERSION 1
-    
+
     # Install tools
     apt-get update
     apt-get install -y wget curl git cmake
@@ -73,7 +73,7 @@ main() {
         dpkg -i cuda-keyring_1.1-1_all.deb
         rm cuda-keyring_1.1-1_all.deb
         apt-get update
-        apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12 libcutlass-dev 
+        apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12 libcutlass-dev
     fi
 
     # Clean up
@@ -103,7 +103,7 @@ main() {
         else
             UV_ARGS=()
         fi
-    
+
         # Install uv
         UV_VERSION="0.7.2"
         curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
@@ -112,12 +112,22 @@ main() {
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
         # Install dependencies
-        uv sync --locked --only-group build ${UV_ARGS[@]}
-        uv sync \
-            --link-mode copy \
-            --locked \
-            --all-extras \
-            --all-groups ${UV_ARGS[@]}
+        # Skip --locked flag when testing against different MCore version
+        if [[ "${MCORE_TRIGGERED_TESTING:-false}" == "true" ]]; then
+            echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
+            uv sync --only-group build ${UV_ARGS[@]}
+            uv sync \
+                --link-mode copy \
+                --all-extras \
+                --all-groups ${UV_ARGS[@]}
+        else
+            uv sync --locked --only-group build ${UV_ARGS[@]}
+            uv sync \
+                --link-mode copy \
+                --locked \
+                --all-extras \
+                --all-groups ${UV_ARGS[@]}
+        fi
 
         # Install the package
         uv pip install --no-deps -e .

@@ -12,222 +12,111 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+import pytest
 
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.tokenizers.utils import build_new_tokenizer
 
 
-class TestTokenizerConfig:
-    """Test cases for TokenizerConfig dataclass."""
-
-    def test_tokenizer_config_default_hf_kwargs(self):
-        """Test that hf_tokenizer_kwargs defaults to empty dict."""
+class TestTokenizers:
+    @pytest.mark.parametrize("vocab_size", [32000])
+    def test_build_null_tokenizer(self, vocab_size):
+        # Setup
         config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="bert-base-uncased",
+            tokenizer_type="NullTokenizer",
+            vocab_size=vocab_size,
         )
-        assert config.hf_tokenizer_kwargs == {}
 
-    def test_tokenizer_config_with_hf_kwargs(self):
-        """Test that hf_tokenizer_kwargs can be set."""
+        # Execute
+        tokenizer = build_new_tokenizer(config)
+
+        # Verify
+        assert tokenizer.library == "null"
+        assert tokenizer.vocab_size == vocab_size
+
+    @patch("megatron.core.tokenizers.text.libraries.MegatronHFTokenizer")
+    @pytest.mark.parametrize("use_fast", [True])
+    @pytest.mark.parametrize("include_special_tokens", [False])
+    def test_build_megatron_tokenizer(self, mock_hf_tokenizer_class, use_fast, include_special_tokens):
+        # Setup
         custom_kwargs = {
-            "use_fast": True,
-            "trust_remote_code": True,
-            "chat_template": "custom_template",
+            "use_fast": use_fast,
+            "include_special_tokens": include_special_tokens,
         }
+        config = TokenizerConfig(
+            tokenizer_type="GPT2BPETokenizer",
+            tokenizer_model="gpt2",
+            hf_tokenizer_kwargs=custom_kwargs,
+        )
+
+        # Execute
+        tokenizer = build_new_tokenizer(config)
+
+        # Verify
+        assert tokenizer.library == "megatron"
+        assert tokenizer.path == "GPT2BPETokenizer"
+        assert tokenizer.additional_args["use_fast"] == use_fast
+        assert tokenizer.additional_args["include_special_tokens"] == include_special_tokens
+
+    @patch("megatron.core.tokenizers.text.libraries.HuggingFaceTokenizer")
+    @pytest.mark.parametrize("chat_template", ["{% for message in messages %}{{ message.content }}{% endfor %}"])
+    def test_build_hf_tokenizer(self, mock_hf_tokenizer_class, chat_template):
+        # Setup
+        metadata_path = {"library": "huggingface", "chat_template": chat_template}
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
-            hf_tokenizer_kwargs=custom_kwargs,
+            metadata_path=metadata_path,
         )
-        assert config.hf_tokenizer_kwargs == custom_kwargs
 
+        # Execute
+        tokenizer = build_new_tokenizer(config)
 
-class TestBuildTokenizer:
-    """Test cases for build_tokenizer function."""
+        # Verify
+        assert tokenizer.library == "huggingface"
+        assert tokenizer.chat_template == chat_template
 
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_build_hf_tokenizer_with_config_kwargs(self, mock_get_rank, mock_hf_tokenizer_class):
-        """Test that hf_tokenizer_kwargs from config are passed to HuggingFaceTokenizer."""
+    @patch("megatron.core.tokenizers.text.libraries.SentencePieceTokenizer")
+    @pytest.mark.parametrize("legacy", [True])
+    def test_build_sp_tokenizer(self, mock_sp_tokenizer, legacy):
         # Setup
-        mock_tokenizer_instance = MagicMock()
-        mock_hf_tokenizer_class.return_value = mock_tokenizer_instance
-
         custom_kwargs = {
-            "use_fast": True,
-            "trust_remote_code": False,
-            "padding_side": "left",
+            "legacy": legacy,
         }
+
         config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="gpt2",
-            hf_tokenizer_kwargs=custom_kwargs,
+            tokenizer_type="Llama2Tokenizer",
+            tokenizer_model="sp.model",
+            special_tokens=["<TEST_SPECIAL>"],
+            sp_tokenizer_kwargs=custom_kwargs,
         )
 
         # Execute
-        tokenizer = build_tokenizer(config)
+        tokenizer = build_new_tokenizer(config)
 
         # Verify
-        mock_hf_tokenizer_class.assert_called_once_with("gpt2", **custom_kwargs)
-        assert tokenizer == mock_tokenizer_instance
+        assert tokenizer.library == "sentencepiece"
+        assert tokenizer.additional_args["legacy"] == legacy
 
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_build_hf_tokenizer_kwargs_override(self, mock_get_rank, mock_hf_tokenizer_class):
-        """Test that passed kwargs override config hf_tokenizer_kwargs."""
+    @patch("megatron.core.tokenizers.text.libraries.TikTokenTokenizer")
+    @pytest.mark.parametrize("pattern", ["v1"])
+    @pytest.mark.parametrize("num_special_tokens", [2000])
+    def test_build_tiktoken_tokenizer(self, mock_tiktoken_tokenizer, pattern, num_special_tokens):
         # Setup
-        mock_tokenizer_instance = MagicMock()
-        mock_hf_tokenizer_class.return_value = mock_tokenizer_instance
-
-        config_kwargs = {
-            "use_fast": True,
-            "trust_remote_code": False,
-        }
-        passed_kwargs = {
-            "use_fast": False,  # This should override
-            "padding_side": "right",  # This should be added
-        }
-        expected_kwargs = {
-            "use_fast": False,  # Overridden
-            "trust_remote_code": False,  # From config
-            "padding_side": "right",  # From passed kwargs
-        }
-
         config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="gpt2",
-            hf_tokenizer_kwargs=config_kwargs,
+            tokenizer_type="TikTokenizer",
+            tokenizer_model="tiktoken.json",
+            tiktoken_pattern=pattern,
+            tiktoken_num_special_tokens=num_special_tokens,
         )
 
         # Execute
-        tokenizer = build_tokenizer(config, **passed_kwargs)
+        tokenizer = build_new_tokenizer(config)
 
         # Verify
-        mock_hf_tokenizer_class.assert_called_once_with("gpt2", **expected_kwargs)
-        assert tokenizer == mock_tokenizer_instance
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_build_hf_tokenizer_no_config_kwargs(self, mock_get_rank, mock_hf_tokenizer_class):
-        """Test that HuggingFaceTokenizer works without hf_tokenizer_kwargs."""
-        # Setup
-        mock_tokenizer_instance = MagicMock()
-        mock_hf_tokenizer_class.return_value = mock_tokenizer_instance
-
-        config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="gpt2",
-            # hf_tokenizer_kwargs not set, should default to {}
-        )
-
-        # Execute
-        tokenizer = build_tokenizer(config)
-
-        # Verify
-        mock_hf_tokenizer_class.assert_called_once_with("gpt2")
-        assert tokenizer == mock_tokenizer_instance
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_build_hf_tokenizer_with_chat_template(self, mock_get_rank, mock_hf_tokenizer_class):
-        """Test that chat_template can be passed via hf_tokenizer_kwargs."""
-        # Setup
-        mock_tokenizer_instance = MagicMock()
-        mock_hf_tokenizer_class.return_value = mock_tokenizer_instance
-
-        chat_template = "{% for message in messages %}{{ message.content }}{% endfor %}"
-        custom_kwargs = {
-            "chat_template": chat_template,
-        }
-        config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
-            hf_tokenizer_kwargs=custom_kwargs,
-        )
-
-        # Execute
-        tokenizer = build_tokenizer(config)
-
-        # Verify
-        mock_hf_tokenizer_class.assert_called_once_with("meta-llama/Llama-2-7b-chat-hf", chat_template=chat_template)
-        assert tokenizer == mock_tokenizer_instance
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._SentencePieceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_build_non_hf_tokenizer_ignores_hf_kwargs(self, mock_get_rank, mock_sp_tokenizer_class):
-        """Test that non-HuggingFace tokenizers don't use hf_tokenizer_kwargs."""
-        # Setup
-        mock_tokenizer_instance = MagicMock()
-        mock_sp_tokenizer_class.return_value = mock_tokenizer_instance
-
-        # Even if hf_tokenizer_kwargs is set, it shouldn't affect SentencePiece tokenizer
-        config = TokenizerConfig(
-            tokenizer_type="SentencePieceTokenizer",
-            tokenizer_model="tokenizer.model",
-            hf_tokenizer_kwargs={"use_fast": True},  # Should be ignored
-        )
-
-        # Execute
-        tokenizer = build_tokenizer(config)
-
-        # Verify - SentencePiece should be called without hf_tokenizer_kwargs
-        mock_sp_tokenizer_class.assert_called_once_with("tokenizer.model", vocab_extra_ids=0)
-        assert tokenizer == mock_tokenizer_instance
-
-
-class TestHuggingFaceTokenizerIntegration:
-    """Integration tests for HuggingFace tokenizer with mocked transformers."""
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_hf_tokenizer_with_use_fast_integration(self, mock_get_rank, mock_hf_tokenizer_class):
-        """Test that use_fast parameter flows through correctly in a realistic scenario."""
-        # Setup a realistic mock that behaves like a real HF tokenizer
-        mock_tokenizer_instance = MagicMock()
-        mock_underlying_tokenizer = MagicMock()
-        mock_underlying_tokenizer.__class__.__name__ = "GPT2Tokenizer"  # Not "Fast"
-        mock_tokenizer_instance._tokenizer = mock_underlying_tokenizer
-        mock_tokenizer_instance.vocab_size = 50257
-        mock_hf_tokenizer_class.return_value = mock_tokenizer_instance
-
-        config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="gpt2",
-            hf_tokenizer_kwargs={"use_fast": False},
-        )
-
-        tokenizer = build_tokenizer(config)
-
-        # Verify the kwargs were passed
-        mock_hf_tokenizer_class.assert_called_once_with("gpt2", use_fast=False)
-        assert tokenizer is not None
-        assert hasattr(tokenizer, "_tokenizer")
-        # Verify it's not a fast tokenizer
-        assert "Fast" not in type(tokenizer._tokenizer).__name__
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_hf_tokenizer_backward_compatibility_integration(self, mock_get_rank, mock_hf_tokenizer_class):
-        """Test backward compatibility with mocked tokenizer."""
-        # Setup a realistic mock
-        mock_tokenizer_instance = MagicMock()
-        mock_underlying_tokenizer = MagicMock()
-        mock_underlying_tokenizer.__class__.__name__ = "GPT2TokenizerFast"
-        mock_tokenizer_instance._tokenizer = mock_underlying_tokenizer
-        mock_tokenizer_instance.vocab_size = 50257
-        mock_hf_tokenizer_class.return_value = mock_tokenizer_instance
-
-        config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="gpt2",
-            # No hf_tokenizer_kwargs specified
-        )
-
-        tokenizer = build_tokenizer(config)
-
-        # Verify no extra kwargs were passed (backward compatible)
-        mock_hf_tokenizer_class.assert_called_once_with("gpt2")
-        assert tokenizer is not None
-        assert hasattr(tokenizer, "vocab_size")
+        assert tokenizer.library == "tiktoken"
+        assert tokenizer.path == "tiktoken.json"
+        assert tokenizer.additional_args["pattern"] == pattern
+        assert tokenizer.additional_args["num_special_tokens"] == num_special_tokens

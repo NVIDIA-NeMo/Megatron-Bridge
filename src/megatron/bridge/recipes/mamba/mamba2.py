@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import warnings
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -68,12 +69,12 @@ class Mamba2CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: str | None
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: torch.dtype | None
-    virtual_pipeline_parallelism: int | None
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    sequence_parallel: bool
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -91,12 +92,21 @@ class Mamba2CommonKwargs(TypedDict, total=False):
 
 
 def mamba2_130m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 130M."""
+    """Return a pre-training config for Mamba2 130M.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_130m_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider130M,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": False,
     }
@@ -105,12 +115,21 @@ def mamba2_130m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_370m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 370M."""
+    """Return a pre-training config for Mamba2 370M.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_370m_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider370M,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": False,
     }
@@ -119,12 +138,21 @@ def mamba2_370m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_780m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 780M."""
+    """Return a pre-training config for Mamba2 780M.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_780m_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider780M,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": False,
     }
@@ -133,12 +161,21 @@ def mamba2_780m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_1p3b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 1.3B."""
+    """Return a pre-training config for Mamba2 1.3B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_1p3b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider1P3B,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": False,
     }
@@ -147,12 +184,21 @@ def mamba2_1p3b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_2p7b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 2.7B."""
+    """Return a pre-training config for Mamba2 2.7B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_2p7b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider2P7B,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": False,
     }
@@ -161,12 +207,21 @@ def mamba2_2p7b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_8b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 8B."""
+    """Return a pre-training config for Mamba2 8B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_8b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": NVIDIAMambaModelProvider8B,
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": True,
     }
@@ -175,12 +230,21 @@ def mamba2_8b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Conf
 
 
 def mamba2_hybrid_8b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 Hybrid 8B."""
+    """Return a pre-training config for Mamba2 Hybrid 8B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_hybrid_8b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": NVIDIAMambaHybridProvider8B,
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "use_null_tokenizer": True,
     }
@@ -210,12 +274,12 @@ def _mamba2_common(
     per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: torch.dtype | None = None,
-    virtual_pipeline_parallelism: int | None = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     # Training hyperparameters
     train_iters: int = 1_168_251,
     global_batch_size: int = 8,
@@ -246,12 +310,12 @@ def _mamba2_common(
     )
 
     model_cfg = model_provider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        sequence_parallel=sequence_parallel,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -288,7 +352,7 @@ def _mamba2_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -312,6 +376,7 @@ def _mamba2_common(
             else TokenizerConfig(
                 tokenizer_type="HuggingFaceTokenizer",
                 tokenizer_model=tokenizer_model or "EleutherAI/gpt-neox-20b",
+                hf_tokenizer_kwargs={"use_fast": True},
             )
         ),
         checkpoint=CheckpointConfig(

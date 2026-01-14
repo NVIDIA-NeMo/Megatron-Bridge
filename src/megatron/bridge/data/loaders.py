@@ -22,7 +22,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -223,10 +223,11 @@ def build_train_valid_test_data_loaders(
             global_batch_size=cfg.train.global_batch_size,
         )
     elif cfg.train.eval_iters > 0:
+        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             train_state.consumed_valid_samples,
-            "cyclic",
+            val_dataloader_type,
             cfg.train.micro_batch_size,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
@@ -322,7 +323,8 @@ def build_train_valid_test_data_iterators(
         train_data_iterator = None
 
     if valid_dataloader is not None:
-        valid_data_iterator = _get_iterator("cyclic", valid_dataloader)
+        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+        valid_data_iterator = _get_iterator(val_dataloader_type, valid_dataloader)
     else:
         valid_data_iterator = None
 
@@ -361,7 +363,7 @@ def setup_data_iterators(
         Each element can be a single iterator or a list of iterators if virtual
         pipeline parallelism is enabled.
     """
-    if cfg.model.virtual_pipeline_model_parallel_size is not None:
+    if cfg.model.virtual_pipeline_model_parallel_size is not None and cfg.dataset.dataloader_type != "batch":
         train_data_iterator = []
         valid_data_iterator = []
         test_data_iterator = []

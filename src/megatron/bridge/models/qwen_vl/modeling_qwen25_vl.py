@@ -190,12 +190,16 @@ class Qwen25VLModel(MegatronModule):
             if self.config.sequence_parallel:
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
+        # Compute MRoPE position_ids on ALL pipeline stages
+        # Each stage has input_ids and visual grid info from the data iterator
+        # This avoids any broadcasting overhead
+        hf_attention_mask = None
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
             image_grid_thw,
             video_grid_thw,
             second_per_grid_ts=second_per_grid_ts,
-            attention_mask=attention_mask,
+            attention_mask=hf_attention_mask,
         )
 
         outputs = self.language_model.forward(

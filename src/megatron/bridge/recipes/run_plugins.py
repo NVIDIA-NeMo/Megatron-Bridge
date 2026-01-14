@@ -544,7 +544,7 @@ class PerfEnvPlugin(Plugin):
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
     num_gpus: int = 8
-    deepep_enabled: bool = False
+    moe_flex_dispatcher_backend: str | None = None
     a2a_overlap: bool = False
 
     def get_vboost_srun_cmd(self, nodes, job_dir):
@@ -571,7 +571,7 @@ class PerfEnvPlugin(Plugin):
         self.dp_size = self.num_gpus // (self.tp_size * self.cp_size * self.pp_size)
 
         cuda_device_max_connections = 8
-        if self.deepep_enabled:
+        if self.moe_flex_dispatcher_backend in ["deepep", "hybridep"]:
             cuda_device_max_connections = 32
         if self.gpu_sm100_or_newer:
             if (self.tp_size > 1 or self.cp_size > 1) and (self.dp_size > 1 or self.pp_size > 1):
