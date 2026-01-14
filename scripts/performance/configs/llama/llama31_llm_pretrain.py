@@ -208,6 +208,7 @@ def llama31_405b_pretrain_config_h100(
         comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
     cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg.dataset.num_workers = 8
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
