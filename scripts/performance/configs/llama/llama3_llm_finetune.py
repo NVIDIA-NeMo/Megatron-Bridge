@@ -218,7 +218,7 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     cfg = llama3_70b_finetune_config(
         peft="lora",
         precision_config=precision_config,
-        packed_sequence=False,
+        packed_sequence=True,
         seq_length=2048,
     )
     set_llama3_common_peft_configs(cfg)

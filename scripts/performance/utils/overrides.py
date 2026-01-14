@@ -296,6 +296,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=True
         )
+        recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+        recipe.dataset.dataset_kwargs["pad_to_max_length"] = True
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
 
