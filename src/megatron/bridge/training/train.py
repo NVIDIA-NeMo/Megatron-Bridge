@@ -143,12 +143,10 @@ def train(
     total_loss_dict = {}
 
     # Make sure rerun_state_machine has the right iteration loaded from checkpoint.
-    """
     rerun_state_machine = get_rerun_state_machine()
     if rerun_state_machine.current_iteration != global_state.train_state.step:
         print_rank_0(f"Setting rerun_state_machine.current_iteration to {global_state.train_state.step}...")
         rerun_state_machine.current_iteration = global_state.train_state.step
-    """
 
     num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
     num_floating_point_operations_since_last_log_event = 0.0
@@ -169,9 +167,8 @@ def train(
         assert train_config.manual_gc_interval >= 0, (
             "Manual garbage collection interval should be larger than or equal to 0"
         )
-        print("GC disabled")
         gc.disable()
-        # gc.collect()
+        gc.collect()
 
     if config.straggler and config.straggler.log_straggler:
         world = torch.distributed.get_world_size()
@@ -217,7 +214,6 @@ def train(
         config.optimizer.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
-    should_toggle_forward_pre_hook = False
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -261,8 +257,7 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
-    num_floating_point_operations_in_batch_size1 = flop_utils.num_floating_point_operations(config, batch_size=1)
-    dp_size = pg_collection.dp.size()
+    num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -415,7 +410,8 @@ def train(
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
-        #"""
+
+        dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
@@ -424,52 +420,50 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = num_floating_point_operations_in_batch_size1 * batch_size
+        num_floating_point_operations_in_batch = num_floating_point_operations_model * batch_size
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
-        #"""
 
         # Logging.
-        #"""
-        if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
-            print("Getting loss scale for optimizer")
-            loss_scale = optimizer.get_loss_scale().item()
-        else:
-            loss_scale = 1.0
-        params_norm = None
-
-        if config.logger.log_params_norm:
-            params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
-
-        learning_rate = None
-        decoupled_learning_rate = None
-        for param_group in optimizer.param_groups:
-            if len(param_group) == 0:
-                continue
-            if param_group["is_decoupled_lr"]:
-                decoupled_learning_rate = param_group["lr"]
+        if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
+            if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
+                print("Getting loss scale for optimizer")
+                loss_scale = optimizer.get_loss_scale().item()
             else:
-                learning_rate = param_group["lr"]
-                     
-        report_memory_flag = training_log(
-            loss_dict,
-            total_loss_dict,
-            learning_rate,
-            decoupled_learning_rate,
-            loss_scale,
-            report_memory_flag,
-            skipped_iter,
-            grad_norm,
-            params_norm,
-            num_zeros_in_grad,
-            config,
-            global_state,
-            history_wct,
-            model,
-            log_max_attention_logit,
-        )
-        #"""
+                loss_scale = 1.0
+            params_norm = None
+
+            if config.logger.log_params_norm:
+                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+
+            learning_rate = None
+            decoupled_learning_rate = None
+            for param_group in optimizer.param_groups:
+                if len(param_group) == 0:
+                    continue
+                if param_group["is_decoupled_lr"]:
+                    decoupled_learning_rate = param_group["lr"]
+                else:
+                    learning_rate = param_group["lr"]
+                        
+            report_memory_flag = training_log(
+                loss_dict,
+                total_loss_dict,
+                learning_rate,
+                decoupled_learning_rate,
+                loss_scale,
+                report_memory_flag,
+                skipped_iter,
+                grad_norm,
+                params_norm,
+                num_zeros_in_grad,
+                config,
+                global_state,
+                history_wct,
+                model,
+                log_max_attention_logit,
+            )
 
         if (
             global_state.train_state.do_valid
