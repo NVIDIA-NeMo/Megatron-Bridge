@@ -251,12 +251,17 @@ def main(args):
     deploy_executor.job_details = CustomJobDetailsRay()
     eval_executor.job_details = CustomJobDetailsRay()
 
+    pre_ray_start = [
+        "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/",
+    ]
+
     deploy_job = RayJob(
         name="demo-slurm-ray-cluster-deploy", executor=deploy_executor, cluster_name="demo-slurm-ray-cluster"
     )
     deploy_job.start(
         command="bash /nemo-workspace/okoenig/code/evaluation/deploy.sh",
         workdir=os.path.dirname(os.path.abspath(__file__)),  # rsync'ed via SSH to the cluster_dir/code/
+        pre_ray_start_commands=pre_ray_start,
     )
 
     # eval_job = RayJob(

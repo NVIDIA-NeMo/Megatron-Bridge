@@ -99,6 +99,7 @@ def kuberay_executor(
         "TOKENIZERS_PARALLELISM": "False",
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
+        "RAY_enable_infeasible_task_early_exit": "true",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
