@@ -1,8 +1,9 @@
 #!/bin/bash
 # Usage:
-#   Normal run: ./run_llama3_405b.sh
-#   Deterministic mode: DETERMINISTIC=true ./run_llama3_405b.sh
-#   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_llama3_405b.sh
+#   Normal run: ./run_qwen3_30b_moe_fp8.sh
+#   Deterministic mode: DETERMINISTIC=true ./run_qwen3_30b_moe_fp8.sh
+#   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_qwen3_30b_moe_fp8.sh
+#   Run on GB200: GPU=gb200 ./run_qwen3_30b_moe_fp8.sh
 set -euo pipefail
 source ../../secrets.sh
 
@@ -10,15 +11,23 @@ GPU=${GPU:-"h100"}
 if [ "$GPU" = "h100" ]; then
     CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_nemorl"
-    PARTITION="batch"
-    NUM_GPUS=512
+    PARTITION="batch_short"
+    NUM_GPUS=32
     GPUS_PER_NODE=8
+    # FP8 memory optimization
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    PRECISION="fp8_cs"
 elif [ "$GPU" = "gb200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
-    NUM_GPUS=128
+    NUM_GPUS=16
     GPUS_PER_NODE=4
+    # FP8 memory optimization
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    # Megatron Core requires NCCL_GRAPH_REGISTER=0 to be explicitly set to prevent illegal memory access when CUDA graphs are also active.
+    export NCCL_GRAPH_REGISTER=0
+    PRECISION="fp8_mx"
 else
     echo "Invalid GPU: $GPU"
     exit 1
@@ -50,7 +59,6 @@ if [ "$BACKEND" = "flash" ]; then
     export NVTE_FUSED_ATTN=0
     export NVTE_UNFUSED_ATTN=0
     export NVTE_FLASH_ATTN=1
-    export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=block +model.recompute_num_layers=1"
     export additional_args="model.attention_backend=flash"
 elif [ "$BACKEND" = "fused" ]; then
     export NVTE_FUSED_ATTN=1
@@ -67,32 +75,37 @@ else
     exit 1
 fi
 
+# AssertionError: Modules must not have hooks registered at the time they are passed. However, registering hooks on modules after passing them through make_graphed_callables is allowed.
+export additional_args="${additional_args} model.cuda_graph_impl=none"
 
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
+    # Disable CUDA graphs in deterministic mode - hooks conflict with make_graphed_callables
     export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
-    export EXP_NAME="deterministic-${BACKEND}-${GPU}"
+    export EXP_NAME="deterministic-${BACKEND}-${PRECISION}-${GPU}"
 else
-    export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
+    export EXP_NAME="non-deterministic-${BACKEND}-${PRECISION}-${GPU}"
 fi
 
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
     --gpu $GPU \
-    -m llama31 \
-    -s 405b \
+    --time_limit "01:00:00" \
+    -m qwen3 \
+    -s 30b_a3b \
     -ng $NUM_GPUS \
     -gn $GPUS_PER_NODE \
+    -c $PRECISION \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
-    -wdj "llama31-405b-nemo-25.11-${EXP_NAME}" \
+    -wdj "qwen3-30b-moe-fp8-nemo-25.11-${EXP_NAME}" \
     --task pretrain \
     logger.tensorboard_dir=/nemo_run/tensorboard \
     logger.log_interval=1 \

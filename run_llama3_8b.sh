@@ -4,11 +4,25 @@
 #   Deterministic mode: DETERMINISTIC=true ./run_llama3_8b.sh
 #   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_llama3_8b.sh
 set -euo pipefail
-source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
+source ../../secrets.sh
 
-CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
-ACCOUNT="coreai_dlalgo_nemorl"
-PARTITION="interactive"
+GPU=${GPU:-"h100"}
+if [ "$GPU" = "h100" ]; then
+    CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_nemorl"
+    PARTITION="interactive"
+    NUM_GPUS=8
+    GPUS_PER_NODE=8
+elif [ "$GPU" = "gb200" ]; then
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_llm"
+    PARTITION="batch"
+    NUM_GPUS=4
+    GPUS_PER_NODE=4
+else
+    echo "Invalid GPU: $GPU"
+    exit 1
+fi
 # Get current directory to mount
 WORKDIR=$(pwd)
 
@@ -47,21 +61,21 @@ if [ "$DETERMINISTIC" = true ]; then
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
-    export EXP_NAME="deterministic-${BACKEND}"
+    export EXP_NAME="deterministic-${BACKEND}-${GPU}"
 else
-    export EXP_NAME="non-deterministic-${BACKEND}"
+    export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
 fi
 
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
-    --gpu h100 \
+    --gpu $GPU \
     -m llama3 \
     -s 8b \
-    -ng 8 \
-    -gn 8 \
+    -ng $NUM_GPUS \
+    -gn $GPUS_PER_NODE \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \

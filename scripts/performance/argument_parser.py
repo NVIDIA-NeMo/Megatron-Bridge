@@ -417,6 +417,13 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    parser.add_argument(
+        "--segment",
+        type=int,
+        help="Slurm segment size for GB200 clusters. Defaults to None",
+        required=False,
+        default=None,
+    )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides

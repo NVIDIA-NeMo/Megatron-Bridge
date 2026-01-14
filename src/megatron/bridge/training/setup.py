@@ -14,6 +14,7 @@
 
 import inspect
 import logging
+import os
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
@@ -214,14 +215,17 @@ def setup(
     )
 
     # Apply NVTX profiling hooks to model for nsys profiling
-    from megatron.bridge.utils import autonvtx
-    if isinstance(model, list):
-        # For pipeline parallel models
-        for i, model_chunk in enumerate(model):
-            autonvtx.patch(model_chunk, name=f"PipelineStage_{i}")
-    else:
-        # For single model
-        autonvtx.patch(model, name=model.__class__.__name__)
+    # Disable backward hooks when CUDA graphs are enabled (TE requires no hooks)
+    if os.getenv("NVTX_PROFILING") == "1":
+        from megatron.bridge.utils import autonvtx
+        add_backward_hooks = cfg.model.cuda_graph_impl == "none"
+        if isinstance(model, list):
+            # For pipeline parallel models
+            for i, model_chunk in enumerate(model):
+                autonvtx.patch(model_chunk, name=f"PipelineStage_{i}", add_backward_hooks=add_backward_hooks)
+        else:
+            # For single model
+            autonvtx.patch(model, name=model.__class__.__name__, add_backward_hooks=add_backward_hooks)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers

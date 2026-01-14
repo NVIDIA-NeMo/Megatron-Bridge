@@ -4,20 +4,41 @@
 #   Deterministic mode: DETERMINISTIC=true ./run_llama3_405b_fp8.sh
 #   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_llama3_405b_fp8.sh
 set -euo pipefail
-source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
+source ../../secrets.sh
 
-CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
-ACCOUNT="coreai_dlalgo_nemorl"
-PARTITION="batch"
+GPU=${GPU:-"h100"}
+if [ "$GPU" = "h100" ]; then
+    CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_nemorl"
+    PARTITION="batch"
+    NUM_GPUS=512
+    GPUS_PER_NODE=8
+    # FP8 memory optimization
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+elif [ "$GPU" = "gb200" ]; then
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_llm"
+    PARTITION="batch"
+    NUM_GPUS=256
+    GPUS_PER_NODE=4
+    # FP8 memory optimization
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    # Megatron Core requires NCCL_GRAPH_REGISTER=0 to be explicitly set to prevent illegal memory access when CUDA graphs are also active.
+    export NCCL_GRAPH_REGISTER=0
+else
+    echo "Invalid GPU: $GPU"
+    exit 1
+fi
 # Get current directory to mount
 WORKDIR=$(pwd)
 
 
 export DETERMINISTIC=${DETERMINISTIC:-false}
 export BACKEND=${BACKEND:-fused}  # Allow Flash Attention in deterministic mode
+export RECOMPUTE_ARGS=""
+
 export NVTE_DEBUG=1   # disables/enables debugging
 export NVTE_DEBUG_LEVEL=2
-
 
 if [ "$BACKEND" = "flash" ]; then
     export NVTE_FUSED_ATTN=0
@@ -46,38 +67,25 @@ if [ "$DETERMINISTIC" = true ]; then
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
-    export EXP_NAME="deterministic-${BACKEND}"
+    export EXP_NAME="deterministic-${BACKEND}-${GPU}"
 else
-    export EXP_NAME="non-deterministic-${BACKEND}"
+    export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
 fi
-
-
-# FP8 memory optimization
-# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Force Python to not use bytecode cache (.pyc files) to ensure code changes are picked up
 export PYTHONDONTWRITEBYTECODE=1
 
-# Fix TorchInductor/Triton cache race condition
-# Use persistent cache on Lustre instead of /tmp to avoid multi-rank compilation conflicts
-# export TORCHINDUCTOR_CACHE_DIR=/lustre/fs1/portfolios/coreai/users/zhiyul/.cache/torchinductor
-# export TRITON_CACHE_DIR=/lustre/fs1/portfolios/coreai/users/zhiyul/.cache/triton
-
-# Determinism is broken with recompute
-# export RECOMPUTE_ARGS="+model.recompute_granularity=full +model.recompute_method=block +model.recompute_num_layers=1"
-RECOMPUTE_ARGS=""
-
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
-    --gpu h100 \
+    --gpu $GPU \
     -m llama31 \
     -s 405b \
-    -ng 512 \
-    -gn 8 \
+    -ng $NUM_GPUS \
+    -gn $GPUS_PER_NODE \
     -c fp8_cs \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
@@ -92,5 +100,3 @@ python scripts/performance/setup_experiment.py \
     logger.tensorboard_log_interval=1 \
     $RECOMPUTE_ARGS \
     $additional_args
-
-

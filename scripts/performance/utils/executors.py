@@ -64,6 +64,7 @@ def slurm_executor(
     network: str = None,
     custom_bash_cmds: List[str] = None,
     work_dir: str = None,
+    segment: int = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -103,12 +104,12 @@ def slurm_executor(
     mounts.extend(custom_mounts)
 
     # add --segment flag to sbatch if job uses GB200 and goes beyond one rack.
-    segment = None
-    if num_gpus_per_node == 4 and nodes > 18:
-        for segment_candidate in range(18, 0, -1):
-            if nodes % segment_candidate == 0:
-                segment = segment_candidate
-                break
+    if segment is None:
+        if num_gpus_per_node == 4 and nodes > 18:
+            for segment_candidate in range(18, 0, -1):
+                if nodes % segment_candidate == 0:
+                    segment = segment_candidate
+                    break
 
     numa_divisor = 2 if gpu.lower() == "gb200" else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
@@ -129,7 +130,8 @@ def slurm_executor(
         tunnel=run.LocalTunnel(job_dir=os.path.join(log_dir, "experiments")),
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
-        gpus_per_node=num_gpus_per_node,
+        gpus_per_node=None,
+        # gres=f"gpu:{num_gpus_per_node}" if (gpu.lower() != "gb200" or segment is not None) else None,
         container_image=container_image,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,

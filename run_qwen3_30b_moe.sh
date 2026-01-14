@@ -1,41 +1,106 @@
 #!/bin/bash
+# Usage:
+#   Normal run: ./run_qwen3_30b_moe.sh
+#   Deterministic mode: DETERMINISTIC=true ./run_qwen3_30b_moe.sh
+#   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_qwen3_30b_moe.sh
+#   Run on GB200: GPU=gb200 ./run_qwen3_30b_moe.sh
 set -euo pipefail
-source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
+source ../../secrets.sh
 
-CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
-ACCOUNT="coreai_dlalgo_nemorl"
-PARTITION="batch_short"
+GPU=${GPU:-"h100"}
+if [ "$GPU" = "h100" ]; then
+    CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_nemorl"
+    PARTITION="batch_short"
+    NUM_GPUS=32
+    GPUS_PER_NODE=8
+elif [ "$GPU" = "gb200" ]; then
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_llm"
+    PARTITION="batch"
+    NUM_GPUS=8
+    GPUS_PER_NODE=4
+else
+    echo "Invalid GPU: $GPU"
+    exit 1
+fi
 # Get current directory to mount
 WORKDIR=$(pwd)
 
+# Base commit for Megatron-LM changes
+BASE_COMMIT="0d8e0714cd29c01e164fe6de9f532182bdffa942"
+MEGATRON_DIR="3rdparty/Megatron-LM"
+
+# Dynamically construct mounts for changed files in Megatron-LM
+CUSTOM_MOUNTS=""
+if [ -d "$MEGATRON_DIR" ]; then
+    CHANGED_FILES=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD)
+    for f in $CHANGED_FILES; do
+        CUSTOM_MOUNTS="${CUSTOM_MOUNTS},$WORKDIR/$MEGATRON_DIR/$f:/opt/megatron-lm/$f"
+    done
+fi
+
 export DETERMINISTIC=${DETERMINISTIC:-false}
+export BACKEND=${BACKEND:-fused}  # Allow Flash Attention in deterministic mode
+export RECOMPUTE_ARGS=""
+
+export NVTE_DEBUG=1   # disables/enables debugging
+export NVTE_DEBUG_LEVEL=2
+
+if [ "$BACKEND" = "flash" ]; then
+    export NVTE_FUSED_ATTN=0
+    export NVTE_UNFUSED_ATTN=0
+    export NVTE_FLASH_ATTN=1
+    export additional_args="model.attention_backend=flash"
+elif [ "$BACKEND" = "fused" ]; then
+    export NVTE_FUSED_ATTN=1
+    export NVTE_UNFUSED_ATTN=0
+    export NVTE_FLASH_ATTN=0
+    export additional_args="model.attention_backend=fused"
+elif [ "$BACKEND" = "local" ]; then
+    export NVTE_FUSED_ATTN=0
+    export NVTE_UNFUSED_ATTN=0
+    export NVTE_FLASH_ATTN=0
+    export additional_args="model.attention_backend=local"
+else
+    echo "Invalid backend: $BACKEND"
+    exit 1
+fi
+
+# AssertionError: Modules must not have hooks registered at the time they are passed. However, registering hooks on modules after passing them through make_graphed_callables is allowed.
+# export additional_args="${additional_args} model.cuda_graph_impl=none"
+# These env vars might help if the hardware detection isn't working
+export NVLINK_DOMAIN_SIZE=72
+export USE_MNNVL=1
+
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    export additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false model.attention_backend=local"
-    export DETERMINISTIC_FLAG="deterministic"
-    export CUDA_LAUNCH_BLOCKING=1
+    # Disable CUDA graphs in deterministic mode - hooks conflict with make_graphed_callables
+    export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
+    export EXP_NAME="deterministic-${BACKEND}-${GPU}"
 else
-    export additional_args=""
-    export DETERMINISTIC_FLAG="non-deterministic"
+    export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
 fi
 
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
-    --gpu h100 \
+    --gpu $GPU \
+    --time_limit "01:00:00" \
     -m qwen3 \
     -s 30b_a3b \
-    -ng 32 \
-    -gn 8 \
+    -ng $NUM_GPUS \
+    -gn $GPUS_PER_NODE \
+    --segment 4 \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/workdir" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
-    -wdj "qwen3-30b-moe-nemo-25.11-${DETERMINISTIC_FLAG}" \
+    -wdj "qwen3-30b-moe-nemo-25.11-${EXP_NAME}" \
     --task pretrain \
     logger.tensorboard_dir=/nemo_run/tensorboard \
     logger.log_interval=1 \

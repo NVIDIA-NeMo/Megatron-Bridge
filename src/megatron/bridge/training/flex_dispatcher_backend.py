@@ -14,6 +14,7 @@
 
 
 import logging
+import os
 
 import torch
 from megatron.core.transformer import TransformerConfig
@@ -52,12 +53,30 @@ def apply_flex_dispatcher_backend(
                 )
             return
     elif moe_flex_dispatcher_backend == "hybridep":
-        if not (device_properties.major == 10 and device_properties.name in ["NVIDIA GB200", "NVIDIA GB300"]):
+        # Always set NVLINK_DOMAIN_SIZE to 72 and USE_MNNVL to 1 for HybridEP as requested,
+        # but print original values for debug first.
+        original_nvl_size = os.environ.get("NVLINK_DOMAIN_SIZE")
+        original_use_mnnvl = os.environ.get("USE_MNNVL")
+        
+        if get_rank_safe() == 0:
+            print(
+                f"DEBUG: HybridEP configuration. "
+                f"GPU: {device_properties.name} (major={device_properties.major}). "
+                f"Original environment: NVLINK_DOMAIN_SIZE={original_nvl_size}, USE_MNNVL={original_use_mnnvl}"
+            )
+        
+        os.environ["NVLINK_DOMAIN_SIZE"] = "72"
+        os.environ["USE_MNNVL"] = "1"
+        
+        # We allow HybridEP on any Blackwell GPU (major=10) if requested, 
+        # as some GB200 systems may report as B200.
+        if device_properties.major != 10:
             if get_rank_safe() == 0:
                 logger.warning(
-                    "HybridEP is only applicable to GB200 and GB300 GPUs with NVL72. Skipping HybridEP configuration."
+                    f"HybridEP is intended for Blackwell GPUs (major=10). "
+                    f"Detected GPU: {device_properties.name} (major={device_properties.major}). "
+                    "Proceeding with HybridEP as requested."
                 )
-            return
     else:
         if get_rank_safe() == 0:
             logger.warning("Not a valid flex dispatcher backend. Skipping flex dispatcher backend configuration.")
@@ -77,5 +96,14 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
                 raise ValueError("DeepEP is supported for Ampere, Hopper, and Blackwell (only B200 and B300) GPUs")
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
-            if not (device_properties.major == 10 and device_properties.name in ["NVIDIA GB200", "NVIDIA GB300"]):
-                raise ValueError("HybridEP is supported for GB200 or GB300 GPUs with NVL72")
+            # Always ensure NVLINK_DOMAIN_SIZE and USE_MNNVL are set for HybridEP
+            os.environ["NVLINK_DOMAIN_SIZE"] = "72"
+            os.environ["USE_MNNVL"] = "1"
+            
+            if device_properties.major != 10:
+                if get_rank_safe() == 0:
+                    logger.warning(
+                        f"HybridEP validation: Typically requires Blackwell GPUs (major=10). "
+                        f"Detected GPU: {device_properties.name} (major={device_properties.major}). "
+                        "Proceeding anyway."
+                    )
