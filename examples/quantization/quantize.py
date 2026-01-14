@@ -331,9 +331,21 @@ if __name__ == "__main__":
         default="Hello!|Born in California, Soyer trained as a",
         help="Input texts for testing quantized model. Please use | to separate different batches.",
     )
+    parser.add_argument(
+        "--disable-hf-datasets-file-lock",
+        action="store_true",
+        help="Disable HF datasets file lock. This is only needed when testing with data in a read-only directory.",
+    )
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
+    if args.disable_hf_datasets_file_lock:
+        from unittest.mock import MagicMock
+
+        import datasets
+
+        datasets.builder.FileLock = MagicMock()
+
     main(
         args.hf_model_id,
         args.tp,

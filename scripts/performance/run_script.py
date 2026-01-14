@@ -40,6 +40,7 @@ def main():
         gpu=args.gpu,
         compute_dtype=args.compute_dtype,
         mock=args.data == "mock",
+        config_variant=args.config_variant,
     )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
