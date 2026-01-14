@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Parallelism presets for Nemotron performance configs."""
+"""Parallelism presets for Nemotron performance configs.
+
+Config naming convention:
+    {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
+
+Use --config_variant to select a variant (default: v1).
+Use --list_config_variants to see available variants interactively.
+"""
 
 from dataclasses import replace
 
@@ -26,38 +33,49 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
 )
 
 
-# NemotronH 56B presets ---------------------------------------------------------
+# =============================================================================
+# NemotronH 56B Pretrain - V1 (default)
+# =============================================================================
 
-NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
     cuda_graph_scope=["mamba", "attn"],
 )
 
 
-NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_V1 = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
     cuda_graph_scope=["mamba", "attn"],
 )
 
 
-NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_B300_FP8_CS_V1 = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
     cuda_graph_scope=["mamba", "attn"],
 )
 
 
-NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS = replace(
+NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_V1 = replace(
+    BASE_NEMOTRONH_56B_CONFIG,
+    tensor_model_parallel_size=2,
+    cuda_graph_scope=["mamba", "attn"],
+)
+
+
+NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=8,
     cuda_graph_scope=["mamba"],
 )
 
+
 __all__ = [
-    "NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS",
-    "NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS",
-    "NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS",
-    "NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS_V1",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_B300_FP8_CS_V1",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS_V1",
+    "NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS_V1",
 ]

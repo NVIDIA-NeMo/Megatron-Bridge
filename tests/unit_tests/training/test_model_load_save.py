@@ -425,7 +425,7 @@ class TestLoadMegatronModel:
             result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
 
         # Verify modelopt state was detected and set
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path, ignore_kd_state=True)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
         assert mock_model_cfg.restore_modelopt_state is True
 
         # Verify modelopt state was loaded
@@ -503,7 +503,7 @@ class TestLoadMegatronModel:
             result = load_megatron_model(ckpt_path, model_type="gpt", return_state_dict=True, use_cpu_init=True)
 
         # Verify modelopt state was detected but not set (no attribute on TransformerConfig)
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path, ignore_kd_state=True)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
         # TransformerConfig doesn't have restore_modelopt_state, so hasattr returns False
         assert not hasattr(mock_model_cfg, "restore_modelopt_state")
 

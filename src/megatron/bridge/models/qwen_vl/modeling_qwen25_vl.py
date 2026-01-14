@@ -190,9 +190,9 @@ class Qwen25VLModel(MegatronModule):
             if self.config.sequence_parallel:
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
-        # Megatron attention mask (B,1,S,S) or (1,1,S,S) boolean mask (True = masked)
-        # HuggingFace attention mask (B,S) mask (1 = keep).
-        # For simplicity, we set hf_attention_mask to None.
+        # Compute MRoPE position_ids on ALL pipeline stages
+        # Each stage has input_ids and visual grid info from the data iterator
+        # This avoids any broadcasting overhead
         hf_attention_mask = None
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,

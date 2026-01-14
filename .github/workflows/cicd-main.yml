@@ -20,7 +20,7 @@ on:
       - main
       - "pull-request/[0-9]+"
       - "deploy-release/*"
-  
+
   # Allow MCore to trigger this workflow remotely for compatibility testing
   workflow_dispatch:
     inputs:
@@ -65,7 +65,14 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.69.0
+    with:
+      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+      non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   lint-check:
     name: Lint check
@@ -85,7 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
-      
+
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
@@ -93,27 +100,27 @@ jobs:
           echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
           echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
           echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
-          
+
           cd 3rdparty/Megatron-LM
           git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
-          
+
           # Verify the checkout was successful
           ACTUAL_COMMIT=$(git rev-parse HEAD)
           EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-          
+
           echo "✅ MCore submodule updated successfully"
           echo "Expected: ${EXPECTED_COMMIT}"
           echo "Actual:   ${ACTUAL_COMMIT}"
-          
+
           if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
             echo "❌ ERROR: MCore commit mismatch!"
             exit 1
           fi
-          
+
           git log -1 --oneline
           cd ../..
-      
+
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
@@ -141,7 +148,7 @@ jobs:
 
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: self-hosted-nemo
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     environment: nemo-ci
     if: |
       (
@@ -163,27 +170,27 @@ jobs:
           echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
           echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
           echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
-          
+
           cd 3rdparty/Megatron-LM
           git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
-          
+
           # Verify the checkout was successful
           ACTUAL_COMMIT=$(git rev-parse HEAD)
           EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-          
+
           echo "✅ MCore submodule updated successfully"
           echo "Expected: ${EXPECTED_COMMIT}"
           echo "Actual:   ${ACTUAL_COMMIT}"
-          
+
           if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
             echo "❌ ERROR: MCore commit mismatch!"
             exit 1
           fi
-          
+
           git log -1 --pretty=format:"📝 Commit: %H%n👤 Author: %an%n📅 Date: %ad%n💬 Message: %s" --date=short
           cd ../..
-          
+
           # Store for Docker build arg
           echo "MCORE_COMMIT_SHA=${EXPECTED_COMMIT}" | tee -a "$GITHUB_ENV"
 
@@ -276,24 +283,24 @@ jobs:
             ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
-      
+
       - name: Verify MCore commit in Docker image
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
           echo "🔍 Verifying MCore commit inside Docker image..."
           EXPECTED="${{ env.MCORE_COMMIT_SHA }}"
-          
+
           # Get last line first (the SHA), then trim whitespace
           ACTUAL=$(docker run --rm ${{ env.container-registry }}/megatron-bridge:${{ github.sha }} \
             cat /opt/Megatron-Bridge/.mcore_commit_sha 2>&1 | tail -1)
           ACTUAL=$(echo "${ACTUAL}" | tr -d '\n\r ')
-          
+
           # Trim whitespace from expected value too
           EXPECTED=$(echo "${EXPECTED}" | tr -d '\n\r ')
-          
+
           echo "Expected MCore commit: ${EXPECTED}"
           echo "Actual MCore commit:   ${ACTUAL}"
-          
+
           if [ "${ACTUAL}" = "${EXPECTED}" ]; then
             echo "✅ MCore commit verified in Docker image!"
           else
@@ -313,7 +320,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: self-hosted-nemo
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests
     environment: nemo-ci
     env:
@@ -324,7 +331,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
@@ -332,23 +339,23 @@ jobs:
           cd 3rdparty/Megatron-LM
           git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
-          
+
           ACTUAL_COMMIT=$(git rev-parse HEAD)
           EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-          
+
           echo "🧪 UNIT TESTS - MCore verification:"
           echo "Expected: ${EXPECTED_COMMIT}"
           echo "Actual:   ${ACTUAL_COMMIT}"
-          
+
           if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
             echo "❌ ERROR: MCore commit mismatch!"
             exit 1
           fi
-          
+
           echo "✅ MCore commit verified"
           echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
-      
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -361,11 +368,12 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
 
   cicd-functional-tests:
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 16
       matrix:
         include:
           - script: L2_Launch_training
@@ -397,8 +405,8 @@ jobs:
           - script: L2_Launch_quantization_aware_training
           - script: L2_Launch_quantization_export
           - script: L2_Launch_recipes_llama_cuda_graphs
-    needs: [cicd-unit-tests]
-    runs-on: self-hosted-nemo
+    needs: [pre-flight, cicd-unit-tests]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
         success()
@@ -418,7 +426,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      
+
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_commit != '' }}
         run: |
@@ -426,23 +434,23 @@ jobs:
           cd 3rdparty/Megatron-LM
           git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
           git checkout ${{ github.event.inputs.mcore_commit }}
-          
+
           ACTUAL_COMMIT=$(git rev-parse HEAD)
           EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-          
+
           echo "🧪 FUNCTIONAL TESTS - MCore verification:"
           echo "Expected: ${EXPECTED_COMMIT}"
           echo "Actual:   ${ACTUAL_COMMIT}"
-          
+
           if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
             echo "❌ ERROR: MCore commit mismatch!"
             exit 1
           fi
-          
+
           echo "✅ MCore commit verified"
           echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
           git log -1 --oneline
-      
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -455,6 +463,7 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
 
   Nemo_CICD_Test:
     needs:

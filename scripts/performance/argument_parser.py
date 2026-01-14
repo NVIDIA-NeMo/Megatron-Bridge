@@ -378,7 +378,7 @@ def parse_cli_args():
         "--custom_env_vars",
         type=to_dict,
         help="Comma separated string of environment variables",
-        default=[],
+        default={},
     )
     slurm_args.add_argument(
         "-cs",
@@ -460,7 +460,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300"],
+        choices=["h100", "b200", "gb200", "gb300", "b300"],
         help="Target gpu type.",
         required=True,
     )
@@ -538,6 +538,12 @@ def parse_cli_args():
     performance_args.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
+        type=bool_arg,
+        required=False,
+    )
+    performance_args.add_argument(
+        "--nccl_ub",
+        help="Enable NCCL user buffer for FSDP communication. Disabled by default.",
         type=bool_arg,
         required=False,
     )
@@ -624,6 +630,21 @@ def parse_cli_args():
         help=f"Directory for logging experiment results. Defaults to {get_nemorun_home()} or NEMORUN_HOME envvar",
         required=False,
         default=None,
+    )
+
+    # Config variant selection
+    config_variant_args = parser.add_argument_group("Config variant arguments")
+    config_variant_args.add_argument(
+        "-cv",
+        "--config_variant",
+        type=str,
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v1'. Use --list_config_variants to see available options.",
+        default="v1",
+    )
+    config_variant_args.add_argument(
+        "--list_config_variants",
+        action="store_true",
+        help="List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).",
     )
 
     # Testing parameters
