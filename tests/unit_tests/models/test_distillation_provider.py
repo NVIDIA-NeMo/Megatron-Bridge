@@ -24,11 +24,11 @@ from megatron.bridge.models.qwen import Qwen3MoEModelProvider
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
-class TestGPTDistillationProvider:
-    """Test cases for GPTDistillationProvider class."""
+class TestDistillationProvider:
+    """Test cases for DistillationProvider class."""
 
     def test_initialization_with_teacher(self):
-        """Test GPTDistillationProvider can be initialized with a teacher."""
+        """Test DistillationProvider can be initialized with a teacher."""
         teacher = GPTModelProvider(
             num_layers=24,
             hidden_size=4096,
@@ -59,7 +59,7 @@ class TestGPTDistillationProvider:
         assert student.num_attention_heads == 16
 
     def test_initialization_without_teacher_raises_error(self):
-        """Test GPTDistillationProvider raises error when teacher is None."""
+        """Test DistillationProvider raises error when teacher is None."""
         student_base = GPTModelProvider(
             num_layers=12,
             hidden_size=2048,

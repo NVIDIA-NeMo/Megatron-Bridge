@@ -98,7 +98,7 @@ class DistillationProvider(TransformerConfig):
         """Custom method to save equivalent to the original provider class.
 
         Used by `_ConfigContainerBase` to serialize the main `ConfigContainer` to YAML.
-        There is no need to restore a `GPTDistillationProvider` from the run config file, as
+        There is no need to restore a `DistillationProvider` from the run config file, as
         it can always be re-converted using the original student provider.
 
         Returns:
