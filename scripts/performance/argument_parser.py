@@ -462,6 +462,34 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    parser.add_argument(
+        "--hidden_size",
+        type=int,
+        help="Hidden size to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        help="Number of layers to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--pipeline_model_parallel_layout",
+        type=str,
+        help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--first_k_dense_replace",
+        type=int,
+        help="Number of MoE layers to be converted to dense layers. Defaults to None.",
+        required=False,
+        default=None,
+    )
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
 

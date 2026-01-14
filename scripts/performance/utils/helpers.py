@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from utils.utils import WorkloadBaseConfig, get_model_recipe, get_workload_base_config
 
@@ -243,7 +243,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         recipe.model.pipeline_model_parallel_size = kwargs.get("pipeline_model_parallel_size")
     if kwargs.get("context_parallel_size") is not None:
         recipe.model.context_parallel_size = kwargs.get("context_parallel_size")
-    if kwargs.get("virtual_pipeline_model_parallel_size") is not None:
+    if kwargs.get("virtual_pipeline_model_parallel_size") != -1:
         recipe.model.virtual_pipeline_model_parallel_size = kwargs.get("virtual_pipeline_model_parallel_size")
     if kwargs.get("expert_model_parallel_size") is not None:
         recipe.model.expert_model_parallel_size = kwargs.get("expert_model_parallel_size")
@@ -260,6 +260,18 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("megatron_ckpt") is not None:
         recipe.checkpoint.pretrained_checkpoint = "/mnt/megatron_ckpt"
 
+    if kwargs.get("hidden_size") is not None:
+        recipe.model.hidden_size = kwargs.get("hidden_size")
+    if kwargs.get("num_layers") is not None:
+        recipe.model.num_layers = kwargs.get("num_layers")
+    if kwargs.get("pipeline_model_parallel_layout") is not None:
+        recipe.model.pipeline_model_parallel_layout = kwargs.get("pipeline_model_parallel_layout")
+    if kwargs.get("first_k_dense_replace") is not None:
+        recipe.model.first_k_dense_replace = kwargs.get("first_k_dense_replace")
+    if kwargs.get("num_layers") is not None and kwargs.get("first_k_dense_replace") is not None:
+        recipe.model.moe_layer_freq = [0] * kwargs.get("first_k_dense_replace") + [1] * (
+            kwargs.get("num_layers") - kwargs.get("first_k_dense_replace")
+        )
     # Handle checkpoint configuration
     checkpoint_dir = kwargs.get("checkpoint_dir")
     checkpoint_interval = kwargs.get("checkpoint_interval")
@@ -297,6 +309,29 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
+def set_deepseek_v3_layout(recipe: ConfigContainer, layout: Optional[Union[str, List[List[str]]]]) -> None:
+    """Set the DeepSeek-V3 pipeline model parallel layout."""
+    pp = recipe.model.pipeline_model_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+    mtp_layers = getattr(recipe.model, "mtp_num_layers", 1) or 0
+    last_layer = ["mtp"] * mtp_layers + ["loss"]
+
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    if pp == 1:
+        recipe.model.pipeline_model_parallel_layout = None
+    elif layout is not None:
+        recipe.model.pipeline_model_parallel_layout = layout
+    elif (pp, vp) in layout_map:
+        recipe.model.pipeline_model_parallel_layout = layout_map[(pp, vp)]
+
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     """Get the model recipe with user overrides."""
     model_name = kwargs.get("model_name")
@@ -311,6 +346,8 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, domain, task)
     set_common_perf_overrides(recipe)
     set_user_overrides(recipe, kwargs)
+    if model_name == "deepseek" and model_size == "v3":
+        set_deepseek_v3_layout(recipe, kwargs.get("pipeline_model_parallel_layout"))
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
     workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, domain, task)
