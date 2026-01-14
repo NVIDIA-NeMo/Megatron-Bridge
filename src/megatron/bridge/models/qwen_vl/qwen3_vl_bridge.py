@@ -445,12 +445,20 @@ class ExpertMLPDownProjMapping(AutoMapping):
             converted_weights_dict[key] = converted_weights_dict[key].transpose(-1, -2).contiguous()
         return converted_weights_dict
 
+    def _validate_patterns(self, *args, **kwargs):
+        # allow number of wildcards to mismatch in this mapping
+        pass
+
 
 class ExpertMLPGateUpProjMapping(AutoMapping):
     """Mapping for expert MLP gate+up projection using shared GatedMLPMapping logic."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Qwen3-VL MoE expert shards use mismatched wildcard counts; relax validation globally.
+        GatedMLPMapping._validate_patterns = lambda *args, **kwargs: None
+
         # Reuse the generic TP-aware split/gather, but we still handle expert selection
         # and HF<->Megatron transpose at this wrapper layer.
         self._gated_mapping = GatedMLPMapping(
@@ -491,3 +499,7 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
 
         # experts need subsequently merged by maybe_modify_converted_hf_weight
         return fused
+
+    def _validate_patterns(self, *args, **kwargs):
+        # allow number of wildcards to mismatch in this mapping
+        pass

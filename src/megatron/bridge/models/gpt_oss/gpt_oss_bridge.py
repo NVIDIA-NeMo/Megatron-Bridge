@@ -240,6 +240,10 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
             megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
 
+    def _validate_patterns(self, *args, **kwargs):
+        # allow number of wildcards to mismatch in this mapping
+        pass
+
 
 class GPTOSSMLPGateUpProjMapping(AutoMapping):
     """
@@ -274,6 +278,10 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         if len(megatron_weights.shape) == 2:
             megatron_weights = megatron_weights.transpose(0, 1)
         return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
+
+    def _validate_patterns(self, *args, **kwargs):
+        # allow number of wildcards to mismatch in this mapping
+        pass
 
 
 def _dequantize_mxfp4(
