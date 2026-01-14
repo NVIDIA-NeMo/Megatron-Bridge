@@ -257,6 +257,7 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
+    num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -269,7 +270,7 @@ def train(
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
-
+ 
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
@@ -408,46 +409,50 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(config, batch_size)
+        num_floating_point_operations_in_batch = num_floating_point_operations_model * batch_size
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
-            loss_scale = optimizer.get_loss_scale().item()
-        else:
-            loss_scale = 1.0
-        params_norm = None
-
-        if config.logger.log_params_norm:
-            params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
-        learning_rate = None
-        decoupled_learning_rate = None
-        for param_group in optimizer.param_groups:
-            if len(param_group) == 0:
-                continue
-            if param_group["is_decoupled_lr"]:
-                decoupled_learning_rate = param_group["lr"]
+        if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
+            if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
+                print("Getting loss scale for optimizer")
+                loss_scale = optimizer.get_loss_scale().item()
             else:
-                learning_rate = param_group["lr"]
-        report_memory_flag = training_log(
-            loss_dict,
-            total_loss_dict,
-            learning_rate,
-            decoupled_learning_rate,
-            loss_scale,
-            report_memory_flag,
-            skipped_iter,
-            grad_norm,
-            params_norm,
-            num_zeros_in_grad,
-            config,
-            global_state,
-            history_wct,
-            model,
-            log_max_attention_logit,
-        )
+                loss_scale = 1.0
+            params_norm = None
+
+            if config.logger.log_params_norm:
+                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+
+            learning_rate = None
+            decoupled_learning_rate = None
+            for param_group in optimizer.param_groups:
+                if len(param_group) == 0:
+                    continue
+                if param_group["is_decoupled_lr"]:
+                    decoupled_learning_rate = param_group["lr"]
+                else:
+                    learning_rate = param_group["lr"]
+                        
+            report_memory_flag = training_log(
+                loss_dict,
+                total_loss_dict,
+                learning_rate,
+                decoupled_learning_rate,
+                loss_scale,
+                report_memory_flag,
+                skipped_iter,
+                grad_norm,
+                params_norm,
+                num_zeros_in_grad,
+                config,
+                global_state,
+                history_wct,
+                model,
+                log_max_attention_logit,
+            )
 
         if (
             global_state.train_state.do_valid
@@ -477,6 +482,7 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
             )
+
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
             timers("eval-time").stop()
@@ -613,8 +619,9 @@ def train_step(
     train_config = cfg.train
     optim_config = cfg.optimizer
 
-    rerun_state_machine = get_rerun_state_machine()
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
+    # rerun_state_machine = get_rerun_state_machine()
+    # while rerun_state_machine.should_run_forward_backward(data_iterator):
+    if True:
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -650,13 +657,24 @@ def train_step(
                 data_iterator=forward_backward_data_iterator,
             )
 
+        elif len(model) > 1:
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
+
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
+            )
+
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
+        print("no modelopt stuff")
+        """
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
             seq_length=model_config.seq_length,
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=model_config.seq_length,
         )
+        """
 
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
@@ -667,9 +685,9 @@ def train_step(
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,
             forward_only=False,
-            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            #adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
         )
-    should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
+    should_checkpoint, should_exit, exit_code = False, False, 0  # rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
 
@@ -678,7 +696,7 @@ def train_step(
         torch.cuda.empty_cache()
 
     # Update parameters.
-    timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
+    # timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     # get max attention logit for logging and run clip_qk()
@@ -687,16 +705,20 @@ def train_step(
     if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
         log_max_attention_logit = clip_qk(model)
 
-    timers("optimizer").stop()
+    # timers("optimizer").stop()
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
-    # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
-    # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
-    if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
+    numeric_checks = False
+    if numeric_checks:
+        update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+        # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
+        # so we must gather across mp ranks
+        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+        if optim_config.log_num_zeros_in_grad:
+            num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(
+                num_zeros_in_grad, mp_group=pg_collection.mp
+            )
 
     # Update learning rate.
     if update_successful:
@@ -1084,6 +1106,9 @@ def checkpoint_and_decide_exit(
     Returns:
         True if the training loop should exit, False otherwise.
     """
+    if not state.cfg.checkpoint.save:
+        return False
+
     saved_checkpoint = False
 
     # Exit based on signal handler.
