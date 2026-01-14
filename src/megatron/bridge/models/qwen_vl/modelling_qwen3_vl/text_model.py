@@ -28,10 +28,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
-    Qwen3VLMoETextRotaryEmbedding,
-    Qwen3VLTextRotaryEmbedding,
-)
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.transformer_config import TransformerConfig
 
@@ -81,15 +78,14 @@ class Qwen3VLGPTModel(GPTModel):
             vp_stage=vp_stage,
         )
 
-        is_moe = (
-            hasattr(config, "num_moe_experts") and config.num_moe_experts is not None and config.num_moe_experts > 0
+        # rebuild rope
+        self.rotary_pos_emb = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=self.config.kv_channels,
+            rotary_percent=rotary_percent,
+            rotary_interleaved=self.config.rotary_interleaved,
+            seq_len_interpolation_factor=seq_len_interpolation_factor,
+            rotary_base=rotary_base,
         )
-
-        if is_moe:
-            self.rotary_pos_emb = Qwen3VLMoETextRotaryEmbedding(config.hf_text_config)
-        else:
-            self.rotary_pos_emb = Qwen3VLTextRotaryEmbedding(config.hf_text_config)
-
         self.mrope_section = self.config.mrope_section
         assert self.mrope_section is not None, (
             "mrope require mrope_section setting, but we got None from TransformerConfig"
@@ -136,6 +132,14 @@ class Qwen3VLGPTModel(GPTModel):
         """
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
+        if torch.distributed.get_rank() == 0:
+            breakpoint()
+        torch.distributed.barrier()
+
+        # currently
+        # decoder_input.shape torch.Size([4096, 4, 2048])
+        # position_ids.shape torch.Size([4, 4096])
+        # maybe the preprocess in Qwen3VLModel.forward's support for thd will crash this rope.
 
         decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = self._preprocess(
             input_ids=input_ids,
