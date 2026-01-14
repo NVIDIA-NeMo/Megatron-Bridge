@@ -80,7 +80,7 @@ class TestSampleBasedTrainingFunctional:
             scheduler=scheduler_cfg,
             dataset=MockGPTDatasetConfig(
                 random_seed=1234,
-                sequence_length=256,
+                seq_length=256,
                 reset_position_ids=False,
                 reset_attention_mask=False,
                 eod_mask_loss=False,

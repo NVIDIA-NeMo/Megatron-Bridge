@@ -15,16 +15,16 @@
 """
 Example:
   # Vision-Language generation with image from URL:
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
 
   # Vision-Language generation with local image:
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
 
   # Text-only generation (no image):
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
 """
 
 import argparse
@@ -40,6 +40,7 @@ from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
@@ -52,7 +53,9 @@ class SingleBatchIterator:
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None):
+    def __init__(
+        self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None, image_sizes=None
+    ):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
@@ -64,6 +67,8 @@ class SingleBatchIterator:
             self.batch["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             self.batch["image_grid_thw"] = image_grid_thw
+        if image_sizes is not None:
+            self.batch["image_sizes"] = image_sizes
 
         self._yielded = False
 
@@ -104,6 +109,8 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["pixel_values"] = batch["pixel_values"]
     if "image_grid_thw" in batch:
         forward_args["image_grid_thw"] = batch["image_grid_thw"]
+    if "image_sizes" in batch:
+        forward_args["image_sizes"] = batch["image_sizes"]
 
     def loss_func(x, **kwargs):
         return x
@@ -137,7 +144,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         prompt: Text prompt
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
     """
     if image_path:
         # Create messages with image and text
@@ -165,11 +172,17 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             padding=True,
             return_tensors="pt",
         )
-        return inputs.input_ids, inputs.pixel_values, getattr(inputs, "image_grid_thw", None), messages
+        return (
+            inputs.input_ids,
+            inputs.pixel_values,
+            getattr(inputs, "image_grid_thw", None),
+            getattr(inputs, "image_sizes", None),
+            messages,
+        )
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None
+        return inputs.input_ids, None, None, None, None
 
 
 def main(args) -> None:
@@ -238,15 +251,34 @@ def main(args) -> None:
     for m in model:
         m.eval()
 
+    # Set grad_scale_func to None on the model's config for inference
+    for m in model:
+        if hasattr(m, "config"):
+            m.config.grad_scale_func = None
+
     # Initialize tokenizer and processor
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
+    )
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, messages = process_image_inputs(processor, args.image_path, prompt)
+    input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(
+        processor, args.image_path, prompt
+    )
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -254,6 +286,8 @@ def main(args) -> None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
+    if image_sizes is not None:
+        image_sizes = image_sizes.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -272,7 +306,9 @@ def main(args) -> None:
             # Keep passing vision inputs for all steps to ensure image features are available
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
-            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
+            iterator = SingleBatchIterator(
+                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes
+            )
 
             output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,
@@ -365,6 +401,7 @@ if __name__ == "__main__":
         default=None,
         help="Path or URL to the image for vision-language generation (optional).",
     )
+    parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
     args = parser.parse_args()
 
     main(args)

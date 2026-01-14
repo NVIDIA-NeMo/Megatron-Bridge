@@ -58,6 +58,32 @@ class MockMegatronModule(MegatronModule):
         return [torch.nn.Parameter(torch.randn(10, 10))]
 
 
+class _Rank0Group:
+    def size(self):
+        return 1
+
+    def rank(self):
+        return 0
+
+
+class _Rank1Group:
+    def size(self):
+        return 1
+
+    def rank(self):
+        return 1
+
+
+class _PG:
+    def __init__(self):
+        self.pp = _Rank0Group()
+        self.tp = _Rank0Group()
+        self.cp = _Rank0Group()
+        self.dp = _Rank0Group()
+        self.dp_cp = _Rank0Group()
+        self.expt_dp = _Rank0Group()
+
+
 class MockModelProvider(ModelProviderMixin):
     """Mock ModelProviderMixin for testing."""
 
@@ -72,21 +98,17 @@ class MockModelProvider(ModelProviderMixin):
 class TestCreateModel:
     """Test cases for _create_model function."""
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.model_provider.is_pp_last_stage", return_value=True)
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
-    def test_create_model_single_pipeline(self, mock_tensor_parallel, mock_parallel_state):
+    def test_create_model_single_pipeline(self, mock_tensor_parallel, mock_is_last, mock_is_first):
         """Test model creation with single pipeline stage."""
-        # Setup mocks
-        mock_parallel_state.get_pipeline_model_parallel_world_size.return_value = 1
-        mock_parallel_state.get_virtual_pipeline_model_parallel_world_size.return_value = None
-        mock_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_parallel_state.is_pipeline_last_stage.return_value = True
-
         # Create mock model and provider
         mock_model = MockMegatronModule()
         model_provider = MockModelProvider(mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_or_decoder)
+        pg = _PG()
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=pg)
 
         # Assertions
         assert isinstance(result, list)
@@ -94,22 +116,34 @@ class TestCreateModel:
         assert result[0] is mock_model
         assert mock_model.model_type == ModelType.encoder_or_decoder
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.is_pp_first_stage")
+    @patch("megatron.bridge.models.model_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
-    def test_create_model_virtual_pipeline(self, mock_tensor_parallel, mock_parallel_state):
+    def test_create_model_virtual_pipeline(self, mock_tensor_parallel, mock_is_last, mock_is_first):
         """Test model creation with virtual pipeline parallelism."""
         # Setup mocks
-        mock_parallel_state.get_pipeline_model_parallel_world_size.return_value = 2
-        mock_parallel_state.get_virtual_pipeline_model_parallel_world_size.return_value = 2
-        mock_parallel_state.is_pipeline_first_stage.side_effect = [True, False]
-        mock_parallel_state.is_pipeline_last_stage.side_effect = [False, True]
+        mock_is_first.side_effect = [True, False]
+        mock_is_last.side_effect = [False, True]
 
         # Create mock models and provider
         mock_models = [MockMegatronModule(), MockMegatronModule()]
         model_provider = Mock()
         model_provider.provide = Mock(side_effect=mock_models)
 
-        result = _create_model(model_provider, ModelType.encoder_or_decoder)
+        # pg with pp size > 1 to trigger VPP logic
+        class _PP:
+            def size(self):
+                return 2
+
+            def rank(self):
+                return 0
+
+        pg = _PG()
+        pg.pp = _PP()
+        # Also set vp size on provider
+        model_provider.virtual_pipeline_model_parallel_size = 2
+
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=pg)
 
         # Assertions
         assert isinstance(result, list)
@@ -117,20 +151,16 @@ class TestCreateModel:
         assert all(model.model_type == ModelType.encoder_or_decoder for model in result)
         assert model_provider.provide.call_count == 2
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
-    def test_create_model_encoder_decoder_single_pipeline(self, mock_tensor_parallel, mock_parallel_state):
+    def test_create_model_encoder_decoder_single_pipeline(self, mock_tensor_parallel):
         """Test creation of encoder-decoder model with single pipeline."""
-        # Setup mocks
-        mock_parallel_state.get_pipeline_model_parallel_world_size.return_value = 1
-        mock_parallel_state.get_virtual_pipeline_model_parallel_world_size.return_value = None
 
         # Create mock model and provider
         mock_model = MockMegatronModule()
         model_provider = Mock()
         model_provider.provide = Mock(return_value=mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_and_decoder)
+        result = _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=_PG())
 
         # Assertions
         assert isinstance(result, list)
@@ -139,22 +169,16 @@ class TestCreateModel:
         assert mock_model.model_type == ModelType.encoder_and_decoder
         model_provider.provide.assert_called_once_with()  # No pre/post process args
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
-    def test_create_model_encoder_decoder_multi_pipeline(self, mock_tensor_parallel, mock_parallel_state):
+    def test_create_model_encoder_decoder_multi_pipeline(self, mock_tensor_parallel):
         """Test creation of encoder-decoder model with multiple pipeline stages."""
-        # Setup mocks
-        mock_parallel_state.get_pipeline_model_parallel_world_size.return_value = 4
-        mock_parallel_state.get_virtual_pipeline_model_parallel_world_size.return_value = None
-        mock_parallel_state.get_pipeline_model_parallel_rank.return_value = 2
-        mock_parallel_state.get_pipeline_model_parallel_decoder_start.return_value = 2
 
         # Create mock model and provider
         mock_model = MockMegatronModule()
         model_provider = Mock()
         model_provider.provide = Mock(return_value=mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_and_decoder)
+        result = _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=_PG())
 
         # Assertions
         assert isinstance(result, list)
@@ -163,21 +187,14 @@ class TestCreateModel:
         assert mock_model.model_type == ModelType.encoder_and_decoder
         model_provider.provide.assert_called_once_with()
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
-    def test_create_model_sets_tensor_parallel_attributes(self, mock_tensor_parallel, mock_parallel_state):
+    def test_create_model_sets_tensor_parallel_attributes(self, mock_tensor_parallel):
         """Test that tensor parallel attributes are set on parameters."""
-        # Setup mocks
-        mock_parallel_state.get_pipeline_model_parallel_world_size.return_value = 1
-        mock_parallel_state.get_virtual_pipeline_model_parallel_world_size.return_value = None
-        mock_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_parallel_state.is_pipeline_last_stage.return_value = True
-
         # Create mock model with parameters
         mock_model = MockMegatronModule()
         model_provider = MockModelProvider(mock_model)
 
-        _create_model(model_provider, ModelType.encoder_or_decoder)
+        _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=_PG())
 
         # Verify tensor parallel attributes are set
         # Check that the function was called for each parameter
@@ -207,6 +224,7 @@ class TestDDPWrap:
             data_parallel_random_init=True,
             ddp_config=ddp_config,
             overlap_param_gather_with_optimizer_step=False,
+            pg_collection=_PG(),
         )
 
         # Assertions
@@ -243,6 +261,7 @@ class TestDDPWrap:
             data_parallel_random_init=False,
             ddp_config=ddp_config,
             overlap_param_gather_with_optimizer_step=False,
+            pg_collection=_PG(),
         )
 
         # Assertions
@@ -266,6 +285,7 @@ class TestDDPWrap:
                 data_parallel_random_init=False,
                 ddp_config=ddp_config,
                 overlap_param_gather_with_optimizer_step=True,
+                pg_collection=_PG(),
             )
 
             # Check that bucketing is disabled when overlap is True
@@ -276,20 +296,32 @@ class TestDDPWrap:
 class TestPrintNumParams:
     """Test cases for _print_num_params function."""
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("builtins.print")
-    def test_print_num_params_rank_zero(self, mock_print, mock_parallel_state):
+    def test_print_num_params_rank_zero(self, mock_print):
         """Test printing parameters when on data parallel rank 0."""
-        # Setup mocks
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_tensor_model_parallel_rank.return_value = 1
-        mock_parallel_state.get_pipeline_model_parallel_rank.return_value = 2
-
         # Create models with known parameter counts
         models = [MockMegatronModule(), MockMegatronModule()]
 
-        _print_num_params(models)
+        # pg where dp and cp ranks are zero; customize tp/pp ranks to expected print
+        class _TP:
+            def rank(self):
+                return 1
+
+            def size(self):
+                return 1
+
+        class _PP:
+            def rank(self):
+                return 2
+
+            def size(self):
+                return 1
+
+        pg = _PG()
+        pg.tp = _TP()
+        pg.pp = _PP()
+
+        _print_num_params(models, pg_collection=pg)
 
         # Check print was called
         mock_print.assert_called_once()
@@ -297,32 +329,26 @@ class TestPrintNumParams:
         assert "number of parameters" in printed_text
         assert "(1, 2)" in printed_text  # tensor and pipeline ranks
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("builtins.print")
-    def test_print_num_params_non_zero_rank(self, mock_print, mock_parallel_state):
+    def test_print_num_params_non_zero_rank(self, mock_print):
         """Test that nothing is printed when not on data parallel rank 0."""
-        # Setup mocks
-        mock_parallel_state.get_data_parallel_rank.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-
         models = [MockMegatronModule()]
 
-        _print_num_params(models)
+        pg = _PG()
+        pg.dp = _Rank1Group()
+        _print_num_params(models, pg_collection=pg)
 
         # Check print was not called
         mock_print.assert_not_called()
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("builtins.print")
-    def test_print_num_params_non_zero_context_rank(self, mock_print, mock_parallel_state):
+    def test_print_num_params_non_zero_context_rank(self, mock_print):
         """Test that nothing is printed when not on context parallel rank 0."""
-        # Setup mocks
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_rank.return_value = 1
-
         models = [MockMegatronModule()]
 
-        _print_num_params(models)
+        pg = _PG()
+        pg.cp = _Rank1Group()
+        _print_num_params(models, pg_collection=pg)
 
         # Check print was not called
         mock_print.assert_not_called()
@@ -361,11 +387,14 @@ class TestGetModel:
         model_provider = MockModelProvider(model)
         ddp_config = DistributedDataParallelConfig()
 
-        result = get_model(model_provider, ddp_config)
+        pg = _PG()
+        result = get_model(model_provider, ddp_config, pg_collection=pg)
 
         # Assertions
         assert len(result) == 1
-        mock_create_model.assert_called_once_with(model_provider, ModelType.encoder_or_decoder)
+        mock_create_model.assert_called_once()
+        # Ensure pg_collection was passed through
+        assert "pg_collection" in mock_create_model.call_args.kwargs
         mock_print_params.assert_called_once()
         mock_ddp_wrap.assert_called_once()
 
@@ -405,7 +434,7 @@ class TestGetModel:
         model_provider = MockModelProvider(model)
         ddp_config = DistributedDataParallelConfig()
 
-        get_model(model_provider, ddp_config, fp16=True)
+        get_model(model_provider, ddp_config, fp16=True, pg_collection=_PG())
 
         # Assertions
         assert model_provider.fp16
@@ -441,7 +470,7 @@ class TestGetModel:
         model_provider = MockModelProvider(model)
         ddp_config = DistributedDataParallelConfig()
 
-        get_model(model_provider, ddp_config, use_cpu_initialization=True)
+        get_model(model_provider, ddp_config, use_cpu_initialization=True, pg_collection=_PG())
 
         assert config.use_cpu_initialization
 
@@ -474,7 +503,7 @@ class TestGetModel:
         model_provider = MockModelProvider(model)
         ddp_config = DistributedDataParallelConfig()
 
-        result = get_model(model_provider, ddp_config, wrap_with_ddp=False)
+        result = get_model(model_provider, ddp_config, wrap_with_ddp=False, pg_collection=_PG())
 
         # Assertions - should return unwrapped model
         assert len(result) == 1
@@ -516,6 +545,7 @@ class TestGetModel:
             ddp_config,
             use_torch_fsdp2=True,
             use_cpu_initialization=True,
+            pg_collection=_PG(),
         )
 
         # Should not call cuda when FSDP2 with CPU init
@@ -555,7 +585,13 @@ class TestGetModel:
         model_provider = MockModelProvider(model)
         ddp_config = DistributedDataParallelConfig()
 
-        result = get_model(model_provider, ddp_config, pre_wrap_hook=pre_wrap_hook, use_cpu_initialization=True)
+        result = get_model(
+            model_provider,
+            ddp_config,
+            pre_wrap_hook=pre_wrap_hook,
+            use_cpu_initialization=True,
+            pg_collection=_PG(),
+        )
 
         # Assertions
         assert result == [model]
@@ -595,21 +631,27 @@ class TestEdgeCases:
             mock_correct_amax.return_value = [model]
             mock_wrap.return_value = [model]
 
-            get_model(model_provider, ddp_config, init_model_with_meta_device=True)
+            get_model(model_provider, ddp_config, init_model_with_meta_device=True, pg_collection=_PG())
 
             # Should not call cuda when meta device is used
             model.cuda.assert_not_called()
 
-    @patch("megatron.bridge.models.model_provider.parallel_state")
-    def test_create_model_virtual_pipeline_with_encoder_decoder_raises(self, mock_parallel_state):
+    def test_create_model_virtual_pipeline_with_encoder_decoder_raises(self):
         """Test that virtual pipeline with encoder-decoder raises assertion error."""
-        # Setup mocks for virtual pipeline
-        mock_parallel_state.get_pipeline_model_parallel_world_size.return_value = 2
-        mock_parallel_state.get_virtual_pipeline_model_parallel_world_size.return_value = 2
-
         model_provider = MockModelProvider()
+        model_provider.virtual_pipeline_model_parallel_size = 2
 
         with pytest.raises(AssertionError) as excinfo:
-            _create_model(model_provider, ModelType.encoder_and_decoder)
+            # Craft pg with pp size > 1 to trigger VPP branch for the assertion
+            class _PP:
+                def size(self):
+                    return 2
+
+                def rank(self):
+                    return 0
+
+            pg = _PG()
+            pg.pp = _PP()
+            _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=pg)
 
         assert "Interleaved schedule not supported" in str(excinfo.value)
