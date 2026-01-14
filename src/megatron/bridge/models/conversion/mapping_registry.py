@@ -154,7 +154,6 @@ class MegatronMappingRegistry:
         Args:
             *mappings: MegatronParamMapping objects
         """
-        self.mappings = mappings
         self.mappings = list(mappings)
         self._add_separate_layernorm_mappings()
         if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
