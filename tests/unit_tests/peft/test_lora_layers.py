@@ -38,6 +38,7 @@ from megatron.bridge.peft.lora_layers import (
     TEFusedLoRALinear,
     patch_linear_module,
 )
+from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class MockLinearWithTupleReturn(nn.Module):
@@ -767,7 +768,14 @@ class TestLoRATopKRouter:
             return nn.Linear(in_features, out_features, bias=False)
 
         def fake_attrs(*args, **kwargs):
-            return False, 4, 3, False, True, False
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=4,
+                out_features=3,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=False,
+            )
 
         monkeypatch.setattr(lora_module, "TopKRouter", DummyTopKRouter, raising=True)
         monkeypatch.setattr(lora_module, "ParallelLinearAdapter", fake_adapter, raising=True)
@@ -800,14 +808,13 @@ class TestLoRATopKRouterAdapters:
         )
 
         attrs = peft_utils.get_adapter_attributes_from_linear(router)
-        input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = attrs
 
-        assert input_is_parallel is False
-        assert in_features == router.weight.shape[1]
-        assert out_features == router.weight.shape[0]
-        assert disable_tp_comm is False
-        assert disable_sp_comm is True
-        assert base_linear_is_parallel is False
+        assert attrs.input_is_parallel is False
+        assert attrs.in_features == router.weight.shape[1]
+        assert attrs.out_features == router.weight.shape[0]
+        assert attrs.disable_tensor_parallel_comm is False
+        assert attrs.disable_sequence_parallel_comm is True
+        assert attrs.base_linear_is_parallel is False
 
 
 class TestCanonicalLoRATopKRouter:
@@ -821,7 +828,14 @@ class TestCanonicalLoRATopKRouter:
             return nn.Linear(in_features, out_features, bias=False)
 
         def fake_attrs(*args, **kwargs):
-            return False, 4, 3, False, True, False
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=4,
+                out_features=3,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=False,
+            )
 
         monkeypatch.setattr(canonical_module, "TopKRouter", DummyTopKRouter, raising=True)
         monkeypatch.setattr(canonical_module, "ParallelLinearAdapter", fake_adapter, raising=True)
