@@ -269,7 +269,7 @@ def build_train_valid_test_data_loaders(
     do_test = test_dataloader is not None and cfg.train.eval_iters > 0
     flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
 
-    torch.distributed.broadcast(flags, 0, group=dp_group)
+    torch.distributed.broadcast(flags, 0)
 
     train_state.do_train = flags[0].item()
     train_state.do_valid = flags[1].item()
