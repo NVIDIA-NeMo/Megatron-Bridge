@@ -18,6 +18,7 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
+from megatron.core.transformer.moe.moe_utils import apply_random_logits
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.utils.import_utils import safe_import
@@ -59,6 +60,22 @@ class LoRALinear(AdapterWrapper):
         adapter_output = self.adapter(layernorm_output.contiguous())
         adapter_output = adapter_output.reshape(linear_output.shape)
         return linear_output + adapter_output, bias
+
+
+class LoRATopKRouter(AdapterWrapper):
+    """Adapter wrapper that applies LoRA to router gating logits."""
+
+    def forward(self, x: torch.Tensor):
+        """Forward pass that adds LoRA delta to router logits before routing."""
+        self.to_wrap._maintain_float32_expert_bias()
+        jittered_input = self.to_wrap.apply_input_jitter(x)
+        logits = self.to_wrap.gating(jittered_input)
+        if self._adapter_enabled:
+            adapter_output = self.adapter(jittered_input.contiguous())
+            logits = logits + adapter_output.to(dtype=logits.dtype)
+        if self.to_wrap.config.moe_router_force_load_balancing:
+            logits = apply_random_logits(logits)
+        return self.to_wrap.routing(logits)
 
 
 class TELinearAdapter(te.Linear):

@@ -632,6 +632,21 @@ def parse_cli_args():
         default=None,
     )
 
+    # Config variant selection
+    config_variant_args = parser.add_argument_group("Config variant arguments")
+    config_variant_args.add_argument(
+        "-cv",
+        "--config_variant",
+        type=str,
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v1'. Use --list_config_variants to see available options.",
+        default="v1",
+    )
+    config_variant_args.add_argument(
+        "--list_config_variants",
+        action="store_true",
+        help="List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).",
+    )
+
     # Testing parameters
     testing_args = parser.add_argument_group("Testing arguments")
     testing_args.add_argument(

@@ -26,6 +26,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class SimpleModel(nn.Module):
@@ -221,10 +222,31 @@ class TestCanonicalLoRA:
         def mock_get_attrs(module, is_expert=False):
             if hasattr(module, "out_features"):
                 if module.out_features == 1536:  # linear_qkv
-                    return (False, 512, 1536, False, True, True)
+                    return AdapterAttributes(
+                        input_is_parallel=False,
+                        in_features=512,
+                        out_features=1536,
+                        disable_tensor_parallel_comm=False,
+                        disable_sequence_parallel_comm=True,
+                        base_linear_is_parallel=True,
+                    )
                 elif module.out_features == 2048:  # linear_fc1
-                    return (False, 512, 2048, False, True, True)
-            return (False, 512, 512, False, True, True)  # default
+                    return AdapterAttributes(
+                        input_is_parallel=False,
+                        in_features=512,
+                        out_features=2048,
+                        disable_tensor_parallel_comm=False,
+                        disable_sequence_parallel_comm=True,
+                        base_linear_is_parallel=True,
+                    )
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=512,
+                out_features=512,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )  # default
 
         with patch(
             "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
@@ -488,7 +510,14 @@ class TestCanonicalLoRA:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False, True, True)
+            mock_get_attrs.return_value = AdapterAttributes(
+                input_is_parallel=False,
+                in_features=512,
+                out_features=1536,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -526,7 +555,14 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False, True, True)
+            mock_get_attrs.return_value = AdapterAttributes(
+                input_is_parallel=False,
+                in_features=512,
+                out_features=1536,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -548,7 +584,14 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 2048, False, True, True)
+            mock_get_attrs.return_value = AdapterAttributes(
+                input_is_parallel=False,
+                in_features=512,
+                out_features=2048,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
 
             # Mock ParallelLinearAdapter
             with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
