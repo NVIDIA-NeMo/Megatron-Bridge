@@ -495,7 +495,11 @@ class AutoBridge(Generic[MegatronModelT]):
             dist.barrier()
 
     def save_megatron_model(
-        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
+        self,
+        model: list[MegatronModule],
+        path: str | Path,
+        hf_tokenizer_path: Optional[str | Path] = None,
+        low_memory_save: bool = False,
     ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
@@ -511,6 +515,11 @@ class AutoBridge(Generic[MegatronModelT]):
             path: Directory path where the checkpoint will be saved
             hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
                 If provided, the tokenizer metadata will be included in the checkpoint.
+            low_memory_save: If True, uses a memory-optimized save flow that reduces
+                peak memory by ~50% for models with merged weights (e.g., gate+up
+                projections). The model is deleted after state dict generation and
+                cannot be used afterward. Use this for checkpoint conversion where
+                the model isn't needed afterward.
 
         Example:
             >>> # Save model checkpoint after conversion
@@ -523,16 +532,24 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
             ... )
 
+            >>> # Low-memory save for large model conversion
+            >>> bridge.save_megatron_model(
+            ...     megatron_model,
+            ...     "./megatron_checkpoint",
+            ...     low_memory_save=True
+            ... )
+
         Note:
             - This method is collective and must be called by all ranks
             - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
             - The checkpoint format follows Megatron's standard structure for compatibility
+            - When low_memory_save=True, the model is deleted and cannot be used afterward
         """
         try:
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
-        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
+        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path, low_memory_save=low_memory_save)
 
     def load_megatron_model(
         self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
@@ -605,6 +622,7 @@ class AutoBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
+        low_memory_save: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -619,6 +637,11 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
+            low_memory_save: If True, uses a memory-optimized save flow that reduces
+                peak memory by ~50% for models with merged weights (e.g., gate+up
+                projections). The model is deleted after state dict generation and
+                cannot be used afterward. Useful for large model conversions where
+                memory is constrained. Default is False.
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -640,6 +663,13 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
             ... )
+
+            >>> # Enable low-memory save for large models
+            >>> AutoBridge.import_ckpt(
+            ...     "meta-llama/Meta-Llama-3-8B",
+            ...     "./megatron_checkpoints/llama3_8b",
+            ...     low_memory_save=True
+            ... )
         """
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
@@ -648,7 +678,9 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        bridge.save_megatron_model(megatron_model, megatron_path, hf_tokenizer_path=hf_model_id)
+        bridge.save_megatron_model(
+            megatron_model, megatron_path, hf_tokenizer_path=hf_model_id, low_memory_save=low_memory_save
+        )
 
     def export_ckpt(
         self,
