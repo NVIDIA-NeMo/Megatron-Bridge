@@ -87,9 +87,9 @@ Currently, distillation is supported for GPT and Mamba-based models
 
 To enable distillation for a model:
 
-1. Use `DistillationProvider` instead of `GPTModelProvider`
-2. Set the `teacher` attribute to the teacher model configuration
-3. Configure `kd_config` with desired distillation settings
+1. Set the `teacher` attribute to the teacher model configuration
+2. Configure `kd_config` with desired distillation settings (else uses default)
+3. Use `convert_to_distillation_provider()` to convert your existing model provider
 
 ## Checkpointing
 
