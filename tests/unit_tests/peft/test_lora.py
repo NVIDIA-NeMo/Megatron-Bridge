@@ -637,6 +637,11 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
+        # Attach real pg_collection from initialized parallel state
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
         # Create LoRA instance targeting linear layers
         lora = LoRA(
             target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"], dim=8, alpha=16, dropout=0.0
@@ -692,6 +697,10 @@ class TestLoRAMegatronIntegration:
             vocab_size=100,
             ffn_hidden_size=128,
         )
+
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create LoRA and register hook
         lora = LoRA(dim=4, alpha=8)
@@ -766,6 +775,10 @@ class TestLoRAMegatronIntegration:
                 ffn_hidden_size=128,
             )
 
+            from megatron.core.process_groups_config import ProcessGroupCollection
+
+            model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
             # Create LoRA and register hook
             lora = LoRA(target_modules=targets, dim=4, alpha=8)
             lora_hook = self._create_lora_pre_wrap_hook(lora)
@@ -794,6 +807,10 @@ class TestLoRAMegatronIntegration:
             vocab_size=100,
             ffn_hidden_size=128,
         )
+
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         # Create LoRA instance
         lora = LoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
