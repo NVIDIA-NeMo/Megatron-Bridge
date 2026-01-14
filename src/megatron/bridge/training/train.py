@@ -17,7 +17,7 @@ import os
 import sys
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Union
 
 import torch
@@ -261,11 +261,13 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
+    num_floating_point_operations_in_batch_size1 = flop_utils.num_floating_point_operations(config, batch_size=1)
+    dp_size = pg_collection.dp.size()
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
-        """
+        #"""
         nvtx_ctx = handle_profiling_step(
             prof_config,
             global_state.train_state.step,
@@ -274,23 +276,23 @@ def train(
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
-        """
+        #"""
 
-        """
+        #"""
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
-        """
+        #"""
 
         # Update the timeout for all process groups after initialization
         # We update the timeout after the first successful iteration,
         # which takes longer than others usually
-        """
+        #"""
         if global_state.train_state.step == start_iteration + 1:
             distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
             if distributed_timeout_seconds_after_init is not None:
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
-        """
+        #"""
 
         # Update number of microbatches first without consistency check to decide if a
         # checkpoint should be saved. If the number of microbatches is different
@@ -316,11 +318,11 @@ def train(
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
-        """
+        #
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
-        """
+        #"""
 
         # Capture CUDA Graphs after warmup.
         if (
@@ -358,7 +360,7 @@ def train(
             forward_backward_func,
         )
 
-        """
+        #"""
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -413,8 +415,7 @@ def train(
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
-        """
-        dp_size = pg_collection.dp.size()
+        #"""
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
@@ -423,15 +424,16 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = 0  # flop_utils.num_floating_point_operations(config, batch_size)
+        num_floating_point_operations_in_batch = num_floating_point_operations_in_batch_size1 * batch_size
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
-        """
+        #"""
 
-        """
         # Logging.
+        #"""
         if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
+            print("Getting loss scale for optimizer")
             loss_scale = optimizer.get_loss_scale().item()
         else:
             loss_scale = 1.0
@@ -439,6 +441,7 @@ def train(
 
         if config.logger.log_params_norm:
             params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+
         learning_rate = None
         decoupled_learning_rate = None
         for param_group in optimizer.param_groups:
@@ -466,7 +469,7 @@ def train(
             model,
             log_max_attention_logit,
         )
-        """
+        #"""
 
         if (
             global_state.train_state.do_valid
@@ -484,7 +487,6 @@ def train(
                 gc.collect()
             prefix = f"iteration {global_state.train_state.step}"
             timers("eval-time", log_level=0).start(barrier=True)
-            """
             evaluate_and_print_results(
                 global_state,
                 prefix,
@@ -497,7 +499,6 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
             )
-            """
 
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
