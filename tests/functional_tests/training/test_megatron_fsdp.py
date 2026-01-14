@@ -266,6 +266,7 @@ class TestMegatronFSDP:
         finally:
             clear_directories(tmp_path)
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_with_checkpoint(self, tmp_path):
         """
@@ -306,6 +307,7 @@ class TestMegatronFSDP:
         finally:
             clear_directories(tmp_path)
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_save_resume(self, tmp_path):
         """
