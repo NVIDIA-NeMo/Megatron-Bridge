@@ -16,27 +16,10 @@ import logging
 
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
+from utils.utils import get_workload_base_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-
-from .deepseek_workload_base_configs import (
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS,
-    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC,
-)
 
 
 logger = logging.getLogger(__name__)
@@ -57,16 +40,19 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     cfg.model.moe_router_force_load_balancing = True
 
 
-def deepseek_v3_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """GB300, baseline config."""
-    if precision == "bf16":
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS
-        if precision == "fp8_mx":
-            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=mock,
@@ -94,16 +80,19 @@ def deepseek_v3_pretrain_config_gb300(precision: str = "bf16", mock: bool = True
     return cfg
 
 
-def deepseek_v3_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """GB200, baseline config."""
-    if precision == "bf16":
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS
-        if precision == "fp8_mx":
-            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=mock,
@@ -131,16 +120,19 @@ def deepseek_v3_pretrain_config_gb200(precision: str = "bf16", mock: bool = True
     return cfg
 
 
-def deepseek_v3_pretrain_config_b300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def deepseek_v3_pretrain_config_b300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """B300, baseline config."""
-    if precision == "bf16":
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS
-        if precision == "fp8_mx":
-            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="b300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=mock,
@@ -158,16 +150,19 @@ def deepseek_v3_pretrain_config_b300(precision: str = "bf16", mock: bool = True)
     return cfg
 
 
-def deepseek_v3_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def deepseek_v3_pretrain_config_b200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """B200, baseline config."""
-    if precision == "bf16":
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_CS
-        if precision == "fp8_mx":
-            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="b200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=mock,
@@ -185,16 +180,19 @@ def deepseek_v3_pretrain_config_b200(precision: str = "bf16", mock: bool = True)
     return cfg
 
 
-def deepseek_v3_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def deepseek_v3_pretrain_config_h100(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """H100, baseline config."""
-    if precision == "bf16":
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS
-        if precision == "fp8_sc":
-            base_cfg = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="h100",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=mock,
