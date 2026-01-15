@@ -306,6 +306,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             packed=True,
             pad_seq_to_mult=pad_seq_to_mult,
         )
+        if recipe.model.cuda_graph_impl != "none":
+            recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+        recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
 
