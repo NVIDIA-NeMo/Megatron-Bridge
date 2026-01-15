@@ -322,12 +322,9 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
-    config_variant: str = "v1",
 ) -> ConfigContainer:
     """Set the post overrides."""
-    workload_base_config = get_workload_base_config(
-        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-    )
+    workload_base_config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task)
 
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True

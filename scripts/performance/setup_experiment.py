@@ -30,12 +30,10 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
-    from utils.utils import select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
-    from .utils.utils import select_config_variant_interactive
 
 try:
     import wandb
@@ -220,7 +218,6 @@ def main(
     dgxc_project_name: str,
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
-    config_variant: str = "v1",
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -327,7 +324,6 @@ def main(
                 gpu=gpu,
                 compute_dtype=compute_dtype,
                 train_task=task,
-                config_variant=config_variant,
             )
         )
 
@@ -505,17 +501,6 @@ if __name__ == "__main__":
     if unknown_args:
         logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
 
-    # Handle --list_config_variants: show available variants and interactively select
-    config_variant = args.config_variant
-    if args.list_config_variants:
-        config_variant = select_config_variant_interactive(
-            model_family_name=args.model_family_name,
-            model_recipe_name=args.model_recipe_name,
-            gpu=args.gpu,
-            compute_dtype=args.compute_dtype,
-            task=args.task,
-        )
-
     main(
         use_recipes=args.use_recipes,
         model_family_name=args.model_family_name,
@@ -582,5 +567,4 @@ if __name__ == "__main__":
         dgxc_project_name=args.dgxc_project_name,
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
-        config_variant=config_variant,
     )
