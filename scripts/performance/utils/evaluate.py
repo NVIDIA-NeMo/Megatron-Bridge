@@ -430,7 +430,7 @@ def calc_convergence_and_performance(
     """
 
     if not HAVE_WANDB:
-        raise ImportError("wandb is required for calculting perf and convergence metrics")
+        raise ImportError("wandb is required for calculating perf and convergence metrics")
 
     if not HAVE_NUMPY:
         raise ImportError("numpy is required for calculating perf and convergence metrics")
