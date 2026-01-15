@@ -276,7 +276,6 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     # Create dataset configuration based on type
     if args.data == "mock":
         recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
-        recipe.dataset.num_workers = 8
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
