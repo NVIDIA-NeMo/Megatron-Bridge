@@ -260,13 +260,30 @@ class MambaModelProvider130M(MambaModelProvider):
         This class is deprecated and will be removed in a future release.
     """
 
-    hybrid_override_pattern: str = "M" * 24
-    num_layers: int = 24
-    seq_length: int = 2048
-    hidden_size: int = 768
-    mamba_num_groups: int = 1
-    ffn_hidden_size: int = 768
-    make_vocab_size_divisible_by: int = 16
+    def __init__(
+        self,
+        hybrid_override_pattern: str = "M" * 24,
+        seq_length: int = 2048,
+        make_vocab_size_divisible_by: int = 16,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(
+            hybrid_override_pattern=hybrid_override_pattern,
+            make_vocab_size_divisible_by=make_vocab_size_divisible_by,
+            *args,
+            **kwargs,
+        )
+
+    @override
+    def _default_transformer_cfg(self):
+        cfg = super()._default_transformer_cfg()
+        cfg.num_layers = 24
+        cfg.hidden_size = 768
+        cfg.mamba_num_groups = 1
+        cfg.ffn_hidden_size = 768
+
+        return cfg
 
     def finalize(self) -> None:
         self.transformer_cfg.finalize()
