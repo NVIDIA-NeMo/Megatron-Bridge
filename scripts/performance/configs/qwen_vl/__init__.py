@@ -6,7 +6,7 @@ except ModuleNotFoundError:
     HAVE_MEGATRON_BRIDGE = False
 
 if HAVE_MEGATRON_BRIDGE:
-    from .qwen3_vl_llm_pretrain import (
+    from .qwen3_vl_pretrain import (
         qwen3_vl_30b_a3b_pretrain_config_b200,
         qwen3_vl_30b_a3b_pretrain_config_gb200,
         qwen3_vl_30b_a3b_pretrain_config_gb300,

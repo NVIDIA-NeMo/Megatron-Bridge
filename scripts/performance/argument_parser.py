@@ -143,6 +143,13 @@ def parse_cli_args():
         argument_default=None,
     )
     parser.add_argument(
+        "--domain",
+        type=lower_str,
+        choices=["llm", "vlm"],
+        help="Domain to use for experiment.",
+        default="llm",
+    )
+    parser.add_argument(
         "-m",
         "--model_family_name",
         type=lower_str,
