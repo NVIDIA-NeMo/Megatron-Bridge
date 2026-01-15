@@ -469,6 +469,8 @@ def main(
 
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
+            else:
+                is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
