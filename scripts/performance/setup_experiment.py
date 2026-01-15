@@ -188,6 +188,5 @@ if __name__ == "__main__":
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
             work_dir=args.work_dir,
-            segment=args.segment,
         ),
     )

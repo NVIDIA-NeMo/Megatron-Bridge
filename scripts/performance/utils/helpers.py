@@ -249,10 +249,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("global_batch_size") is not None:
         recipe.train.global_batch_size = kwargs.get("global_batch_size")
     if kwargs.get("micro_batch_size") is not None:
-        logger.info(f"Overriding micro_batch_size from {recipe.train.micro_batch_size} to {kwargs.get('micro_batch_size')}")
         recipe.train.micro_batch_size = kwargs.get("micro_batch_size")
-    else:
-        logger.info(f"No micro_batch_size override, using recipe default: {recipe.train.micro_batch_size}")
 
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True

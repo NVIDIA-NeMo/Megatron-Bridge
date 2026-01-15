@@ -18,7 +18,7 @@ elif [ "$GPU" = "gb200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
-    NUM_GPUS=8
+    NUM_GPUS=16
     GPUS_PER_NODE=4
 else
     echo "Invalid GPU: $GPU"
@@ -94,7 +94,6 @@ python scripts/performance/setup_experiment.py \
     -s 30b_a3b \
     -ng $NUM_GPUS \
     -gn $GPUS_PER_NODE \
-    --segment 4 \
     --container_image $CONTAINER \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
