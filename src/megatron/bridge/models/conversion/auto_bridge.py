@@ -101,6 +101,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
             raise ValueError("hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance")
         self.hf_pretrained: PreTrainedCausalLM | PretrainedConfig = hf_pretrained
+        # When True, directly export FP8 blockwise weights instead of dequantizing to BF16
+        self.export_fp8_weights: bool = False
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -372,6 +374,15 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     cpu=True
             ... ))
         """
+        # Build conversion tasks based on export_fp8_weights configuration
+        if conversion_tasks is None and self.export_fp8_weights:
+            if not isinstance(model, list):
+                model = [model]
+            # Use FP8 export tasks for blockwise FP8 weights
+            conversion_tasks = self._model_bridge.build_export_fp8_tasks(
+                self.hf_pretrained, model
+            )
+
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance,
@@ -985,7 +996,9 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        return model_bridge.get_model_bridge(self._causal_lm_architecture)
+        bridge = model_bridge.get_model_bridge(self._causal_lm_architecture)
+        bridge.export_fp8_weights = self.export_fp8_weights
+        return bridge
 
     @property
     def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
