@@ -117,6 +117,33 @@ def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_b300_config(precision: str = "bf16") -> ConfigContainer:
+    """B300, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.DEEPSEEK_V3_B300_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.DEEPSEEK_V3_B300_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.DEEPSEEK_V3_B300_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    return cfg
+
+
 def deepseek_v3_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
