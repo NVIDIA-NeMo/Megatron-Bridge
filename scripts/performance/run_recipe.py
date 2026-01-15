@@ -70,7 +70,6 @@ def set_user_overrides(config, args):
     # Create dataset configuration based on type
     if args.data == "mock":
         config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
-        config.dataset.num_workers = 8
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
