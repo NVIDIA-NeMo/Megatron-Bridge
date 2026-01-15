@@ -430,10 +430,10 @@ def calc_convergence_and_performance(
     """
 
     if not HAVE_WANDB:
-        raise ImportError("wandb is required for this calculting perf and convergence metrics")
+        raise ImportError("wandb is required for calculting perf and convergence metrics")
 
     if not HAVE_NUMPY:
-        raise ImportError("numpy is required for this calculting perf and convergence metrics")
+        raise ImportError("numpy is required for calculting perf and convergence metrics")
 
     current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
     current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
