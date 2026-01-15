@@ -20,14 +20,13 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedInitConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
@@ -37,21 +36,13 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-class Qwen3CommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Qwen3 recipe helper functions."""
+class Qwen3FinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen3 finetuning recipe helper functions."""
 
     # Core identifiers
     hf_path: str
     dir: str | None
     name: str
-    # Dataset configuration
-    data_paths: list[str] | None
-    data_args_path: str | None
-    train_data_path: list[str] | None
-    valid_data_path: list[str] | None
-    test_data_path: list[str] | None
-    per_split_data_args_path: str | None
-    mock: bool
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
@@ -60,303 +51,550 @@ class Qwen3CommonKwargs(TypedDict, total=False):
     context_parallel_size: int
     sequence_parallel: bool
     use_megatron_fsdp: bool
-    use_null_tokenizer: bool
+    # Finetuning-specific options
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
+    packed_sequence: bool
     # Training hyperparameters
     train_iters: int
-    global_batch_size: int
+    global_batch_size: int | None
     micro_batch_size: int
     seq_length: int
-    lr: float
+    eval_interval: int
+    save_interval: int
+    finetune_lr: float
     min_lr: float
     lr_warmup_iters: int
     lr_decay_iters: int | None
-    eval_interval: int
-    save_interval: int
+    # W&B logging
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
     # Precision / overlap configs
     precision_config: MixedPrecisionConfig | str | None
     comm_overlap_config: CommOverlapConfig | None
 
 
-class Qwen3FinetuneKwargs(Qwen3CommonKwargs, total=False):
-    """Typed options accepted by Qwen3 finetuning recipe helper functions."""
-
-    # Core finetuning options
-    pretrained_checkpoint: str | None
-    peft: str | PEFT | None
-    packed_sequence: bool
-
-    # Training params
-    finetune_lr: float
-
-    # W&B logging
-    wandb_project: str | None
-    wandb_entity: str | None
-    wandb_exp_name: str | None
+# =============================================================================
+# Pretrain Recipes
+# =============================================================================
+# Each pretrain recipe returns a ConfigContainer with all settings directly visible.
+# Users can modify the returned config as needed before training.
 
 
-def qwen3_600m_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_600m_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 0.6B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=1, PP=1 (fits on a single GPU).
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-0.6B",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # =========================================================================
+    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # =========================================================================
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 1  # --tensor-model-parallel-size
+    cfg.model.pipeline_model_parallel_size = 1  # --pipeline-model-parallel-size
+    cfg.model.virtual_pipeline_model_parallel_size = None  # --num-layers-per-virtual-pipeline-stage
+    cfg.model.context_parallel_size = 1  # --context-parallel-size
+    cfg.model.sequence_parallel = False  # --sequence-parallel
+    cfg.model.seq_length = 4096
+
+    # Training optimizations
+    cfg.model.cross_entropy_loss_fusion = True  # --cross-entropy-loss-fusion
+    cfg.model.cross_entropy_fusion_impl = "te"  # --cross-entropy-fusion-impl
+    cfg.model.init_method_std = 0.02  # --init-method-std
+
+    # =========================================================================
+    # Tokenizer (--tokenizer-type, --tokenizer-model)
+    # =========================================================================
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"  # --tokenizer-model
+
+    # =========================================================================
+    # Training config (--train-samples, --exit-duration-in-mins, --manual-gc, etc.)
+    # =========================================================================
+    # cfg.train.train_samples = 268554688  # --train-samples (alternative to train_iters)
+    # cfg.train.exit_duration_in_mins = 230  # --exit-duration-in-mins
+    cfg.train.manual_gc_interval = 5  # --manual-gc-interval
+
+    # =========================================================================
+    # Dataset config (--data-path, --split, --num-workers, --no-mmap-bin-files)
+    # =========================================================================
+    # cfg.dataset.blend = (["path/to/data"], None)  # --data-path
+    cfg.dataset.split = "99,1,0"  # --split
+    cfg.dataset.mmap_bin_files = False  # --no-mmap-bin-files
+    cfg.dataset.num_workers = 6  # --num-workers
+
+    # =========================================================================
+    # Logger config (--log-interval, --log-timers-to-tensorboard, --wandb-project, etc.)
+    # =========================================================================
+    cfg.logger.log_interval = 1  # --log-interval
+    cfg.logger.log_memory_to_tensorboard = True  # --log-memory-to-tensorboard
+    cfg.logger.log_params_norm = True  # --log-params-norm
+    cfg.logger.log_validation_ppl_to_tensorboard = True  # --log-validation-ppl-to-tensorboard
+    cfg.logger.log_throughput = True  # --log-throughput
+    # cfg.logger.wandb_project = "my_project"  # --wandb-project
+    # cfg.logger.wandb_exp_name = "Qwen3-0.6B-experiment"  # --wandb-exp-name
+
+    # =========================================================================
+    # Checkpoint config (--save, --load, --save-interval, --finetune, etc.)
+    # =========================================================================
+    cfg.checkpoint.finetune = False  # --finetune
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"  # --dist-ckpt-strictness
+
+    # =========================================================================
+    # Distributed config (--distributed-timeout-minutes, --enable-experimental)
+    # =========================================================================
+    cfg.dist.distributed_timeout_minutes = 60  # --distributed-timeout-minutes
+    cfg.dist.enable_megatron_core_experimental = True  # --enable-experimental
+
+    return cfg
 
 
-def qwen3_1p7b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_1p7b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 1.7B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=1, PP=1 (fits on a single GPU).
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-1.7B",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # =========================================================================
+    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # =========================================================================
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 1  # --tensor-model-parallel-size
+    cfg.model.pipeline_model_parallel_size = 1  # --pipeline-model-parallel-size
+    cfg.model.virtual_pipeline_model_parallel_size = None  # --num-layers-per-virtual-pipeline-stage
+    cfg.model.context_parallel_size = 1  # --context-parallel-size
+    cfg.model.sequence_parallel = False  # --sequence-parallel
+    cfg.model.seq_length = 4096
+
+    # Training optimizations
+    cfg.model.cross_entropy_loss_fusion = True  # --cross-entropy-loss-fusion
+    cfg.model.cross_entropy_fusion_impl = "te"  # --cross-entropy-fusion-impl
+    cfg.model.init_method_std = 0.02  # --init-method-std
+
+    # =========================================================================
+    # Tokenizer (--tokenizer-type, --tokenizer-model)
+    # =========================================================================
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-1.7B"  # --tokenizer-model
+
+    # =========================================================================
+    # Training config (--train-samples, --exit-duration-in-mins, --manual-gc, etc.)
+    # =========================================================================
+    # cfg.train.train_samples = 268554688  # --train-samples (alternative to train_iters)
+    # cfg.train.exit_duration_in_mins = 230  # --exit-duration-in-mins
+    cfg.train.manual_gc_interval = 5  # --manual-gc-interval
+
+    # =========================================================================
+    # Dataset config (--data-path, --split, --num-workers, --no-mmap-bin-files)
+    # =========================================================================
+    # cfg.dataset.blend = (["path/to/data"], None)  # --data-path
+    cfg.dataset.split = "99,1,0"  # --split
+    cfg.dataset.mmap_bin_files = False  # --no-mmap-bin-files
+    cfg.dataset.num_workers = 6  # --num-workers
+
+    # =========================================================================
+    # Logger config (--log-interval, --log-timers-to-tensorboard, --wandb-project, etc.)
+    # =========================================================================
+    cfg.logger.log_interval = 1  # --log-interval
+    cfg.logger.log_memory_to_tensorboard = True  # --log-memory-to-tensorboard
+    cfg.logger.log_params_norm = True  # --log-params-norm
+    cfg.logger.log_validation_ppl_to_tensorboard = True  # --log-validation-ppl-to-tensorboard
+    cfg.logger.log_throughput = True  # --log-throughput
+    # cfg.logger.wandb_project = "my_project"  # --wandb-project
+    # cfg.logger.wandb_exp_name = "Qwen3-1.7B-experiment"  # --wandb-exp-name
+
+    # =========================================================================
+    # Checkpoint config (--save, --load, --save-interval, --finetune, etc.)
+    # =========================================================================
+    cfg.checkpoint.finetune = False  # --finetune
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"  # --dist-ckpt-strictness
+
+    # =========================================================================
+    # Distributed config (--distributed-timeout-minutes, --enable-experimental)
+    # =========================================================================
+    cfg.dist.distributed_timeout_minutes = 60  # --distributed-timeout-minutes
+    cfg.dist.enable_megatron_core_experimental = True  # --enable-experimental
+
+    return cfg
 
 
-def qwen3_4b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_4b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 4B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=2, PP=1.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-4B",
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # =========================================================================
+    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # =========================================================================
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 2  # --tensor-model-parallel-size
+    cfg.model.pipeline_model_parallel_size = 1  # --pipeline-model-parallel-size
+    cfg.model.virtual_pipeline_model_parallel_size = None  # --num-layers-per-virtual-pipeline-stage
+    cfg.model.context_parallel_size = 1  # --context-parallel-size
+    cfg.model.sequence_parallel = True  # --sequence-parallel (enable for TP > 1)
+    cfg.model.seq_length = 4096
+
+    # Training optimizations
+    cfg.model.cross_entropy_loss_fusion = True  # --cross-entropy-loss-fusion
+    cfg.model.cross_entropy_fusion_impl = "te"  # --cross-entropy-fusion-impl
+    cfg.model.init_method_std = 0.02  # --init-method-std
+
+    # =========================================================================
+    # Tokenizer (--tokenizer-type, --tokenizer-model)
+    # =========================================================================
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-4B"  # --tokenizer-model
+
+    # =========================================================================
+    # Training config (--train-samples, --exit-duration-in-mins, --manual-gc, etc.)
+    # =========================================================================
+    # cfg.train.train_samples = 268554688  # --train-samples (alternative to train_iters)
+    # cfg.train.exit_duration_in_mins = 230  # --exit-duration-in-mins
+    cfg.train.manual_gc_interval = 5  # --manual-gc-interval
+
+    # =========================================================================
+    # Dataset config (--data-path, --split, --num-workers, --no-mmap-bin-files)
+    # =========================================================================
+    # cfg.dataset.blend = (["path/to/data"], None)  # --data-path
+    cfg.dataset.split = "99,1,0"  # --split
+    cfg.dataset.mmap_bin_files = False  # --no-mmap-bin-files
+    cfg.dataset.num_workers = 6  # --num-workers
+
+    # =========================================================================
+    # Logger config (--log-interval, --log-timers-to-tensorboard, --wandb-project, etc.)
+    # =========================================================================
+    cfg.logger.log_interval = 1  # --log-interval
+    cfg.logger.log_memory_to_tensorboard = True  # --log-memory-to-tensorboard
+    cfg.logger.log_params_norm = True  # --log-params-norm
+    cfg.logger.log_validation_ppl_to_tensorboard = True  # --log-validation-ppl-to-tensorboard
+    cfg.logger.log_throughput = True  # --log-throughput
+    # cfg.logger.wandb_project = "my_project"  # --wandb-project
+    # cfg.logger.wandb_exp_name = "Qwen3-4B-experiment"  # --wandb-exp-name
+
+    # =========================================================================
+    # Checkpoint config (--save, --load, --save-interval, --finetune, etc.)
+    # =========================================================================
+    cfg.checkpoint.finetune = False  # --finetune
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"  # --dist-ckpt-strictness
+
+    # =========================================================================
+    # Distributed config (--distributed-timeout-minutes, --enable-experimental)
+    # =========================================================================
+    cfg.dist.distributed_timeout_minutes = 60  # --distributed-timeout-minutes
+    cfg.dist.enable_megatron_core_experimental = True  # --enable-experimental
+
+    return cfg
 
 
-def qwen3_8b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_8b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 8B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=4, PP=1.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-8B",
-        "tensor_model_parallel_size": 4,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # =========================================================================
+    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # =========================================================================
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 4  # --tensor-model-parallel-size
+    cfg.model.pipeline_model_parallel_size = 1  # --pipeline-model-parallel-size
+    cfg.model.virtual_pipeline_model_parallel_size = None  # --num-layers-per-virtual-pipeline-stage
+    cfg.model.context_parallel_size = 1  # --context-parallel-size
+    cfg.model.sequence_parallel = True  # --sequence-parallel (enable for TP > 1)
+    cfg.model.seq_length = 4096
+
+    # Training optimizations
+    cfg.model.cross_entropy_loss_fusion = True  # --cross-entropy-loss-fusion
+    cfg.model.cross_entropy_fusion_impl = "te"  # --cross-entropy-fusion-impl
+    cfg.model.init_method_std = 0.02  # --init-method-std
+
+    # =========================================================================
+    # Tokenizer (--tokenizer-type, --tokenizer-model)
+    # =========================================================================
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"  # --tokenizer-model
+
+    # =========================================================================
+    # Training config (--train-samples, --exit-duration-in-mins, --manual-gc, etc.)
+    # =========================================================================
+    # cfg.train.train_samples = 268554688  # --train-samples (alternative to train_iters)
+    # cfg.train.exit_duration_in_mins = 230  # --exit-duration-in-mins
+    cfg.train.manual_gc_interval = 5  # --manual-gc-interval
+
+    # =========================================================================
+    # Dataset config (--data-path, --split, --num-workers, --no-mmap-bin-files)
+    # =========================================================================
+    # cfg.dataset.blend = (["path/to/data"], None)  # --data-path
+    cfg.dataset.split = "99,1,0"  # --split
+    cfg.dataset.mmap_bin_files = False  # --no-mmap-bin-files
+    cfg.dataset.num_workers = 6  # --num-workers
+
+    # =========================================================================
+    # Logger config (--log-interval, --log-timers-to-tensorboard, --wandb-project, etc.)
+    # =========================================================================
+    cfg.logger.log_interval = 1  # --log-interval
+    cfg.logger.log_memory_to_tensorboard = True  # --log-memory-to-tensorboard
+    cfg.logger.log_params_norm = True  # --log-params-norm
+    cfg.logger.log_validation_ppl_to_tensorboard = True  # --log-validation-ppl-to-tensorboard
+    cfg.logger.log_throughput = True  # --log-throughput
+    # cfg.logger.wandb_project = "my_project"  # --wandb-project
+    # cfg.logger.wandb_exp_name = "Qwen3-8B-experiment"  # --wandb-exp-name
+
+    # =========================================================================
+    # Checkpoint config (--save, --load, --save-interval, --finetune, etc.)
+    # =========================================================================
+    cfg.checkpoint.finetune = False  # --finetune
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"  # --dist-ckpt-strictness
+
+    # =========================================================================
+    # Distributed config (--distributed-timeout-minutes, --enable-experimental)
+    # =========================================================================
+    cfg.dist.distributed_timeout_minutes = 60  # --distributed-timeout-minutes
+    cfg.dist.enable_megatron_core_experimental = True  # --enable-experimental
+
+    return cfg
 
 
-def qwen3_14b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_14b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 14B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=8, PP=1.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-14B",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # =========================================================================
+    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # =========================================================================
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 8  # --tensor-model-parallel-size
+    cfg.model.pipeline_model_parallel_size = 1  # --pipeline-model-parallel-size
+    cfg.model.virtual_pipeline_model_parallel_size = None  # --num-layers-per-virtual-pipeline-stage
+    cfg.model.context_parallel_size = 1  # --context-parallel-size
+    cfg.model.sequence_parallel = True  # --sequence-parallel (enable for TP > 1)
+    cfg.model.seq_length = 4096
+
+    # Training optimizations
+    cfg.model.cross_entropy_loss_fusion = True  # --cross-entropy-loss-fusion
+    cfg.model.cross_entropy_fusion_impl = "te"  # --cross-entropy-fusion-impl
+    cfg.model.init_method_std = 0.02  # --init-method-std
+
+    # =========================================================================
+    # Tokenizer (--tokenizer-type, --tokenizer-model)
+    # =========================================================================
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-14B"  # --tokenizer-model
+
+    # =========================================================================
+    # Training config (--train-samples, --exit-duration-in-mins, --manual-gc, etc.)
+    # =========================================================================
+    # cfg.train.train_samples = 268554688  # --train-samples (alternative to train_iters)
+    # cfg.train.exit_duration_in_mins = 230  # --exit-duration-in-mins
+    cfg.train.manual_gc_interval = 5  # --manual-gc-interval
+
+    # =========================================================================
+    # Dataset config (--data-path, --split, --num-workers, --no-mmap-bin-files)
+    # =========================================================================
+    # cfg.dataset.blend = (["path/to/data"], None)  # --data-path
+    cfg.dataset.split = "99,1,0"  # --split
+    cfg.dataset.mmap_bin_files = False  # --no-mmap-bin-files
+    cfg.dataset.num_workers = 6  # --num-workers
+
+    # =========================================================================
+    # Logger config (--log-interval, --log-timers-to-tensorboard, --wandb-project, etc.)
+    # =========================================================================
+    cfg.logger.log_interval = 1  # --log-interval
+    cfg.logger.log_memory_to_tensorboard = True  # --log-memory-to-tensorboard
+    cfg.logger.log_params_norm = True  # --log-params-norm
+    cfg.logger.log_validation_ppl_to_tensorboard = True  # --log-validation-ppl-to-tensorboard
+    cfg.logger.log_throughput = True  # --log-throughput
+    # cfg.logger.wandb_project = "my_project"  # --wandb-project
+    # cfg.logger.wandb_exp_name = "Qwen3-14B-experiment"  # --wandb-exp-name
+
+    # =========================================================================
+    # Checkpoint config (--save, --load, --save-interval, --finetune, etc.)
+    # =========================================================================
+    cfg.checkpoint.finetune = False  # --finetune
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"  # --dist-ckpt-strictness
+
+    # =========================================================================
+    # Distributed config (--distributed-timeout-minutes, --enable-experimental)
+    # =========================================================================
+    cfg.dist.distributed_timeout_minutes = 60  # --distributed-timeout-minutes
+    cfg.dist.enable_megatron_core_experimental = True  # --enable-experimental
+
+    return cfg
 
 
-def qwen3_32b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_32b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 32B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=8, PP=2 with recompute enabled for memory optimization.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-32B",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 2,
-        "pipeline_dtype": torch.bfloat16,
-        "enable_recompute": True,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # =========================================================================
+    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # =========================================================================
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 8  # --tensor-model-parallel-size
+    cfg.model.pipeline_model_parallel_size = 2  # --pipeline-model-parallel-size
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None  # --num-layers-per-virtual-pipeline-stage
+    cfg.model.context_parallel_size = 1  # --context-parallel-size
+    cfg.model.sequence_parallel = True  # --sequence-parallel (enable for TP > 1)
+    cfg.model.seq_length = 4096
+
+    # Training optimizations
+    cfg.model.cross_entropy_loss_fusion = True  # --cross-entropy-loss-fusion
+    cfg.model.cross_entropy_fusion_impl = "te"  # --cross-entropy-fusion-impl
+    cfg.model.init_method_std = 0.02  # --init-method-std
+
+    # Enable recompute for memory optimization (large models)
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+
+    # =========================================================================
+    # Tokenizer (--tokenizer-type, --tokenizer-model)
+    # =========================================================================
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-32B"  # --tokenizer-model
+
+    # =========================================================================
+    # Training config (--train-samples, --exit-duration-in-mins, --manual-gc, etc.)
+    # =========================================================================
+    # cfg.train.train_samples = 268554688  # --train-samples (alternative to train_iters)
+    # cfg.train.exit_duration_in_mins = 230  # --exit-duration-in-mins
+    cfg.train.manual_gc_interval = 5  # --manual-gc-interval
+
+    # =========================================================================
+    # Dataset config (--data-path, --split, --num-workers, --no-mmap-bin-files)
+    # =========================================================================
+    # cfg.dataset.blend = (["path/to/data"], None)  # --data-path
+    cfg.dataset.split = "99,1,0"  # --split
+    cfg.dataset.mmap_bin_files = False  # --no-mmap-bin-files
+    cfg.dataset.num_workers = 6  # --num-workers
+
+    # =========================================================================
+    # Logger config (--log-interval, --log-timers-to-tensorboard, --wandb-project, etc.)
+    # =========================================================================
+    cfg.logger.log_interval = 1  # --log-interval
+    cfg.logger.log_memory_to_tensorboard = True  # --log-memory-to-tensorboard
+    cfg.logger.log_params_norm = True  # --log-params-norm
+    cfg.logger.log_validation_ppl_to_tensorboard = True  # --log-validation-ppl-to-tensorboard
+    cfg.logger.log_throughput = True  # --log-throughput
+    # cfg.logger.wandb_project = "my_project"  # --wandb-project
+    # cfg.logger.wandb_exp_name = "Qwen3-32B-experiment"  # --wandb-exp-name
+
+    # =========================================================================
+    # Checkpoint config (--save, --load, --save-interval, --finetune, etc.)
+    # =========================================================================
+    cfg.checkpoint.finetune = False  # --finetune
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"  # --dist-ckpt-strictness
+
+    # =========================================================================
+    # Distributed config (--distributed-timeout-minutes, --enable-experimental)
+    # =========================================================================
+    cfg.dist.distributed_timeout_minutes = 60  # --distributed-timeout-minutes
+    cfg.dist.enable_megatron_core_experimental = True  # --enable-experimental
+
+    return cfg
 
 
-def _qwen3_common(
-    hf_path: str,
-    dir: str | None = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: list[str] | None = None,
-    data_args_path: str | None = None,
-    train_data_path: list[str] | None = None,
-    valid_data_path: list[str] | None = None,
-    test_data_path: list[str] | None = None,
-    per_split_data_args_path: str | None = None,
-    mock: bool = False,
-    # Model configuration
-    tensor_model_parallel_size: int = 1,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: torch.dtype | None = None,
-    virtual_pipeline_model_parallel_size: int | None = None,
-    context_parallel_size: int = 1,
-    sequence_parallel: bool = False,
-    use_megatron_fsdp: bool = False,
-    use_null_tokenizer: bool = False,
-    enable_recompute: bool = False,
-    # Training hyperparameters
-    train_iters: int = 300000,
-    global_batch_size: int = 32,
-    micro_batch_size: int = 2,
-    seq_length: int = 4096,
-    lr: float = 3e-4,
-    min_lr: float = 3e-5,
-    lr_warmup_iters: int = 500,
-    lr_decay_iters: int | None = None,
-    eval_interval: int = 500,
-    save_interval: int = 500,
-    # Precision recipe
-    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
-    comm_overlap_config: CommOverlapConfig | None = None,
-) -> ConfigContainer:
-    """
-    Create a pre-training configuration for Qwen3 models using a given HuggingFace path.
+def _pretrain_common() -> ConfigContainer:
+    """Create a base pre-training ConfigContainer with common defaults for any language model.
 
-    Args:
-        hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-1.7B").
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallel (bool): Whether to use sequence parallelism.
-        use_megatron_fsdp (bool): Whether to use Megatron FSDP.
-        use_null_tokenizer (bool): Whether to use NullTokenizer instead of HuggingFaceTokenizer.
-        enable_recompute (bool): Whether to enable recompute for memory optimization.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
+    This function returns a ConfigContainer template with sensible defaults.
+    The caller MUST set `cfg.model` and `cfg.tokenizer.tokenizer_model` before use.
 
     Returns:
-        ConfigContainer: Configuration for pre-training.
+        ConfigContainer: Base configuration template for pre-training.
     """
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
+    # Default output directories
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "default")
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
-    )
-
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
-    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
-    model_cfg.pipeline_dtype = pipeline_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
-    model_cfg.context_parallel_size = context_parallel_size
-    model_cfg.sequence_parallel = sequence_parallel
-    model_cfg.seq_length = seq_length
-
-    # Add recompute settings for memory optimization (used by larger models like 32B)
-    if enable_recompute:
-        model_cfg.recompute_granularity = "full"
-        model_cfg.recompute_method = "uniform"
-        model_cfg.recompute_num_layers = 1
-
-    model_cfg.cross_entropy_fusion_impl = "te"
-
+    # Default optimizer and scheduler
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        max_lr=lr,
-        min_lr=min_lr,
+        lr_warmup_iters=500,
+        lr_decay_iters=None,  # Defaults to train_iters during validation
+        max_lr=3e-4,
+        min_lr=3e-5,
     )
 
-    # Config Container
-    cfg_container = ConfigContainer(
-        model=model_cfg,
+    cfg = ConfigContainer(
+        # Model - MUST be set by each recipe before use
+        model=None,  # type: ignore[arg-type]
+        # Training config
         train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=eval_interval,
+            train_iters=300000,
+            eval_interval=500,
             eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
+            global_batch_size=32,
+            micro_batch_size=2,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
         ),
+        # Optimizer and scheduler
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
+        # DDP config - these are the commonly overridden settings
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
-            average_in_collective=True,  # Not supported for custom FSDP for now, need to be set to False if using FSDP
-            data_parallel_sharding_strategy="optim_grads_params",  # For custom FSDP only
+            average_in_collective=True,
+            data_parallel_sharding_strategy="optim_grads_params",
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
+        # Dataset config - uses mock data by default
         dataset=GPTDatasetConfig(
             random_seed=1234,
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            seq_length=seq_length,
+            seq_length=4096,
             num_dataset_builder_threads=1,
-            blend=blend,
-            blend_per_split=blend_per_split,
-            split=split,
-            # Dataloader config parameters
+            blend=None,  # Mock data mode
+            blend_per_split=None,
+            split="1,1,1",
             data_sharding=True,
             dataloader_type="single",
             skip_getting_attention_mask_from_dataset=True,
         ),
+        # Logger config
         logger=LoggerConfig(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
+        # Tokenizer - placeholder, each recipe should set tokenizer_model
         tokenizer=TokenizerConfig(
-            tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
-            tokenizer_model=hf_path if not use_null_tokenizer else None,
-            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=None,  # Must be set by each recipe
         ),
+        # Checkpoint config
         checkpoint=CheckpointConfig(
-            save_interval=save_interval,
+            save_interval=500,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",
             fully_parallel_save=True,
         ),
+        # RNG config
         rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
+        # Distributed init config
+        dist=DistributedInitConfig(),
+        # Mixed precision - bf16 by default
+        mixed_precision="bf16_mixed",
     )
 
-    return cfg_container
+    return cfg
 
 
 def qwen3_600m_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
