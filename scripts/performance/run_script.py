@@ -57,7 +57,7 @@ def main():
     )
     
     # Select forward step function based on the model family name.
-    if args.model_family_name == "qwen_vl":
+    if args.domain == "vlm":
         forward_step_func = vlm_forward_step
     else:
         forward_step_func = forward_step
