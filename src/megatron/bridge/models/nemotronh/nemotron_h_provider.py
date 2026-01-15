@@ -153,6 +153,7 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
 class Nemotron3NanoProvider(NemotronHModelProvider):
     """Configuration for a 3B parameter Nemotron 3 Nano model."""
 
+    seq_length: int = 262144
     num_query_groups: int = 2
     hybrid_override_pattern: str = "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
     num_layers: int = 52
@@ -168,6 +169,8 @@ class Nemotron3NanoProvider(NemotronHModelProvider):
     moe_shared_expert_intermediate_size: int = 3712  # 1856 * 2 shared expert
     moe_router_topk: int = 6
     moe_router_topk_scaling_factor: float = 2.5
+    moe_router_num_groups: int = 1
+    moe_router_group_topk: int = 1
 
 
 # -----------------------------------------------------------------------------

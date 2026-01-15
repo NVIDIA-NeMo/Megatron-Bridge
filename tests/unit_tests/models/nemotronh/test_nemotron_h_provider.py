@@ -377,6 +377,7 @@ class TestNemotron3NanoProvider:
         provider = Nemotron3NanoProvider()
 
         # Check Nemotron 3 Nano specific configuration
+        assert provider.seq_length == 262144
         assert provider.num_layers == 52
         assert provider.hidden_size == 2688
         assert provider.num_attention_heads == 32
@@ -398,6 +399,8 @@ class TestNemotron3NanoProvider:
         assert provider.moe_shared_expert_intermediate_size == 3712  # 1856 * 2 shared expert
         assert provider.moe_router_topk == 6
         assert provider.moe_router_topk_scaling_factor == 2.5
+        assert provider.moe_router_num_groups == 1
+        assert provider.moe_router_group_topk == 1
 
     def test_nemotron_3_nano_override_configuration(self):
         """Test Nemotron 3 Nano model with overridden configuration."""
