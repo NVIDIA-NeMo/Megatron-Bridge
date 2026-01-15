@@ -25,11 +25,23 @@ from typing import List, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TENorm,
+    TERowParallelLinear,
+)
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models import Qwen3ModelProvider, Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+from megatron.core.models.vision.vit_layer_specs import (
+    get_vit_layer_with_transformer_engine_spec,
+)
+from copy import deepcopy
 
 
 @dataclass
@@ -122,11 +134,19 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             normalization="RMSNorm",
             fp8=False,
         )
+        vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+        vision_patch_merger_spec = PatchMergerSubmodules(
+            patch_norm=TENorm,
+            linear_fc1=TEColumnParallelLinear,
+            linear_fc2=TERowParallelLinear,
+        )
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_vision_config,
+            vision_transformer_layer_spec=vision_transformer_layer_spec,
+            vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
             post_process=post_process,
         )
@@ -270,7 +290,11 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
 
         # Create vision transformer config - placeholder for future use
         # vision_transformer_config = deepcopy(self)
-        hf_config = self.vision_config
+        hf_vision_config = self.vision_config
+
+        vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), hf_vision_config)
+        vision_transformer_config.pipeline_model_parallel_size = 1
+        vision_transformer_config.first_pipeline_num_layers = None
 
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
@@ -280,11 +304,20 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             normalization="RMSNorm",
         )
 
+        vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+        vision_patch_merger_spec = PatchMergerSubmodules(
+            patch_norm=TENorm,
+            linear_fc1=TEColumnParallelLinear,
+            linear_fc2=TERowParallelLinear,
+        )
+
         # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_config,
+            vision_transformer_config=vision_transformer_config,
+            vision_transformer_layer_spec=vision_transformer_layer_spec,
+            vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
             post_process=post_process,
         )
