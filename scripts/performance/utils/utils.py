@@ -184,7 +184,7 @@ def get_perf_optimized_recipe(
     if train_task == "pretrain":
         return recipe_builder(precision=compute_dtype, mock=mock, config_variant=config_variant)
     else:
-        return recipe_builder(precision=compute_dtype)
+        return recipe_builder(precision=compute_dtype, config_variant=config_variant)
 
 
 def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):

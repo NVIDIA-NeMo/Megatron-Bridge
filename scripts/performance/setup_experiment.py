@@ -183,6 +183,7 @@ def main(
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    ep_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -320,6 +321,7 @@ def main(
                 tp_size=tp_size,
                 pp_size=pp_size,
                 cp_size=cp_size,
+                ep_size=ep_size,
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
                 gpu=gpu,
@@ -453,22 +455,24 @@ def main(
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
 
-            is_testing_passed, error_msg = calc_convergence_and_performance(
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                assets_dir=os.path.join(job_dir, exp_name),
-                log_paths=log_paths,
-                loss_metric="lm loss",
-                timing_metric="elapsed time per iteration (ms)",
-                golden_values_path=golden_values_path,
-                convergence_config=convergence_params,
-                performance_config=performance_params,
-                wandb_run=wandb_run,
-            )
-
             if wandb_run:
+                is_testing_passed, error_msg = calc_convergence_and_performance(
+                    model_family_name=model_family_name,
+                    model_recipe_name=model_recipe_name,
+                    assets_dir=os.path.join(job_dir, exp_name),
+                    log_paths=log_paths,
+                    loss_metric="lm loss",
+                    timing_metric="elapsed time per iteration (ms)",
+                    golden_values_path=golden_values_path,
+                    convergence_config=convergence_params,
+                    performance_config=performance_params,
+                    wandb_run=wandb_run,
+                )
+
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
+            else:
+                is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
@@ -529,6 +533,7 @@ if __name__ == "__main__":
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        ep_size=args.expert_model_parallel_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
