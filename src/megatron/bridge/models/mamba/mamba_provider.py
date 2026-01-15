@@ -15,7 +15,7 @@
 import logging
 import warnings
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union, override
 
 import torch
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
@@ -81,59 +81,123 @@ def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
         return transformer_engine_mamba_stack_spec()
 
 
-@dataclass
-class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
+class MambaModelProvider(ModelProviderMixin[MCoreMambaModel]):
     """Configuration and provider for Megatron Core Mamba models.
 
     This class extends TransformerConfig with Mamba-specific parameters and
     provides a method to instantiate configured Mamba models.
+
+    Precendence for TransformerConfig settings is as follows:
+        1: `transformer_cfg_kwargs`
+        2: `config` argument
+        3: mamba-specific defaults in `_default_transformer_cfg()`
     """
 
-    # Model configuration
-    fp16_lm_cross_entropy: bool = False
-    parallel_output: bool = True
-    share_embeddings_and_output_weights: bool = False
-    params_dtype: torch.dtype = torch.bfloat16
-    fp16: bool = False
-    bf16: bool = True
-    num_layers: int = 2
-    mamba_num_groups: int = 8
-    num_attention_heads: int = 1
-    hybrid_attention_ratio: float = 0.0
-    hybrid_mlp_ratio: float = 0.0
-    hybrid_override_pattern: Optional[str] = None
-    seq_length: int = 8192
-    # Mamba with no attention has no need for position embeddings, so none is default
-    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
-    rotary_percent: float = 1.0
-    rotary_base: int = 10000
-    seq_len_interpolation_factor: Optional[float] = None
-    apply_rope_fusion: bool = True
-    make_vocab_size_divisible_by: int = 128
-    gated_linear_unit: bool = False
-    normalization: str = "RMSNorm"
-    add_bias_linear: bool = False
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-    layernorm_epsilon: float = 1e-5
-    attention_backend: AttnBackend = AttnBackend.flash
-    deallocate_pipeline_outputs: bool = True
-    bias_dropout_fusion: bool = True
-    cross_entropy_loss_fusion: bool = True
-    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
-        get_default_mamba_stack_spec
-    )
-    vocab_size: Optional[int] = None
-    should_pad_vocab: bool = False
-    hf_model_id: Optional[str] = None
-    _pg_collection: Optional[ProcessGroupCollection] = None
-    """Optional HuggingFace model identifier associated with this provider."""
+    def __init__(
+        self,
+        config: TransformerConfig | None = None,
+        fp16_lm_cross_entropy: bool = False,
+        parallel_output: bool = True,
+        share_embeddings_and_output_weights: bool = False,
+        hybrid_attention_ratio: float = 0.0,
+        hybrid_mlp_ratio: float = 0.0,
+        hybrid_override_pattern: Optional[str] = None,
+        seq_length: int = 8192,
+        # Mamba with no attention has no need for position embeddings, so none is default
+        position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none",
+        rotary_percent: float = 1.0,
+        rotary_base: int = 10000,
+        seq_len_interpolation_factor: Optional[float] = None,
+        make_vocab_size_divisible_by: int = 128,
+        mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
+            get_default_mamba_stack_spec
+        ),
+        vocab_size: Optional[int] = None,
+        should_pad_vocab: bool = False,
+        hf_model_id: Optional[str] = None,
+        **transformer_cfg_kwargs,
+    ) -> None:
+        self.fp16_lm_cross_entropy = fp16_lm_cross_entropy
+        self.parallel_output = parallel_output
+        self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
+        self.hybrid_attention_ratio = hybrid_attention_ratio
+        self.hybrid_mlp_ratio = hybrid_mlp_ratio
+        self.hybrid_override_pattern = hybrid_override_pattern
+        self.seq_length = seq_length
+        self.position_embedding_type = position_embedding_type
+        self.rotary_percent = rotary_percent
+        self.rotary_base = rotary_base
+        self.seq_len_interpolation_factor = seq_len_interpolation_factor
+        self.make_vocab_size_divisible_by = make_vocab_size_divisible_by
+        self.mamba_stack_spec = mamba_stack_spec
+        self.vocab_size = vocab_size
+        self.should_pad_vocab = should_pad_vocab
+        self.hf_model_id = hf_model_id
 
-    # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
-    # When resuming modelopt_state, we also change the mamba_stack_spec to use quantization-ready layers.
-    restore_modelopt_state: bool = False
+        if config is not None:
+            self.transformer_cfg = config
+        else:
+            self.transformer_cfg = self._default_transformer_cfg()
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
+        for attr_name, val in transformer_cfg_kwargs.items():
+            if hasattr(self.transformer_cfg, attr_name):
+                setattr(self.transformer_cfg, attr_name, val)
+            else:
+                raise AttributeError(
+                    f"TransformerConfig has no attribute {attr_name}. Cannot set {attr_name}={val} on TransformerConfig."
+                )
+
+        self._pg_collection: Optional[ProcessGroupCollection] = None
+        # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
+        # When resuming modelopt_state, we also change the mamba_stack_spec to use quantization-ready layers.
+        self.restore_modelopt_state: bool = False
+
+    def _default_transformer_cfg(self):
+        return TransformerConfig(
+            params_dtype=torch.bfloat16,
+            fp16=False,
+            bf16=True,
+            num_layers=2,
+            mamba_num_groups=8,
+            num_attention_heads=1,
+            apply_rope_fusion=True,
+            gated_linear_unit=False,
+            normalization="RMSNorm",
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            layernorm_epsilon=1e-5,
+            attention_backend=AttnBackend.flash,
+            deallocate_pipeline_outputs=True,
+            bias_dropout_fusion=True,
+            cross_entropy_loss_fusion=True,
+        )
+
+    @override
+    def __setattr__(self, name: str, value: Any, /) -> None:
+        if hasattr(self.transformer_cfg, name):
+            setattr(self.transformer_cfg, name, value)
+        elif hasattr(self, name):
+            super().__setattr__(name, value)
+        else:
+            raise AttributeError(
+                f"Cannot set {name}={value}."
+                f" Neither MambaModelProvider nor TransformerConfig has any attribute {name}."
+            )
+
+    @override
+    def __getattr__(self, name: str, /) -> Any:
+        if hasattr(self.transformer_cfg, name):
+            return getattr(self.transformer_cfg, name)
+        elif hasattr(self, name):
+            return self.name
+        else:
+            raise AttributeError(f"Neither MambaModelProvider nor TransformerConfig has any attribute {name}.")
+
+    @override
+    def provide(
+        self, pre_process: bool | None = None, post_process: bool | None = None, vp_stage: int | None = None
+    ) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
 
         Args:
@@ -168,7 +232,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             padded_vocab_size = self.vocab_size
 
         return MCoreMambaModel(
-            self,
+            self.transformer_cfg,
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,
