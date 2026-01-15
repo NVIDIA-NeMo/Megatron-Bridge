@@ -225,6 +225,10 @@ class Qwen3VLModel(MegatronModule):
         vision_data = None
         vision_mask = None
         deepstack_feature_lists = None
+        
+        # position ids is computed within the model
+        position_ids = None
+
         cp_size = mpu.get_context_parallel_world_size()
 
         if self.pre_process:

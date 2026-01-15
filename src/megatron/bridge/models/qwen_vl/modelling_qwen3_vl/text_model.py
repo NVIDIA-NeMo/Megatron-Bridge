@@ -132,14 +132,9 @@ class Qwen3VLGPTModel(GPTModel):
         """
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
-        if torch.distributed.get_rank() == 0:
-            breakpoint()
-        torch.distributed.barrier()
 
-        # currently
-        # decoder_input.shape torch.Size([4096, 4, 2048])
-        # position_ids.shape torch.Size([4, 4096])
-        # maybe the preprocess in Qwen3VLModel.forward's support for thd will crash this rope.
+        # decoder_input [seq_len, batch_size, hidden_size]
+        # position_ids [batch_size, seq_len]
 
         decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = self._preprocess(
             input_ids=input_ids,
