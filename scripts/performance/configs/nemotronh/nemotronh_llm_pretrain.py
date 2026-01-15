@@ -16,10 +16,17 @@ import logging
 
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
-from utils.utils import get_workload_base_config
 
 from megatron.bridge.recipes.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+
+from .nemotronh_workload_base_configs import (
+    NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_B300_FP8_CS,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS,
+    NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -31,19 +38,9 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def nemotronh_56b_pretrain_config_gb300(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
-) -> ConfigContainer:
+def nemotronh_56b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB300, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
-    base_cfg = get_workload_base_config(
-        model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
-        gpu="gb300",
-        compute_dtype="FP8_CS",
-        task="pretrain",
-        config_variant=config_variant,
-    )
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -56,19 +53,9 @@ def nemotronh_56b_pretrain_config_gb300(
     return cfg
 
 
-def nemotronh_56b_pretrain_config_gb200(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
-) -> ConfigContainer:
+def nemotronh_56b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """GB200, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
-    base_cfg = get_workload_base_config(
-        model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
-        gpu="gb200",
-        compute_dtype="FP8_CS",
-        task="pretrain",
-        config_variant=config_variant,
-    )
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_GB200_FP8_CS
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -81,19 +68,9 @@ def nemotronh_56b_pretrain_config_gb200(
     return cfg
 
 
-def nemotronh_56b_pretrain_config_b300(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
-) -> ConfigContainer:
+def nemotronh_56b_pretrain_config_b300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B300, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
-    base_cfg = get_workload_base_config(
-        model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
-        gpu="b300",
-        compute_dtype="FP8_CS",
-        task="pretrain",
-        config_variant=config_variant,
-    )
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_B300_FP8_CS
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -106,19 +83,9 @@ def nemotronh_56b_pretrain_config_b300(
     return cfg
 
 
-def nemotronh_56b_pretrain_config_b200(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
-) -> ConfigContainer:
+def nemotronh_56b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """B200, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
-    base_cfg = get_workload_base_config(
-        model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
-        gpu="b200",
-        compute_dtype="FP8_CS",
-        task="pretrain",
-        config_variant=config_variant,
-    )
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_B200_FP8_CS
     precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -131,21 +98,11 @@ def nemotronh_56b_pretrain_config_b200(
     return cfg
 
 
-def nemotronh_56b_pretrain_config_h100(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
-) -> ConfigContainer:
+def nemotronh_56b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
     """H100, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
-    base_cfg = get_workload_base_config(
-        model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
-        gpu="h100",
-        compute_dtype="FP8_CS",
-        task="pretrain",
-        config_variant=config_variant,
-    )
     precision_config = get_precision_config(precision)
 
+    base_cfg = NEMOTRONH_56B_PRETRAIN_CONFIG_H100_FP8_CS
     cfg = nemotronh_56b_pretrain_config(
         mock=mock,
         precision_config=precision_config,
