@@ -269,7 +269,7 @@ class MambaModelProvider130M(MambaModelProvider):
     make_vocab_size_divisible_by: int = 16
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("MambaModelProvider130M")
 
 
@@ -290,7 +290,7 @@ class MambaModelProvider370M(MambaModelProvider):
     make_vocab_size_divisible_by: int = 16
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("MambaModelProvider370M")
 
 
@@ -311,7 +311,7 @@ class MambaModelProvider780M(MambaModelProvider):
     make_vocab_size_divisible_by: int = 16
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("MambaModelProvider780M")
 
 
@@ -332,7 +332,7 @@ class MambaModelProvider1P3B(MambaModelProvider):
     make_vocab_size_divisible_by: int = 16
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("MambaModelProvider1P3B")
 
 
@@ -353,7 +353,7 @@ class MambaModelProvider2P7B(MambaModelProvider):
     make_vocab_size_divisible_by: int = 16
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("MambaModelProvider2P7B")
 
 
@@ -375,7 +375,7 @@ class NVIDIAMambaModelProvider8B(MambaModelProvider):
     make_vocab_size_divisible_by: int = 128
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("NVIDIAMambaModelProvider8B")
 
 
@@ -398,7 +398,7 @@ class NVIDIAMambaHybridModelProvider8B(MambaModelProvider):
     make_vocab_size_divisible_by: int = 128
 
     def finalize(self) -> None:
-        super().finalize()
+        self.transformer_cfg.finalize()
         _warn_class_deprecated("NVIDIAMambaHybridModelProvider8B")
 
 
@@ -441,7 +441,7 @@ class MambaProvider(MambaModelProvider):
 
     def __post_init__(self) -> None:
         _warn_deprecated("MambaProvider", "MambaModelProvider")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -455,7 +455,7 @@ class MambaProvider130M(MambaModelProvider130M):
 
     def __post_init__(self) -> None:
         _warn_deprecated("MambaProvider130M", "MambaModelProvider130M")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -469,7 +469,7 @@ class MambaProvider370M(MambaModelProvider370M):
 
     def __post_init__(self) -> None:
         _warn_deprecated("MambaProvider370M", "MambaModelProvider370M")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -483,7 +483,7 @@ class MambaProvider780M(MambaModelProvider780M):
 
     def __post_init__(self) -> None:
         _warn_deprecated("MambaProvider780M", "MambaModelProvider780M")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -497,7 +497,7 @@ class MambaProvider1_3B(MambaModelProvider1P3B):
 
     def __post_init__(self) -> None:
         _warn_deprecated("MambaProvider1_3B", "MambaModelProvider1P3B")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -511,7 +511,7 @@ class MambaProvider2_7B(MambaModelProvider2P7B):
 
     def __post_init__(self) -> None:
         _warn_deprecated("MambaProvider2_7B", "MambaModelProvider2P7B")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -525,7 +525,7 @@ class NVIDIAMambaProvider8B(NVIDIAMambaModelProvider8B):
 
     def __post_init__(self) -> None:
         _warn_deprecated("NVIDIAMambaProvider8B", "NVIDIAMambaModelProvider8B")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
 
 
 @dataclass
@@ -539,4 +539,4 @@ class NVIDIAMambaHybridProvider8B(NVIDIAMambaHybridModelProvider8B):
 
     def __post_init__(self) -> None:
         _warn_deprecated("NVIDIAMambaHybridProvider8B", "NVIDIAMambaHybridModelProvider8B")
-        super().__post_init__()
+        self.transformer_cfg.__post_init__()
