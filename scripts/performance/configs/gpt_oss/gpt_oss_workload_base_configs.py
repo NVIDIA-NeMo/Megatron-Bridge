@@ -17,10 +17,10 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-V1: Original configs (GBS=512)
-V2: Default configs (GBS=1280)
+V1: GBS=512
+V2: GBS=1280
 
-Use --config_variant to select a variant (default: v2).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -84,7 +84,7 @@ GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
 
 
 # =============================================================================
-# GPT-OSS 120B Pretrain - V2 (default, GBS=1280)
+# GPT-OSS 120B Pretrain - V2 (GBS=1280)
 # =============================================================================
 
 GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(

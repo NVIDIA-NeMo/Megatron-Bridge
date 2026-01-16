@@ -17,10 +17,10 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-V1: Original configs (GBS=2048 for Blackwell variants, GBS=8192 for H100)
-V2: Default configs (GBS=4096 for Blackwell variants, GBS=16384 for H100)
+V1: GBS=2048 for Blackwell variants, GBS=8192 for H100
+V2: GBS=4096 for Blackwell variants, GBS=16384 for H100
 
-Use --config_variant to select a variant (default: v2).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -122,7 +122,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP
 
 
 # =============================================================================
-# DeepSeek V3 Pretrain - V2 (default, GBS=4096 for Blackwell, GBS=16384 for H100)
+# DeepSeek V3 Pretrain - V2 (GBS=4096 for Blackwell, GBS=16384 for H100)
 # =============================================================================
 
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V2 = replace(

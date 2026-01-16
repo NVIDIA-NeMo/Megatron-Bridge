@@ -17,10 +17,10 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-V1: Alternate configs (GBS=128 for 70B pretrain)
-V2: Default configs (GBS=256 for 70B pretrain, original settings for 8B/SFT/LoRA)
+V1: GBS=128 for 70B pretrain
+V2: GBS=256 for 70B pretrain
 
-Use --config_variant to select a variant (default: v2).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -196,7 +196,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
 
 
 # =============================================================================
-# Llama3 70B pretrain presets - V2 (default, GBS=256)
+# Llama3 70B pretrain presets - V2 (GBS=256)
 # =============================================================================
 
 LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(

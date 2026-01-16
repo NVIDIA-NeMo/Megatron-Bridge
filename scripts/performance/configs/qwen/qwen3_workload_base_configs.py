@@ -17,10 +17,10 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-V1: Original configs (235B only: original settings; 30B/Next 80B: only version)
-V2: Default configs (235B: num_gpus=256 for Blackwell, GBS=8192)
+V1: 235B_a22b; 30B_a3b; Next_80b_a3b
+V2: 235B_a22b: num_gpus=256 for Blackwell, GBS=8192 for all GPUs
 
-Use --config_variant to select a variant (default: v2).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -47,7 +47,7 @@ BASE_QWEN3_NEXT_80B_A3B_CONFIG = WorkloadBaseConfig(
 )
 
 # =============================================================================
-# Qwen3 235B A22B presets - V1 (original)
+# Qwen3 235B A22B presets - V1
 # =============================================================================
 
 
@@ -181,7 +181,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
 
 
 # =============================================================================
-# Qwen3 235B A22B presets - V2 (default, num_gpus=256 for Blackwell, GBS=8192 for all)
+# Qwen3 235B A22B presets - V2 (num_gpus=256 for Blackwell, GBS=8192 for all)
 # =============================================================================
 
 QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
@@ -462,7 +462,7 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
 
 
 __all__ = [
-    # Qwen3 235B A22B V1 (original)
+    # Qwen3 235B A22B V1
     "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_BF16_V1",
     "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
     "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
