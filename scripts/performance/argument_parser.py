@@ -645,8 +645,8 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v1'. Use --list_config_variants to see available options.",
-        default="v1",
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2'. Use --list_config_variants to see available options.",
+        default="v2",
     )
     config_variant_args.add_argument(
         "--list_config_variants",
