@@ -161,7 +161,7 @@ class TestDataLoaders:
             dp_group=dp_group,
         )
 
-        mock_broadcast.assert_called_once_with(mock.ANY, 0, group=dp_group)
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
         actual_flags = mock_broadcast.call_args[0][0]
         expected_flags = torch.tensor([1, 1, 1], dtype=torch.long, device="cuda")
         assert torch.equal(actual_flags, expected_flags)
@@ -190,7 +190,7 @@ class TestDataLoaders:
             dp_group=dp_group,
         )
 
-        mock_broadcast.assert_called_once_with(mock.ANY, 0, group=dp_group)
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
         actual_flags = mock_broadcast.call_args[0][0]
         expected_flags = torch.tensor([1, 0, 0], dtype=torch.long, device="cuda")
         assert torch.equal(actual_flags, expected_flags)
