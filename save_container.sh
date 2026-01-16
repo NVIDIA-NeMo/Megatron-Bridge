@@ -15,7 +15,8 @@ MOUNTS="\
 /lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm"
 
 ORIGINAL_CONTAINER_NAME="nvcr.io#nvidia/nemo:25.11"
-NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+# With this weekend's build, [9.18.0.45], cudnn has deterministic f16 MLA support.
+NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.45.sqsh"
 
 
 srun -N1 \
@@ -30,7 +31,8 @@ srun -N1 \
  --container-image=${ORIGINAL_CONTAINER_NAME} \
  --container-writable \
  --container-save=${NEW_CONTAINER_NAME} \
- --pty bash -c "echo 'success'"
+ --pty bash
+#  --pty bash -c "echo 'success'"
 #  --pty bash -c "pip install -q catalogue ninja build && \
 #     pip install -e /opt/megatron-lm --no-build-isolation && \
 #     pip install -e /opt/Megatron-Bridge[recipes] --no-build-isolation && \

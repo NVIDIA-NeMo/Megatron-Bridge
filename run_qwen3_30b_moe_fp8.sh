@@ -27,6 +27,9 @@ elif [ "$GPU" = "gb200" ]; then
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     # Megatron Core requires NCCL_GRAPH_REGISTER=0 to be explicitly set to prevent illegal memory access when CUDA graphs are also active.
     export NCCL_GRAPH_REGISTER=0
+    # These env vars help if the hardware detection isn't working on GB200
+    export NVLINK_DOMAIN_SIZE=72
+    export USE_MNNVL=1
     PRECISION="fp8_mx"
 else
     echo "Invalid GPU: $GPU"
@@ -76,7 +79,7 @@ else
 fi
 
 # AssertionError: Modules must not have hooks registered at the time they are passed. However, registering hooks on modules after passing them through make_graphed_callables is allowed.
-export additional_args="${additional_args} model.cuda_graph_impl=none"
+# export additional_args="${additional_args} model.cuda_graph_impl=none"
 
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
@@ -101,7 +104,7 @@ python scripts/performance/setup_experiment.py \
     -gn $GPUS_PER_NODE \
     -c $PRECISION \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
@@ -114,5 +117,4 @@ python scripts/performance/setup_experiment.py \
     logger.log_memory_to_tensorboard=true \
     logger.throughput_window_size=1 \
     logger.tensorboard_log_interval=1 \
-    $RECOMPUTE_ARGS \
     $additional_args

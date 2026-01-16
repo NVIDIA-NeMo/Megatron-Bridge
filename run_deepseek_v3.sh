@@ -1,28 +1,31 @@
 #!/bin/bash
 # Usage:
-#   Normal run: ./run_qwen3_30b_moe.sh
-#   Deterministic mode: DETERMINISTIC=true ./run_qwen3_30b_moe.sh
-#   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_qwen3_30b_moe.sh
-#   Run on GB200: GPU=gb200 ./run_qwen3_30b_moe.sh
+#   Normal run: ./run_deepseek_v3.sh
+#   Deterministic mode: DETERMINISTIC=true ./run_deepseek_v3.sh
+#   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_deepseek_v3.sh
+#   Run on GB200: GPU=gb200 ./run_deepseek_v3.sh
 set -euo pipefail
 source ../../secrets.sh
 
 GPU=${GPU:-"h100"}
+
+# Use cuDNN 9.18.0.45 for deterministic MLA support and GQA fixes
+export CUDNN_HOME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/cudnn_lib/9.18.0.45/cudnn"
+export LD_LIBRARY_PATH="$CUDNN_HOME/lib:${LD_LIBRARY_PATH:-}"
+export CPATH="$CUDNN_HOME/include:${CPATH:-}"
+
 if [ "$GPU" = "h100" ]; then
     CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_nemorl"
     PARTITION="batch_short"
-    NUM_GPUS=32
+    NUM_GPUS=1024
     GPUS_PER_NODE=8
 elif [ "$GPU" = "gb200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
-    NUM_GPUS=16
+    NUM_GPUS=256
     GPUS_PER_NODE=4
-    # These env vars help if the hardware detection isn't working on GB200
-    export NVLINK_DOMAIN_SIZE=72
-    export USE_MNNVL=1
 else
     echo "Invalid GPU: $GPU"
     exit 1
@@ -65,6 +68,11 @@ elif [ "$BACKEND" = "local" ]; then
     export NVTE_UNFUSED_ATTN=0
     export NVTE_FLASH_ATTN=0
     export additional_args="model.attention_backend=local"
+elif [ "$BACKEND" = "unfused" ]; then
+    export NVTE_FUSED_ATTN=0
+    export NVTE_UNFUSED_ATTN=1
+    export NVTE_FLASH_ATTN=0
+    export additional_args="model.attention_backend=unfused"
 else
     echo "Invalid backend: $BACKEND"
     exit 1
@@ -72,6 +80,9 @@ fi
 
 # AssertionError: Modules must not have hooks registered at the time they are passed. However, registering hooks on modules after passing them through make_graphed_callables is allowed.
 # export additional_args="${additional_args} model.cuda_graph_impl=none"
+# These env vars might help if the hardware detection isn't working
+export NVLINK_DOMAIN_SIZE=72
+export USE_MNNVL=1
 
 if [ "$DETERMINISTIC" = true ]; then
     # Deterministic mode environment variables (all required)
@@ -90,16 +101,16 @@ python scripts/performance/setup_experiment.py \
     --partition $PARTITION \
     --gpu $GPU \
     --time_limit "01:00:00" \
-    -m qwen3 \
-    -s 30b_a3b \
+    -m deepseek \
+    -s v3 \
     -ng $NUM_GPUS \
     -gn $GPUS_PER_NODE \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$CUDNN_HOME:/opt/cudnn$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
-    -wdj "qwen3-30b-moe-nemo-25.11-${EXP_NAME}" \
+    -wdj "deepseek-v3-nemo-25.11-${EXP_NAME}" \
     --task pretrain \
     logger.tensorboard_dir=/nemo_run/tensorboard \
     logger.log_interval=1 \
