@@ -423,6 +423,7 @@ def main(
             if not detach:
                 exp = run.Experiment.from_title(exp_name)
                 register_pipeline_terminator(exp=exp, job_id=exp.jobs[0].id)
+                exp.logs(job_id=exp.jobs[0].id)
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
