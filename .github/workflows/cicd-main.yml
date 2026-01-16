@@ -369,6 +369,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-functional-tests:
     strategy:
@@ -464,6 +465,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   Nemo_CICD_Test:
     needs:
