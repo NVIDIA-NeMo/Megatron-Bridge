@@ -413,7 +413,7 @@ def main(
                 executor=executor,
                 plugins=plugins,
                 dryrun=dryrun,
-                detach=detach,
+                detach=True,
                 name=exp_name,
             )
             if dryrun:
@@ -423,7 +423,7 @@ def main(
             if not detach:
                 exp = run.Experiment.from_title(exp_name)
                 register_pipeline_terminator(exp=exp, job_id=exp.jobs[0].id)
-            
+
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
             if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
