@@ -40,6 +40,7 @@ def main():
         gpu=args.gpu,
         compute_dtype=args.compute_dtype,
         mock=args.data == "mock",
+        config_variant=args.config_variant,
     )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
@@ -53,6 +54,7 @@ def main():
         args.compute_dtype,
         args.task,
         user_gbs=args.global_batch_size,
+        config_variant=args.config_variant,
     )
 
     pretrain(config=recipe, forward_step_func=forward_step)

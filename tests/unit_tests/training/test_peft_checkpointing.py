@@ -849,6 +849,10 @@ class TestPEFTCheckpointingIntegration:
             ffn_hidden_size=256,
         )
 
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
         # Create LoRA PEFT config
         lora_config = LoRA(
             target_modules=["linear_qkv", "linear_proj"],

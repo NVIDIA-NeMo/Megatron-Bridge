@@ -15,20 +15,26 @@
 import contextlib
 import inspect
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
 import modelopt.torch.distill as mtd
 import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
@@ -97,6 +103,8 @@ def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
+    from megatron.core import parallel_state
+
     use_arbitrary_attention_mask = (
         config.use_arbitrary_attention_mask
         if config.use_arbitrary_attention_mask is not None
@@ -193,6 +201,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # Set to False when using packed/remove-padding (THD) data format.
     use_arbitrary_attention_mask: Optional[bool] = None
 
+    _pg_collection: Optional[ProcessGroupCollection] = None
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 
@@ -259,6 +269,18 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.attention_backend == AttnBackend.local:
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
+        # Determine pre/post flags if not provided using vp + pp stage
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self._pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self._pg_collection.pp
+            )
+        # Expose vp stage on config for downstream modules (e.g., TE layers)
+        # so they can compute correct offsets without legacy globals.
+        self._vp_stage = vp_stage
         with model_init_device_context():
             model = MCoreGPTModel(
                 self,
@@ -272,11 +294,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 rotary_percent=self.rotary_percent,
                 rotary_base=self.rotary_base,
                 seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-                pre_process=pre_process
-                or parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage),
-                post_process=post_process
-                or parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage),
+                pre_process=pre_process,
+                post_process=post_process,
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
+                pg_collection=self._pg_collection,
                 vp_stage=vp_stage,
                 **kwargs,
             )
@@ -288,83 +309,25 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.use_transformer_engine_full_layer_spec:
             # Copied from:
             # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
-            if parallel_state.get_tensor_model_parallel_world_size() > 1:
+            if self._pg_collection.tp.size() > 1:
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_tensor_parallel_group"):
-                        tp_group = parallel_state.get_tensor_model_parallel_group()
+                        tp_group = self._pg_collection.tp
                         child.set_tensor_parallel_group(tp_group)
 
-            if parallel_state.get_context_parallel_world_size() > 1:
+            if self._pg_collection.cp.size() > 1:
                 cp_stream = torch.cuda.Stream()
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_context_parallel_group"):
-                        child.set_context_parallel_group(
-                            parallel_state.get_context_parallel_group(),
-                            parallel_state.get_context_parallel_global_ranks(),
-                            cp_stream,
-                        )
+                        cp_group = self._pg_collection.cp
+                        cp_global_ranks = torch.distributed.get_process_group_ranks(cp_group)
+                        child.set_context_parallel_group(cp_group, cp_global_ranks, cp_stream)
 
         return model
-
-
-@dataclass
-class GPTDistillationProvider(GPTModelProvider):
-    """Provider for Megatron Core GPT models in distillation mode."""
-
-    teacher: Optional["GPTModelProvider"] = None
-    kd_config: Optional["ModelOptDistillConfig"] = None
-
-    def __post_init__(self):
-        assert self.teacher is not None, "Teacher model must be provided."
-        shared_attrs = [
-            "tensor_model_parallel_size",
-            "pipeline_model_parallel_size",
-            "context_parallel_size",
-            "seq_length",
-            "pipeline_dtype",
-        ]
-        for attr in shared_attrs:
-            if getattr(self, attr) != getattr(self.teacher, attr):
-                raise ValueError(f"Student and teacher providers must have the same {attr}.")
-
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
-
-        Args:
-            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
-            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
-            vp_stage: Virtual pipeline stage
-
-        Returns:
-            MCoreGPTModel: Configured ModelOpt DistillationModel instance
-        """
-        if vp_stage is not None:
-            raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
-
-        student_model = super().provide(pre_process, post_process, vp_stage)
-        # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
-        teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
-
-        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
-        modelopt_cfg = {
-            "teacher_model": teacher_model,
-            "criterion": kd_cfg.criterion,
-            "loss_balancer": kd_cfg.loss_balancer,
-        }
-        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
-        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
-
-        return kd_model
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        # Mirror to teacher if it has that attribute
-        if hasattr(self.teacher, name):
-            setattr(self.teacher, name, value)
 
 
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
@@ -393,6 +356,111 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
+
+
+@dataclass
+class GPTDistillationProvider(GPTModelProvider):
+    """Provider for Megatron Core GPT models in distillation mode.
+
+    NOTE: If your model uses an existing provider class that extends `GPTModelProvider`, please
+        use `convert_to_distillation_provider` to convert it instead of using this class directly.
+    """
+
+    teacher: Optional["GPTModelProvider"] = None
+    kd_config: Optional["ModelOptDistillConfig"] = None
+
+    def __post_init__(self):
+        assert getattr(self, "teacher", None) is not None, "Teacher model must be provided."
+
+        shared_attrs = [
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+            "seq_length",
+            "pipeline_dtype",
+        ]
+        for attr in shared_attrs:
+            if getattr(self, attr) != getattr(self.teacher, attr):
+                raise ValueError(f"Student and teacher providers must have the same {attr}.")
+
+        # Logits are overwritten in-place when TE cross-entropy loss is enabled, so switch it back to native version.
+        self.cross_entropy_fusion_impl = "native"
+
+        # Hack to dynamically subclass other providers and still use their methods
+        self._super_class = self.__class__.__bases__[0]
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
+
+        Args:
+            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
+            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
+            vp_stage: Virtual pipeline stage
+
+        Returns:
+            MCoreGPTModel: Configured ModelOpt DistillationModel instance
+        """
+        if vp_stage is not None:
+            raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
+
+        student_model = self._super_class.provide(self, pre_process, post_process, vp_stage)
+        # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
+        teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
+
+        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
+        modelopt_cfg = {
+            "teacher_model": teacher_model,
+            "criterion": kd_cfg.criterion,
+            "loss_balancer": kd_cfg.loss_balancer,
+        }
+        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
+        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
+
+        return kd_model
+
+    def to_cfg_dict(self) -> dict[str, Any]:
+        """Custom method to save equivalent to the original provider class.
+
+        Used by `_ConfigContainerBase` to serialize the main `ConfigContainer` to YAML.
+        There is no need to restore a `GPTDistillationProvider` from the run config file, as
+        it can always be re-converted using the original student provider.
+
+        Returns:
+            Dictionary representation of this provider class
+        """
+        from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+
+        result = {"_target_": f"{self._super_class.__module__}.{self._super_class.__qualname__}"}
+        for field in fields(self):
+            if field.name.startswith("_") or field.name in ["teacher", "kd_config"]:
+                continue
+            result[field.name] = _ConfigContainerBase._convert_value_to_dict(getattr(self, field.name))
+        return result
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        # Mirror to teacher if it has that attribute
+        if hasattr(self.teacher, name):
+            setattr(self.teacher, name, value)
+
+
+def convert_to_distillation_provider(
+    student_provider: "GPTModelProvider",
+    teacher_provider: "GPTModelProvider",
+    kd_config: Optional["ModelOptDistillConfig"] = None,
+) -> "GPTDistillationProvider":
+    """Convert any subclass of GPTModelProvider to a GPTDistillationProvider."""
+    assert isinstance(student_provider, GPTModelProvider), "Student provider must be a subclass of GPTModelProvider."
+    assert isinstance(teacher_provider, GPTModelProvider), "Teacher provider must be a subclass of GPTModelProvider."
+
+    GPTDistillationProvider.__bases__ = (type(student_provider),)
+    student_provider.__class__ = GPTDistillationProvider
+
+    student_provider.teacher = teacher_provider
+    student_provider.kd_config = kd_config
+    student_provider.__post_init__()
+
+    return student_provider
 
 
 @dataclass
