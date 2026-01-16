@@ -30,9 +30,9 @@ import nemo_run as run
 
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
 import logging
 
@@ -127,6 +127,14 @@ def main(
                     "--cuda-event-trace=false",
                     "--nvtx-domain-include=NCCL",
                 ],
+            )
+        )
+    else:
+        plugins.append(
+            PyTorchProfilerPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                profile_ranks=list(range(num_gpus)),
             )
         )
 
