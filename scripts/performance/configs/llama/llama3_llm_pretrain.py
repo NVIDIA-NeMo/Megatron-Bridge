@@ -228,6 +228,11 @@ def llama3_70b_pretrain_config_h100(
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 
+    # if precision == "fp8_cs":  # keeping this eanbled causes NaN grad norm
+    #     cfg.comm_overlap.overlap_param_gather = False
+    #     cfg.ddp.overlap_param_gather = False
+    #     cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
