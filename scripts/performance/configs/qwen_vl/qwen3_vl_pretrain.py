@@ -17,7 +17,10 @@ import logging
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 
-from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_30b_a3b_pretrain_config, qwen3_vl_235b_a22b_pretrain_config
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
+    qwen3_vl_30b_a3b_pretrain_config,
+    qwen3_vl_235b_a22b_pretrain_config,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 

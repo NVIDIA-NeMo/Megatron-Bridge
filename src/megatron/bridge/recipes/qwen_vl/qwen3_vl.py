@@ -40,6 +40,7 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
+
 class Qwen3VLCommonKwargs(TypedDict, total=False):
     """Typed options accepted by Qwen3 VL MoE recipe helpers."""
 
@@ -415,7 +416,7 @@ def _qwen3_vl_common(
             persistent_workers=False,
         )
     else:
-        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf'].")
+        raise ValueError(f"Unsupported dataset_type '{dataset_type}'. Expected one of ['mock', 'preloaded', 'hf'].")
 
     # Config Container
     cfg = ConfigContainer(
@@ -435,8 +436,8 @@ def _qwen3_vl_common(
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
-            overlap_grad_reduce=False, # qwen3_vl does not support overlap_grad_reduce=True in current implementation
-            overlap_param_gather=False, # qwen3_vl does not support overlap_param_gather=True in current implementation
+            overlap_grad_reduce=False,  # qwen3_vl does not support overlap_grad_reduce=True in current implementation
+            overlap_param_gather=False,  # qwen3_vl does not support overlap_param_gather=True in current implementation
             average_in_collective=True,  # Not supported for Megatron FSDP for now, need to be set to False if using Megatron FSDP
             data_parallel_sharding_strategy="optim_grads_params",  # For Megatron FSDP only
             use_distributed_optimizer=True,
