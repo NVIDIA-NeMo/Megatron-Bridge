@@ -549,6 +549,14 @@ class TestAutoBridge:
                 mock_megatron_model, "./output_dir", True, True, merge_adapter_weights=True
             )
 
+    def test_save_hf_pretrained_config_only_raises(self):
+        """Test save_hf_pretrained raises when bridge has config only."""
+        mock_config = Mock(spec=PretrainedConfig)
+        bridge = AutoBridge(mock_config)
+
+        with pytest.raises(ValueError, match="from_hf_pretrained"):
+            bridge.save_hf_pretrained([Mock()], "./output_dir")
+
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.is_available", return_value=True)
@@ -817,6 +825,16 @@ class TestAutoBridge:
                 mock_save_hf_pretrained.assert_called_once_with(
                     mock_megatron_model, "./hf_export", show_progress=True, source_path=None, strict=False
                 )
+
+    def test_export_ckpt_config_only_raises(self):
+        """Test export_ckpt raises when bridge has config only."""
+        mock_config = Mock(spec=PretrainedConfig)
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_config
+
+        with pytest.raises(ValueError, match="from_hf_pretrained"):
+            bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
 
     def test_export_ckpt_with_kwargs(self):
         """Test export_ckpt with custom kwargs."""
