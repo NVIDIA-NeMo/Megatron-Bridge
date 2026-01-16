@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Literal, Optional
+import warnings
+
+
+@dataclass
+class ModuleParallelismConfig:
+    """Parallelism config for a single module in a MIMO model."""
+
+    tensor_parallel: int = 1
+    pipeline_parallel: int = 1
+    context_parallel: int = 1
+    expert_parallel: int = 1
+    data_parallel: Optional[int] = None
+    rank_offset: int = 0
+
+    @property
+    def total_model_parallel_size(self) -> int:
+        return (
+            self.tensor_parallel
+            * self.pipeline_parallel
+            * self.context_parallel
+            * self.expert_parallel
+        )
+
+    @property
+    def total_ranks(self) -> int:
+        if self.data_parallel is None:
+            raise ValueError("data_parallel must be set before accessing total_ranks.")
+        return self.total_model_parallel_size * self.data_parallel
+
+    def finalize(self, world_size: Optional[int]) -> None:
+        """Compute data_parallel if unset, and validate parallelism constraints."""
+        if self.data_parallel is None:
+            if world_size is None or world_size <= 0:
+                raise ValueError("world_size must be provided to compute data_parallel.")
+            if world_size % self.total_model_parallel_size != 0:
+                raise ValueError(
+                    f"world_size ({world_size}) is not divisible by total_model_parallel_size "
+                    f"({self.total_model_parallel_size})."
+                )
+            self.data_parallel = world_size // self.total_model_parallel_size
+
+        if self.data_parallel <= 0:
+            raise ValueError("data_parallel must be positive.")
+
+        if self.expert_parallel > 1 and self.pipeline_parallel > 1:
+            warnings.warn(
+                "Using expert_parallel > 1 with pipeline_parallel > 1 is complex and may be unsupported.",
+                stacklevel=2,
+            )
+
+
+@dataclass
+class MIMOConfig:
+    """Configuration for multi-module (MIMO) heterogeneous parallelism."""
+
+    llm_module_name: str
+    module_parallelisms: dict[str, ModuleParallelismConfig]
+    special_token_ids: dict[str, int] = field(default_factory=dict)
+    deployment_mode: Literal["colocated", "separate", "homogeneous"] = "colocated"
+    # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
+
+    def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
+        return self.module_parallelisms[module_name]
+
+    @property
+    def module_names(self) -> list[str]:
+        return list(self.module_parallelisms.keys())
+
+    @property
+    def total_world_size(self) -> int:
+        if self.deployment_mode in ("colocated", "homogeneous"):
+            totals = [p.total_ranks for p in self.module_parallelisms.values()]
+            return max(totals) if totals else 0
+        ranges = [p.rank_offset + p.total_ranks for p in self.module_parallelisms.values()]
+        return max(ranges) if ranges else 0
+
+    def _validate_colocated(self) -> None:
+        totals = []
+        for parallelism in self.module_parallelisms.values():
+            if parallelism.rank_offset != 0:
+                raise ValueError("rank_offset must be 0 for colocated deployment.")
+            totals.append(parallelism.total_ranks)
+        if totals and len(set(totals)) > 1:
+            raise ValueError("All modules must have the same total_ranks in colocated deployment.")
+
+    def _validate_homogeneous(self) -> None:
+        first = None
+        for parallelism in self.module_parallelisms.values():
+            if parallelism.rank_offset != 0:
+                raise ValueError("rank_offset must be 0 for homogeneous deployment.")
+            values = (
+                parallelism.tensor_parallel,
+                parallelism.pipeline_parallel,
+                parallelism.context_parallel,
+                parallelism.expert_parallel,
+                parallelism.data_parallel,
+            )
+            if first is None:
+                first = values
+            elif values != first:
+                raise ValueError("All modules must have identical parallelism in homogeneous deployment.")
+
+    def _validate_separate(self) -> None:
+        # We use "separate" to describe rank placement and avoid overloading
+        # "heterogeneous", which is already used elsewhere for layer-level configs.
+        ranges = []
+        for parallelism in self.module_parallelisms.values():
+            if parallelism.data_parallel is None:
+                raise ValueError("data_parallel must be set for separate deployment.")
+            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
+
+        ranges.sort()
+        for idx in range(1, len(ranges)):
+            prev_end = ranges[idx - 1][1]
+            cur_start = ranges[idx][0]
+            if cur_start < prev_end:
+                raise ValueError("rank_offset ranges overlap in separate deployment.")
+
+    def finalize(self, world_size: Optional[int]) -> None:
+        if self.llm_module_name not in self.module_parallelisms:
+            raise ValueError(f"LLM module '{self.llm_module_name}' not in module_parallelisms.")
+
+        if self.deployment_mode in ("colocated", "homogeneous"):
+            for parallelism in self.module_parallelisms.values():
+                parallelism.finalize(world_size)
+        else:
+            for parallelism in self.module_parallelisms.values():
+                parallelism.finalize(None)
+
+        if self.deployment_mode == "colocated":
+            self._validate_colocated()
+        elif self.deployment_mode == "homogeneous":
+            self._validate_homogeneous()
+        else:
+            self._validate_separate()
+
+        if world_size and world_size > 1:
+            expected = self.total_world_size
+            if expected and world_size != expected:
+                raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")

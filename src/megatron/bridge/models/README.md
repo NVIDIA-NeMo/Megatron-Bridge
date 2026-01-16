@@ -103,6 +103,27 @@ Different weight transformation strategies handle various parallelism patterns:
 - **GatedMLPMapping**: Manages gated activation concatenation
 - **AutoMapping**: Auto-detects and applies correct strategy
 
+## MIMO Encoder Providers
+
+When configuring multi-encoder MIMO training, `ConfigContainer` accepts an
+`encoder_providers` mapping keyed by module name. Each entry is an
+`EncoderProvider` that describes how to build the encoder stack and any optional
+projection layers.
+
+Example YAML snippet (MIMO encoder providers):
+
+```yaml
+encoder_providers:
+  images:
+    _target_: megatron.bridge.models.encoder_provider.GenericVisionEncoderProvider
+    config:
+      _target_: megatron.bridge.models.encoder_provider.EncoderTransformerConfig
+      num_layers: 12
+      hidden_size: 768
+      num_attention_heads: 12
+      seq_length: 1024
+```
+
 ## Conversion Process
 
 ### 🤗Hugging Face → Megatron
