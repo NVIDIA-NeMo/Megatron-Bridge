@@ -285,9 +285,9 @@ class TestGPTModelProvider:
 
     @patch("megatron.core.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
-    def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
-        """Test quantization_layer_spec function."""
-        from megatron.bridge.models.gpt_provider import quantization_layer_spec
+    def test_modelopt_transformer_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
+        """Test modelopt_transformer_layer_spec function."""
+        from megatron.bridge.models.gpt_provider import modelopt_transformer_layer_spec
 
         # Mock context parallel world size to return 1 (use_arbitrary_attention_mask will be True)
         mock_parallel_state.get_context_parallel_world_size.return_value = 1
@@ -304,7 +304,7 @@ class TestGPTModelProvider:
         mock_get_gpt_modelopt_spec.return_value = mock_spec
 
         # Call the function
-        result = quantization_layer_spec(provider)
+        result = modelopt_transformer_layer_spec(provider)
 
         # Verify the mock was called with correct parameters
         mock_get_gpt_modelopt_spec.assert_called_once_with(
@@ -318,7 +318,7 @@ class TestGPTModelProvider:
         # Verify the result
         assert result is mock_spec
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.modelopt_transformer_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
     def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
@@ -347,7 +347,7 @@ class TestGPTModelProvider:
         mock_te_spec.assert_not_called()
         assert result == "quantization_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.modelopt_transformer_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
     def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
@@ -377,7 +377,7 @@ class TestGPTModelProvider:
         mock_te_spec.assert_not_called()
         assert result == "te_full_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.modelopt_transformer_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
     def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
