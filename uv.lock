@@ -2396,7 +2396,7 @@ requires-dist = [
     { name = "timm" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/NVIDIA/TransformerEngine.git?rev=release_v2.11" },
-    { name = "transformers", specifier = ">=4.55.0,<5.0.0" },
+    { name = "transformers", specifier = ">=4.51.3,<5.0.0" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.19.10" },
 ]
