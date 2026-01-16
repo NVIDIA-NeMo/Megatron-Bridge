@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -184,7 +183,7 @@ if __name__ == "__main__":
             args.gpus_per_node,
             args.time_limit,
             args.container_image,
-            custom_env_vars={k: os.environ[k] for k in ["CUDNN_HOME", "LD_LIBRARY_PATH", "CPATH"] if k in os.environ},
+            custom_env_vars={},
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
