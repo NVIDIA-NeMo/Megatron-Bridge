@@ -46,12 +46,19 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     # Check each weight against the original HF-model
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=True):
         original_param = bridge.hf_pretrained.state[name]
+        param_for_comparison = param.to(dtype=original_param.dtype) if param.dtype != original_param.dtype else param
         table.add_row(
             name,
             str(tuple(param.shape)),
             str(param.dtype).replace("torch.", ""),
             str(param.device),
-            "✅" if torch.allclose(param, original_param.to(param.device), atol=1e-6) else "❌",
+            (
+                f"{param_for_comparison.shape} != {original_param.shape}"
+                if param_for_comparison.shape != original_param.shape
+                else (
+                    "✅" if torch.allclose(param_for_comparison, original_param.to(param.device), atol=1e-6) else "❌"
+                )
+            )
         )
 
     return table

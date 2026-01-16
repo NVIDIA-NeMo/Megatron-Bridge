@@ -306,23 +306,13 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Converted weights (empty dict if not on
                 TP rank 0).
         """
-        megatron_weights: Optional[torch.Tensor] = None
 
-        if dtensor_weights is not None:
-            if isinstance(dtensor_weights, DTensor):
-                # Gather FSDP-sharded DTensor to a replicated DTensor, then
-                # work with the local full tensor.
-                full_dtensor = gather_uneven_dtensor_to_full_tensor(dtensor_weights)
-                megatron_weights = full_dtensor.to_local()
-            else:
-                megatron_weights = dtensor_weights
+        if isinstance(dtensor_weights, DTensor):
+            full_dtensor = gather_uneven_dtensor_to_full_tensor(dtensor_weights)
+            megatron_weights = full_dtensor.to_local()
+        else:
+            megatron_weights = dtensor_weights
 
-            # Preserve TP metadata if it was attached to the original tensor.
-            for attr in ("tensor_model_parallel", "partition_dim"):
-                if hasattr(dtensor_weights, attr) and getattr(dtensor_weights, attr) is not None:
-                    setattr(megatron_weights, attr, getattr(dtensor_weights, attr))
-        
-        # Reuse existing Megatron → HF logic (handles PP/TP/EP and format tweaks).
         return self.megatron_to_hf(megatron_weights, megatron_module)
 
     def broadcast_from_pp_rank(

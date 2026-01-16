@@ -128,13 +128,6 @@ def _pretrain(
     ckpt_context = setup_output.checkpointing_context
     pg_collection = setup_output.pg_collection
 
-    # Temporary modification for fsdp -> hf
-    from megatron.bridge import AutoBridge
-    from megatron.bridge.models.conversion import weights_verification_table
-    from rich.console import Console
-    console = Console()
-    bridge = AutoBridge.from_hf_pretrained(config.model.hf_model_id)
-    console.print(weights_verification_table(bridge, model))
 
     # TRAINING
     if not config.train.skip_train:
