@@ -19,26 +19,29 @@ from typing import Iterable
 import modelopt.torch.distill as mtd
 import torch
 from megatron.core.models.gpt import GPTModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.parallel_state import (
+    get_context_parallel_rank,
+    get_context_parallel_world_size,
+)
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.utils import (
+    get_batch_on_this_cp_rank,
+    get_model_config,
+    is_te_min_version,
+    unwrap_model,
+)
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
-from megatron.core.parallel_state import (
-    get_context_parallel_rank,
-    get_context_parallel_world_size,
-    get_tensor_model_parallel_rank,
-)
-from megatron.core.utils import (
-    is_te_min_version,
-)
+
+
 try:
     # Register the TE CUDA kernels
-    import transformer_engine  # pylint: disable=unused-import
+    import transformer_engine  # type: ignore  # noqa: F401
 
     # Alias the PyTorch wrapper so we can call tex.* APIs
     import transformer_engine_torch as tex
@@ -172,21 +175,19 @@ def get_batch(
 
     # print_rank_0("before get_batch_on_this_cp_rank")
     # for key, val in batch.items():
-    #     val_shape = val.shape if val is not None else None  # NOTE: val can be None 
+    #     val_shape = val.shape if val is not None else None  # NOTE: val can be None
     #     print_rank_0(f"{key}: {val_shape}")
 
     cu_seqlens = batch.pop("cu_seqlens", None)
     cu_seqlens_argmin = batch.pop("cu_seqlens_argmin", None)
     max_seqlen = batch.pop("max_seqlen", None)
-    
+
     # NOTE: THIS IS DUNCAN'S IMPLEMENTATION
     if cu_seqlens is None:
         # slice batch along sequence dimension for context parallelism
         batch = get_batch_on_this_cp_rank(batch)  # The implementation of this function is in MCore
     else:  # Packed THD format
-        assert (
-            cu_seqlens.dim() == 2 and cu_seqlens.shape[0] == 1
-        ), "micro-batch-size must be 1 for packing"
+        assert cu_seqlens.dim() == 2 and cu_seqlens.shape[0] == 1, "micro-batch-size must be 1 for packing"
         # cu_seqlens = cu_seqlens[0]
         # batch['cu_seqlens'] = cu_seqlens # NOTE(liding): this changes shape from [1,192] to [192]....
 
@@ -198,14 +199,13 @@ def get_batch(
         cp_size = get_context_parallel_world_size()
         if cp_size > 1:  # slice batch along sequence dimension for context parallelism
             assert tex is not None and is_te_min_version("1.10.0"), (
-                "Please update Transformer Engine to >= 1.10 to use "
-                "Context Parallel with THD format data"
+                "Please update Transformer Engine to >= 1.10 to use Context Parallel with THD format data"
             )
             # print(f"{cu_seqlens[0][:-1].cpu().numpy().tolist()=}")
             cp_rank = get_context_parallel_rank()
             index = tex.thd_get_partitioned_indices(
                 cu_seqlens[0][:-1],
-                batch['tokens'].size(1),
+                batch["tokens"].size(1),
                 cp_size,
                 cp_rank,
             )
@@ -213,17 +213,17 @@ def get_batch(
             for key, data in batch.items():
                 if data is None:
                     continue
-                if key in {'attention_mask', 'cu_seqlens', 'max_seqlen', 'cu_seqlens_argmin'}:
+                if key in {"attention_mask", "cu_seqlens", "max_seqlen", "cu_seqlens_argmin"}:
                     continue
                 batch[key] = data.index_select(1, index)
 
     # NOTE: THIS IS MBIDGE IMPLEMENTATION
     # # slice batch along sequence dimension for context parallelism
     # batch = get_batch_on_this_cp_rank(batch)
-    
+
     # print_rank_0("after get_batch_on_this_cp_rank")
     # for key, val in batch.items():
-    #     val_shape = val.shape if val is not None else None  # NOTE: val can be None 
+    #     val_shape = val.shape if val is not None else None  # NOTE: val can be None
     #     print_rank_0(f"{key}: {val_shape}")
 
     return (

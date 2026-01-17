@@ -20,7 +20,6 @@ import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
-from megatron.bridge.data.datasets.sft import create_sft_dataset
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
@@ -60,7 +59,7 @@ def tokenize_dataset(
     from megatron.bridge.data.datasets.sft import GPTSFTDataset
 
     pad_seq_length_to_mult = 16
-    cp_size = 8 # TODO(liding): hardcoded for now for debugging
+    cp_size = 8  # TODO(liding): hardcoded for now for debugging
 
     if cp_size > 1:
         pad_seq_length_to_mult = max(pad_seq_length_to_mult, cp_size * 2)
@@ -89,13 +88,14 @@ def tokenize_dataset(
     dataset = np.array([dataset[i] for i in range(len(dataset))])
 
     if cp_size > 1:
+
         def pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id):
-            '''
+            """
             pad each individual data point to the length of max_length
-            '''
+            """
             assert max_seq_length >= max_length_to_pad
             for key, val in data.items():
-                if key in {'input_ids', 'context_ids'}:
+                if key in {"input_ids", "context_ids"}:
                     if len(val) <= max_length_to_pad:
                         # because input_ids are truncated by 1 for inputs and labels,
                         # we add 1 extra padding here to make sure padded inputs and labels
@@ -111,12 +111,13 @@ def tokenize_dataset(
                         )
                         data[key] = val[:max_seq_length]
             return
-        
+
         ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
         for data in dataset:
-            max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data['input_ids']), pad_seq_length_to_mult))
+            max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
             pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id)
     return dataset
+
 
 def prepare_packed_sequence_data(
     input_path: Path,

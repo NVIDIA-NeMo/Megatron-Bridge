@@ -301,13 +301,11 @@ class TestNemotron3NanoConversion:
         # Create a temporary directory for this test class
         temp_dir = tmp_path_factory.mktemp("nemotron_3_nano_toy_model")
         model_dir = temp_dir / "nemotron_3_nano_toy"
-        
+
         repo_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16"
 
         # Create Nemotron-3-Nano toy model config by starting with the HF model and applying overrides
-        config = AutoConfig.from_pretrained(
-            repo_id, trust_remote_code=True
-        )
+        config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
         for k, v in HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES.items():
             setattr(config, k, v)
 
@@ -332,9 +330,7 @@ class TestNemotron3NanoConversion:
                 v.data = v.data.to(torch.float32)
 
         # Download and save tokenizer from the reference Nemotron-3-Nano model
-        tokenizer = AutoTokenizer.from_pretrained(
-            repo_id, trust_remote_code=True
-        )
+        tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory

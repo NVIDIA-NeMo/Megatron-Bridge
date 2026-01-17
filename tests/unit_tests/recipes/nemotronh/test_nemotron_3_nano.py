@@ -143,9 +143,7 @@ class TestNemotron3NanoPretrain:
     def test_pretrain_config_with_custom_directory(self):
         """Test custom directory configuration."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = nemotron_3_nano_pretrain_config(
-                mock=True, dir=temp_dir, name="test_run"
-            )
+            config = nemotron_3_nano_pretrain_config(mock=True, dir=temp_dir, name="test_run")
 
             expected_run_dir = os.path.join(temp_dir, "test_run")
             expected_checkpoint_dir = os.path.join(expected_run_dir, "checkpoints")
@@ -285,9 +283,7 @@ class TestNemotron3NanoFinetune:
 
     def test_finetune_config_with_pretrained_checkpoint(self):
         """Test finetune_config with pretrained checkpoint."""
-        config = nemotron_3_nano_finetune_config(
-            pretrained_checkpoint="/path/to/checkpoint"
-        )
+        config = nemotron_3_nano_finetune_config(pretrained_checkpoint="/path/to/checkpoint")
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
 

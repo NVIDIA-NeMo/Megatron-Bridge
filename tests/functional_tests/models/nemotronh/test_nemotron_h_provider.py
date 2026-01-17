@@ -16,12 +16,12 @@ import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.nemotronh import (
+    Nemotron3NanoProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
     NemotronHModel56BProvider,
     NemotronNano9Bv2Provider,
     NemotronNano12Bv2Provider,
-    Nemotron3NanoProvider
 )
 from tests.functional_tests.utils import compare_provider_configs
 

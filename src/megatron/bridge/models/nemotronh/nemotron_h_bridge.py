@@ -55,15 +55,17 @@ class NemotronHBridge(MegatronModelBridge):
         configs = {}
         # MoE configurations
         if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
-            configs.update({
-                "num_moe_experts": hf_config.n_routed_experts,
-                "moe_ffn_hidden_size": hf_config.moe_intermediate_size,
-                "moe_shared_expert_intermediate_size": hf_config.moe_shared_expert_intermediate_size,
-                "moe_router_topk": hf_config.num_experts_per_tok,
-                "moe_router_num_groups": hf_config.n_group,
-                "moe_router_group_topk": hf_config.topk_group,
-                "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
-            })
+            configs.update(
+                {
+                    "num_moe_experts": hf_config.n_routed_experts,
+                    "moe_ffn_hidden_size": hf_config.moe_intermediate_size,
+                    "moe_shared_expert_intermediate_size": hf_config.moe_shared_expert_intermediate_size,
+                    "moe_router_topk": hf_config.num_experts_per_tok,
+                    "moe_router_num_groups": hf_config.n_group,
+                    "moe_router_group_topk": hf_config.topk_group,
+                    "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
+                }
+            )
 
         return NemotronHModelProvider(
             num_layers=hf_config.num_hidden_layers,

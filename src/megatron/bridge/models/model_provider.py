@@ -584,7 +584,6 @@ def get_model(
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 
-
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
 

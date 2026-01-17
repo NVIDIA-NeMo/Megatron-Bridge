@@ -22,12 +22,10 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_finetune_config as finetune_config,
 )
-from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -49,11 +47,11 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--config-file",
         type=str,
-        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml", # TODO: update yaml file name
+        help="Path to the YAML OmegaConf override file. Default: conf/nemotron_3_nano_finetune_override_example.yaml",
     )
     parser.add_argument("--peft", type=str, help="Type of PEFT to use")
     parser.add_argument("--packed-sequence", action="store_true", help="Whether to use sequence packing")
-    parser.add_argument("--seq-length", type=int, default=2048,help="Sequence length")
+    parser.add_argument("--seq-length", type=int, default=2048, help="Sequence length")
 
     # Parse known args for the script, remaining will be treated as overrides
     args, cli_dotlist_overrides = parser.parse_known_args()
@@ -63,10 +61,12 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 def main() -> None:
     """
     Entry point for the Mamba 8B finetuning script.
-    """ 
+    """
     args, cli_overrides = parse_cli_args()
 
-    cfg: ConfigContainer = finetune_config(seq_length=args.seq_length,peft=args.peft, packed_sequence=args.packed_sequence)
+    cfg: ConfigContainer = finetune_config(
+        seq_length=args.seq_length, peft=args.peft, packed_sequence=args.packed_sequence
+    )
     cfg.model.seq_length = args.seq_length
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging

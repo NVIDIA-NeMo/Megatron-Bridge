@@ -17,11 +17,9 @@
 import pytest
 
 from megatron.bridge.recipes.nemotronh import (
+    nemotron_3_nano_pretrain_config,
     nemotron_nano_9b_v2_pretrain_config,
     nemotronh_4b_pretrain_config,
-)
-from megatron.bridge.recipes.nemotronh import (
-    nemotron_3_nano_pretrain_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
 

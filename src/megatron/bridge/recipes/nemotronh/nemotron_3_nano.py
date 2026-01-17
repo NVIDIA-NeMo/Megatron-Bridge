@@ -23,7 +23,6 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -36,6 +35,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
 
 class Nemotron3NanoCommonKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron Next 3B v2 recipe helper functions."""
@@ -233,11 +233,11 @@ def _nemotron_3_nano_common(
         lr_decay_style="cosine",
     )
 
-    tokenizer_config=TokenizerConfig(
-            tokenizer_type= "HuggingFaceTokenizer",
-            tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-            vocab_size=None
-        )
+    tokenizer_config = TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        vocab_size=None,
+    )
 
     # Config Container
     cfg = ConfigContainer(
@@ -495,8 +495,10 @@ def _nemotron_3_nano_finetune_common(
         ),
         dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
-        tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer",tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"),
-        checkpoint = CheckpointConfig(
+        tokenizer=TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+        ),
+        checkpoint=CheckpointConfig(
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
