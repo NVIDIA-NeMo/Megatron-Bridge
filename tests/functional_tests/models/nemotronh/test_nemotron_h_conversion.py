@@ -272,10 +272,10 @@ class TestNemotronHConversion:
 
 # Overrides for Nemotron-3-Nano MoE model (30B total, 3B active)
 HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES = {
-    "num_hidden_layers": 5,
-    "hybrid_override_pattern": "MEM*E",
-    "hidden_size": 512,
-    "intermediate_size": 256,
+    "num_hidden_layers": 3,
+    "hybrid_override_pattern": "M*E",
+    "hidden_size": 672,
+    "n_routed_experts": 16
 }
 
 
@@ -382,8 +382,8 @@ class TestNemotron3NanoConversion:
 
         # Verify core model configuration
         assert config_data["model_type"] == "nemotron_h"
-        assert config_data["hidden_size"] == 512
-        assert config_data["intermediate_size"] == 256
+        for keys in HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES.keys():
+            assert config_data[keys] == HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES[keys]
 
         # Try loading the model to verify it's valid
         try:
@@ -404,7 +404,7 @@ class TestNemotron3NanoConversion:
             # Verify model structure
             assert hasattr(model, "backbone")
             assert hasattr(model.backbone, "layers")
-            assert len(model.backbone.layers) == 5  # num_hidden_layers from toy config
+            assert len(model.backbone.layers) == HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["num_hidden_layers"]  # num_hidden_layers from toy config
 
             print(f"SUCCESS: Nemotron-3-Nano toy model created and validated at {nemotron_3_nano_toy_model_path}")
 
@@ -494,9 +494,8 @@ class TestNemotron3NanoConversion:
 
             # Verify core model configuration
             assert saved_config["model_type"] == "nemotron_h", "Model type should be nemotron_h"
-            assert saved_config["hidden_size"] == 512, "Hidden size should match toy config"
-            assert saved_config["intermediate_size"] == 256, "FFN hidden size should match toy config"
-            assert saved_config["num_hidden_layers"] == 5, "Number of hidden layers should match toy config"
+            for keys in HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES.keys():
+                assert saved_config[keys] == HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES[keys], f"{keys} should match toy config"
 
             print(f"SUCCESS: Nemotron-3-Nano {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
