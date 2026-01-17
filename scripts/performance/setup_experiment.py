@@ -17,6 +17,7 @@
 import glob
 import logging
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -60,6 +61,19 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+def register_pipeline_terminator(exp: run.Experiment, job_id: str):
+    """Register a signal handler to terminate the job."""
+
+    def sigterm_handler(_signo, _stack_frame):
+        logger.info(f"Trying to terminate job {job_id}")
+        exp.cancel(job_id=job_id)
+        logger.info(f"Job {job_id} terminated")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, sigterm_handler)
+    signal.signal(signal.SIGTERM, sigterm_handler)
 
 
 def check_training_finished(log_file_path: str) -> bool:
@@ -183,6 +197,7 @@ def main(
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    ep_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -320,6 +335,7 @@ def main(
                 tp_size=tp_size,
                 pp_size=pp_size,
                 cp_size=cp_size,
+                ep_size=ep_size,
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
                 gpu=gpu,
@@ -397,12 +413,17 @@ def main(
                 executor=executor,
                 plugins=plugins,
                 dryrun=dryrun,
-                detach=detach,
+                detach=True,
                 name=exp_name,
             )
             if dryrun:
                 logger.info("dryrun requested: exiting")
                 return
+
+            if not detach:
+                exp = run.Experiment.from_title(exp_name)
+                register_pipeline_terminator(exp=exp, job_id=exp.jobs[0].id)
+                exp.logs(job_id=exp.jobs[0].id)
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
@@ -453,22 +474,24 @@ def main(
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
 
-            is_testing_passed, error_msg = calc_convergence_and_performance(
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                assets_dir=os.path.join(job_dir, exp_name),
-                log_paths=log_paths,
-                loss_metric="lm loss",
-                timing_metric="elapsed time per iteration (ms)",
-                golden_values_path=golden_values_path,
-                convergence_config=convergence_params,
-                performance_config=performance_params,
-                wandb_run=wandb_run,
-            )
-
             if wandb_run:
+                is_testing_passed, error_msg = calc_convergence_and_performance(
+                    model_family_name=model_family_name,
+                    model_recipe_name=model_recipe_name,
+                    assets_dir=os.path.join(job_dir, exp_name),
+                    log_paths=log_paths,
+                    loss_metric="lm loss",
+                    timing_metric="elapsed time per iteration (ms)",
+                    golden_values_path=golden_values_path,
+                    convergence_config=convergence_params,
+                    performance_config=performance_params,
+                    wandb_run=wandb_run,
+                )
+
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
+            else:
+                is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
@@ -529,6 +552,7 @@ if __name__ == "__main__":
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        ep_size=args.expert_model_parallel_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
