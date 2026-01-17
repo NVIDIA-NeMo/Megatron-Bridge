@@ -20,6 +20,7 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 import torch
 import torch.distributed
 import torch.nn as nn
+from torch.distributed._tensor import DTensor
 from megatron.core import mpu
 from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
@@ -28,6 +29,7 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
+from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
 
@@ -289,6 +291,29 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 TP rank 0).
         """
         ...
+
+    def megatron_fsdp_to_hf(
+        self,
+        dtensor_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron FSDP format.
+        Args:
+            dtensor_weights (Optional[torch.Tensor]): Weight tensor from current rank. 
+            megatron_module (Optional[nn.Module]): Module for config access
+
+        Returns:
+            Dict[str, torch.Tensor]: Converted weights (empty dict if not on
+                TP rank 0).
+        """
+
+        if isinstance(dtensor_weights, DTensor):
+            full_dtensor = gather_uneven_dtensor_to_full_tensor(dtensor_weights)
+            megatron_weights = full_dtensor.to_local()
+        else:
+            megatron_weights = dtensor_weights
+
+        return self.megatron_to_hf(megatron_weights, megatron_module)
 
     def broadcast_from_pp_rank(
         self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None
