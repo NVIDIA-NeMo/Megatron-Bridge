@@ -586,6 +586,8 @@ def training_log(
             )
             if wandb_writer:
                 wandb_writer.log({"max-attention-logit": log_max_attention_logit}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
 
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
