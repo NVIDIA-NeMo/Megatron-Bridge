@@ -21,11 +21,13 @@ from megatron.bridge.models.deepseek.deepseek_provider import (
     DeepSeekV2Provider,
     DeepSeekV3ModelProvider,
     DeepSeekV3Provider,
+    DeepSeekV32ModelProvider,
     MoonlightModelProvider16B,
     MoonlightProvider,
 )
 from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge  # noqa: F401
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge  # noqa: F401
+from megatron.bridge.models.deepseek.deepseek_v32_bridge import DeepSeekV32Bridge  # noqa: F401
 
 
 __all__ = [
@@ -33,6 +35,7 @@ __all__ = [
     "DeepSeekV2LiteModelProvider",
     "DeepSeekV2ModelProvider",
     "DeepSeekV3ModelProvider",
+    "DeepSeekV32ModelProvider",
     "MoonlightModelProvider16B",
     "DeepSeekProvider",
     "DeepSeekV2LiteProvider",
