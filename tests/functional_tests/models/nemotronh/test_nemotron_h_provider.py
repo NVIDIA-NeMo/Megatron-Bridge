@@ -16,6 +16,7 @@ import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.nemotronh import (
+    Nemotron3NanoProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
     NemotronHModel56BProvider,
@@ -32,6 +33,7 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     "nvidia/Nemotron-H-56B-Base-8K": NemotronHModel56BProvider,
     "nvidia/NVIDIA-Nemotron-Nano-9B-v2": NemotronNano9Bv2Provider,
     "nvidia/NVIDIA-Nemotron-Nano-12B-v2": NemotronNano12Bv2Provider,
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16": Nemotron3NanoProvider,
 }
 
 # Model-specific fields to skip during configuration comparison
