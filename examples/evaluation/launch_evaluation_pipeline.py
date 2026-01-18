@@ -259,7 +259,7 @@ def main(args):
         name="demo-slurm-ray-cluster-deploy", executor=deploy_executor, cluster_name="demo-slurm-ray-cluster"
     )
     deploy_job.start(
-        command="bash /nemo-workspace/okoenig/code/evaluation/deploy.sh",
+        command="bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-cluster-deploy/code/deploy.sh & bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-cluster-deploy/code/eval.sh",
         workdir=os.path.dirname(os.path.abspath(__file__)),  # rsync'ed via SSH to the cluster_dir/code/
         pre_ray_start_commands=pre_ray_start,
     )

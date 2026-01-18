@@ -6,7 +6,7 @@ export RAY_enable_infeasible_task_early_exit=true
 
 python \
   /opt/Export-Deploy/scripts/deploy/nlp/deploy_ray_inframework.py \
-  --megatron_checkpoint /nemo-workspace/pagaray/megatron_bridge_ci/weekly_test/2026-01-10/llama/llama3_8b/checkpoints/iter_0009600/  \
+  --megatron_checkpoint /lustre/fsw/coreai_dlalgo_ci/megatron_bridge_ci/test_evaluations/iter_0009600 \
   --model_id megatron_model \
   --host 0.0.0.0 \
   --port 8000 \
