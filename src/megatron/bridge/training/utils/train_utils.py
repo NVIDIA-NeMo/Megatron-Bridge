@@ -14,6 +14,7 @@
 
 import inspect
 import math
+import os
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -36,7 +37,7 @@ from megatron.bridge.training.utils.flop_utils import num_floating_point_operati
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0, print_rank_last
 
 
 if TYPE_CHECKING:
@@ -335,6 +336,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    log_max_attention_logit: Optional[float] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -357,7 +359,7 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
-
+        log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
     """
@@ -441,14 +443,21 @@ def training_log(
         if hasattr(timers, "write_to_mlflow"):
             timers.write_to_mlflow(timers_to_log, mlflow_logger, iteration, normalizer=total_iterations, reset=True)
 
-    if writer and (iteration % logger_config.tensorboard_log_interval == 0):
-        if config.profiling:
-            if config.profiling.record_memory_history and is_last_rank():
-                snapshot = torch.cuda.memory._snapshot()
-                from pickle import dump
+    if config.profiling:
+        if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
+            assert config.logger.tensorboard_dir is not None, (
+                "Tensorboard directory must be set when profiling memory history"
+            )
+            snapshot = torch.cuda.memory._snapshot()
+            from pickle import dump
 
-                with open(config.profiling.memory_snapshot_path, "wb") as f:
-                    dump(snapshot, f)
+            filename, ext = os.path.splitext(config.profiling.memory_snapshot_path)
+            filename = f"{filename}_{get_rank_safe()}{ext}"
+            with open(filename, "wb") as f:
+                dump(snapshot, f)
+                print_rank_0(f"Saved memory snapshot to {filename}")
+
+    if writer and (iteration % logger_config.tensorboard_log_interval == 0):
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
                 iteration=iteration,
@@ -568,6 +577,15 @@ def training_log(
                 wandb_writer.log({"params-norm": params_norm}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"params-norm": params_norm}, step=iteration)
+        if log_max_attention_logit is not None:
+            writer.add_scalar("max-attention-logit", log_max_attention_logit, iteration)
+            writer.add_scalar(
+                "max-attention-logit vs samples",
+                log_max_attention_logit,
+                global_state.train_state.consumed_train_samples,
+            )
+            if wandb_writer:
+                wandb_writer.log({"max-attention-logit": log_max_attention_logit}, iteration)
 
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
@@ -678,6 +696,8 @@ def training_log(
             log_string += f" num zeros: {num_zeros_in_grad} |"
         if params_norm is not None:
             log_string += f" params norm: {params_norm:.3f} |"
+        if log_max_attention_logit is not None:
+            log_string += f" max attention logit: {log_max_attention_logit:.3f} |"
         log_string += " number of skipped iterations: {:3d} |".format(total_loss_dict[skipped_iters_key])
         log_string += " number of nan iterations: {:3d} |".format(total_loss_dict[nan_iters_key])
         total_loss_dict[advanced_iters_key] = 0

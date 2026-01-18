@@ -146,7 +146,8 @@ class _ConfigContainerBase:
 
         Handles:
         - ConfigContainer instances (using to_dict)
-        - Regular dataclasses (using asdict)
+        - Classes which implement a to_cfg_dict method
+        - Regular dataclasses (converting each non-private field)
         - Lists and tuples (converting each element)
         - Dictionaries (converting each value)
         - Other types (kept as-is)
@@ -159,6 +160,9 @@ class _ConfigContainerBase:
         """
         if isinstance(value, _ConfigContainerBase):
             return value.to_dict()
+        elif hasattr(value, "to_cfg_dict"):
+            # Allow non-Container classes to implement own custom method
+            return value.to_cfg_dict()
         elif is_dataclass(value) and not isinstance(value, type):
             # Handle regular dataclasses
             result = {}

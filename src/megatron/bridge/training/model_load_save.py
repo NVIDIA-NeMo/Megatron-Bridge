@@ -262,7 +262,7 @@ def build_and_load_model(
     from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
     from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
-    if has_modelopt_state(checkpoint_path, ignore_kd_state=True):
+    if has_modelopt_state(checkpoint_path):
         if hasattr(model_cfg, "restore_modelopt_state"):
             model_cfg.restore_modelopt_state = True
 
@@ -377,6 +377,9 @@ def load_megatron_model(
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    if use_cpu_init:
+        model_cfg.fp8 = None
+        model_cfg.fp8_param = False
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
@@ -394,6 +397,7 @@ def save_megatron_model(
     path: Union[str, Path],
     ckpt_format: str = "torch_dist",
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
+    hf_tokenizer_kwargs: Optional[dict] = None,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
@@ -408,6 +412,8 @@ def save_megatron_model(
         ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
         hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
             If provided, the tokenizer metadata will be included in the checkpoint.
+        hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
+            Common options include trust_remote_code=True for models with custom tokenizers.
 
     Example:
         >>> # Save model checkpoint
@@ -418,6 +424,14 @@ def save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
         ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+        ... )
+
+        >>> # Save model checkpoint with custom tokenizer kwargs
+        >>> save_megatron_model(
+        ...     megatron_model,
+        ...     "./megatron_checkpoint",
+        ...     hf_tokenizer_path="THUDM/glm-4-9b-chat",
+        ...     hf_tokenizer_kwargs={"trust_remote_code": True}
         ... )
 
     Note:
@@ -433,6 +447,7 @@ def save_megatron_model(
         tokenizer_config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model=str(hf_tokenizer_path),
+            hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
     # Get model config from the first model instance

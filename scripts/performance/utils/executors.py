@@ -123,7 +123,7 @@ def slurm_executor(
                     segment = segment_candidate
                     break
 
-    numa_divisor = 2 if gpu.lower() == "gb200" else 4
+    numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
 
@@ -168,7 +168,7 @@ def dgxc_executor(
     num_gpus_per_node: int,
     wandb_key: str = None,
     hf_token: str = None,
-    custom_env_vars: List[str] = None,
+    custom_env_vars: Dict[str, str] = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):
