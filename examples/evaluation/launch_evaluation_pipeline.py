@@ -252,7 +252,7 @@ def main(args):
     eval_executor.job_details = CustomJobDetailsRay()
 
     pre_ray_start = [
-        "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/",
+        "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
     ]
 
     deploy_job = RayJob(
