@@ -26,6 +26,11 @@ elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     # Megatron Core requires NCCL_GRAPH_REGISTER=0 to be explicitly set to prevent illegal memory access when CUDA graphs are also active.
     export NCCL_GRAPH_REGISTER=0
+    if [ "$GPU" = "gb200" ]; then
+        # These env vars help if the hardware detection isn't working on GB200
+        export NVLINK_DOMAIN_SIZE=72
+        export USE_MNNVL=1
+    fi
     PRECISION="fp8_mx"
 else
     echo "Invalid GPU: $GPU"
@@ -73,6 +78,13 @@ elif [ "$BACKEND" = "local" ]; then
 else
     echo "Invalid backend: $BACKEND"
     exit 1
+fi
+
+if { [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; } && [ "$BACKEND" = "fused" ]; then
+    # use cudnn 9.18.0.76 for deterministic fused attention support
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.76.sqsh"
+    export CUDNN_HOME=/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/cudnn_lib/9.18.0.76/cudnn/
+    export LD_LIBRARY_PATH='$CUDNN_HOME/lib64:$LD_LIBRARY_PATH'
 fi
 
 

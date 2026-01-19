@@ -19,6 +19,11 @@ elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
     PARTITION="batch"
     NUM_GPUS=128
     GPUS_PER_NODE=4
+    if [ "$GPU" = "gb200" ]; then
+        # These env vars help if the hardware detection isn't working on GB200
+        export NVLINK_DOMAIN_SIZE=72
+        export USE_MNNVL=1
+    fi
 else
     echo "Invalid GPU: $GPU"
     exit 1
@@ -65,6 +70,13 @@ elif [ "$BACKEND" = "local" ]; then
 else
     echo "Invalid backend: $BACKEND"
     exit 1
+fi
+
+if { [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; } && [ "$BACKEND" = "fused" ]; then
+    # use cudnn 9.18.0.76 for deterministic fused attention support
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.76.sqsh"
+    export CUDNN_HOME=/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/cudnn_lib/9.18.0.76/cudnn/
+    export LD_LIBRARY_PATH='$CUDNN_HOME/lib64:$LD_LIBRARY_PATH'
 fi
 
 
