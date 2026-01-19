@@ -13,7 +13,7 @@ if [ "$GPU" = "h100" ]; then
     PARTITION="interactive"
     NUM_GPUS=8
     GPUS_PER_NODE=8
-elif [ "$GPU" = "gb200" ]; then
+elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
@@ -54,7 +54,7 @@ else
     exit 1
 fi
 
-if [ "$GPU" = "gb200" ] && [ "$BACKEND" = "fused" ]; then
+if { [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; } && [ "$BACKEND" = "fused" ]; then
     # use cudnn 9.18.0.76 for deterministic fused attention support
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.76.sqsh"
     export CUDNN_HOME=/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/cudnn_lib/9.18.0.76/cudnn/

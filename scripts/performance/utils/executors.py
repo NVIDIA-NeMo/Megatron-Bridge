@@ -89,7 +89,7 @@ def slurm_executor(
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
 
-    if gpu.lower() == "gb200":
+    if gpu.lower() in ["gb200", "b200"]:
         PERF_ENV_VARS["NCCL_NET_GDR_LEVEL"] = "PHB"  # For NCCL 2.25
         PERF_ENV_VARS["NCCL_NET_GDR_C2C"] = "1"  # For NCCL 2.26
 
@@ -110,7 +110,7 @@ def slurm_executor(
                 segment = segment_candidate
                 break
 
-    numa_divisor = 2 if gpu.lower() == "gb200" else 4
+    numa_divisor = 2 if gpu.lower() in ["gb200", "b200"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
     
@@ -129,7 +129,7 @@ def slurm_executor(
         tunnel=run.LocalTunnel(job_dir=os.path.join(log_dir, "experiments")),
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
-        gpus_per_node=None if gpu.lower() == "gb200" else num_gpus_per_node,
+        gpus_per_node=None if gpu.lower() in ["gb200", "b200"] else num_gpus_per_node,
         container_image=container_image,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,

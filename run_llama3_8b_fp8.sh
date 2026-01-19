@@ -16,7 +16,7 @@ if [ "$GPU" = "h100" ]; then
     # FP8 memory optimization
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     PRECISION="fp8_cs"
-elif [ "$GPU" = "gb200" ]; then
+elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
