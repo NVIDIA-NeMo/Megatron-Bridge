@@ -77,7 +77,7 @@ def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_grad_reduce = False
 
 
-def qwen3_vl_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB300_BF16
@@ -100,7 +100,7 @@ def qwen3_vl_235b_a22b_pretrain_config_gb300(precision: str = "bf16", mock: bool
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_235b_a22b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_GB200_BF16
@@ -123,7 +123,7 @@ def qwen3_vl_235b_a22b_pretrain_config_gb200(precision: str = "bf16", mock: bool
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_235b_a22b_pretrain_config_b200(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_B200_BF16
@@ -151,7 +151,7 @@ def qwen3_vl_235b_a22b_pretrain_config_b200(precision: str = "bf16", mock: bool 
     return cfg
 
 
-def qwen3_vl_235b_a22b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_235b_a22b_pretrain_config_h100(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_235B_A22B_PRETRAIN_CONFIG_H100_BF16
@@ -172,7 +172,7 @@ def qwen3_vl_235b_a22b_pretrain_config_h100(precision: str = "bf16", mock: bool 
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_30b_a3b_pretrain_config_gb300(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_GB300_BF16
@@ -195,7 +195,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb300(precision: str = "bf16", mock: bool =
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_30b_a3b_pretrain_config_gb200(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_GB200_BF16
@@ -218,7 +218,7 @@ def qwen3_vl_30b_a3b_pretrain_config_gb200(precision: str = "bf16", mock: bool =
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_b200(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_30b_a3b_pretrain_config_b200(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_B200_BF16
@@ -241,7 +241,7 @@ def qwen3_vl_30b_a3b_pretrain_config_b200(precision: str = "bf16", mock: bool = 
     return cfg
 
 
-def qwen3_vl_30b_a3b_pretrain_config_h100(precision: str = "bf16", mock: bool = True) -> ConfigContainer:
+def qwen3_vl_30b_a3b_pretrain_config_h100(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = QWEN3_VL_30B_A3B_PRETRAIN_CONFIG_H100_BF16
