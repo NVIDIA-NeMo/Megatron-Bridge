@@ -451,10 +451,10 @@ class TestCreateSFTDataset:
 class TestTokenizerSpaceSensitive:
     """Test cases for space_sensitive attribute on tokenizers."""
 
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
+    @patch("megatron.core.tokenizers.MegatronTokenizerBase")
     @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
     def test_hf_tokenizer_computes_space_sensitive(self, mock_get_rank, mock_hf_class):
-        """Test that _HuggingFaceTokenizer computes space_sensitive attribute."""
+        """Test that MegatronTokenizer computes space_sensitive attribute."""
         from megatron.bridge.training.tokenizers.config import TokenizerConfig
         from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -486,10 +486,10 @@ class TestTokenizerSpaceSensitive:
         # Verify space_sensitive is set
         assert hasattr(tokenizer, "space_sensitive")
 
-    @patch("megatron.bridge.training.tokenizers.tokenizer._SentencePieceTokenizer")
+    @patch("megatron.core.tokenizers.MegatronTokenizerBase")
     @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
     def test_sentencepiece_tokenizer_has_space_sensitive(self, mock_get_rank, mock_sp_class):
-        """Test that _SentencePieceTokenizer has space_sensitive attribute."""
+        """Test that MegatronTokenizer has space_sensitive attribute."""
         from megatron.bridge.training.tokenizers.config import TokenizerConfig
         from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -500,7 +500,6 @@ class TestTokenizerSpaceSensitive:
         config = TokenizerConfig(
             tokenizer_type="SentencePieceTokenizer",
             tokenizer_model="tokenizer.model",
-            legacy_tokenizer=True,
         )
 
         tokenizer = build_tokenizer(config)
@@ -551,7 +550,7 @@ class TestChatTemplateOverrideWarning:
     @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
     def test_warning_on_chat_template_override(self, mock_get_rank, mock_print):
         """Test that warning is printed when overwriting existing chat template."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+        from megatron.core.tokenizers import MegatronTokenizer
 
         with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
             mock_hf_tok = MagicMock()
@@ -560,7 +559,11 @@ class TestChatTemplateOverrideWarning:
             mock_from_pretrained.return_value = mock_hf_tok
 
             # Create tokenizer with chat_template override
-            tokenizer = _HuggingFaceTokenizer("gpt2", chat_template="new_template")
+            tokenizer = MegatronTokenizer.from_pretrained(
+                tokenizer_path="GPT2BPETokenizer",
+                metadata_path={"library": "megatron"},
+                chat_template="new_template",
+            )
 
             # Verify warning was printed
             mock_print.assert_called_once()
@@ -573,7 +576,7 @@ class TestChatTemplateOverrideWarning:
     @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
     def test_no_warning_when_no_existing_template(self, mock_get_rank, mock_print):
         """Test that no warning when setting template on tokenizer without one."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+        from megatron.core.tokenizers import MegatronTokenizer
 
         with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
             mock_hf_tok = MagicMock()
@@ -581,7 +584,11 @@ class TestChatTemplateOverrideWarning:
             mock_hf_tok.get_vocab.return_value = {"test": 1}
             mock_from_pretrained.return_value = mock_hf_tok
 
-            _HuggingFaceTokenizer("gpt2", chat_template="new_template")
+            tokenizer = MegatronTokenizer.from_pretrained(
+                tokenizer_path="GPT2BPETokenizer",
+                metadata_path={"library": "megatron"},
+                chat_template="new_template",
+            )
 
             # No warning should be printed
             mock_print.assert_not_called()
@@ -914,7 +921,7 @@ class TestChatTemplateFormat:
     @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
     def test_chat_template_format_set_to_jinja(self, mock_get_rank):
         """Test that chat_template_format is set to 'jinja'."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+        from megatron.core.tokenizers import MegatronTokenizer
 
         with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
             mock_hf_tok = MagicMock()
@@ -922,7 +929,11 @@ class TestChatTemplateFormat:
             mock_hf_tok.get_vocab.return_value = {"test": 1}
             mock_from_pretrained.return_value = mock_hf_tok
 
-            tokenizer = _HuggingFaceTokenizer("gpt2", chat_template="custom_template")
+            tokenizer = MegatronTokenizer.from_pretrained(
+                tokenizer_path="GPT2BPETokenizer",
+                metadata_path={"library": "megatron"},
+                chat_template="custom_template",
+            )
 
             # Verify chat_template_format was set
             assert hasattr(tokenizer._tokenizer, "chat_template_format")
@@ -1264,7 +1275,7 @@ class TestSpaceSensitiveComputation:
     @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
     def test_hf_tokenizer_computes_space_sensitive_correctly(self, mock_get_rank):
         """Test that HF tokenizer correctly computes space_sensitive."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+        from megatron.core.tokenizers import MegatronTokenizer
 
         with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
             mock_hf_tok = MagicMock()
@@ -1286,7 +1297,11 @@ class TestSpaceSensitiveComputation:
             mock_hf_tok.__call__ = mock_call
             mock_from_pretrained.return_value = mock_hf_tok
 
-            tokenizer = _HuggingFaceTokenizer("gpt2")
+            tokenizer = MegatronTokenizer.from_pretrained(
+                tokenizer_path="GPT2BPETokenizer",
+                metadata_path={"library": "megatron"},
+                chat_template="custom_template",
+            )
 
             # Should compute space_sensitive as True
             assert hasattr(tokenizer, "space_sensitive")
@@ -1294,7 +1309,7 @@ class TestSpaceSensitiveComputation:
 
     def test_sentencepiece_tokenizer_space_sensitive_fallback(self):
         """Test that SentencePiece defaults to True if computation fails."""
-        from megatron.bridge.training.tokenizers.tokenizer import _SentencePieceTokenizer
+        from megatron.core.tokenizers import MegatronTokenizer
 
         with patch("sentencepiece.SentencePieceProcessor") as mock_sp:
             mock_sp_instance = MagicMock()
@@ -1308,7 +1323,10 @@ class TestSpaceSensitiveComputation:
             mock_sp_instance.encode_as_ids.side_effect = Exception("Test error")
             mock_sp.return_value = mock_sp_instance
 
-            tokenizer = _SentencePieceTokenizer("test.model")
+            tokenizer = MegatronTokenizer.from_pretrained(
+                tokenizer_path="test.model",
+                metadata_path={"library": "sentencepiece"},
+            )
 
             # Should fallback to True
             assert tokenizer.space_sensitive is True

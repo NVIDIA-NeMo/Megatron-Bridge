@@ -50,7 +50,9 @@ class TokenizerConfig:
             "Llama2Tokenizer",
             "TikTokenizer",
             "MultimodalTokenizer",
+            "NullMultimodalTokenizer",
             "NullTokenizer",
+            "SFTTokenizer",
         ]
     ] = None
     """What type of tokenizer to use."""
@@ -75,6 +77,7 @@ class TokenizerConfig:
 
     tokenizer_prompt_format: Optional[str] = None
     image_tag_type: Optional[str] = None
+    force_system_message: Optional[bool] = False
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
