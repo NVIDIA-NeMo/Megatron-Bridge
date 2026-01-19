@@ -15,11 +15,12 @@ if [ "$GPU" = "h100" ]; then
     GPUS_PER_NODE=8
     # FP8 memory optimization
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    PRECISION="fp8_cs"
 elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
     CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
-    NUM_GPUS=256
+    NUM_GPUS=128
     GPUS_PER_NODE=4
     # FP8 memory optimization
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -30,12 +31,26 @@ elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
         export NVLINK_DOMAIN_SIZE=72
         export USE_MNNVL=1
     fi
+    PRECISION="fp8_mx"
 else
     echo "Invalid GPU: $GPU"
     exit 1
 fi
 # Get current directory to mount
 WORKDIR=$(pwd)
+
+# Base commit for Megatron-LM changes
+BASE_COMMIT="0d8e0714cd29c01e164fe6de9f532182bdffa942"
+MEGATRON_DIR="3rdparty/Megatron-LM"
+
+# Dynamically construct mounts for changed files in Megatron-LM
+CUSTOM_MOUNTS=""
+if [ -d "$MEGATRON_DIR" ]; then
+    CHANGED_FILES=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD)
+    for f in $CHANGED_FILES; do
+        CUSTOM_MOUNTS="${CUSTOM_MOUNTS},$WORKDIR/$MEGATRON_DIR/$f:/opt/megatron-lm/$f"
+    done
+fi
 
 
 export DETERMINISTIC=${DETERMINISTIC:-false}
@@ -95,9 +110,9 @@ python scripts/performance/setup_experiment.py \
     -s 405b \
     -ng $NUM_GPUS \
     -gn $GPUS_PER_NODE \
-    -c fp8_cs \
+    -c $PRECISION \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
