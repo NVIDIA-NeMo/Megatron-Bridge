@@ -221,8 +221,6 @@ def setup(
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    if cfg.scheduler.no_weight_decay_cond_type == "qwen3_next":
-        raise NotImplementedError("qwen3_next style weight decay disabled until mcore fix.")
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
