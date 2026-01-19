@@ -210,7 +210,7 @@ def main(args):
         executor=executor,
     )
     job.start(
-        command=f"bash /nemo-workspace/okoenig/code/evaluation/deploy.sh {args.megatron_checkpoint} | tee -a deploy.log & bash /nemo-workspace/okoenig/code/evaluation/eval.sh {args.output_dir} | tee -a eval.log",
+        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} | tee -a deploy.log & bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} | tee -a eval.log",
         workdir=None,
         pre_ray_start_commands=[
             "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
