@@ -174,6 +174,7 @@ LLAMA3_8B_GB300_NVFP4_BASE_CONFIG = replace(
 LLAMA3_8B_GB200_BF16_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
+    use_megatron_fsdp=True,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
 )
@@ -182,6 +183,7 @@ LLAMA3_8B_GB200_BF16_BASE_CONFIG = replace(
 LLAMA3_8B_GB200_FP8_CS_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
+    use_megatron_fsdp=True,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
 )

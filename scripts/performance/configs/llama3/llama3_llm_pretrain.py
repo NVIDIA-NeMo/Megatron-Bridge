@@ -206,6 +206,7 @@ def llama3_8b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
+        comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA3_8B_GB200_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
@@ -213,13 +214,21 @@ def llama3_8b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         elif precision == "nvfp4":
             base_cfg = base_cfgs.LLAMA3_8B_GB200_NVFP4_BASE_CONFIG
         precision_config = get_precision_config(precision)
+        comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
     set_llama3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
+    if cfg.ddp.use_megatron_fsdp:
+        cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
+        cfg.ddp.suggested_communication_unit_size = 800000000
+
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+    cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.model.use_te_rng_tracker = False
 
     return cfg
 
