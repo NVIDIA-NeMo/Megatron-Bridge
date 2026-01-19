@@ -321,6 +321,10 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
+        num_query_groups = (
+            cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
+        )
+
         # Compute hybrid model FLOPs.
         return hybrid_flops(
             batch_size=batch_size,
