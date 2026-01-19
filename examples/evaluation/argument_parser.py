@@ -142,6 +142,12 @@ def parse_cli_args():
     # Logging args
     logging_args = parser.add_argument_group("Logging arguments")
     logging_args.add_argument(
+        "--output_dir",
+        type=str,
+        help="Output directory to save the results",
+        required=False,
+    )
+    logging_args.add_argument(
         "--experiment_name",
         type=str,
         help="wandb job name",
