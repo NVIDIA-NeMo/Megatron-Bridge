@@ -51,7 +51,12 @@ def slurm_executor(
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
         container_image=container_image,
-        container_mounts=custom_mounts,
+        container_mounts=[
+            "/lustre/fsw/coreai_dlalgo_llm/datasets/RedPajama2:/nemo-workspace/datasets/RedPajama2",
+            "/lustre:/lustre",
+            "/lustre/fsw/coreai_dlalgo_ci/megatron_bridge_ci/test_evaluations/Megatron-Bridge:/opt/Megatron-Bridge",
+            "/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy:/nemo_run",
+        ],
         env_vars=env_vars,
         srun_args=[
             "--mpi=pmix",

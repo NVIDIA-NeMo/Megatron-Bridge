@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import nemo_run as run
 import yaml
 from nemo_run.core.execution.slurm import SlurmJobDetails
+from nemo_run.run.ray.cluster import RayCluster
 from nemo_run.run.ray.job import RayJob
 
 
@@ -50,13 +51,13 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-def register_pipeline_terminator(exp: run.Experiment, job_id: str):
+def register_pipeline_terminator(job: RayJob):
     """Register a signal handler to terminate the job."""
 
     def sigterm_handler(_signo, _stack_frame):
-        logger.info(f"Trying to terminate job {job_id}")
-        exp.cancel(job_id=job_id)
-        logger.info(f"Job {job_id} terminated")
+        logger.info(f"Trying to terminate job {job.name}")
+        job.stop(wait=True)
+        logger.info(f"Job {job.name} terminated")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, sigterm_handler)
@@ -74,7 +75,7 @@ class CustomJobDetailsRay(SlurmJobDetails):
         The command used to list the files is ls -1 {ls_term} 2> /dev/null
         """
         assert self.folder
-        return os.path.join(self.folder, "ray-overlap-*")
+        return os.path.join(self.folder, "ray-job.log")
 
 
 RAY_DEPLOY_SCRIPT = """
@@ -209,7 +210,7 @@ def main(args):
     logger.info("Evaluation script: %s", eval_run_script)
 
     if not args.dgxc_cluster:
-        deploy_executor = slurm_executor(
+        executor = slurm_executor(
             account=args.account,
             partition=args.partition,
             nodes=-(args.num_gpus // -args.gpus_per_node),
@@ -221,7 +222,7 @@ def main(args):
             hf_token=args.hf_token,
         )
     else:
-        deploy_executor = kuberay_executor(
+        executor = kuberay_executor(
             nodes=-(args.num_gpus // -args.gpus_per_node),
             num_gpus_per_node=args.gpus_per_node,
             dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
@@ -232,99 +233,61 @@ def main(args):
             hf_token=args.hf_token,
         )
 
-    eval_executor = kuberay_executor(
-        nodes=1,
-        num_gpus_per_node=0,
-        dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
-        dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
-        custom_env_vars=args.custom_env_vars,
-        container_image=args.container_image,
-        namespace=args.dgxc_namespace,
-        hf_token=args.hf_token,
-    )
-    eval_executor.srun_args = [
-        "--mpi=none",
-        "--ntasks-per-node=1",
-        "--nodes=1",
-    ]
-
-    deploy_executor.job_details = CustomJobDetailsRay()
-    eval_executor.job_details = CustomJobDetailsRay()
+    executor.job_details = CustomJobDetailsRay()
 
     pre_ray_start = [
         "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
+        "cp -a /nemo-workspace/Megatron-Bridge/. /opt/Megatron-Bridge/ || true",
     ]
 
-    deploy_job = RayJob(
-        name="demo-slurm-ray-cluster-deploy", executor=deploy_executor, cluster_name="demo-slurm-ray-cluster"
+    job = RayJob(
+        name="demo-slurm-ray-deploy",
+        executor=executor,
     )
-    deploy_job.start(
-        command="bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-cluster-deploy/code/deploy.sh | tee -a deploy.log & bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-cluster-deploy/code/eval.sh | tee -a eval.log",
+    job.start(
+        command="bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy/code/deploy.sh | tee -a deploy.log & bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy/code/eval.sh | tee -a eval.log",
         workdir=os.path.dirname(os.path.abspath(__file__)),  # rsync'ed via SSH to the cluster_dir/code/
         pre_ray_start_commands=pre_ray_start,
     )
+    job.logs(follow=True, timeout=10 * 60)
 
-    # eval_job = RayJob(
-    #     name="demo-slurm-ray-cluster-eval", executor=eval_executor, cluster_name="demo-slurm-ray-cluster"
-    # )
-    # eval_job.start(
-    #     command="bash /nemo-workspace/okoenig/code/evaluation/eval.sh",
-    #     workdir=os.path.dirname(os.path.abspath(__file__)),  # rsync'ed via SSH to the cluster_dir/code/
-    # )
+    register_pipeline_terminator(job=job)
 
-    # with run.Experiment(args.experiment_name) as exp:
-    #     exp.add(
-    #         deploy_run_script,
-    #         executor=deploy_executor,
-    #         name=args.experiment_name,
-    #     )
-    #     exp.add(
-    #         eval_run_script,
-    #         executor=eval_executor,
-    #         name=args.experiment_name,
-    #     )
-    #     if args.dryrun:
-    #         exp.dryrun()
-    #     else:
-    #         exp.run(detach=True)
+    with open(
+        os.path.join("/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy", "results", "results.yml"), "r"
+    ) as f:
+        results = yaml.safe_load(f)
 
-    # register_pipeline_terminator(exp=exp, job_id=exp.jobs[0].id)
+    logger.info("Results: %s", results)
 
-    # exp.logs(job_id=exp.jobs[0].id)
+    if HAVE_WANDB and args.wandb_key:
+        wandb_run = wandb.init(
+            project=args.wandb_project_name,
+            entity=args.wandb_entity_name,
+            id=args.wandb_experiment_name,
+            resume="allow",
+        )
+        artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
+        artifact.add_file(
+            local_path=os.path.join(
+                "/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy", "results", "results.json"
+            ),
+            name="results.json",
+        )
+        wandb_run.log_artifact(artifact)
 
-    # result_dict = exp.status(return_dict=True)
-    # _, job_dict = list(result_dict.items())[0]
+        for category in ["tasks", "groups"]:
+            for task_or_group_name, result in results[category].items():
+                for metric_name, metric_result in result["metrics"].items():
+                    field_key = f"{category.rstrip('s')}/{task_or_group_name}/{metric_name}"
+                    wandb_run.log(
+                        {
+                            f"{field_key}/value": metric_result["scores"][metric_name]["value"],
+                            f"{field_key}/stderr": metric_result["scores"][metric_name]["stats"]["stderr"],
+                        }
+                    )
 
-    # with open(os.path.join(job_dict["local_dir"], "results", "results.yml"), "r") as f:
-    #     results = yaml.safe_load(f)
-
-    # logger.info("Results: %s", results)
-
-    # if HAVE_WANDB and args.wandb_key:
-    #     wandb_run = wandb.init(
-    #         project=args.wandb_project_name,
-    #         entity=args.wandb_entity_name,
-    #         id=args.wandb_experiment_name,
-    #         resume="allow",
-    #     )
-    #     artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
-    #     artifact.add_file(
-    #         local_path=os.path.join(job_dict["local_dir"], "results", "results.json"), name="results.json"
-    #     )
-    #     wandb_run.log_artifact(artifact)
-
-    #     for category in ["tasks", "groups"]:
-    #         for task_or_group_name, result in results[category].items():
-    #             for metric_name, metric_result in result["metrics"].items():
-    #                 field_key = f"{category.rstrip('s')}/{task_or_group_name}/{metric_name}"
-    #                 wandb_run.log(
-    #                     {
-    #                         f"{field_key}/value": metric_result["scores"][metric_name]["value"],
-    #                         f"{field_key}/stderr": metric_result["scores"][metric_name]["stats"]["stderr"],
-    #                     }
-    #                 )
-
-    #     wandb_run.finish()
+        wandb_run.finish()
 
 
 if __name__ == "__main__":
