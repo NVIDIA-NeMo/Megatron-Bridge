@@ -222,9 +222,7 @@ def main(args):
     time.sleep(90)
     job.logs(follow=True, timeout=10 * 60 * 60)
 
-    with open(
-        os.path.join("/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy", "results", "results.yml"), "r"
-    ) as f:
+    with open(os.path.join(args.output_dir, "results.yml"), "r") as f:
         results = yaml.safe_load(f)
 
     logger.info("Results: %s", results)
@@ -238,9 +236,7 @@ def main(args):
         )
         artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
         artifact.add_file(
-            local_path=os.path.join(
-                "/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy", "results", "results.json"
-            ),
+            local_path=os.path.join(args.output_dir, "results", "results.json"),
             name="results.json",
         )
         wandb_run.log_artifact(artifact)
