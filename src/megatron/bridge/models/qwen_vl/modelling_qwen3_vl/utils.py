@@ -93,7 +93,7 @@ def get_rope_index(
         # Build an attention mask from packed sequence metadata when one is not provided.
         # cu_seqlens_q entries are cumulative lengths; their diffs give per-sample lengths.
         cu_seqlens = packed_seq_params.cu_seqlens_q
-        if cu_seqlens is not None and cu_seqlens.numel() >= 2:
+        if cu_seqlens is not None and cu_seqlens.numel() >= 2 and input_ids.shape[0] >= 2:
             seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
             attention_mask = torch.zeros_like(input_ids, dtype=input_ids.dtype)
             max_len = attention_mask.shape[1]
