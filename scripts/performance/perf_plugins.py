@@ -258,7 +258,7 @@ class PerfEnvPlugin(Plugin):
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
-            if model_name == "llama3" and model_size in ["8b", "70b"]:
+            if model_name == "llama3" and model_size == "70b":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
             if model_name == "llama31" and model_size == "405b":
