@@ -85,7 +85,7 @@ def main(
         torch_dtype=dtype,
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
+    model_provider = bridge.to_megatron_provider(load_weights=False)
     _configure_model_provider(model_provider, ep, dtype)
 
     ddp_config=DistributedDataParallelConfig(
@@ -103,6 +103,7 @@ def main(
         data_parallel_random_init=False,
     )
 
+    bridge.load_hf_weights(megatron_model)
     table = weights_verification_table(bridge, megatron_model)
     if _is_rank_zero():
         console.print(table)

@@ -759,6 +759,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
+        if use_megatron_fsdp:
+            megatron_model = [megatron_model[0].module.module]
         # [ModelOpt]: Hide extra parameters registered in Distillation mode
         with contextlib.ExitStack() as stack:
             if hasattr(megatron_model[0], "hide_teacher_model"):
@@ -778,12 +781,18 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
 
             # 2) Delegate conversion & distribution to the bridge
-            converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
+            if use_megatron_fsdp:
+                converted_weights = task.mapping.hf_to_megatron_fsdp(hf_weights, task.megatron_module, task.param_weight)
+            else:
+                converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
 
             # 3) Copy into Megatron param if this rank received a shard
             if converted_weights is not None:
                 # Assert that param_weight is not None for HF->Megatron tasks
                 assert task.param_weight is not None, "param_weight is required for HF->Megatron conversion"
+                if use_megatron_fsdp:
+                    task.param_weight._local_tensor.reshape(-1).copy_(converted_weights)
+                    continue
 
                 # Check shape compatibility before copying
                 if converted_weights.shape != task.param_weight.shape:

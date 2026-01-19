@@ -20,7 +20,7 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 import torch
 import torch.distributed
 import torch.nn as nn
-from torch.distributed._tensor import DTensor
+from torch.distributed._tensor import DTensor, distribute_tensor
 from megatron.core import mpu
 from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
@@ -314,6 +314,30 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             megatron_weights = dtensor_weights
 
         return self.megatron_to_hf(megatron_weights, megatron_module)
+
+    def hf_to_megatron_fsdp(
+        self,
+        hf_weights: WeightType,
+        megatron_module: nn.Module,
+        param_weight,
+    ) -> torch.Tensor:
+        """Convert hf_weights to Megatron FSDP format.
+        Args:
+            hf_weights (WeightType): Source hf_weights in external format.
+            megatron_module (nn.Module): Target Megatron module (for config
+                access).
+            param_weight (torch.Tensor): The parameter tensor that will receive the converted weight.
+
+        Returns:
+            torch.Tensor: The converted weight tensor.
+        """
+        megatron_weights = self.hf_to_megatron(hf_weights, megatron_module)
+
+        if isinstance(param_weight, DTensor):
+            local_data = megatron_weights.view(-1)[param_weight.megatron_fsdp_slice]
+        else:
+            local_data = megatron_weights
+        return local_data
 
     def broadcast_from_pp_rank(
         self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None
