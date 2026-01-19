@@ -51,12 +51,7 @@ def slurm_executor(
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
         container_image=container_image,
-        container_mounts=[
-            "/lustre/fsw/coreai_dlalgo_llm/datasets/RedPajama2:/nemo-workspace/datasets/RedPajama2",
-            "/lustre:/lustre",
-            "/lustre/fsw/coreai_dlalgo_ci/megatron_bridge_ci/test_evaluations/Megatron-Bridge:/opt/Megatron-Bridge",
-            "/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy:/nemo_run",
-        ],
+        container_mounts=custom_mounts,
         env_vars=env_vars,
         srun_args=[
             "--mpi=pmix",
@@ -105,6 +100,11 @@ def kuberay_executor(
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
         "RAY_enable_infeasible_task_early_exit": "true",
+        "NCCL_IB_DISABLE": "1",
+        "NCCL_IB_HCA": "^openib",  # Ignore OpenIB devices
+        "NCCL_NET": "Socket",
+        "NCCL_NET_GDR_LEVEL": "0",
+        "FI_PROVIDER": "tcp",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)

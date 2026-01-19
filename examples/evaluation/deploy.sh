@@ -2,11 +2,11 @@
 for i in $(env | grep ^SLURM_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
-export RAY_enable_infeasible_task_early_exit=true
 
+MEGATRON_CHECKPOINT=$1
 python \
   /opt/Export-Deploy/scripts/deploy/nlp/deploy_ray_inframework.py \
-  --megatron_checkpoint /nemo-workspace/pagaray/megatron_bridge_ci/weekly_test/2026-01-17/llama/llama3_8b/checkpoints/iter_0009600/ \
+  --megatron_checkpoint $MEGATRON_CHECKPOINT \
   --model_id megatron_model \
   --host 0.0.0.0 \
   --port 8000 \

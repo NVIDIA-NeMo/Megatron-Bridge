@@ -23,6 +23,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from dataclasses import dataclass
 
 import nemo_run as run
@@ -56,7 +57,7 @@ def register_pipeline_terminator(job: RayJob):
 
     def sigterm_handler(_signo, _stack_frame):
         logger.info(f"Trying to terminate job {job.name}")
-        job.stop(wait=True)
+        job.stop()
         logger.info(f"Job {job.name} terminated")
         sys.exit(0)
 
@@ -177,37 +178,6 @@ EVAL_EOF
 
 def main(args):
     """Deploys the inference and evaluation server with NemoRun."""
-    # Deployment script
-    deploy_run_script = run.Script(
-        inline=RAY_DEPLOY_SCRIPT.format(
-            megatron_checkpoint=args.megatron_checkpoint,
-            host=args.host,
-            port=args.port,
-            num_gpus=args.num_gpus,
-            num_replicas=args.num_replicas,
-            tensor_model_parallel_size=args.tensor_model_parallel_size,
-            pipeline_model_parallel_size=args.pipeline_model_parallel_size,
-            context_model_parallel_size=args.context_model_parallel_size,
-        ),
-        metadata={"use_with_ray_cluster": True},
-    )
-    logger.info("Deploy script: %s", deploy_run_script)
-
-    # Evaluation script - using inline script to avoid serialization issues
-    eval_run_script = run.Script(
-        inline=EVAL_SCRIPT.format(
-            endpoint_url=f"http://{args.host}:{args.port}/v1/{ENDPOINT_TYPES[args.endpoint_type]}",
-            endpoint_type=args.endpoint_type,
-            eval_task=args.eval_task,
-            limit_samples=args.limit_samples if args.limit_samples is not None else "None",
-            parallelism=args.parallelism,
-            request_timeout=args.request_timeout,
-            temperature=args.temperature if args.temperature is not None else "None",
-            top_p=args.top_p if args.top_p is not None else "None",
-            top_k=args.top_k if args.top_k is not None else "None",
-        )
-    )
-    logger.info("Evaluation script: %s", eval_run_script)
 
     if not args.dgxc_cluster:
         executor = slurm_executor(
@@ -235,23 +205,21 @@ def main(args):
 
     executor.job_details = CustomJobDetailsRay()
 
-    pre_ray_start = [
-        "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
-        "cp -a /nemo-workspace/Megatron-Bridge/. /opt/Megatron-Bridge/ || true",
-    ]
-
     job = RayJob(
         name="demo-slurm-ray-deploy",
         executor=executor,
     )
     job.start(
-        command="bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy/code/deploy.sh | tee -a deploy.log & bash /home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy/code/eval.sh | tee -a eval.log",
-        workdir=os.path.dirname(os.path.abspath(__file__)),  # rsync'ed via SSH to the cluster_dir/code/
-        pre_ray_start_commands=pre_ray_start,
+        command=f"bash /nemo-workspace/okoenig/code/evaluation/deploy.sh {args.megatron_checkpoint} | tee -a deploy.log & bash /nemo-workspace/okoenig/code/evaluation/eval.sh {args.output_dir} | tee -a eval.log",
+        pre_ray_start_commands=[
+            "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
+            "cp -a /nemo-workspace/Megatron-Bridge/. /opt/Megatron-Bridge/ || true",
+        ],
     )
-    job.logs(follow=True, timeout=10 * 60)
 
     register_pipeline_terminator(job=job)
+    time.sleep(90)
+    job.logs(follow=True, timeout=10 * 60 * 60)
 
     with open(
         os.path.join("/home/okoenig/.nemo_run/experiments/demo-slurm-ray-deploy", "results", "results.yml"), "r"

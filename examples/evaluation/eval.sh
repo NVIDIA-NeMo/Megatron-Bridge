@@ -3,10 +3,12 @@ for i in $(env | grep ^SLURM_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
 
-# Install missing dependency for lm-evaluation-harness
-pip install math_verify --quiet
+OUTPUT_DIR=$1
 
-python << 'EVAL_EOF'
+# Install missing dependency for lm-evaluation-harness
+uv pip install math_verify --quiet
+
+uv run --active --no-sync python << EVAL_EOF
 import subprocess
 import time
 
@@ -29,7 +31,7 @@ request_timeout = 1000
 temperature = None
 top_p = None
 top_k = None
-output_dir = "/nemo_run/results/"
+output_dir = "/$OUTPUT_DIR/results/"
 
 # Check server readiness
 server_ready = check_endpoint(
