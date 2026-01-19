@@ -1376,7 +1376,7 @@ wheels = [
 
 [[package]]
 name = "flashinfer-python"
-version = "0.6.0"
+version = "0.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -1393,9 +1393,9 @@ dependencies = [
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/8d/c7330f27f09b9110af2f6c44c6f68d7b536f525f8ac539210073bfcdb965/flashinfer_python-0.6.0.tar.gz", hash = "sha256:3c2cd7d734933b4116cda00e7be03cb59d827b086f508f986e0867a5e01a8c81", size = 5114758, upload-time = "2026-01-08T02:57:03.298Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/91/cca69baeff24bb3efd12c7479a026432c8717ee47193694010494c528b22/flashinfer_python-0.5.3.tar.gz", hash = "sha256:100d59b0ede47878d2808cd3a1b9039d7a952d66338bc9f68dac192ae1b2e3f1", size = 4682367, upload-time = "2025-11-20T21:22:46.976Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/90/5834597488f5ea62b1cc874338125c79ce21c11d777ac6f7b47f12cf2bb3/flashinfer_python-0.6.0-py3-none-any.whl", hash = "sha256:e8be4fd2f9229a7faef411579439eebc6c6dc54893d62bd50498f374cd04cc16", size = 7544491, upload-time = "2026-01-08T02:57:01.703Z" },
+    { url = "https://files.pythonhosted.org/packages/76/78/6dc7e7da8cb87c9965644ea0d2439457a1bc9256c45ceda0044595be4143/flashinfer_python-0.5.3-py3-none-any.whl", hash = "sha256:b601293b72f9138bad173edc28df84b9f239a013be974e2e79d4ba98aeb38cf5", size = 6998069, upload-time = "2025-11-20T21:22:45.104Z" },
 ]
 
 [[package]]
@@ -2451,6 +2451,7 @@ dependencies = [
 dev = [
     { name = "av" },
     { name = "causal-conv1d" },
+    { name = "datasets" },
     { name = "einops" },
     { name = "emerging-optimizers" },
     { name = "fastapi" },
@@ -2486,14 +2487,17 @@ requires-dist = [
     { name = "av", marker = "extra == 'lts'" },
     { name = "causal-conv1d", marker = "extra == 'dev'", specifier = "~=1.5" },
     { name = "causal-conv1d", marker = "extra == 'lts'", specifier = "~=1.5" },
+    { name = "datasets", marker = "extra == 'dev'" },
+    { name = "datasets", marker = "extra == 'lts'" },
     { name = "einops", marker = "extra == 'dev'", specifier = "~=0.8" },
     { name = "einops", marker = "extra == 'lts'", specifier = "~=0.8" },
     { name = "emerging-optimizers", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.1.0" },
+    { name = "emerging-optimizers", marker = "extra == 'lts'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.1.0" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = "~=0.50" },
     { name = "fastapi", marker = "extra == 'lts'", specifier = "~=0.50" },
     { name = "flash-linear-attention", marker = "extra == 'dev'", specifier = "~=0.3.2" },
-    { name = "flashinfer-python", marker = "extra == 'dev'" },
-    { name = "flashinfer-python", marker = "extra == 'lts'" },
+    { name = "flashinfer-python", marker = "extra == 'dev'", specifier = "~=0.5.0" },
+    { name = "flashinfer-python", marker = "extra == 'lts'", specifier = "~=0.5.0" },
     { name = "flask-restful", marker = "extra == 'mlm'" },
     { name = "mamba-ssm", marker = "extra == 'dev'", specifier = "~=2.2" },
     { name = "mamba-ssm", marker = "extra == 'lts'", specifier = "~=2.2" },
@@ -2520,7 +2524,7 @@ requires-dist = [
     { name = "torch" },
     { name = "tqdm", marker = "extra == 'dev'" },
     { name = "tqdm", marker = "extra == 'lts'" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'dev'", specifier = ">=2.9.0a0,<2.10.0" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'dev'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=release_v2.11" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "wandb", marker = "extra == 'mlm'" },
     { name = "wget", marker = "extra == 'dev'" },
@@ -2535,7 +2539,7 @@ build = [
     { name = "nvidia-mathdx" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "pybind11" },
-    { name = "setuptools", specifier = "<80.0.0" },
+    { name = "setuptools", specifier = ">=77.0.0,<80.0.0" },
     { name = "torch" },
 ]
 ci = [
