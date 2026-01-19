@@ -72,7 +72,9 @@ if [ "$DETERMINISTIC" = true ]; then
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
-    export additional_args="${additional_args} ddp.use_megatron_fsdp=true ddp.fsdp_double_buffer=true ddp.data_parallel_sharding_strategy=optim_grads_params ddp.overlap_grad_reduce=true ddp.overlap_param_gather=true model.init_model_with_meta_device=true checkpoint.ckpt_format=fsdp_dtensor model.gradient_accumulation_fusion=false model.attention_backend=flash model.cuda_graph_impl=none train.manual_gc=true train.manual_gc_interval=100 train.micro_batch_size=1 model.cpu_offloading=true model.cpu_offloading_num_layers=10 model.use_te_rng_tracker=false"
+    export additional_args="${additional_args} ddp.use_megatron_fsdp=true ddp.fsdp_double_buffer=true ddp.data_parallel_sharding_strategy=optim_grads_params ddp.overlap_grad_reduce=true ddp.overlap_param_gather=true model.init_model_with_meta_device=true checkpoint.ckpt_format=fsdp_dtensor model.gradient_accumulation_fusion=false model.attention_backend=flash model.cuda_graph_impl=none train.manual_gc=true train.manual_gc_interval=100"
+    # problematic
+    export additional_args="${additional_args} model.cpu_offloading=true model.cpu_offloading_num_layers=10"
     export EXP_NAME="deterministic-${BACKEND}-${GPU}"
 else
     export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
