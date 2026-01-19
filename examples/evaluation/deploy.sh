@@ -6,12 +6,12 @@ export RAY_enable_infeasible_task_early_exit=true
 
 python \
   /opt/Export-Deploy/scripts/deploy/nlp/deploy_ray_inframework.py \
-  --megatron_checkpoint /lustre/fsw/coreai_dlalgo_ci/megatron_bridge_ci/test_evaluations/iter_0009600 \
+  --megatron_checkpoint /nemo-workspace/pagaray/megatron_bridge_ci/weekly_test/2026-01-17/llama/llama3_8b/checkpoints/iter_0009600/ \
   --model_id megatron_model \
   --host 0.0.0.0 \
   --port 8000 \
   --num_gpus 8 \
-  --num_replicas 1 \
+  --num_replicas 8 \
   --tensor_model_parallel_size 1 \
   --pipeline_model_parallel_size 1 \
   --context_parallel_size 1
