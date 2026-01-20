@@ -13,6 +13,7 @@
 # limitations under the License.
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
+ARG MCORE_LAYER=submodule_mcore
 FROM ${BASE_IMAGE} AS mbridge_base
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -55,16 +56,16 @@ FROM mbridge_base as mbridge_submodule_mcore
 COPY 3rdparty/Megatron-LM/pyproject.toml /tmp/Megatron-LM/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/
 
+FROM mbridge_${MCORE_LAYER} as mbridge_mcore
+
 FROM mbridge_base as mbridge_final
 
 WORKDIR /opt/Megatron-Bridge
-ARG MCORE_LAYER=submodule_mcore
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
 
-COPY --from=mbridge_${MCORE_LAYER} /tmp/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+RUN --mount=type=bind,from=mbridge_mcore,source=/tmp/Megatron-LM,target=/opt/Megatron-Bridge/3rdparty/Megatron-LM \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
@@ -79,4 +80,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY . /opt/Megatron-Bridge
 
-COPY --from=mbridge_${MCORE_LAYER} /src/Megatron-LM* /opt/Megatron-Bridge/3rdparty/Megatron-LM
+COPY --from=mbridge_mcore /src/Megatron-LM* /opt/Megatron-Bridge/3rdparty/
