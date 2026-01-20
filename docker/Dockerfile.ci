@@ -34,12 +34,12 @@ FROM ${BASE_IMAGE} as mbridge_custom_mcore
 
 ARG MCORE_REPO
 ARG MCORE_COMMIT
-ARG TOKEN_SOURCE
+ARG MCORE_HOST
 WORKDIR /tmp
 
 RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     CI_JOB_TOKEN=$(cat /run/secrets/CI_JOB_TOKEN) && \
-    git clone ${TOKEN_SOURCE}:${CI_JOB_TOKEN}@${MCORE_REPO} . && \
+    git clone ${MCORE_HOST}:${CI_JOB_TOKEN}@${MCORE_REPO} Megatron-LM && \
     pushd Megatron-LM && \
         git pull && \
         git fetch origin $MCORE_COMMIT && \
