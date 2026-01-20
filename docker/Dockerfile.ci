@@ -15,7 +15,6 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
 ARG MCORE_LAYER=submodule_mcore
 FROM ${BASE_IMAGE} AS mbridge_base
-WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
@@ -60,6 +59,7 @@ COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatro
 
 FROM mbridge_${MCORE_LAYER} as mbridge_final
 
+WORKDIR /opt/Megatron-Bridge
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
 
