@@ -21,9 +21,6 @@ from typing import Any, Literal, Optional, Union
 class TokenizerConfig:
     """Configuration settings for the tokenizer."""
 
-    legacy_tokenizer: Optional[bool] = False
-    """To use Megatron-Bridge legacy tokenizer system."""
-
     metadata_path: Optional[Union[str | dict]] = None
     """Path to the tokenizer metadata file."""
 

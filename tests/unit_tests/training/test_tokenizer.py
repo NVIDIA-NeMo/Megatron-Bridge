@@ -31,10 +31,10 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
-        assert tokenizer.library == "null"
+        assert tokenizer.library == "null-text"
         assert tokenizer.vocab_size == vocab_size
 
     @patch("megatron.core.tokenizers.text.libraries.MegatronHFTokenizer")
@@ -53,7 +53,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "megatron"
@@ -73,7 +73,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "huggingface"
@@ -95,7 +95,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "sentencepiece"
@@ -114,7 +114,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "tiktoken"
@@ -123,7 +123,7 @@ class TestTokenizers:
         assert tokenizer.additional_args["num_special_tokens"] == num_special_tokens
 
     @pytest.mark.timeout(30)
-    def test_hf_tokenizer_as_local_path_object(tmp_path):
+    def test_hf_tokenizer_as_local_path_object(self, tmp_path):
         # Cover the user case where a user has made a local path object of a WIP tokenizer and wants
         #  to use that in some megatron model at train time.
 
@@ -147,8 +147,10 @@ class TestTokenizers:
         cfg = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model=local_model_path,
-            legacy_tokenizer=True,
-            hf_tokenizer_kwargs={"trust_remote_code": True},
+            hf_tokenizer_kwargs={
+                "trust_remote_code": True,
+                "include_special_tokens": True,
+            },
         )
         loaded_tokenizer = build_tokenizer(cfg)
 

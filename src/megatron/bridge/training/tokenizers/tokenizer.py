@@ -12,37 +12,6 @@ MEGATRON_TOKENIZERS = ["BertWordPieceLowerCase", "BertWordPieceCase", "GPT2BPETo
 SP_TOKENIZERS = ["SentencePieceTokenizer", "GPTSentencePieceTokenizer", "Llama2Tokenizer"]
 
 
-def _compute_space_sensitive(tokenizer_instance: "MegatronTokenizer", default: bool = True) -> bool:
-    """
-    Determine if a tokenizer is space-sensitive.
-
-    A tokenizer is space-sensitive if tokenizing "x y" produces different token sequences
-    than concatenating tokenize("x") + tokenize("y"). This affects how prompt templates
-    handle spaces in the dataset preprocessing pipeline.
-
-    Args:
-        tokenizer_instance: Tokenizer instance with a `tokenize` method
-        default: Fallback value if computation fails (True for SentencePiece, False for others)
-
-    Returns:
-        bool: True if the tokenizer is space-sensitive, False otherwise
-
-    Example:
-        # A space-sensitive tokenizer (e.g., many BPE tokenizers):
-        # tokenize("x y") -> [87, 331]
-        # tokenize("x") + tokenize("y") -> [87, 379]  # Different!
-
-        # A non-space-sensitive tokenizer would produce the same result
-    """
-    try:
-        test_tokens_with_space = tokenizer_instance.tokenize("x y")
-        test_tokens_concat = tokenizer_instance.tokenize("x") + tokenizer_instance.tokenize("y")
-        return test_tokens_with_space != test_tokens_concat
-    except Exception:
-        # If tokenization fails for any reason, use the default
-        return default
-
-
 def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
     """Initialize tokenizer from megatron.core.tokenizers based on the provided configuration.
 
