@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# syntax=docker/dockerfile:1.4
-
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
 FROM ${BASE_IMAGE} AS mbridge_base
 ENV PATH="/root/.local/bin:$PATH"
