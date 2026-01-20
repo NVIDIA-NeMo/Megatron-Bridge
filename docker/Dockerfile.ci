@@ -34,11 +34,11 @@ FROM mbridge_base as mbridge_custom_mcore
 ARG MCORE_REPO
 ARG MCORE_COMMIT
 ARG MCORE_HOST
-WORKDIR /tmp
+WORKDIR /src/Megatron-LM
 
 RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     CI_JOB_TOKEN=$(cat /run/secrets/CI_JOB_TOKEN) && \
-    git clone ${MCORE_HOST}:${CI_JOB_TOKEN}@${MCORE_REPO} Megatron-LM && \
+    git clone ${MCORE_HOST}:${CI_JOB_TOKEN}@${MCORE_REPO} . && \
     pushd Megatron-LM && \
         git pull && \
         git fetch origin $MCORE_COMMIT && \
@@ -46,24 +46,24 @@ RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
         echo "Container built with Megatron-LM commit hash: $MCORE_COMMIT" && \
         rm -rf .git && \
         rm -rf  ~/.netrc && \
+        mkdir -p /tmp/Megatron-LM/megatron/core/ && \
+        cp pyproject.toml /tmp/Megatron-LM/ && \
+        cp megatron/core/__init__.py megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/ && \
     popd && \
-    mkdir -p /opt/Megatron-Bridge/3rdparty/Megatron-LM/ && \
-    mkdir -p /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/ && \
-    mv /tmp/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/ && \
-    mv /tmp/Megatron-LM/megatron/core/__init__.py /tmp/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
 
 FROM mbridge_base as mbridge_submodule_mcore
 
-COPY 3rdparty/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
-COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+COPY 3rdparty/Megatron-LM/pyproject.toml /tmp/Megatron-LM/
+COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/
 
-FROM mbridge_${MCORE_LAYER} as mbridge_final
+FROM mbridge_base as mbridge_final
 
 WORKDIR /opt/Megatron-Bridge
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+RUN --mount=type=bind,from=mbridge_${MCORE_LAYER},source=/tmp/Megatron-LM,target=/opt/Megatron-Bridge/3rdparty/Megatron-LM \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
@@ -78,6 +78,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY . /opt/Megatron-Bridge
 
-RUN if [ $MCORE_LAYER = "custom_mcore" ]; then \
-    mv /tmp/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM; \
-    fi
+COPY --from=mbridge_${MCORE_LAYER} /src/Megatron-LM* /opt/Megatron-Bridge/3rdparty/Megatron-LM
