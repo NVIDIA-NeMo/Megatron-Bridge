@@ -125,7 +125,9 @@ def get_batch(
         batch["tokens"],
         batch["labels"],
         batch["loss_mask"],
-        batch["attention_mask"],
+        batch.get(
+            "attention_mask"
+        ),  # Attention_mask is optional for pre-training as a casual mask is generated automatically.
         batch["position_ids"],
         batch.get("cu_seqlens"),
         batch.get("cu_seqlens_argmin"),

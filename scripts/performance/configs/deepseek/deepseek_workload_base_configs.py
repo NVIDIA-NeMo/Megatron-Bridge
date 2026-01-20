@@ -17,10 +17,10 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-V1: Default configs (original)
-V2: Same as V1 except GBS=4096 for Blackwell variants, GBS=16384 for H100
+V1: GBS=2048 for Blackwell variants, GBS=8192 for H100
+V2: GBS=4096 for Blackwell variants, GBS=16384 for H100
 
-Use --config_variant to select a variant (default: v1).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -35,7 +35,7 @@ BASE_DEEPSEEK_V3_CONFIG = WorkloadBaseConfig(
 
 
 # =============================================================================
-# DeepSeek V3 Pretrain - V1 (default)
+# DeepSeek V3 Pretrain - V1 (original GBS settings)
 # =============================================================================
 
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1 = replace(
@@ -171,8 +171,42 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2
 
 
+# =============================================================================
+# DeepSeek V3 Pretrain - Large Scale Proxy
+# =============================================================================
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V1,
+    global_batch_size=1024,
+)
+
+
 __all__ = [
-    # V1
+    # V1 (original GBS settings)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
@@ -206,4 +240,10 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2",
+    # Large Scale Proxy
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE",
 ]

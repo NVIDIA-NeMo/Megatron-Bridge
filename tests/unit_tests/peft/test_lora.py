@@ -418,6 +418,68 @@ class TestLoRAMerge:
         # Should be unchanged
         assert merged_model.linear_qkv is original_linear
 
+    def test_lora_merge_with_te_grouped_linear(self):
+        """Test LoRA weight merging with TE Grouped Linear instances (MoE)."""
+
+        # Create a mock base module (representing a TE Grouped Linear module)
+        class MockTEGroupedLinear(nn.Module):
+            def __init__(self, num_gemms=2):
+                super().__init__()
+                self.num_gemms = num_gemms
+                self.weight0 = nn.Parameter(torch.randn(128, 64))  # Output x Input for nn.Linear weights
+                self.weight1 = nn.Parameter(torch.randn(128, 64))
+                # Ensure no 'weight' attribute exists
+                if hasattr(self, "weight"):
+                    del self.weight
+
+        base_module = MockTEGroupedLinear()
+        original_weight0 = base_module.weight0.data.clone()
+        original_weight1 = base_module.weight1.data.clone()
+
+        # Create a mock LoRA adapter
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = 16
+                self.dim = 8
+                # LoRA implementation typically expects Linear layers
+                # linear_in: Input -> Rank (Rank x Input weight)
+                # linear_out: Rank -> Output (Output x Rank weight)
+                self.linear_in = nn.Linear(64, 8, bias=False)
+                self.linear_out = nn.Linear(8, 128, bias=False)
+
+                # Initialize with values
+                with torch.no_grad():
+                    self.linear_in.weight.data.fill_(0.1)
+                    self.linear_out.weight.data.fill_(0.05)
+
+        adapter = MockAdapter()
+
+        # Create LoRALinear instance
+        lora_linear = LoRALinear(base_module, adapter)
+
+        # Create merge instance and apply
+        merge = LoRAMerge()
+        merged_result = merge.transform(lora_linear)
+
+        # Verify result is the wrapper
+        assert merged_result is lora_linear
+
+        # Verify weights were modified
+        merged_weight0 = lora_linear.to_wrap.weight0.data
+        merged_weight1 = lora_linear.to_wrap.weight1.data
+
+        assert not torch.equal(original_weight0, merged_weight0)
+        assert not torch.equal(original_weight1, merged_weight1)
+
+        expected_lora_weight = (adapter.alpha / adapter.dim) * (adapter.linear_out.weight @ adapter.linear_in.weight)
+
+        expected_merged0 = original_weight0 + expected_lora_weight
+        expected_merged1 = original_weight1 + expected_lora_weight
+
+        assert torch.allclose(merged_weight0, expected_merged0, atol=1e-6)
+        assert torch.allclose(merged_weight1, expected_merged1, atol=1e-6)
+
 
 class TestLoRAIntegration:
     """Integration tests for LoRA functionality."""

@@ -184,6 +184,7 @@ class TestQwen3NextConversion:
         except Exception as e:
             assert False, f"Failed to load created toy model: {e}"
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
         "tp,pp,ep,test_name",

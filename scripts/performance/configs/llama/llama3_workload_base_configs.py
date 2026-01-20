@@ -17,11 +17,10 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-Examples:
-    LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V1  (default/primary config)
-    LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V2  (alternate config with different settings)
+V1: GBS=128 for 70B pretrain
+V2: GBS=256 for 70B pretrain
 
-Use --config_variant to select a variant (default: v1).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -48,7 +47,7 @@ BASE_LLAMA3_70B_CONFIG_GBS256 = WorkloadBaseConfig(
 )
 
 # =============================================================================
-# Llama3 70B pretrain presets - V1 (default)
+# Llama3 70B pretrain presets - V1 (GBS=128)
 # =============================================================================
 
 LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
@@ -346,7 +345,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
 
 
 # =============================================================================
-# Llama3 8B pretrain presets - V1 (default, no V2 for 8B)
+# Llama3 8B pretrain presets - V1 (only version)
 # =============================================================================
 
 LLAMA3_8B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
@@ -460,7 +459,7 @@ LLAMA3_8B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
 
 
 # =============================================================================
-# Llama3 8B finetune presets - V1
+# Llama3 8B finetune presets - V1 (only version)
 # =============================================================================
 
 _LLAMA3_8B_SFT_CONFIG_GB200 = replace(
@@ -490,11 +489,10 @@ LLAMA3_8B_SFT_CONFIG_H100_FP8_CS_V1 = replace(
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="mlp",
 )
-LLAMA3_8B_SFT_CONFIG_H100_FP8_MX_V1 = LLAMA3_8B_SFT_CONFIG_H100_FP8_CS_V1
 
 
 # =============================================================================
-# Llama3 70B finetune (SFT) presets - V1
+# Llama3 70B finetune (SFT) presets - V1 (only version)
 # =============================================================================
 
 _LLAMA3_70B_SFT_CONFIG_GB300 = replace(
@@ -546,11 +544,10 @@ _LLAMA3_70B_SFT_CONFIG_H100 = replace(
 
 LLAMA3_70B_SFT_CONFIG_H100_BF16_V1 = _LLAMA3_70B_SFT_CONFIG_H100
 LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1 = _LLAMA3_70B_SFT_CONFIG_H100
-LLAMA3_70B_SFT_CONFIG_H100_FP8_MX_V1 = _LLAMA3_70B_SFT_CONFIG_H100
 
 
 # =============================================================================
-# Llama3 70B finetune (LoRA) presets - V1
+# Llama3 70B finetune (LoRA) presets - V1 (only version)
 # =============================================================================
 
 _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
@@ -567,7 +564,10 @@ _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
 
 LLAMA3_70B_LORA_CONFIG_GB300_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
 LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
-LLAMA3_70B_LORA_CONFIG_GB300_FP8_MX_V1 = LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1
+LLAMA3_70B_LORA_CONFIG_GB300_FP8_MX_V1 = replace(
+    LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1,
+    pipeline_model_parallel_size=2,  # PP=1 is OOM
+)
 
 
 _LLAMA3_70B_LORA_CONFIG_GB200 = replace(
@@ -598,16 +598,15 @@ _LLAMA3_70B_LORA_CONFIG_H100 = replace(
     global_batch_size=32,
 )
 
-LLAMA3_70B_LORA_CONFIG_H100_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_H100
-LLAMA3_70B_LORA_CONFIG_H100_FP8_CS_V1 = replace(
-    LLAMA3_70B_LORA_CONFIG_H100_BF16_V1,
-    recompute_num_layers=1,
+LLAMA3_70B_LORA_CONFIG_H100_BF16_V1 = replace(
+    _LLAMA3_70B_LORA_CONFIG_H100,
+    recompute_num_layers=2,
 )
-LLAMA3_70B_LORA_CONFIG_H100_FP8_MX_V1 = LLAMA3_70B_LORA_CONFIG_H100_FP8_CS_V1
+LLAMA3_70B_LORA_CONFIG_H100_FP8_CS_V1 = _LLAMA3_70B_LORA_CONFIG_H100
 
 
 __all__ = [
-    # 70B Pretrain V1
+    # 70B Pretrain V1 (GBS=128)
     "LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V1",
     "LLAMA3_70B_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
     "LLAMA3_70B_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
@@ -645,7 +644,7 @@ __all__ = [
     "LLAMA3_70B_PRETRAIN_CONFIG_B200_NVFP4_V2",
     "LLAMA3_70B_PRETRAIN_CONFIG_H100_BF16_V2",
     "LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V2",
-    # 8B Pretrain V1
+    # 8B Pretrain V1 (only version)
     "LLAMA3_8B_PRETRAIN_CONFIG_GB300_BF16_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
@@ -664,30 +663,27 @@ __all__ = [
     "LLAMA3_8B_PRETRAIN_CONFIG_B200_NVFP4_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_H100_BF16_V1",
     "LLAMA3_8B_PRETRAIN_CONFIG_H100_FP8_CS_V1",
-    # 8B SFT V1
+    # 8B SFT V1 (only version)
     "LLAMA3_8B_SFT_CONFIG_GB200_BF16_V1",
     "LLAMA3_8B_SFT_CONFIG_GB200_FP8_CS_V1",
     "LLAMA3_8B_SFT_CONFIG_GB200_FP8_MX_V1",
     "LLAMA3_8B_SFT_CONFIG_H100_BF16_V1",
     "LLAMA3_8B_SFT_CONFIG_H100_FP8_CS_V1",
-    "LLAMA3_8B_SFT_CONFIG_H100_FP8_MX_V1",
-    # 70B SFT V1
+    # 70B SFT V1 (only version)
     "LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1",
     "LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1",
     "LLAMA3_70B_SFT_CONFIG_GB200_FP8_MX_V1",
     "LLAMA3_70B_SFT_CONFIG_H100_BF16_V1",
     "LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1",
-    "LLAMA3_70B_SFT_CONFIG_H100_FP8_MX_V1",
     "LLAMA3_70B_SFT_CONFIG_GB300_BF16_V1",
     "LLAMA3_70B_SFT_CONFIG_GB300_FP8_CS_V1",
     "LLAMA3_70B_SFT_CONFIG_GB300_FP8_MX_V1",
-    # 70B LoRA V1
+    # 70B LoRA V1 (only version)
     "LLAMA3_70B_LORA_CONFIG_GB200_BF16_V1",
     "LLAMA3_70B_LORA_CONFIG_GB200_FP8_CS_V1",
     "LLAMA3_70B_LORA_CONFIG_GB200_FP8_MX_V1",
     "LLAMA3_70B_LORA_CONFIG_H100_BF16_V1",
     "LLAMA3_70B_LORA_CONFIG_H100_FP8_CS_V1",
-    "LLAMA3_70B_LORA_CONFIG_H100_FP8_MX_V1",
     "LLAMA3_70B_LORA_CONFIG_GB300_BF16_V1",
     "LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1",
     "LLAMA3_70B_LORA_CONFIG_GB300_FP8_MX_V1",
