@@ -182,6 +182,7 @@ def main(
     if not all_match:
         raise ValueError("Weight mismatch detected")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Convert between HuggingFace and Megatron-LM model formats on multiple GPUs"
