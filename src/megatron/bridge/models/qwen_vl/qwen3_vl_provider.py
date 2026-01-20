@@ -125,6 +125,10 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         language_transformer_config = self
 
         hf_vision_config = self.vision_config
+        
+        vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), hf_vision_config)
+        vision_transformer_config.pipeline_model_parallel_size = 1
+        vision_transformer_config.first_pipeline_num_layers = None
 
         # Spec for the Qwen3VLTransformerLayer
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
@@ -144,7 +148,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_vision_config,
+            vision_transformer_config=vision_transformer_config,
             vision_transformer_layer_spec=vision_transformer_layer_spec,
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
