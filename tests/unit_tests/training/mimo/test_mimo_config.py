@@ -75,3 +75,51 @@ def test_mimo_heterogeneous_rank_offset_overlap():
         mimo_parallelism_config.finalize(world_size=None)
 
 
+def test_mimo_heterogeneous_gap_in_middle_raises_error():
+    """Test that gaps between modules raise an error (likely misconfiguration)."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=0),
+        "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=4),
+    }
+    mimo_parallelism_config = MimoParallelismConfig(
+        llm_module_name="language_module",
+        module_parallelisms=module_parallelisms,
+        deployment_mode="heterogeneous",
+    )
+    # Gap at ranks 2, 3 should raise error
+    with pytest.raises(ValueError, match="gap between modules"):
+        mimo_parallelism_config.finalize(world_size=None)
+
+
+def test_mimo_heterogeneous_leading_gap_warns():
+    """Test that leading unused ranks (before first module) emit a warning."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=2),
+        "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=4),
+    }
+    mimo_parallelism_config = MimoParallelismConfig(
+        llm_module_name="language_module",
+        module_parallelisms=module_parallelisms,
+        deployment_mode="heterogeneous",
+    )
+    # Ranks 0, 1 unused - should warn but not error
+    with pytest.warns(UserWarning, match="Ranks \\[0, 1\\].*idle"):
+        mimo_parallelism_config.finalize(world_size=None)
+
+
+def test_mimo_heterogeneous_contiguous_no_warning():
+    """Test that contiguous rank allocation doesn't warn."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=0),
+        "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=2),
+    }
+    mimo_parallelism_config = MimoParallelismConfig(
+        llm_module_name="language_module",
+        module_parallelisms=module_parallelisms,
+        deployment_mode="heterogeneous",
+    )
+    # No gaps - should pass without warning
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        mimo_parallelism_config.finalize(world_size=None)
