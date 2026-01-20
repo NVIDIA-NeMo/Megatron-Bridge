@@ -24,7 +24,7 @@ Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
 import types
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from megatron.core.transformer.module import MegatronModule
@@ -32,6 +32,10 @@ from torch import Tensor
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+if TYPE_CHECKING:
+    from megatron.core.packed_seq_params import PackedSeqParams
 
 
 # Import HuggingFace Mistral3 model classes with fallback
@@ -185,6 +189,7 @@ class Ministral3Model(MegatronModule):
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         image_sizes: Optional[torch.Tensor] = None,
+        packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
     ) -> Tensor:
@@ -246,6 +251,7 @@ class Ministral3Model(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 

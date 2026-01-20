@@ -97,19 +97,114 @@ def get_batch_from_iterator(
     return _batch_required_keys
 
 
-def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    Any,
-]:
+def pack_batch_sequences(
+    tokens: torch.Tensor,
+    labels: torch.Tensor,
+    loss_mask: torch.Tensor,
+    attention_mask: torch.Tensor,
+    position_ids: torch.Tensor,
+    pad_token_id: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
+    """
+    Pack sequences in a batch by concatenating them and removing padding.
+
+    Args:
+        tokens: [batch_size, seq_len]
+        labels: [batch_size, seq_len]
+        loss_mask: [batch_size, seq_len]
+        attention_mask: [batch_size, 1, seq_len, seq_len] or None
+        position_ids: [batch_size, seq_len]
+        pad_token_id: Token ID used for padding
+
+    Returns:
+        Tuple of:
+        - packed_tokens: [1, total_len] - concatenated sequences
+        - packed_labels: [1, total_len]
+        - packed_loss_mask: [1, total_len]
+        - packed_attention_mask: None (not used with packing)
+        - packed_position_ids: [1, total_len]
+        - cu_seqlens: [num_sequences + 1] - cumulative sequence lengths
+        - cu_seqlens_argmin: 0 (dummy)
+        - max_seqlen: int - max sequence length in packed batch
+    """
+    batch_size, seq_len = tokens.shape
+    device = tokens.device
+
+    # Find actual sequence lengths (excluding padding)
+    # Assuming padding is at the end and uses pad_token_id (0)
+    seq_lengths = []
+    valid_sequences = []
+
+    for i in range(batch_size):
+        # Find first padding token or use full length
+        non_pad_mask = tokens[i] != pad_token_id
+        if non_pad_mask.any():
+            # Find the last non-padding token
+            last_valid_idx = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+        else:
+            # Empty sequence, skip
+            continue
+
+        seq_lengths.append(last_valid_idx)
+        valid_sequences.append(i)
+
+    if len(valid_sequences) == 0:
+        # No valid sequences, return dummy packed batch
+        logger.warning("No valid sequences found in batch, skipping packing")
+        return (
+            tokens[:1],  # Return first sequence as-is
+            labels[:1],
+            loss_mask[:1],
+            attention_mask,
+            position_ids[:1],
+            torch.tensor([0, seq_len], dtype=torch.int32, device=device),
+            0,
+            seq_len,
+        )
+
+    # Build cumulative sequence lengths
+    cu_seqlens = [0]
+    for length in seq_lengths:
+        cu_seqlens.append(cu_seqlens[-1] + length)
+
+    cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
+    max_seqlen = torch.tensor(max(seq_lengths), dtype=torch.int32, device=device)
+    total_len = cu_seqlens[-1].item()
+
+    # Concatenate sequences (remove padding)
+    packed_tokens = torch.zeros(1, total_len, dtype=tokens.dtype, device=device)
+    packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device)
+    packed_loss_mask = torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device)
+    packed_position_ids = torch.zeros(1, total_len, dtype=position_ids.dtype, device=device)
+
+    offset = 0
+    for i, seq_idx in enumerate(valid_sequences):
+        length = seq_lengths[i]
+        packed_tokens[0, offset : offset + length] = tokens[seq_idx, :length]
+        packed_labels[0, offset : offset + length] = labels[seq_idx, :length]
+        packed_loss_mask[0, offset : offset + length] = loss_mask[seq_idx, :length]
+        packed_position_ids[0, offset : offset + length] = position_ids[seq_idx, :length]
+        offset += length
+
+    logger.debug(
+        f"Packed {len(valid_sequences)} sequences: lengths={seq_lengths}, total_len={total_len}, max_len={max_seqlen}"
+    )
+
+    # Attention mask is not used with packed sequences (handled by cu_seqlens)
+    packed_attention_mask = None
+
+    return (
+        packed_tokens,
+        packed_labels,
+        packed_loss_mask,
+        packed_attention_mask,
+        packed_position_ids,
+        cu_seqlens,
+        max_seqlen,
+    )
+
+
+def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection) -> tuple[...]:
     """Generate a batch.
 
     Args:
@@ -192,6 +287,42 @@ def get_batch(
             batch["attention_mask"] = attn  # type: ignore[assignment]
 
     visual_inputs = batch.get("visual_inputs")
+    if getattr(cfg.dataset, "pack_sequences_in_batch", False):
+        # Pack sequences
+        tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+        (
+            packed_tokens,
+            packed_labels,
+            packed_loss_mask,
+            packed_attention_mask,
+            packed_position_ids,
+            cu_seqlens,
+            max_seqlen,
+        ) = pack_batch_sequences(
+            tokens=tokens_or_input,
+            labels=batch.get("labels"),
+            loss_mask=batch.get("loss_mask"),
+            attention_mask=batch.get("attention_mask"),
+            position_ids=batch.get("position_ids"),
+            pad_token_id=0,
+        )
+
+        # Update batch dict with packed tensors
+        if batch.get("tokens") is not None:
+            batch["tokens"] = packed_tokens
+        else:
+            batch["input_ids"] = packed_tokens
+        batch["labels"] = packed_labels
+        batch["loss_mask"] = packed_loss_mask
+        batch["attention_mask"] = packed_attention_mask
+        batch["position_ids"] = packed_position_ids
+
+        # # Add packing metadata
+        logger.debug(f"Packed batch: cu_seqlens={cu_seqlens.tolist()}, max_seqlen={max_seqlen}")
+    else:
+        # No packing, use dummy values
+        cu_seqlens = None
+        max_seqlen = None
 
     return (
         (batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")),
@@ -199,9 +330,8 @@ def get_batch(
         batch.get("loss_mask"),
         batch.get("attention_mask"),
         batch.get("position_ids"),
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("max_seqlen"),
+        cu_seqlens,
+        max_seqlen,
         visual_inputs,
     )
 
@@ -235,7 +365,6 @@ def forward_step(
             attention_mask,
             position_ids,
             cu_seqlens,
-            cu_seqlens_argmin,
             max_seqlen,
             visual_inputs,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
@@ -255,7 +384,6 @@ def forward_step(
     if cu_seqlens is not None:
         packed_seq_params = {
             "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
             "max_seqlen": max_seqlen,
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)

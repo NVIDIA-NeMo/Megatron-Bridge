@@ -39,9 +39,9 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     cu_seqlens_argmin = batch.get("cu_seqlens_argmin", None)
     if cu_seqlens_argmin is not None:
         cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
-    else:
+        assert cu_seqlens[cu_seqlens_argmin.item()] == -1  # cu_seqlens padding is -1
+    elif torch.min(cu_seqlens) == -1:
         cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
-
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
 
     return PackedSeqParams(
