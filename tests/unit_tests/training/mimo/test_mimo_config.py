@@ -48,7 +48,7 @@ def test_mimo_homogeneous_mismatched_parallelism():
         mimo.finalize(world_size=4)
 
 
-def test_mimo_separate_rank_offset_overlap():
+def test_mimo_heterogeneous_rank_offset_overlap():
     module_parallelisms = {
         "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=0),
         "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=2),
@@ -56,7 +56,7 @@ def test_mimo_separate_rank_offset_overlap():
     mimo = MIMOConfig(
         llm_module_name="language_module",
         module_parallelisms=module_parallelisms,
-        deployment_mode="separate",
+        deployment_mode="heterogeneous",
     )
     with pytest.raises(ValueError, match="overlap"):
         mimo.finalize(world_size=None)
