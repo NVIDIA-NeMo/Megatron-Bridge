@@ -89,6 +89,7 @@ class TestPeftSftExample:
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
+            rewrite=False,
         )
 
         cfg.model.seq_length = 256
