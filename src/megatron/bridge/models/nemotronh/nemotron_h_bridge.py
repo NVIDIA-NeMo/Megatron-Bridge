@@ -59,7 +59,7 @@ class NemotronHBridge(MegatronModelBridge):
             add_bias_linear=hf_config.use_bias,
             num_attention_heads=hf_config.num_attention_heads,
             num_query_groups=hf_config.num_key_value_heads,
-            kv_channels=getattr(hf_config, "head_dim", None),
+            kv_channels=getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None),
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.layer_norm_epsilon,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
@@ -91,11 +91,17 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
             "decoder.final_norm.weight": "backbone.norm_f.weight",
+            # Fused TE layer norm weights (when using TELayerNormColumnParallelLinear)
             # if the megatron key does not exist for a given layer it will be ignored,
             # so only one of these will be used per layer
             "decoder.layers.*.mixer.in_proj.layer_norm_weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "backbone.layers.*.norm.weight",
+            # Separate Norm layer weights (when using Norm for quantization)
+            # These are used when quantization spec uses Norm instead of TENorm
+            "decoder.layers.*.norm.weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.input_layernorm.weight": "backbone.layers.*.norm.weight",
             # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
             "embedding.word_embeddings.weight": "backbone.embeddings.weight",
             "output_layer.weight": "lm_head.weight",

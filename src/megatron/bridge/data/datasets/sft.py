@@ -33,6 +33,7 @@ from megatron.bridge.data.datasets.utils import (
     _JSONLMemMapDataset,
     _OnlineSampleMapping,
     _preprocess,
+    _tokenize,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
@@ -224,7 +225,6 @@ class GPTSFTDataset(Dataset):
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
         get_attention_mask_from_fusion: bool = True,
-        sanity_check_dist_workers: bool = True,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -273,7 +273,6 @@ class GPTSFTDataset(Dataset):
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
         get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
             of adding it to the batch dict.
-        sanity_check_dist_workers (bool): if true, will run sanity check across workers when making mapping.
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
@@ -302,7 +301,6 @@ class GPTSFTDataset(Dataset):
         self.output_original_text = output_original_text
         self.ceil_to_power_2 = ceil_to_power_2
         self.get_attention_mask_from_fusion = get_attention_mask_from_fusion
-        self.sanity_check_dist_workers = sanity_check_dist_workers
 
         if special_tokens is None:
             self.special_tokens = {
@@ -384,7 +382,6 @@ class GPTSFTDataset(Dataset):
                 binary_head=False,
                 index_mapping_dir=self.index_mapping_dir,
                 samples_mapping=osm,
-                sanity_check_dist_workers=self.sanity_check_dist_workers,
             )
         else:
             self.samples_mapping = None
@@ -588,7 +585,7 @@ class GPTSFTDataset(Dataset):
                     raise e
 
         template_strings, template_strings_keys = self._separate_template(prompt_template_values)
-        template_ids = [self.tokenizer.text_to_ids(s) for s in template_strings]
+        template_ids = [_tokenize(self.tokenizer, s) for s in template_strings]
         context_ids, answer_ids = self._multiple_truncation(template_ids, template_strings_keys)
 
         if self.virtual_tokens:
@@ -1074,16 +1071,16 @@ class GPTSFTChatDataset(GPTSFTDataset):
             LABEL_START = self.special_tokens["label_start"]
             END_NAME_SIGNAL = self.special_tokens["end_of_name"]
 
-            id1 = self.tokenizer.text_to_ids(PREFIX_STR)
-            id2 = self.tokenizer.text_to_ids(PREFIX_STR + LABEL_START)
+            id1 = _tokenize(self.tokenizer, PREFIX_STR)
+            id2 = _tokenize(self.tokenizer, PREFIX_STR + LABEL_START)
             self.label_start_tokens = id2[len(id1) :]
 
-            id1 = self.tokenizer.text_to_ids(PREFIX_STR + END_NAME_SIGNAL)
-            id2 = self.tokenizer.text_to_ids(PREFIX_STR)
+            id1 = _tokenize(self.tokenizer, PREFIX_STR + END_NAME_SIGNAL)
+            id2 = _tokenize(self.tokenizer, PREFIX_STR)
             self.name_end_token_ids = id1[len(id2) :]
 
-            id1 = self.tokenizer.text_to_ids(PREFIX_STR + self.special_tokens["turn_start"])
-            id2 = self.tokenizer.text_to_ids(PREFIX_STR)
+            id1 = _tokenize(self.tokenizer, PREFIX_STR + self.special_tokens["turn_start"])
+            id2 = _tokenize(self.tokenizer, PREFIX_STR)
             self.num_turn_start_tokens = len(id1) - len(id2)
 
     def _process_example(self, example):

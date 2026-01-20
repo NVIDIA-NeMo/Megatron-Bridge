@@ -22,6 +22,7 @@ import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
+from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
@@ -43,7 +44,6 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.utils.weight_decay_utils import get_no_weight_decay_cond
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -113,6 +113,11 @@ def setup(
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
+
+    # Disable the JIT fuser if requested
+    if cfg.dist.disable_jit_fuser:
+        print_rank_0("Disabling JIT fuser.")
+        disable_jit_fuser()
 
     # Initialize async checkpoint worker if enabled (idempotent if already initialized)
     state.initialize_async_checkpoint_worker()
@@ -216,16 +221,13 @@ def setup(
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    no_weight_decay_cond = get_no_weight_decay_cond(
-        cfg.scheduler.no_weight_decay_cond_type,
-        default_skip_embedding_weight_decay=cfg.model.embedding_init_method_std is not None,
-    )
+    if cfg.scheduler.no_weight_decay_cond_type == "qwen3_next":
+        raise NotImplementedError("qwen3_next style weight decay disabled until mcore fix.")
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        no_weight_decay_cond=no_weight_decay_cond,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -281,6 +283,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=pg_collection.dp,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
@@ -293,11 +296,7 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    if get_rank_safe() == 0:
-        # Print final resolved/updated/overridden configs
-        print("------- Task Configuration -------")
-        cfg.print_yaml()
-        print("----------------------------------")
+    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -473,3 +472,20 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
                 f" {model_vocab_size - tokenizer_vocab_size}."
             )
         return model_vocab_size, False
+
+
+def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
+    """Save configuration to disk and log it on rank 0."""
+
+    if get_rank_safe() != 0:
+        return
+
+    if cfg.logger.save_config_filepath is not None:
+        try:
+            cfg.to_yaml(cfg.logger.save_config_filepath)
+        except Exception as e:
+            print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
+
+    print("------- Task Configuration -------")
+    cfg.print_yaml()
+    print("----------------------------------")

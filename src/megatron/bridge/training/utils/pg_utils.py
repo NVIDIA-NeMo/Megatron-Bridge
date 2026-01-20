@@ -36,5 +36,13 @@ def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> Pro
     else:
         model_ref = model
 
-    # Do not add any fallback; this must exist on the model
-    return get_attr_wrapped_model(model_ref, "pg_collection", allow_none=False)
+    # Prefer pg_collection attached to the wrapped model, but fall back to the
+    # default MPU-based process groups if it is not present.
+    try:
+        return get_attr_wrapped_model(model_ref, "pg_collection", allow_none=False)
+    except RuntimeError as e:
+        # get_attr_wrapped_model raises a RuntimeError with this exact message
+        # when the requested attribute does not exist on the wrapped model.
+        if "couldn't find attribute pg_collection" in str(e):
+            return ProcessGroupCollection.use_mpu_process_groups()
+        raise
