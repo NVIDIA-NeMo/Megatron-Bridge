@@ -60,7 +60,7 @@ class MIMOConfig:
     llm_module_name: str
     module_parallelisms: dict[str, ModuleParallelismConfig]
     special_token_ids: dict[str, int] = field(default_factory=dict)
-    deployment_mode: Literal["colocated", "separate", "homogeneous"] = "colocated"
+    deployment_mode: Literal["colocated", "heterogeneous", "homogeneous"] = "colocated"
     # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
 
     def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
@@ -104,13 +104,12 @@ class MIMOConfig:
             elif values != first:
                 raise ValueError("All modules must have identical parallelism in homogeneous deployment.")
 
-    def _validate_separate(self) -> None:
-        # We use "separate" to describe rank placement and avoid overloading
-        # "heterogeneous", which is already used elsewhere for layer-level configs.
+    def _validate_heterogeneous(self) -> None:
+        # "heterogeneous" describes rank placement across distinct modules.
         ranges = []
         for parallelism in self.module_parallelisms.values():
             if parallelism.data_parallel is None:
-                raise ValueError("data_parallel must be set for separate deployment.")
+                raise ValueError("data_parallel must be set for heterogeneous deployment.")
             ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
 
         ranges.sort()
@@ -118,7 +117,7 @@ class MIMOConfig:
             prev_end = ranges[idx - 1][1]
             cur_start = ranges[idx][0]
             if cur_start < prev_end:
-                raise ValueError("rank_offset ranges overlap in separate deployment.")
+                raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
 
     def finalize(self, world_size: Optional[int]) -> None:
         if self.llm_module_name not in self.module_parallelisms:
@@ -136,7 +135,7 @@ class MIMOConfig:
         elif self.deployment_mode == "homogeneous":
             self._validate_homogeneous()
         else:
-            self._validate_separate()
+            self._validate_heterogeneous()
 
         if world_size and world_size > 1:
             expected = self.total_world_size

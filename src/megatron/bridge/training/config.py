@@ -1233,8 +1233,8 @@ class ConfigContainer(Container):
         return self.mimo is not None and self.mimo.deployment_mode == "homogeneous"
 
     @property
-    def is_separate_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "separate"
+    def is_heterogeneous_mimo(self) -> bool:
+        return self.mimo is not None and self.mimo.deployment_mode == "heterogeneous"
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
