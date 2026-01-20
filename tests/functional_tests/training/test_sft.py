@@ -308,7 +308,7 @@ class TestSupervisedFinetuning:
                     lr_decay_style="cosine",
                     lr_warmup_iters=1,
                     lr_warmup_init=0.0,
-                    lr_decay_iters=1,
+                    lr_decay_iters=2,
                     override_opt_param_scheduler=True,
                 ),
                 ddp=DistributedDataParallelConfig(
@@ -347,10 +347,7 @@ class TestSupervisedFinetuning:
             )
             finetune(finetune_cfg, forward_step)
 
-            # Only first/last pipeline stages will actually see tensors in gpt_step.get_batch.
-            from megatron.core import mpu
-
-            if mpu.is_pipeline_first_stage() or mpu.is_pipeline_last_stage():
+            if torch.distributed.get_rank() == 0:
                 assert pad_calls["padded"] > 0, "Expected PP padding (<seq_length) to be exercised during training"
 
         finally:
