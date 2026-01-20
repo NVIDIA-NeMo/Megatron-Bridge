@@ -13,7 +13,8 @@
 # limitations under the License.
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
-FROM ${BASE_IMAGE} AS megatron_bridge
+ARG MCORE_LAYER=submodule_mcore
+FROM ${BASE_IMAGE} AS mbridge_base
 WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -28,8 +29,35 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
+
+FROM ${BASE_IMAGE} as mbridge_custom_mcore
+
+ARG MCORE_SOURCE
+ARG MCORE_COMMIT
+ARG TOKEN_SOURCE
+WORKDIR /tmp
+
+RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
+    CI_JOB_TOKEN=$(cat /run/secrets/CI_JOB_TOKEN) && \
+    git clone ${TOKEN_SOURCE}:${CI_JOB_TOKEN}@${MCORE_SOURCE} . && \
+    pushd Megatron-LM && \
+        git pull && \
+        git fetch origin $MCORE_COMMIT && \
+        git checkout FETCH_HEAD && \
+        echo "Container built with Megatron-LM commit hash: $MCORE_COMMIT" && \
+        rm -rf .git && \
+        rm -rf  ~/.netrc && \
+    popd
+
+COPY /tmp/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
+COPY /tmp/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+
+FROM ${BASE_IMAGE} as mbridge_submodule_mcore
+
 COPY 3rdparty/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+
+FROM mbridge_${MCORE_LAYER} as mbridge_final
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
@@ -48,3 +76,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     uv cache prune
 
 COPY . /opt/Megatron-Bridge
+
+RUN if [ $MCORE_LAYER = "custom_mcore" ]; then \
+    mv /tmp/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM; \
+    fi
