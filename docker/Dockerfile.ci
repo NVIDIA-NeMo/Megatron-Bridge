@@ -47,7 +47,7 @@ RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     rm -rf  ~/.netrc && \
     mkdir -p /tmp/Megatron-LM/megatron/core/ && \
     cp pyproject.toml /tmp/Megatron-LM/ && \
-    cp megatron/core/__init__.py megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/ && \
+    cp megatron/core/__init__.py megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/
 
 FROM mbridge_base as mbridge_submodule_mcore
 
