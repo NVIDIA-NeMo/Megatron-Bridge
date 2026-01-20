@@ -204,6 +204,7 @@ def forward_step(
         f"We only support bshd format, and tokens's shape must be [batch_size, seq_len], but got {tokens.shape} and batch_size is {state.cfg.train.micro_batch_size}"
     )
 
+    # pad tokens, labels, loss_mask, attention_mask, position_ids to target_len.
     cur_len = tokens.size(1)
     tp_size = this_pg_collection.tp.size()
     cp_size = this_pg_collection.cp.size()
@@ -218,28 +219,6 @@ def forward_step(
     loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
     attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len=target_len, max_cap=target_len)
     position_ids = pad_or_truncate_pos_to_len(position_ids, target_len=target_len, max_cap=target_len)
-
-    batch_size = tokens.shape[0]
-
-    seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * cur_len
-    seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
-
-    cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-    cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
-    cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-    cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-    max_seqlen_in_batch = seqlens_in_batch.max().item()
-    max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
-
-    packed_seq_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=cu_seqlens,
-        max_seqlen_q=max_seqlen_in_batch_padded,
-        cu_seqlens_kv=cu_seqlens,
-        max_seqlen_kv=max_seqlen_in_batch_padded,
-        cu_seqlens_q_padded=cu_seqlens_padded,
-        cu_seqlens_kv_padded=cu_seqlens_padded,
-    )
 
     forward_args = {
         "input_ids": tokens,
@@ -269,6 +248,27 @@ def forward_step(
         forward_args["video_grid_thw"] = multi_modal_inputs["video_grid_thw"]
 
     if data_format == "thd":
+        batch_size = tokens.shape[0]
+        # construct packed_seq_params for thd data_format.
+        seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * cur_len
+        seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
+
+        cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
+        cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
+        cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
+        cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
+        max_seqlen_in_batch = seqlens_in_batch.max().item()
+        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
+
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            max_seqlen_q=max_seqlen_in_batch_padded,
+            cu_seqlens_kv=cu_seqlens,
+            max_seqlen_kv=max_seqlen_in_batch_padded,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+        )
         # after preprocess, input_ids_rmpad is sliced by cp.
         # when processing vision model, the pre_process is False, and input_ids is not sliced by cp.
         forward_args["packed_seq_params"] = packed_seq_params
@@ -277,6 +277,7 @@ def forward_step(
         forward_args["labels"] = forward_args["labels"].reshape(1, -1)
 
         if vision_model and attention_mask is None:
+            # We will split input_ids by cp on the fly using attention_mask.
             attention_mask = torch.ones(tokens.shape[0], tokens.shape[1], dtype=torch.bool)
             forward_args["attention_mask"] = attention_mask
     elif data_format == "bshd":
