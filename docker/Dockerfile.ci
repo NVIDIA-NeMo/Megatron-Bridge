@@ -50,7 +50,7 @@ RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     popd
 
 COPY /tmp/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
-COPY /tmp/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+COPY /tmp/Megatron-LM/megatron/core/__init__.py /tmp/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
 
 FROM ${BASE_IMAGE} as mbridge_submodule_mcore
 
