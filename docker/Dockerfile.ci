@@ -39,17 +39,15 @@ WORKDIR /src/Megatron-LM
 RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     CI_JOB_TOKEN=$(cat /run/secrets/CI_JOB_TOKEN) && \
     git clone ${MCORE_HOST}:${CI_JOB_TOKEN}@${MCORE_REPO} . && \
-    pushd Megatron-LM && \
-        git pull && \
-        git fetch origin $MCORE_COMMIT && \
-        git checkout FETCH_HEAD && \
-        echo "Container built with Megatron-LM commit hash: $MCORE_COMMIT" && \
-        rm -rf .git && \
-        rm -rf  ~/.netrc && \
-        mkdir -p /tmp/Megatron-LM/megatron/core/ && \
-        cp pyproject.toml /tmp/Megatron-LM/ && \
-        cp megatron/core/__init__.py megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/ && \
-    popd && \
+    git pull && \
+    git fetch origin $MCORE_COMMIT && \
+    git checkout FETCH_HEAD && \
+    echo "Container built with Megatron-LM commit hash: $MCORE_COMMIT" && \
+    rm -rf .git && \
+    rm -rf  ~/.netrc && \
+    mkdir -p /tmp/Megatron-LM/megatron/core/ && \
+    cp pyproject.toml /tmp/Megatron-LM/ && \
+    cp megatron/core/__init__.py megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/ && \
 
 FROM mbridge_base as mbridge_submodule_mcore
 
