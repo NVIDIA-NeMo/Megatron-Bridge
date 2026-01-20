@@ -58,7 +58,7 @@ jobs:
           dry-run: ${{ inputs.dry-run }}
           artifacts-name: docs-html
           artifacts-path: _build/html
-          emails-csv: ${{ inputs.notify-emails }}
+          emails-csv: ${{ inputs.notify-emails && format('{0},{1}', secrets.docs_release_emails, inputs.notify-emails) || secrets.docs_release_emails }}
           overwrite-latest-on-tag: false
           run-on-version-tag-only: ${{ github.ref_name != 'main' }}
           request-name: megatron-bridge-publish-docs-${{ github.run_id }}
