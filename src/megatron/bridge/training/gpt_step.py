@@ -141,6 +141,7 @@ def get_batch(
         batch.get("tokens"),
         batch.get("labels"),
         batch.get("loss_mask"),
+        # Attention_mask is optional for pre-training as a casual mask is generated automatically.
         batch.get("attention_mask"),
         batch.get("position_ids"),
         batch.get("cu_seqlens"),

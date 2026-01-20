@@ -17,7 +17,6 @@
 import glob
 import logging
 import os
-import signal
 import sys
 import time
 from pathlib import Path
@@ -61,19 +60,6 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-
-def register_pipeline_terminator(exp: run.Experiment, job_id: str):
-    """Register a signal handler to terminate the job."""
-
-    def sigterm_handler(_signo, _stack_frame):
-        logger.info(f"Trying to terminate job {job_id}")
-        exp.cancel(job_id=job_id)
-        logger.info(f"Job {job_id} terminated")
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, sigterm_handler)
-    signal.signal(signal.SIGTERM, sigterm_handler)
 
 
 def check_training_finished(log_file_path: str) -> bool:
@@ -413,17 +399,12 @@ def main(
                 executor=executor,
                 plugins=plugins,
                 dryrun=dryrun,
-                detach=True,
+                detach=detach,
                 name=exp_name,
             )
             if dryrun:
                 logger.info("dryrun requested: exiting")
                 return
-
-            if not detach:
-                exp = run.Experiment.from_title(exp_name)
-                register_pipeline_terminator(exp=exp, job_id=exp.jobs[0].id)
-                exp.logs(job_id=exp.jobs[0].id)
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
