@@ -150,7 +150,7 @@ def main(
         console.print(f"[yellow]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
-    
+
     all_match = True
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
@@ -178,9 +178,9 @@ def main(
         if is_rank_0:
             console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
         bridge.save_megatron_model(megatron_model, megatron_save_path)
-    
+
     if not all_match:
-        raise ValueError(f"Weight mismatch detected")
+        raise ValueError("Weight mismatch detected")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
