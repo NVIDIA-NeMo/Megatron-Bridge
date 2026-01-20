@@ -32,14 +32,14 @@ COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Me
 
 FROM ${BASE_IMAGE} as mbridge_custom_mcore
 
-ARG MCORE_SOURCE
+ARG MCORE_REPO
 ARG MCORE_COMMIT
 ARG TOKEN_SOURCE
 WORKDIR /tmp
 
 RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     CI_JOB_TOKEN=$(cat /run/secrets/CI_JOB_TOKEN) && \
-    git clone ${TOKEN_SOURCE}:${CI_JOB_TOKEN}@${MCORE_SOURCE} . && \
+    git clone ${TOKEN_SOURCE}:${CI_JOB_TOKEN}@${MCORE_REPO} . && \
     pushd Megatron-LM && \
         git pull && \
         git fetch origin $MCORE_COMMIT && \
