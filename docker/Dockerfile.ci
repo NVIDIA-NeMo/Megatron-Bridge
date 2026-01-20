@@ -47,10 +47,11 @@ RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
         echo "Container built with Megatron-LM commit hash: $MCORE_COMMIT" && \
         rm -rf .git && \
         rm -rf  ~/.netrc && \
-    popd
-
-COPY /tmp/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
-COPY /tmp/Megatron-LM/megatron/core/__init__.py /tmp/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+    popd && \
+    mkdir -p /opt/Megatron-Bridge/3rdparty/Megatron-LM/ && \
+    mkdir -p /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/ && \
+    mv /tmp/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/ && \
+    mv /tmp/Megatron-LM/megatron/core/__init__.py /tmp/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
 
 FROM ${BASE_IMAGE} as mbridge_submodule_mcore
 
