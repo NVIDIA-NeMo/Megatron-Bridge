@@ -78,10 +78,10 @@ def llama3_70b_pretrain_config_gb300(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
+    # if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+    #     cfg.comm_overlap.overlap_param_gather = False
+    #     cfg.ddp.overlap_param_gather = False
+    #     cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -117,10 +117,10 @@ def llama3_70b_pretrain_config_gb200(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
+    # if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+    #     cfg.comm_overlap.overlap_param_gather = False
+    #     cfg.ddp.overlap_param_gather = False
+    #     cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -156,10 +156,10 @@ def llama3_70b_pretrain_config_b300(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
+    # if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+    #     cfg.comm_overlap.overlap_param_gather = False
+    #     cfg.ddp.overlap_param_gather = False
+    #     cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -195,10 +195,10 @@ def llama3_70b_pretrain_config_b200(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
+    # if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+    #     cfg.comm_overlap.overlap_param_gather = False
+    #     cfg.ddp.overlap_param_gather = False
+    #     cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
