@@ -19,7 +19,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider, MoonlightModelProvider16B
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -53,7 +53,12 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
         # TODO: mtp
 
-        provider = DeepSeekV3ModelProvider(**configs)
+        if configs.get("hidden_size") == 2048 and configs.get("num_layers") == 27:
+            provider_class = MoonlightModelProvider16B
+        else:
+            provider_class = DeepSeekV3ModelProvider
+
+        provider = provider_class(**configs)
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:

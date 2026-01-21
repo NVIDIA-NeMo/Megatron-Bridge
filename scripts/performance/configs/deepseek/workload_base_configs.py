@@ -91,6 +91,72 @@ DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_H100_BASE_CONFIG
 DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG = DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG
 
 
+# -----------------------------------------------------------------------------
+# Moonlight-16B configs (based on DeepSeek architecture)
+# -----------------------------------------------------------------------------
+
+BASE_MOONLIGHT_CONFIG = WorkloadBaseConfig(
+    expert_tensor_parallel_size=1,
+)
+
+# GB200 single node (4 GPUs): TP=1, PP=1, EP=4
+DEEPSEEK_MOONLIGHT_16B_GB200_BASE_CONFIG = replace(
+    BASE_MOONLIGHT_CONFIG,
+    num_gpus=4,
+    global_batch_size=64,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    expert_model_parallel_size=4,
+    moe_flex_dispatcher_backend="hybridep",
+)
+DEEPSEEK_MOONLIGHT_16B_GB200_BF16_BASE_CONFIG = DEEPSEEK_MOONLIGHT_16B_GB200_BASE_CONFIG
+DEEPSEEK_MOONLIGHT_16B_GB200_FP8_CS_BASE_CONFIG = DEEPSEEK_MOONLIGHT_16B_GB200_BASE_CONFIG
+
+# H100 (16 GPUs): TP=2, PP=1, EP=8
+DEEPSEEK_MOONLIGHT_16B_H100_BASE_CONFIG = replace(
+    BASE_MOONLIGHT_CONFIG,
+    num_gpus=16,
+    global_batch_size=2048,
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=1,
+    expert_model_parallel_size=8,
+    moe_flex_dispatcher_backend="deepep",
+)
+DEEPSEEK_MOONLIGHT_16B_H100_BF16_BASE_CONFIG = DEEPSEEK_MOONLIGHT_16B_H100_BASE_CONFIG
+DEEPSEEK_MOONLIGHT_16B_H100_FP8_CS_BASE_CONFIG = DEEPSEEK_MOONLIGHT_16B_H100_BASE_CONFIG
+
+
+# -----------------------------------------------------------------------------
+# DeepSeek-V3 Lite configs (close to Moonlight-16B)
+# -----------------------------------------------------------------------------
+
+# GB200 single node (4 GPUs): TP=1, PP=1, EP=4
+DEEPSEEK_V3_LITE_GB200_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=4,
+    global_batch_size=64,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    expert_model_parallel_size=4,
+    moe_flex_dispatcher_backend="hybridep",
+)
+DEEPSEEK_V3_LITE_GB200_BF16_BASE_CONFIG = DEEPSEEK_V3_LITE_GB200_BASE_CONFIG
+DEEPSEEK_V3_LITE_GB200_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_LITE_GB200_BASE_CONFIG
+
+# H100 (8 GPUs for lite): TP=1, PP=1, EP=8
+DEEPSEEK_V3_LITE_H100_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=8,
+    global_batch_size=1024,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    expert_model_parallel_size=8,
+    moe_flex_dispatcher_backend="deepep",
+)
+DEEPSEEK_V3_LITE_H100_BF16_BASE_CONFIG = DEEPSEEK_V3_LITE_H100_BASE_CONFIG
+DEEPSEEK_V3_LITE_H100_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_LITE_H100_BASE_CONFIG
+
+
 __all__ = [
     "DEEPSEEK_V3_GB300_BF16_BASE_CONFIG",
     "DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG",
@@ -104,4 +170,14 @@ __all__ = [
     "DEEPSEEK_V3_H100_BF16_BASE_CONFIG",
     "DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG",
     "DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG",
+    # Moonlight-16B
+    "DEEPSEEK_MOONLIGHT_16B_GB200_BF16_BASE_CONFIG",
+    "DEEPSEEK_MOONLIGHT_16B_GB200_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_MOONLIGHT_16B_H100_BF16_BASE_CONFIG",
+    "DEEPSEEK_MOONLIGHT_16B_H100_FP8_CS_BASE_CONFIG",
+    # DeepSeek-V3 Lite
+    "DEEPSEEK_V3_LITE_GB200_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_LITE_GB200_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_LITE_H100_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_LITE_H100_FP8_CS_BASE_CONFIG",
 ]

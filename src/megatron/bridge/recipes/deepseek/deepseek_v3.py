@@ -143,6 +143,72 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
     return deepseek_v3_pretrain_config(**combined_kwargs)
 
 
+def deepseek_v3_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for DeepSeek-V3 Lite (Moonlight-scale but DS-V3 architecture).
+
+    See `_deepseek_v3_common` for the full list of parameters.
+    """
+    cfg = deepseek_v3_pretrain_config(**user_kwargs)
+
+    # Force Moonlight-scale parameters on DeepSeek-V3 architecture for debugging
+    cfg.model.num_layers = 28
+    cfg.model.hidden_size = 2048
+    cfg.model.ffn_hidden_size = 11264
+    cfg.model.num_attention_heads = 16
+    cfg.model.kv_channels = 16
+    cfg.model.num_moe_experts = 64
+    cfg.model.moe_ffn_hidden_size = 1408
+    cfg.model.moe_shared_expert_intermediate_size = 2816
+    cfg.model.moe_router_topk = 6
+    cfg.model.moe_layer_freq = [0] * 1 + [1] * 27
+
+    # Sync suspicious performance params from V3 workload
+    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+
+    return cfg
+
+
+def deepseek_v3_finetune_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
+    """Return a finetuning config for DeepSeek-V3 models (including Lite).
+
+    This recipe supports both full SFT and PEFT (LoRA, DoRA).
+    """
+    # Use pretrain config as base and override with finetune defaults
+    if "hf_path" not in user_kwargs:
+        user_kwargs["hf_path"] = "deepseek-ai/DeepSeek-V3"
+
+    # DeepSeek-V3 (671B) defaults for finetuning
+    if user_kwargs["hf_path"] == "deepseek-ai/DeepSeek-V3":
+        if "tensor_model_parallel_size" not in user_kwargs:
+            user_kwargs["tensor_model_parallel_size"] = 2
+        if "pipeline_model_parallel_size" not in user_kwargs:
+            user_kwargs["pipeline_model_parallel_size"] = 16
+        if "expert_model_parallel_size" not in user_kwargs:
+            user_kwargs["expert_model_parallel_size"] = 64
+    # Moonlight-16B or DeepSeek-V3 Lite defaults for finetuning
+    elif "Moonlight-16B" in user_kwargs["hf_path"]:
+        if "tensor_model_parallel_size" not in user_kwargs:
+            user_kwargs["tensor_model_parallel_size"] = 1
+        if "pipeline_model_parallel_size" not in user_kwargs:
+            user_kwargs["pipeline_model_parallel_size"] = 1
+        if "expert_model_parallel_size" not in user_kwargs:
+            user_kwargs["expert_model_parallel_size"] = 8
+
+    # Ensure precision aware optimizer is on for BF16 finetuning
+    cfg = _deepseek_v3_common(**user_kwargs)
+
+    # Disable distributed optimizer for PEFT to avoid issues with non-distributed params
+    if user_kwargs.get("peft"):
+        cfg.ddp.use_distributed_optimizer = False
+        cfg.optimizer.use_distributed_optimizer = False
+
+    return cfg
+
+
 def _deepseek_v3_common(
     hf_path: str,
     dir: Optional[str] = None,

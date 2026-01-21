@@ -12,6 +12,8 @@ from .deepseek_v2 import (
 
 # DeepSeek V3
 from .deepseek_v3 import (
+    deepseek_v3_finetune_config,
+    deepseek_v3_lite_pretrain_config,
     deepseek_v3_pretrain_config,
     deepseek_v3_pretrain_config_32nodes,
 )
@@ -22,6 +24,8 @@ __all__ = [
     "deepseek_v2_pretrain_config",
     "deepseek_v2_lite_pretrain_config",
     # DeepSeek V3
+    "deepseek_v3_finetune_config",
+    "deepseek_v3_lite_pretrain_config",
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
 ]

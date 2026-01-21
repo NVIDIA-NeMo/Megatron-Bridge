@@ -60,10 +60,10 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 ### Available Recipes
 
 - **Pretrain recipes**:
-  - `moonlight_16b_pretrain_config`: Pre-training for Moonlight-16B (16B parameters, 3B activated per token)
+  - `deepseek_v3_pretrain_config`: Pre-training for Moonlight-16B (use `hf_path="moonshotai/Moonlight-16B-A3B"`)
 
 - **Finetune recipes**:
-  - `moonlight_16b_finetune_config`: Finetuning for Moonlight-16B with PEFT support (LoRA, DoRA)
+  - `deepseek_v3_finetune_config`: Finetuning for Moonlight-16B with PEFT support (LoRA, DoRA)
 
 ### Parallelism Configurations
 
@@ -96,16 +96,16 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 ### Pre-training Example
 
 ```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config
 
-cfg = moonlight_16b_pretrain_config(
+cfg = deepseek_v3_pretrain_config(
+    hf_path="moonshotai/Moonlight-16B-A3B",
     name="moonlight_pretrain",
     data_paths=["/path/to/dataset.nvjsonl"],
     dir="/results/moonlight_16b",
     train_iters=500_000,
     global_batch_size=2048,
     seq_length=4096,
-    # Uses TP=2, PP=1, EP=8 (16 GPUs) automatically
 )
 ```
 
@@ -114,9 +114,10 @@ cfg = moonlight_16b_pretrain_config(
 #### Full Finetuning (2 Nodes)
 
 ```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_finetune_config
 
-cfg = moonlight_16b_finetune_config(
+cfg = deepseek_v3_finetune_config(
+    hf_path="moonshotai/Moonlight-16B-A3B",
     tokenizer_path="moonshotai/Moonlight-16B-A3B",
     name="moonlight_full_sft",
     pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
@@ -124,16 +125,16 @@ cfg = moonlight_16b_finetune_config(
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=5e-6,
-    # Uses TP=2, PP=1, EP=8 (16 GPUs) automatically
 )
 ```
 
 #### LoRA Finetuning
 
 ```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_finetune_config
 
-cfg = moonlight_16b_finetune_config(
+cfg = deepseek_v3_finetune_config(
+    hf_path="moonshotai/Moonlight-16B-A3B",
     tokenizer_path="moonshotai/Moonlight-16B-A3B",
     name="moonlight_lora_finetune",
     pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
@@ -141,7 +142,6 @@ cfg = moonlight_16b_finetune_config(
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
-    # Uses TP=1, PP=1, EP=1 (8 GPUs) automatically
 )
 ```
 

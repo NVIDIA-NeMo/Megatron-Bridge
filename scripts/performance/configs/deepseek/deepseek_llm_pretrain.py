@@ -19,7 +19,10 @@ from utils.helpers import (
     set_workload_base_configs,
 )
 
-from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import (
+    deepseek_v3_lite_pretrain_config,
+    deepseek_v3_pretrain_config as pretrain_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 
 from . import workload_base_configs as base_cfgs
@@ -168,5 +171,109 @@ def deepseek_v3_h100_config(precision: str = "bf16") -> ConfigContainer:
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
+
+    return cfg
+
+
+# -----------------------------------------------------------------------------
+# Moonlight-16B configs
+# -----------------------------------------------------------------------------
+
+
+def deepseek_moonlight_16b_gb200_config(precision: str = "bf16") -> ConfigContainer:
+    """GB200 single node (4 GPUs), Moonlight-16B config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.DEEPSEEK_MOONLIGHT_16B_GB200_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.DEEPSEEK_MOONLIGHT_16B_GB200_FP8_CS_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config(
+        hf_path="moonshotai/Moonlight-16B-A3B",
+        mock=True,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def deepseek_moonlight_16b_h100_config(precision: str = "bf16") -> ConfigContainer:
+    """H100 (16 GPUs), Moonlight-16B config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.DEEPSEEK_MOONLIGHT_16B_H100_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.DEEPSEEK_MOONLIGHT_16B_H100_FP8_CS_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config(
+        hf_path="moonshotai/Moonlight-16B-A3B",
+        mock=True,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+# -----------------------------------------------------------------------------
+# DeepSeek-V3 Lite configs
+# -----------------------------------------------------------------------------
+
+
+def deepseek_v3_lite_gb200_config(precision: str = "bf16") -> ConfigContainer:
+    """GB200, DeepSeek-V3 Lite (Moonlight-like) config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.DEEPSEEK_V3_LITE_GB200_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.DEEPSEEK_V3_LITE_GB200_FP8_CS_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = deepseek_v3_lite_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def deepseek_v3_lite_h100_config(precision: str = "bf16") -> ConfigContainer:
+    """H100, DeepSeek-V3 Lite (Moonlight-like) config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.DEEPSEEK_V3_LITE_H100_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.DEEPSEEK_V3_LITE_H100_FP8_CS_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = deepseek_v3_lite_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
 
     return cfg

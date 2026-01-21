@@ -156,8 +156,8 @@ class DeepSeekV2LiteModelProvider(DeepSeekV2ModelProvider):
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared experts
     moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
-    moe_router_num_groups: int = 1
-    moe_router_group_topk: int = 1
+    moe_router_num_groups: int = 8
+    moe_router_group_topk: int = 4
     moe_router_topk_scaling_factor: float = 1.0
     vocab_size: int = 102400
 
@@ -210,8 +210,8 @@ class MoonlightModelProvider16B(DeepSeekModelProvider):
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared expert
     moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
-    moe_router_num_groups: int = 1
-    moe_router_group_topk: int = 1
+    moe_router_num_groups: int = 8
+    moe_router_group_topk: int = 4
     moe_router_topk_scaling_factor: float = 2.446
     moe_aux_loss_coeff: float = 0.001
     make_vocab_size_divisible_by: int = 1280

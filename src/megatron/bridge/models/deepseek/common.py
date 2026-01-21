@@ -57,8 +57,10 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
         hf_config.num_hidden_layers - hf_config.first_k_dense_replace
     )
     configs["moe_router_topk"] = hf_config.num_experts_per_tok
-    configs["moe_router_num_groups"] = hf_config.n_group
-    configs["moe_router_group_topk"] = hf_config.topk_group
+    if getattr(hf_config, "n_group", 1) > 1:
+        configs["moe_router_num_groups"] = hf_config.n_group
+    if getattr(hf_config, "topk_group", 1) > 1:
+        configs["moe_router_group_topk"] = hf_config.topk_group
     configs["moe_router_topk_scaling_factor"] = hf_config.routed_scaling_factor
     configs["kv_lora_rank"] = hf_config.kv_lora_rank
     configs["qk_head_dim"] = hf_config.qk_nope_head_dim
