@@ -111,6 +111,8 @@ class TestDecentralizedPgPretrain:
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
                 num_layers=1,
+                # Disable shared embeddings - not supported with decentralized PG
+                share_embeddings_and_output_weights=False,
             )
 
             # Config Container with use_decentralized_pg=True
@@ -366,6 +368,8 @@ class TestDecentralizedPgPretrain:
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
                 num_layers=2,  # Need at least 2 layers for PP=2
+                # Disable shared embeddings - not supported with decentralized PG
+                share_embeddings_and_output_weights=False,
             )
 
             # Config Container with use_decentralized_pg=True
@@ -496,6 +500,8 @@ class TestDecentralizedPgPretrain:
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
                 num_layers=1,
+                # Disable shared embeddings - not supported with decentralized PG
+                share_embeddings_and_output_weights=False,
             )
 
             # Config Container with use_decentralized_pg=True
@@ -626,6 +632,8 @@ class TestDecentralizedPgPretrain:
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
                 num_layers=2,  # Need at least 2 layers for PP=2
+                # Disable shared embeddings - not supported with decentralized PG
+                share_embeddings_and_output_weights=False,
             )
 
             # Config Container with use_decentralized_pg=True
@@ -756,6 +764,8 @@ class TestDecentralizedPgPretrain:
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
                 num_layers=1,
+                # Disable shared embeddings - not supported with decentralized PG
+                share_embeddings_and_output_weights=False,
             )
 
             # Config Container with use_decentralized_pg=True
