@@ -910,13 +910,10 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             for i in range(len(item["seq_boundaries"]) - 1):
                 current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                # since the data could be prepadded with tokenizer's eos_id,
-                # we can find out the index of all the eos_id
-                eos_idx = np.where(np.array(current_seq) == self.tokenizer.eos_id)
-
-                # The second eos_id index marks the length of the original unpadded sequence if the sequence is
-                # prepadded for cp_size > 1. Otherwise, there is no extra padding.
-                seqlen_unpadded = eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1 else len(current_seq)
+                # Stop unpadded lengths at the last non-eos token so padding eos are excluded.
+                current_seq_arr = np.array(current_seq)
+                non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
+                seqlen_unpadded = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
                 cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
 
             # if extra paddings are added in the packed sequence, they can't be counted as
@@ -940,10 +937,15 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         loss_mask = self._collate_item(loss_mask, max_length=max_length, pad_id=0)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
 
+        tokens = torch.LongTensor(input_ids)
+        loss_mask = torch.LongTensor(loss_mask)
+        # drop any padding/eos tokens from contributing to the loss
+        loss_mask[tokens == self.tokenizer.eos_id] = 0
+
         processed_batch = {
-            "tokens": torch.LongTensor(input_ids),
+            "tokens": tokens,
             "labels": torch.LongTensor(labels),
-            "loss_mask": torch.LongTensor(loss_mask),
+            "loss_mask": loss_mask,
             "position_ids": torch.LongTensor(position_ids),
             "token_count": token_count,
         }

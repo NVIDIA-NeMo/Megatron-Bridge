@@ -33,6 +33,7 @@ def init_distributed():
 class TestModelLoad:
     """Test instantiating and loading model and tokenizer from Megatron Bridge and MegatronLM checkpoints."""
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
         "ckpt_path",

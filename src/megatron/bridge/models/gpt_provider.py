@@ -99,7 +99,7 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
-def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
@@ -122,7 +122,7 @@ def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
     if config.restore_modelopt_state:
-        return quantization_layer_spec(config)
+        return modelopt_transformer_layer_spec(config)
     elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:

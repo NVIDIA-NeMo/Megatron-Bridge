@@ -208,7 +208,7 @@ class RerunStateMachineConfig:
     error_injection_type: Literal["correct_result", "transient_error", "persistent_error"] = "transient_error"
     """Type of error to inject. """
 
-    rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "disabled"
+    rerun_mode: Literal["disabled", "validate_results", "report_determinism_stats"] = "disabled"
     """Use re-run engine to validate results (default) or to emit stats
     on variability of computations due to non-deterministic algorithms."""
 
