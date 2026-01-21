@@ -67,7 +67,6 @@ def main() -> None:
     cfg.dist.use_decentralized_pg = True
     cfg.dist.use_gloo_process_groups = False  # Gloo not supported with local PG
 
-    # Run training
     pretrain(config=cfg, forward_step_func=forward_step)
 
     # Cleanup

@@ -666,7 +666,7 @@ def train_step(
             adjust_tensor_shapes_fn = None
 
         # Forward pass.
-        p2p_comm = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -677,7 +677,7 @@ def train_step(
             decoder_seq_length=seq_length,
             forward_only=False,
             adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
-            p2p_communicator=p2p_comm,
+            p2p_communicator=p2p_communicator,
             pg_collection=pg_collection,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()

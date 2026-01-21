@@ -378,7 +378,7 @@ def get_rng_state(
     ckpt_format: str = "torch_dist",
     *,
     pg_collection: ProcessGroupCollection,
-) -> Union[ShardedObject, dict]:
+) -> ShardedObject | dict:
     """Get the random number generator states for all necessary libraries.
 
     Collects states from random, numpy, torch, cuda, and the Megatron RNG tracker.
@@ -542,7 +542,7 @@ def save_checkpoint(
 
     # Save LayerWiseDistributedOptimizer
     if isinstance(optimizer, LayerWiseDistributedOptimizer):
-        dp_rank = pg_collection.dp
+        dp_rank = pg_collection.dp.rank()
         optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
         ensure_directory_exists(optim_checkpoint_name)
         if not optimizer.is_stub_optimizer:
@@ -836,7 +836,7 @@ def maybe_save_dataloader_state(
     model: list[MegatronModule] | MegatronModule,
     train_iterator: Any,
     iteration: int,
-    dataloader_save_path: Optional[str],
+    dataloader_save_path: str | None = None,
     *,
     pg_collection: ProcessGroupCollection | None = None,
 ) -> None:
@@ -859,8 +859,8 @@ def maybe_save_dataloader_state(
 
     # Resolve process groups and save dataloader state for each DP rank only once.
     pg_collection = pg_collection or get_pg_collection(model)
-    first_rank = (pg_collection.pp.rank() == 0) and (pg_collection.tp.rank() == 0)
-    if not first_rank:
+    is_first_rank = (pg_collection.pp.rank() == 0) and (pg_collection.tp.rank() == 0)
+    if not is_first_rank:
         return
 
     dp_rank = pg_collection.dp.rank()
@@ -1967,6 +1967,7 @@ def _load_non_persistent_base_checkpoint(
             non_persistent_iteration,
             False,
             checkpointing_context=checkpointing_context,
+            pg_collection=pg_collection,
         )
     elif ckpt_cfg.non_persistent_ckpt_type == "local":
         intermediate_state_dict, checkpoint_name = checkpointing_context["local_checkpoint_manager"].load()
