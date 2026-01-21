@@ -19,7 +19,7 @@ Example: Qwen3 Pretraining with Local Parallel Groups (Simple)
 ==============================================================================
 
 This example demonstrates the simplest way to enable local parallel groups:
-just use an existing recipe and set `cfg.dist.use_local_parallel_groups = True`.
+just use an existing recipe and set `cfg.dist.use_decentralized_pg = True`.
 
 The setup() function inside pretrain() will automatically create the
 ProcessGroupCollection using HyperCommGrid based on the parallelism settings.
@@ -64,7 +64,7 @@ def main() -> None:
     # =========================================================================
     # KEY: Enable local parallel groups
     # =========================================================================
-    cfg.dist.use_local_parallel_groups = True
+    cfg.dist.use_decentralized_pg = True
     cfg.dist.use_gloo_process_groups = False  # Gloo not supported with local PG
 
     # Run training

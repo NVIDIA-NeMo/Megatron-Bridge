@@ -655,7 +655,7 @@ def train_step(
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-        if not cfg.dist.use_local_parallel_groups:
+        if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
                 model,
                 seq_length=model_config.seq_length,

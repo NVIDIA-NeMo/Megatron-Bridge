@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unit tests for the use_local_parallel_groups feature.
+Unit tests for the use_decentralized_pg feature.
 
 This feature enables using ProcessGroupCollection passed through functions instead
 of relying on mcore's global parallel state (mpu) variables. When enabled, parallel
@@ -29,22 +29,22 @@ from megatron.bridge.training.config import DistributedInitConfig
 
 
 class TestDistributedInitConfigLocalParallelGroups:
-    """Tests for DistributedInitConfig.use_local_parallel_groups configuration."""
+    """Tests for DistributedInitConfig.use_decentralized_pg configuration."""
 
-    def test_use_local_parallel_groups_default_is_false(self):
-        """Test that use_local_parallel_groups defaults to False."""
+    def test_use_decentralized_pg_default_is_false(self):
+        """Test that use_decentralized_pg defaults to False."""
         config = DistributedInitConfig()
-        assert config.use_local_parallel_groups is False
+        assert config.use_decentralized_pg is False
 
-    def test_use_local_parallel_groups_can_be_enabled(self):
-        """Test that use_local_parallel_groups can be set to True."""
-        config = DistributedInitConfig(use_local_parallel_groups=True)
-        assert config.use_local_parallel_groups is True
+    def test_use_decentralized_pg_can_be_enabled(self):
+        """Test that use_decentralized_pg can be set to True."""
+        config = DistributedInitConfig(use_decentralized_pg=True)
+        assert config.use_decentralized_pg is True
 
-    def test_use_local_parallel_groups_can_be_explicitly_disabled(self):
-        """Test that use_local_parallel_groups can be explicitly set to False."""
-        config = DistributedInitConfig(use_local_parallel_groups=False)
-        assert config.use_local_parallel_groups is False
+    def test_use_decentralized_pg_can_be_explicitly_disabled(self):
+        """Test that use_decentralized_pg can be explicitly set to False."""
+        config = DistributedInitConfig(use_decentralized_pg=False)
+        assert config.use_decentralized_pg is False
 
 
 class TestCreatePgCollectionFunction:
@@ -278,7 +278,7 @@ class TestInitializeDistributedRaisesOnNoDevices:
 
 
 class TestInitializeDistributedBranching:
-    """Tests for _initialize_distributed branching based on use_local_parallel_groups."""
+    """Tests for _initialize_distributed branching based on use_decentralized_pg."""
 
     @patch("megatron.bridge.training.initialize._create_pg_collection")
     @patch("megatron.bridge.training.initialize.parallel_state")
@@ -295,7 +295,7 @@ class TestInitializeDistributedBranching:
         mock_parallel_state,
         mock_create_pg_collection,
     ):
-        """Test that _initialize_distributed uses HyperCommGrid when use_local_parallel_groups=True."""
+        """Test that _initialize_distributed uses HyperCommGrid when use_decentralized_pg=True."""
         from megatron.bridge.training.initialize import _initialize_distributed
 
         mock_model_config = MagicMock()
@@ -304,7 +304,7 @@ class TestInitializeDistributedBranching:
         mock_model_config.context_parallel_size = 1
 
         mock_dist_config = MagicMock()
-        mock_dist_config.use_local_parallel_groups = True
+        mock_dist_config.use_decentralized_pg = True
 
         mock_pg_collection = MagicMock()
         mock_create_pg_collection.return_value = mock_pg_collection
@@ -339,7 +339,7 @@ class TestInitializeDistributedBranching:
         mock_create_pg_collection,
         mock_pg_collection_class,
     ):
-        """Test that _initialize_distributed uses mpu when use_local_parallel_groups=False."""
+        """Test that _initialize_distributed uses mpu when use_decentralized_pg=False."""
         from megatron.bridge.training.initialize import _initialize_distributed
 
         mock_model_config = MagicMock()
@@ -353,7 +353,7 @@ class TestInitializeDistributedBranching:
         mock_model_config.expert_tensor_parallel_size = None
 
         mock_dist_config = MagicMock()
-        mock_dist_config.use_local_parallel_groups = False
+        mock_dist_config.use_decentralized_pg = False
         mock_dist_config.distributed_timeout_minutes = 30
         mock_dist_config.nccl_communicator_config_path = None
         mock_dist_config.use_tp_pp_dp_mapping = False
@@ -381,25 +381,25 @@ class TestInitializeDistributedBranching:
 
 
 class TestSetupUsesLocalParallelGroups:
-    """Tests for setup function behavior with use_local_parallel_groups."""
+    """Tests for setup function behavior with use_decentralized_pg."""
 
-    def test_config_use_local_parallel_groups_enabled(self):
-        """Test that use_local_parallel_groups can be enabled in config."""
+    def test_config_use_decentralized_pg_enabled(self):
+        """Test that use_decentralized_pg can be enabled in config."""
         from megatron.bridge.training.config import DistributedInitConfig
 
-        config = DistributedInitConfig(use_local_parallel_groups=True)
+        config = DistributedInitConfig(use_decentralized_pg=True)
 
-        # When use_local_parallel_groups=True, _initialize_distributed uses HyperCommGrid
-        assert config.use_local_parallel_groups is True
+        # When use_decentralized_pg=True, _initialize_distributed uses HyperCommGrid
+        assert config.use_decentralized_pg is True
 
-    def test_config_use_local_parallel_groups_disabled_default(self):
-        """Test that use_local_parallel_groups defaults to False."""
+    def test_config_use_decentralized_pg_disabled_default(self):
+        """Test that use_decentralized_pg defaults to False."""
         from megatron.bridge.training.config import DistributedInitConfig
 
-        config = DistributedInitConfig(use_local_parallel_groups=False)
+        config = DistributedInitConfig(use_decentralized_pg=False)
 
-        # When use_local_parallel_groups=False (default), _initialize_distributed uses mpu
-        assert config.use_local_parallel_groups is False
+        # When use_decentralized_pg=False (default), _initialize_distributed uses mpu
+        assert config.use_decentralized_pg is False
 
 
 class TestSetupOptimizerWithPgCollection:
@@ -503,136 +503,136 @@ class TestSetupOptimizerWithPgCollection:
 class TestSetupConditionalPgCollectionPassing:
     """Tests for setup function's conditional pg_collection passing to optimizer."""
 
-    def test_setup_passes_pg_collection_when_use_local_parallel_groups_true(self):
+    def test_setup_passes_pg_collection_when_use_decentralized_pg_true(self):
         """
-        Verify that when use_local_parallel_groups=True, pg_collection is passed to optimizer.
+        Verify that when use_decentralized_pg=True, pg_collection is passed to optimizer.
 
         This tests the logic at setup.py line 232-234:
-        pg_collection=pg_collection if cfg.dist.use_local_parallel_groups else None
+        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None
         """
         from megatron.bridge.training.config import DistributedInitConfig
 
-        # Create config with use_local_parallel_groups=True
-        config = DistributedInitConfig(use_local_parallel_groups=True)
+        # Create config with use_decentralized_pg=True
+        config = DistributedInitConfig(use_decentralized_pg=True)
 
         # Simulate the conditional expression from setup.py
         mock_pg_collection = MagicMock()
-        passed_pg_collection = mock_pg_collection if config.use_local_parallel_groups else None
+        passed_pg_collection = mock_pg_collection if config.use_decentralized_pg else None
 
-        # Verify pg_collection is passed when use_local_parallel_groups=True
+        # Verify pg_collection is passed when use_decentralized_pg=True
         assert passed_pg_collection is mock_pg_collection
 
-    def test_setup_passes_none_when_use_local_parallel_groups_false(self):
+    def test_setup_passes_none_when_use_decentralized_pg_false(self):
         """
-        Verify that when use_local_parallel_groups=False, None is passed to optimizer.
+        Verify that when use_decentralized_pg=False, None is passed to optimizer.
 
         This tests the logic at setup.py line 232-234:
-        pg_collection=pg_collection if cfg.dist.use_local_parallel_groups else None
+        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None
         """
         from megatron.bridge.training.config import DistributedInitConfig
 
-        # Create config with use_local_parallel_groups=False
-        config = DistributedInitConfig(use_local_parallel_groups=False)
+        # Create config with use_decentralized_pg=False
+        config = DistributedInitConfig(use_decentralized_pg=False)
 
         # Simulate the conditional expression from setup.py
         mock_pg_collection = MagicMock()
-        passed_pg_collection = mock_pg_collection if config.use_local_parallel_groups else None
+        passed_pg_collection = mock_pg_collection if config.use_decentralized_pg else None
 
-        # Verify None is passed when use_local_parallel_groups=False
+        # Verify None is passed when use_decentralized_pg=False
         assert passed_pg_collection is None
 
 
 class TestCheckpointingWithLocalParallelGroups:
-    """Tests for checkpointing behavior based on use_local_parallel_groups setting."""
+    """Tests for checkpointing behavior based on use_decentralized_pg setting."""
 
-    def test_modelopt_state_save_skipped_when_use_local_parallel_groups_true(self):
+    def test_modelopt_state_save_skipped_when_use_decentralized_pg_true(self):
         """
-        Verify that sharded modelopt_state save is skipped when use_local_parallel_groups=True.
+        Verify that sharded modelopt_state save is skipped when use_decentralized_pg=True.
 
         This tests the logic at checkpointing.py line 641:
-        if not cfg.dist.use_local_parallel_groups:
+        if not cfg.dist.use_decentralized_pg:
             save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
         """
         from megatron.bridge.training.config import DistributedInitConfig
 
-        # Create config with use_local_parallel_groups=True
-        config = DistributedInitConfig(use_local_parallel_groups=True)
+        # Create config with use_decentralized_pg=True
+        config = DistributedInitConfig(use_decentralized_pg=True)
 
         # Simulate the condition from checkpointing.py
-        should_save_modelopt = not config.use_local_parallel_groups
+        should_save_modelopt = not config.use_decentralized_pg
 
-        # Verify modelopt save is skipped when use_local_parallel_groups=True
+        # Verify modelopt save is skipped when use_decentralized_pg=True
         assert should_save_modelopt is False
 
-    def test_modelopt_state_save_executed_when_use_local_parallel_groups_false(self):
+    def test_modelopt_state_save_executed_when_use_decentralized_pg_false(self):
         """
-        Verify that sharded modelopt_state save is executed when use_local_parallel_groups=False.
+        Verify that sharded modelopt_state save is executed when use_decentralized_pg=False.
 
         This tests the logic at checkpointing.py line 641:
-        if not cfg.dist.use_local_parallel_groups:
+        if not cfg.dist.use_decentralized_pg:
             save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
         """
         from megatron.bridge.training.config import DistributedInitConfig
 
-        # Create config with use_local_parallel_groups=False (default)
-        config = DistributedInitConfig(use_local_parallel_groups=False)
+        # Create config with use_decentralized_pg=False (default)
+        config = DistributedInitConfig(use_decentralized_pg=False)
 
         # Simulate the condition from checkpointing.py
-        should_save_modelopt = not config.use_local_parallel_groups
+        should_save_modelopt = not config.use_decentralized_pg
 
-        # Verify modelopt save is executed when use_local_parallel_groups=False
+        # Verify modelopt save is executed when use_decentralized_pg=False
         assert should_save_modelopt is True
 
 
 class TestTrainTensorShapesAdjustWithLocalParallelGroups:
     """Tests for train.py tensor shapes adjust function behavior."""
 
-    def test_tensor_shapes_adjust_fn_is_none_when_use_local_parallel_groups_true(self):
+    def test_tensor_shapes_adjust_fn_is_none_when_use_decentralized_pg_true(self):
         """
-        Verify that adjust_tensor_shapes_fn is None when use_local_parallel_groups=True.
+        Verify that adjust_tensor_shapes_fn is None when use_decentralized_pg=True.
 
         This tests the logic at train.py line 658-666:
-        if not cfg.dist.use_local_parallel_groups:
+        if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(...)
         else:
             adjust_tensor_shapes_fn = None
         """
         from megatron.bridge.training.config import DistributedInitConfig
 
-        # Create config with use_local_parallel_groups=True
-        config = DistributedInitConfig(use_local_parallel_groups=True)
+        # Create config with use_decentralized_pg=True
+        config = DistributedInitConfig(use_decentralized_pg=True)
 
         # Simulate the condition from train.py
-        if not config.use_local_parallel_groups:
+        if not config.use_decentralized_pg:
             adjust_tensor_shapes_fn = "would_call_get_tensor_shapes_adjust_fn"
         else:
             adjust_tensor_shapes_fn = None
 
-        # Verify adjust_tensor_shapes_fn is None when use_local_parallel_groups=True
+        # Verify adjust_tensor_shapes_fn is None when use_decentralized_pg=True
         assert adjust_tensor_shapes_fn is None
 
-    def test_tensor_shapes_adjust_fn_is_set_when_use_local_parallel_groups_false(self):
+    def test_tensor_shapes_adjust_fn_is_set_when_use_decentralized_pg_false(self):
         """
-        Verify that adjust_tensor_shapes_fn is set when use_local_parallel_groups=False.
+        Verify that adjust_tensor_shapes_fn is set when use_decentralized_pg=False.
 
         This tests the logic at train.py line 658-666:
-        if not cfg.dist.use_local_parallel_groups:
+        if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(...)
         else:
             adjust_tensor_shapes_fn = None
         """
         from megatron.bridge.training.config import DistributedInitConfig
 
-        # Create config with use_local_parallel_groups=False (default)
-        config = DistributedInitConfig(use_local_parallel_groups=False)
+        # Create config with use_decentralized_pg=False (default)
+        config = DistributedInitConfig(use_decentralized_pg=False)
 
         # Simulate the condition from train.py
-        if not config.use_local_parallel_groups:
+        if not config.use_decentralized_pg:
             adjust_tensor_shapes_fn = "would_call_get_tensor_shapes_adjust_fn"
         else:
             adjust_tensor_shapes_fn = None
 
-        # Verify adjust_tensor_shapes_fn is set when use_local_parallel_groups=False
+        # Verify adjust_tensor_shapes_fn is set when use_decentralized_pg=False
         assert adjust_tensor_shapes_fn is not None
 
 

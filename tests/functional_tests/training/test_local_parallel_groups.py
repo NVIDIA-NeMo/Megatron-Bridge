@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Functional tests for the use_local_parallel_groups feature.
+Functional tests for the use_decentralized_pg feature.
 
 This feature enables using ProcessGroupCollection passed through functions instead
 of relying on mcore's global parallel state (mpu) variables. When enabled, parallel
@@ -70,13 +70,13 @@ def cleanup_megatron_state():
 
 class TestLocalParallelGroupsPretrain:
     """
-    Functional tests for pretraining with use_local_parallel_groups enabled.
+    Functional tests for pretraining with use_decentralized_pg enabled.
     """
 
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_local_parallel_groups(self, tmp_path):
         """
-        Test end to end training with use_local_parallel_groups=True.
+        Test end to end training with use_decentralized_pg=True.
 
         This test verifies that training works correctly when parallel groups
         are passed through functions instead of using global mpu state.
@@ -113,7 +113,7 @@ class TestLocalParallelGroupsPretrain:
                 num_layers=1,
             )
 
-            # Config Container with use_local_parallel_groups=True
+            # Config Container with use_decentralized_pg=True
             cfg = ConfigContainer(
                 model=model_cfg,
                 train=TrainingConfig(
@@ -156,7 +156,7 @@ class TestLocalParallelGroupsPretrain:
                     use_distributed_optimizer=True,
                 ),
                 dist=DistributedInitConfig(
-                    use_local_parallel_groups=True,  # Enable the feature
+                    use_decentralized_pg=True,  # Enable the feature
                     use_gloo_process_groups=False,  # Gloo not supported with custom pg_collection
                 ),
                 dataset=MockGPTDatasetConfig(
@@ -201,7 +201,7 @@ class TestLocalParallelGroupsPretrain:
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_local_parallel_groups_disabled(self, tmp_path):
         """
-        Test end to end training with use_local_parallel_groups=False (default).
+        Test end to end training with use_decentralized_pg=False (default).
 
         This test verifies that training works correctly with the default
         behavior using global mpu state.
@@ -238,7 +238,7 @@ class TestLocalParallelGroupsPretrain:
                 num_layers=1,
             )
 
-            # Config Container with use_local_parallel_groups=False (default)
+            # Config Container with use_decentralized_pg=False (default)
             cfg = ConfigContainer(
                 model=model_cfg,
                 train=TrainingConfig(
@@ -281,7 +281,7 @@ class TestLocalParallelGroupsPretrain:
                     use_distributed_optimizer=True,
                 ),
                 dist=DistributedInitConfig(
-                    use_local_parallel_groups=False,  # Explicitly disable (default)
+                    use_decentralized_pg=False,  # Explicitly disable (default)
                 ),
                 dataset=MockGPTDatasetConfig(
                     random_seed=1234,
@@ -325,7 +325,7 @@ class TestLocalParallelGroupsPretrain:
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_local_parallel_groups_and_pp(self, tmp_path):
         """
-        Test training with use_local_parallel_groups=True and pipeline parallelism.
+        Test training with use_decentralized_pg=True and pipeline parallelism.
 
         This test verifies that the local parallel groups feature works correctly
         with pipeline parallelism enabled.
@@ -367,7 +367,7 @@ class TestLocalParallelGroupsPretrain:
                 num_layers=2,  # Need at least 2 layers for PP=2
             )
 
-            # Config Container with use_local_parallel_groups=True
+            # Config Container with use_decentralized_pg=True
             cfg = ConfigContainer(
                 model=model_cfg,
                 train=TrainingConfig(
@@ -410,7 +410,7 @@ class TestLocalParallelGroupsPretrain:
                     use_distributed_optimizer=True,
                 ),
                 dist=DistributedInitConfig(
-                    use_local_parallel_groups=True,  # Enable the feature
+                    use_decentralized_pg=True,  # Enable the feature
                     use_gloo_process_groups=False,  # Gloo not supported with custom pg_collection
                 ),
                 dataset=MockGPTDatasetConfig(
@@ -455,7 +455,7 @@ class TestLocalParallelGroupsPretrain:
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_local_parallel_groups_and_cp(self, tmp_path):
         """
-        Test training with use_local_parallel_groups=True and context parallelism.
+        Test training with use_decentralized_pg=True and context parallelism.
 
         This test verifies that the local parallel groups feature works correctly
         with context parallelism enabled.
@@ -497,7 +497,7 @@ class TestLocalParallelGroupsPretrain:
                 num_layers=1,
             )
 
-            # Config Container with use_local_parallel_groups=True
+            # Config Container with use_decentralized_pg=True
             cfg = ConfigContainer(
                 model=model_cfg,
                 train=TrainingConfig(
@@ -540,7 +540,7 @@ class TestLocalParallelGroupsPretrain:
                     use_distributed_optimizer=True,
                 ),
                 dist=DistributedInitConfig(
-                    use_local_parallel_groups=True,  # Enable the feature
+                    use_decentralized_pg=True,  # Enable the feature
                     use_gloo_process_groups=False,  # Gloo not supported with custom pg_collection
                 ),
                 dataset=MockGPTDatasetConfig(
@@ -585,7 +585,7 @@ class TestLocalParallelGroupsPretrain:
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_local_parallel_groups_combined_parallelism(self, tmp_path):
         """
-        Test training with use_local_parallel_groups=True and combined TP+PP.
+        Test training with use_decentralized_pg=True and combined TP+PP.
 
         This test verifies that the local parallel groups feature works correctly
         with multiple forms of parallelism enabled simultaneously.
@@ -627,7 +627,7 @@ class TestLocalParallelGroupsPretrain:
                 num_layers=2,  # Need at least 2 layers for PP=2
             )
 
-            # Config Container with use_local_parallel_groups=True
+            # Config Container with use_decentralized_pg=True
             cfg = ConfigContainer(
                 model=model_cfg,
                 train=TrainingConfig(
@@ -670,7 +670,7 @@ class TestLocalParallelGroupsPretrain:
                     use_distributed_optimizer=True,
                 ),
                 dist=DistributedInitConfig(
-                    use_local_parallel_groups=True,  # Enable the feature
+                    use_decentralized_pg=True,  # Enable the feature
                     use_gloo_process_groups=False,  # Gloo not supported with custom pg_collection
                 ),
                 dataset=MockGPTDatasetConfig(
@@ -715,7 +715,7 @@ class TestLocalParallelGroupsPretrain:
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_local_parallel_groups_and_tp(self, tmp_path):
         """
-        Test training with use_local_parallel_groups=True and tensor parallelism.
+        Test training with use_decentralized_pg=True and tensor parallelism.
 
         This test verifies that the local parallel groups feature works correctly
         with tensor parallelism enabled.
@@ -757,7 +757,7 @@ class TestLocalParallelGroupsPretrain:
                 num_layers=1,
             )
 
-            # Config Container with use_local_parallel_groups=True
+            # Config Container with use_decentralized_pg=True
             cfg = ConfigContainer(
                 model=model_cfg,
                 train=TrainingConfig(
@@ -800,7 +800,7 @@ class TestLocalParallelGroupsPretrain:
                     use_distributed_optimizer=True,
                 ),
                 dist=DistributedInitConfig(
-                    use_local_parallel_groups=True,  # Enable the feature
+                    use_decentralized_pg=True,  # Enable the feature
                     use_gloo_process_groups=False,  # Gloo not supported with custom pg_collection
                 ),
                 dataset=MockGPTDatasetConfig(

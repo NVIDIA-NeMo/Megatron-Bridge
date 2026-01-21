@@ -1,6 +1,6 @@
 # Local Parallel Groups Examples
 
-This directory contains examples demonstrating how to use **local parallel groups** (`use_local_parallel_groups=True`) in Megatron-Bridge for distributed training.
+This directory contains examples demonstrating how to use **local parallel groups** (`use_decentralized_pg=True`) in Megatron-Bridge for distributed training.
 
 ## Overview
 
@@ -14,7 +14,7 @@ Instead of relying on Megatron-Core's global parallel state (mpu) module, you ca
 
 | File | Description |
 |------|-------------|
-| `pretrain_qwen3_simple.py` | **Simple**: Use a recipe and enable `use_local_parallel_groups=True` |
+| `pretrain_qwen3_simple.py` | **Simple**: Use a recipe and enable `use_decentralized_pg=True` |
 | `pretrain_qwen3_with_local_parallel_groups.py` | **Advanced**: Manually create process groups with `HyperCommGrid` |
 
 ## Quick Start
@@ -43,7 +43,7 @@ cfg = qwen3_4b_pretrain_config(
 )
 
 # Enable local parallel groups
-cfg.dist.use_local_parallel_groups = True
+cfg.dist.use_decentralized_pg = True
 cfg.dist.use_gloo_process_groups = False  # Gloo not supported
 ```
 

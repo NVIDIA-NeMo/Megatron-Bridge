@@ -130,8 +130,8 @@ def setup(
     )
 
     # pg_collection is returned from initialize_megatron:
-    # - When use_local_parallel_groups=True: uses HyperCommGrid to create local process groups
-    # - When use_local_parallel_groups=False: uses mpu's global parallel state
+    # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
+    # - When use_decentralized_pg=False: uses mpu's global parallel state
     pg_collection = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
@@ -229,9 +229,9 @@ def setup(
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        # Only pass pg_collection when use_local_parallel_groups is True.
+        # Only pass pg_collection when use_decentralized_pg is True.
         # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
-        pg_collection=pg_collection if cfg.dist.use_local_parallel_groups else None,
+        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")

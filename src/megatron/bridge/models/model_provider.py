@@ -154,7 +154,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 is enabled. If None, no mixed precision wrapper is applied.
             pg_collection: Optional pre-initialized ProcessGroupCollection. If provided, skips
                 model parallel initialization and uses the provided collection directly.
-                This is used when `use_local_parallel_groups=True` in the distributed config.
+                This is used when `use_decentralized_pg=True` in the distributed config.
 
         Returns:
             A list containing the wrapped model instance.
@@ -170,7 +170,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
-        # If pg_collection is provided (e.g., from use_local_parallel_groups=True),
+        # If pg_collection is provided (e.g., from use_decentralized_pg=True),
         # use it directly. Otherwise, initialize model parallel state and get pg_collection from MPU.
         if pg_collection is None:
             if not parallel_state.is_initialized():

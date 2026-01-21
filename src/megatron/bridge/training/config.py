@@ -191,7 +191,7 @@ class DistributedInitConfig:
     disable_jit_fuser: bool = False
     """Disable the JIT fuser."""
 
-    use_local_parallel_groups: bool = False
+    use_decentralized_pg: bool = False
     """Use ProcessGroupCollection passed through functions instead of relying on mcore's
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""

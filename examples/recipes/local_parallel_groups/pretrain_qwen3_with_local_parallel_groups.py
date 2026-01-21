@@ -432,9 +432,9 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     torch.distributed.barrier()
 
     # ===========================================================================
-    # Create ConfigContainer with use_local_parallel_groups=True
+    # Create ConfigContainer with use_decentralized_pg=True
     # ===========================================================================
-    # IMPORTANT: When use_local_parallel_groups=True, the setup functions
+    # IMPORTANT: When use_decentralized_pg=True, the setup functions
     # expect pg_collection to be passed explicitly rather than reading from mpu.
 
     model_cfg = Qwen3ModelProvider4B(
@@ -494,10 +494,10 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
         use_distributed_optimizer=True,
     )
 
-    # KEY: use_local_parallel_groups=True tells Megatron-Bridge that we're
+    # KEY: use_decentralized_pg=True tells Megatron-Bridge that we're
     # managing process groups ourselves via pg_collection
     dist_cfg = DistributedInitConfig(
-        use_local_parallel_groups=True,
+        use_decentralized_pg=True,
         use_gloo_process_groups=False,  # Gloo not supported with local PG
     )
 
