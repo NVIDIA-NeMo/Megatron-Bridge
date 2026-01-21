@@ -62,8 +62,9 @@ WORKDIR /opt/Megatron-Bridge
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
 
-RUN --mount=type=bind,from=mbridge_mcore,source=/tmp/Megatron-LM,target=/opt/Megatron-Bridge/3rdparty/Megatron-LM \
-    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+COPY --from=mbridge_mcore /tmp/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
