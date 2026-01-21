@@ -22,10 +22,10 @@ from typing import Any, Literal, Optional, Tuple, Union
 
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
-from megatron.training.datasets.fim_dataset import GPTFIMDatasetConfig as MCoreGPTFIMDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.transformer.enums import AttnBackend
+from megatron.training.datasets.fim_dataset import GPTFIMDatasetConfig as MCoreGPTFIMDatasetConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
