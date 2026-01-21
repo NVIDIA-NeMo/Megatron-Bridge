@@ -23,6 +23,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -58,7 +59,7 @@ class Nemotron3NanoCommonKwargs(TypedDict, total=False):
     pipeline_model_parallel_size: int
     pipeline_parallelism_dtype: Optional[torch.dtype]
     virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
+    context_parallel_size: int
     sequence_parallelism: bool
     expert_tensor_parallelism: int
     expert_model_parallelism: int
@@ -71,6 +72,7 @@ class Nemotron3NanoCommonKwargs(TypedDict, total=False):
     min_lr: float
     lr_warmup_iters: int
     lr_decay_iters: Optional[int]
+    use_null_tokenizer: bool
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
@@ -91,7 +93,7 @@ def nemotron_3_nano_pretrain_config(**user_kwargs: Unpack[Nemotron3NanoCommonKwa
         "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 1,
+        "context_parallel_size": 1,
         "sequence_parallelism": True,
         "enable_deepep": True,
         "expert_tensor_parallelism": 1,
@@ -120,7 +122,7 @@ def _nemotron_3_nano_common(
     pipeline_model_parallel_size: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
+    context_parallel_size: int = 1,
     sequence_parallelism: bool = True,
     expert_tensor_parallelism: int = 1,
     expert_model_parallelism: int = 8,
@@ -136,6 +138,7 @@ def _nemotron_3_nano_common(
     min_lr: float = 1.6e-5,
     lr_warmup_iters: int = 333,
     lr_decay_iters: Optional[int] = None,
+    use_null_tokenizer: bool = False,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
@@ -165,7 +168,7 @@ def _nemotron_3_nano_common(
         pipeline_model_parallel_size: Degree of pipeline model parallelism.
         pipeline_parallelism_dtype: Data type for pipeline parallelism.
         virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism to be passed to model_config.
+        context_parallel_size: Degree of context parallelism to be passed to model_config.
         sequence_parallelism: Whether to use sequence parallelism.
         expert_tensor_parallelism: Degree of expert tensor parallelism.
         expert_model_parallelism: Degree of expert model parallelism.
@@ -179,6 +182,7 @@ def _nemotron_3_nano_common(
         min_lr: Minimum learning rate for cosine decay.
         lr_warmup_iters: Number of warmup iterations for the learning rate.
         lr_decay_iters: Number of iterations for learning rate decay.
+        use_null_tokenizer: Whether to use NullTokenizer instead of HuggingFaceTokenizer.
         tokenizer_model: Path or name of the tokenizer model.
         vocab_size: Size of the vocabulary.
         precision_config: Precision configuration for the model.
@@ -206,7 +210,7 @@ def _nemotron_3_nano_common(
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
+        context_parallel_size=context_parallel_size,
         sequence_parallel=sequence_parallelism,
         expert_tensor_parallel_size=expert_tensor_parallelism,
         expert_model_parallel_size=expert_model_parallelism,
@@ -238,9 +242,9 @@ def _nemotron_3_nano_common(
     )
 
     tokenizer_config = TokenizerConfig(
-        tokenizer_type="HuggingFaceTokenizer",
-        tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-        vocab_size=None,
+        tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
+        tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16" if not use_null_tokenizer else None,
+        vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
     )
 
     # Config Container
@@ -322,7 +326,7 @@ class Nemotron3NanoFinetuneKwargs(TypedDict, total=False):
     pipeline_model_parallel_size: int
     pipeline_parallelism_dtype: Optional[torch.dtype]
     virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
+    context_parallel_size: int
     sequence_parallelism: bool
     expert_tensor_parallelism: int
     expert_model_parallelism: int
@@ -367,7 +371,7 @@ def nemotron_3_nano_finetune_config(**user_kwargs: Unpack[Nemotron3NanoFinetuneK
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 1,
+        "context_parallel_size": 1,
         "sequence_parallelism": False,
         "expert_tensor_parallelism": 1,
         "expert_model_parallelism": 8,
@@ -389,7 +393,7 @@ def _nemotron_3_nano_finetune_common(
     pipeline_model_parallel_size: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
+    context_parallel_size: int = 1,
     sequence_parallelism: bool = True,
     expert_tensor_parallelism: int = 1,
     expert_model_parallelism: int = 1,
@@ -429,7 +433,7 @@ def _nemotron_3_nano_finetune_common(
         pipeline_model_parallel_size: Degree of pipeline model parallelism.
         pipeline_parallelism_dtype: Data type for pipeline parallelism.
         virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism.
+        context_parallel_size: Degree of context parallelism.
         sequence_parallelism: Whether to use sequence parallelism.
         expert_tensor_parallelism: Degree of expert tensor parallelism.
         expert_model_parallelism: Degree of expert model parallelism.
@@ -469,7 +473,7 @@ def _nemotron_3_nano_finetune_common(
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
+        context_parallel_size=context_parallel_size,
         sequence_parallel=sequence_parallelism,
         expert_tensor_parallel_size=expert_tensor_parallelism,
         expert_model_parallel_size=expert_model_parallelism,
