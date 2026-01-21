@@ -15,10 +15,10 @@
 
 """
 ==============================================================================
-Example: Qwen3 Pretraining with Local Parallel Groups (Simple)
+Example: Qwen3 Pretraining with Decentralized Process Groups (Simple)
 ==============================================================================
 
-This example demonstrates the simplest way to enable local parallel groups:
+This example demonstrates the simplest way to enable decentralized process groups:
 just use an existing recipe and set `cfg.dist.use_decentralized_pg = True`.
 
 The setup() function inside pretrain() will automatically create the
@@ -27,12 +27,10 @@ ProcessGroupCollection using HyperCommGrid based on the parallelism settings.
 How to Run
 ----------
 # 8 GPUs: TP2 x PP2 x DP2
-torchrun --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_simple.py
-
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_simple.py
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/decentralized_pg/pretrain_qwen3_simple.py
 
 # 4 GPUs: TP2 x PP2 x DP1
-torchrun --nproc_per_node=4 examples/recipes/local_parallel_groups/pretrain_qwen3_simple.py
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/recipes/decentralized_pg/pretrain_qwen3_simple.py
 """
 
 import torch
@@ -43,7 +41,7 @@ from megatron.bridge.training.pretrain import pretrain
 
 
 def main() -> None:
-    """Run Qwen3 pretraining with local parallel groups enabled."""
+    """Run Qwen3 pretraining with decentralized process groups enabled."""
     # Get the standard Qwen3 4B pretrain config with overrides
     cfg = qwen3_4b_pretrain_config(
         # Use mock data for demo
@@ -60,12 +58,14 @@ def main() -> None:
         lr_warmup_iters=10,
         lr_decay_iters=100,
     )
+    # known issue with share_embeddings_and_output_weights
+    cfg.model.share_embeddings_and_output_weights = False
 
     # =========================================================================
-    # KEY: Enable local parallel groups
+    # KEY: Enable decentralized process groups
     # =========================================================================
     cfg.dist.use_decentralized_pg = True
-    cfg.dist.use_gloo_process_groups = False  # Gloo not supported with local PG
+    cfg.dist.use_gloo_process_groups = False  # Gloo not supported with decentralized PG
 
     pretrain(config=cfg, forward_step_func=forward_step)
 

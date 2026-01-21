@@ -68,13 +68,13 @@ def cleanup_megatron_state():
         pass
 
 
-class TestLocalParallelGroupsPretrain:
+class TestDecentralizedPgPretrain:
     """
     Functional tests for pretraining with use_decentralized_pg enabled.
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_local_parallel_groups(self, tmp_path):
+    def test_pretrain_with_decentralized_pg(self, tmp_path):
         """
         Test end to end training with use_decentralized_pg=True.
 
@@ -199,7 +199,7 @@ class TestLocalParallelGroupsPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_local_parallel_groups_disabled(self, tmp_path):
+    def test_pretrain_with_decentralized_pg_disabled(self, tmp_path):
         """
         Test end to end training with use_decentralized_pg=False (default).
 
@@ -322,12 +322,13 @@ class TestLocalParallelGroupsPretrain:
         finally:
             clear_directories(tmp_path)
 
+    #
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_local_parallel_groups_and_pp(self, tmp_path):
+    def test_pretrain_with_decentralized_pg_and_pp(self, tmp_path):
         """
         Test training with use_decentralized_pg=True and pipeline parallelism.
 
-        This test verifies that the local parallel groups feature works correctly
+        This test verifies that the decentralized process groups feature works correctly
         with pipeline parallelism enabled.
         """
         initialize_distributed()
@@ -453,11 +454,11 @@ class TestLocalParallelGroupsPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_local_parallel_groups_and_cp(self, tmp_path):
+    def test_pretrain_with_decentralized_pg_and_cp(self, tmp_path):
         """
         Test training with use_decentralized_pg=True and context parallelism.
 
-        This test verifies that the local parallel groups feature works correctly
+        This test verifies that the decentralized process groups feature works correctly
         with context parallelism enabled.
         """
         initialize_distributed()
@@ -583,11 +584,11 @@ class TestLocalParallelGroupsPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_local_parallel_groups_combined_parallelism(self, tmp_path):
+    def test_pretrain_with_decentralized_pg_combined_parallelism(self, tmp_path):
         """
         Test training with use_decentralized_pg=True and combined TP+PP.
 
-        This test verifies that the local parallel groups feature works correctly
+        This test verifies that the decentralized process groups feature works correctly
         with multiple forms of parallelism enabled simultaneously.
         """
         initialize_distributed()
@@ -713,11 +714,11 @@ class TestLocalParallelGroupsPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_local_parallel_groups_and_tp(self, tmp_path):
+    def test_pretrain_with_decentralized_pg_and_tp(self, tmp_path):
         """
         Test training with use_decentralized_pg=True and tensor parallelism.
 
-        This test verifies that the local parallel groups feature works correctly
+        This test verifies that the decentralized process groups feature works correctly
         with tensor parallelism enabled.
         """
         initialize_distributed()

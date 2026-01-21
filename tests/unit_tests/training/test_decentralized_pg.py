@@ -28,7 +28,7 @@ import pytest
 from megatron.bridge.training.config import DistributedInitConfig
 
 
-class TestDistributedInitConfigLocalParallelGroups:
+class TestDistributedInitConfigDecentralizedPg:
     """Tests for DistributedInitConfig.use_decentralized_pg configuration."""
 
     def test_use_decentralized_pg_default_is_false(self):
@@ -286,7 +286,7 @@ class TestInitializeDistributedBranching:
     @patch("torch.cuda.device_count", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
-    def test_uses_hyper_comm_grid_when_local_parallel_groups_enabled(
+    def test_uses_hyper_comm_grid_when_decentralized_pg_enabled(
         self,
         mock_get_rank,
         mock_is_init,
@@ -330,7 +330,7 @@ class TestInitializeDistributedBranching:
     @patch("torch.cuda.device_count", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
-    def test_uses_mpu_when_local_parallel_groups_disabled(
+    def test_uses_mpu_when_decentralized_pg_disabled(
         self,
         mock_get_rank,
         mock_is_init,
@@ -380,7 +380,7 @@ class TestInitializeDistributedBranching:
         mock_parallel_state.initialize_model_parallel.assert_called_once()
 
 
-class TestSetupUsesLocalParallelGroups:
+class TestSetupUsesDecentralizedPg:
     """Tests for setup function behavior with use_decentralized_pg."""
 
     def test_config_use_decentralized_pg_enabled(self):
@@ -542,7 +542,7 @@ class TestSetupConditionalPgCollectionPassing:
         assert passed_pg_collection is None
 
 
-class TestCheckpointingWithLocalParallelGroups:
+class TestCheckpointingWithDecentralizedPg:
     """Tests for checkpointing behavior based on use_decentralized_pg setting."""
 
     def test_modelopt_state_save_skipped_when_use_decentralized_pg_true(self):
@@ -584,7 +584,7 @@ class TestCheckpointingWithLocalParallelGroups:
         assert should_save_modelopt is True
 
 
-class TestTrainTensorShapesAdjustWithLocalParallelGroups:
+class TestTrainTensorShapesAdjustWithDecentralizedPg:
     """Tests for train.py tensor shapes adjust function behavior."""
 
     def test_tensor_shapes_adjust_fn_is_none_when_use_decentralized_pg_true(self):

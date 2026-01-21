@@ -1,6 +1,6 @@
-# Local Parallel Groups Examples
+# Decentralized Process Groups Examples
 
-This directory contains examples demonstrating how to use **local parallel groups** (`use_decentralized_pg=True`) in Megatron-Bridge for distributed training.
+This directory contains examples demonstrating how to use **decentralized process groups** (`use_decentralized_pg=True`) in Megatron-Bridge for distributed training.
 
 ## Overview
 
@@ -15,20 +15,20 @@ Instead of relying on Megatron-Core's global parallel state (mpu) module, you ca
 | File | Description |
 |------|-------------|
 | `pretrain_qwen3_simple.py` | **Simple**: Use a recipe and enable `use_decentralized_pg=True` |
-| `pretrain_qwen3_with_local_parallel_groups.py` | **Advanced**: Manually create process groups with `HyperCommGrid` |
+| `pretrain_qwen3_with_decentralized_pg.py` | **Advanced**: Manually create process groups with `HyperCommGrid` |
 
 ## Quick Start
 
 ### Simple Approach (Recommended)
 
-Just use an existing recipe and enable local parallel groups:
+Just use an existing recipe and enable decentralized process groups:
 
 ```bash
 # 8 GPUs: TP2 x PP2 x DP2
-torchrun --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_simple.py
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/decentralized_pg/pretrain_qwen3_simple.py
 
-# Or with uv
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_simple.py
+# 4 GPUs: TP2 x PP2 x DP1
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/recipes/decentralized_pg/pretrain_qwen3_simple.py
 ```
 
 The key is just two lines:
@@ -42,7 +42,7 @@ cfg = qwen3_4b_pretrain_config(
     # ... other settings
 )
 
-# Enable local parallel groups
+# Enable decentralized process groups
 cfg.dist.use_decentralized_pg = True
 cfg.dist.use_gloo_process_groups = False  # Gloo not supported
 ```
@@ -53,14 +53,14 @@ For full control over process groups:
 
 ```bash
 # 8 GPUs: TP2 x PP2 x DP2
-torchrun --nproc_per_node=8 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py
 
 # 4 GPUs: TP2 x PP2 x DP1
-torchrun --nproc_per_node=4 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py \
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/recipes/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
     --tp-size 2 --pp-size 2
 
 # 2 GPUs: TP2 x PP1 x DP1
-torchrun --nproc_per_node=2 examples/recipes/local_parallel_groups/pretrain_qwen3_with_local_parallel_groups.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 examples/recipes/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
     --tp-size 2 --pp-size 1
 ```
 
