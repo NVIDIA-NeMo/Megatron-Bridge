@@ -639,26 +639,20 @@ class TestTrainTensorShapesAdjustWithLocalParallelGroups:
 class TestCreatePgCollectionWithContextParallelism:
     """Tests for _create_pg_collection with context parallelism."""
 
-    @pytest.fixture
-    def mock_model_config(self):
-        """Create a mock model configuration for testing."""
-        config = MagicMock()
-        config.tensor_model_parallel_size = 1
-        config.pipeline_model_parallel_size = 1
-        config.context_parallel_size = 1
-        config.expert_tensor_parallel_size = None
-        config.expert_model_parallel_size = 1
-        return config
-
     @patch("megatron.bridge.training.initialize.HyperCommGrid")
     @patch("torch.distributed.get_world_size", return_value=8)
     @patch("torch.distributed.new_subgroups_by_enumeration")
-    def test_create_pg_collection_with_cp(self, mock_subgroups, mock_world_size, mock_hyper_grid, mock_model_config):
+    def test_create_pg_collection_with_cp(self, mock_subgroups, mock_world_size, mock_hyper_grid):
         """Test _create_pg_collection with context parallelism."""
         from megatron.bridge.training.initialize import _create_pg_collection
 
-        # Setup with CP=2
-        mock_model_config.context_parallel_size = 2
+        # Create a fresh mock config with CP=2 directly
+        mock_model_config = MagicMock()
+        mock_model_config.tensor_model_parallel_size = 1
+        mock_model_config.pipeline_model_parallel_size = 1
+        mock_model_config.context_parallel_size = 2  # CP=2
+        mock_model_config.expert_tensor_parallel_size = None
+        mock_model_config.expert_model_parallel_size = 1
 
         # Setup mock
         mock_grid_instance = MagicMock()
@@ -671,23 +665,28 @@ class TestCreatePgCollectionWithContextParallelism:
         _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
 
         # Verify grid was created with correct shape
+        # HyperCommGrid is called multiple times (main grid and expert grid)
+        # The first call is for the main grid which includes CP
+        # With TP=1, CP=2, PP=1, world_size=8: dp_size = 8 / (1*2*1) = 4
+        # Shape should be [1, 2, 4, 1] = [TP, CP, DP, PP]
         mock_hyper_grid.assert_called()
-        call_kwargs = mock_hyper_grid.call_args[1]
-        assert call_kwargs["shape"][1] == 2  # CP size
+        first_call_kwargs = mock_hyper_grid.call_args_list[0][1]
+        assert first_call_kwargs["shape"][1] == 2  # CP size at index 1
 
     @patch("megatron.bridge.training.initialize.HyperCommGrid")
     @patch("torch.distributed.get_world_size", return_value=8)
     @patch("torch.distributed.new_subgroups_by_enumeration")
-    def test_create_pg_collection_with_tp_cp_pp(
-        self, mock_subgroups, mock_world_size, mock_hyper_grid, mock_model_config
-    ):
+    def test_create_pg_collection_with_tp_cp_pp(self, mock_subgroups, mock_world_size, mock_hyper_grid):
         """Test _create_pg_collection with combined TP, CP, and PP."""
         from megatron.bridge.training.initialize import _create_pg_collection
 
-        # Setup with TP=2, CP=2, PP=2 (2*2*2=8 = world_size, dp=1)
+        # Create a fresh mock config with TP=2, CP=2, PP=2 directly
+        mock_model_config = MagicMock()
         mock_model_config.tensor_model_parallel_size = 2
-        mock_model_config.context_parallel_size = 2
         mock_model_config.pipeline_model_parallel_size = 2
+        mock_model_config.context_parallel_size = 2
+        mock_model_config.expert_tensor_parallel_size = None
+        mock_model_config.expert_model_parallel_size = 1
 
         # Setup mock
         mock_grid_instance = MagicMock()
@@ -700,9 +699,11 @@ class TestCreatePgCollectionWithContextParallelism:
         _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
 
         # Verify grid was created with correct shape [TP, CP, DP, PP]
+        # With TP=2, CP=2, PP=2, world_size=8: dp_size = 8 / (2*2*2) = 1
+        # Shape should be [2, 2, 1, 2] = [TP, CP, DP, PP]
         mock_hyper_grid.assert_called()
-        call_kwargs = mock_hyper_grid.call_args[1]
-        assert call_kwargs["shape"] == [2, 2, 1, 2]  # TP=2, CP=2, DP=1, PP=2
+        first_call_kwargs = mock_hyper_grid.call_args_list[0][1]
+        assert first_call_kwargs["shape"] == [2, 2, 1, 2]  # TP=2, CP=2, DP=1, PP=2
 
 
 class TestCreatePgCollectionWithDistributedOptimizerInstances:
