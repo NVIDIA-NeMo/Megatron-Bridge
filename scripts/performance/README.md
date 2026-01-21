@@ -65,7 +65,7 @@ python scripts/performance/setup_experiment.py
 ```
 
 
-  Generate your personal HuggingFace Access Token from <huggingface.co/settings/tokens/new?>
+  Generate your personal HuggingFace Access Token from <https://huggingface.co/settings/tokens/new?>
 
 #### Mandatory arguments
 - `-m/--model_family_name`
