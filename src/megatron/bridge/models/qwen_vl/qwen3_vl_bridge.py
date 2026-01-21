@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
+    ConcatenatedQKVMapping
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
@@ -151,8 +152,6 @@ class Qwen3VLBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
 
             # vision module attn
-            "vision_model.decoder.layers.*.self_attention.linear_qkv.weight": "model.visual.blocks.*.attn.qkv.weight",
-            "vision_model.decoder.layers.*.self_attention.linear_qkv.bias": "model.visual.blocks.*.attn.qkv.bias",
             "vision_model.decoder.layers.*.self_attention.linear_proj.weight": "model.visual.blocks.*.attn.proj.weight",
             "vision_model.decoder.layers.*.self_attention.linear_proj.bias": "model.visual.blocks.*.attn.proj.bias",
 
@@ -197,12 +196,15 @@ class Qwen3VLBridge(MegatronModelBridge):
         # Add special mappings that require parameter transformation
         mapping_list.extend(
             [
-                # Vision model weights are replicated directly
-                # This handles all vision encoder layers, patch embeddings, mergers, etc.
-                # ReplicatedMapping(
-                #     megatron_param="vision_model.**",
-                #     hf_param="model.visual.**",
-                # ),
+                # QKV mapping for vision model
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    hf_param="model.visual.blocks.*.attn.qkv.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    hf_param="model.visual.blocks.*.attn.qkv.bias",
+                ),
                 ReplicatedMapping(
                     megatron_param="vision_model.patch_embed.proj.**",
                     hf_param="model.visual.patch_embed.proj.**",

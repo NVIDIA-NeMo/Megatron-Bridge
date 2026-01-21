@@ -117,6 +117,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     sequence_parallel: bool = False
 
     qk_layernorm: bool = True
+    
+    bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
@@ -125,7 +127,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         language_transformer_config = self
 
         hf_vision_config = self.vision_config
-        
+
         vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), hf_vision_config)
         vision_transformer_config.pipeline_model_parallel_size = 1
         vision_transformer_config.first_pipeline_num_layers = None
