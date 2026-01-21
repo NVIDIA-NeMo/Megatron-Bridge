@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 import torch.nn.functional as F
-from megatron.core.models.gpt.experimental_attention_variant import (
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.transformer.spec_utils import ModuleSpec
