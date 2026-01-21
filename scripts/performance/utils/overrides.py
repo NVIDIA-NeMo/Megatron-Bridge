@@ -345,6 +345,8 @@ def set_post_overrides(
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
+    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm. Disabling it until the issue is resolved.
+
     # tp = recipe.model.tensor_model_parallel_size
     # pp = recipe.model.pipeline_model_parallel_size
     # cp = recipe.model.context_parallel_size
