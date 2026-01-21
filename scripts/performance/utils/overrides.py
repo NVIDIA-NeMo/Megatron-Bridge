@@ -335,17 +335,17 @@ def set_post_overrides(
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+    # tp = recipe.model.tensor_model_parallel_size
+    # pp = recipe.model.pipeline_model_parallel_size
+    # cp = recipe.model.context_parallel_size
+    # vp = recipe.model.virtual_pipeline_model_parallel_size or 1
 
-    dp = int(num_gpus / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+    # dp = int(num_gpus / (tp * pp * cp))
+    # logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    # if dp > 1 and pp > 1 and vp > 1:
+    #     recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+    #     if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+    #         recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
