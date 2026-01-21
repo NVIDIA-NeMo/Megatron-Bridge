@@ -96,7 +96,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1 = replace(
     expert_model_parallel_size=16,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
-    moe_flex_dispatcher_backend="hybridep",  # B200 uses NVL8 topology with hybridep
+    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1
