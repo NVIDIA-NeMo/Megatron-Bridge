@@ -24,16 +24,6 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _is_hybridep_supported_gpu(device_properties: torch.cuda.device_properties) -> bool:
-    """Check if the GPU supports HybridEP."""
-    supported_gpus = ["NVIDIA GB200", "NVIDIA GB300", "NVIDIA B200", "NVIDIA B300"]
-    # Check exact match first
-    if device_properties.major in [8, 9] or device_properties.name in supported_gpus:
-        return True
-
-    return False
-
-
 def apply_flex_dispatcher_backend(
     model_config: TransformerConfig,
     moe_flex_dispatcher_backend: str | None = None,
@@ -62,10 +52,10 @@ def apply_flex_dispatcher_backend(
                 )
             return
     elif moe_flex_dispatcher_backend == "hybridep":
-        if not _is_hybridep_supported_gpu(device_properties):
+        if not device_properties.major in [8, 9, 10]:
             if get_rank_safe() == 0:
                 logger.warning(
-                    f"HybridEP is only applicable to Hopper, GB200, GB300, B200, and B300 GPUs. "
+                    f"HybridEP is only applicable to Hopper, B200, B300, GB200, and GB300 GPUs. "
                     f"Current GPU: {device_properties.name}. Skipping HybridEP configuration."
                 )
             return
@@ -88,5 +78,5 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
                 raise ValueError("DeepEP is supported for Ampere, Hopper, and Blackwell (only B200 and B300) GPUs")
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
-            if not _is_hybridep_supported_gpu(device_properties):
-                raise ValueError("HybridEP is supported for Hopper,GB200, GB300, B200, and B300 GPUs")
+            if not device_properties.major in [8, 9, 10]:
+                raise ValueError("HybridEP is supported for Hopper, B200, B300, GB200, and GB300 GPUs")
