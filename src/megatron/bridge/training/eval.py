@@ -20,9 +20,11 @@ import torch
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -74,8 +76,9 @@ def evaluate(
     for model_module in model:
         model_module.eval()
 
-    # Retrieve process group collection from the model
+    # Retrieve process group collection and model config from the model
     pg_collection = get_pg_collection(model)
+    model_config = get_model_config(model[0])
 
     # Disable result validation during evaluation
     rerun_state_machine = get_rerun_state_machine()
@@ -135,6 +138,7 @@ def evaluate(
             # Don't care about timing during evaluation
             config.timers = None
             fault_tolerance.on_eval_step_start(state)
+            p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
             loss_dicts = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
@@ -143,6 +147,8 @@ def evaluate(
                 seq_length=seq_length,
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
+                p2p_communicator=p2p_communicator,
+                pg_collection=pg_collection,
             )
             fault_tolerance.on_eval_step_end(state)
             config.timers = state.timers
@@ -204,6 +210,7 @@ def evaluate(
                     data_iterator=non_loss_microbatch_iterator,
                 )
 
+            p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
             collected_non_loss_data = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=non_loss_data_iterator,
@@ -213,6 +220,8 @@ def evaluate(
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
                 collect_non_loss_data=True,
+                p2p_communicator=p2p_communicator,
+                pg_collection=pg_collection,
             )
 
     # Move model back to the train mode.
