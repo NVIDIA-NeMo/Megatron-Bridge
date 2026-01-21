@@ -41,6 +41,7 @@ from rich.console import Console
 from rich.table import Table
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.conversion import weights_verification_table
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
@@ -136,11 +137,9 @@ def main(
 
     # Export (Megatron -> HF weights iteration only)
     export_start = perf_counter()
-    for _ in bridge.export_hf_weights(
-        megatron_model,
-        show_progress=show_progress and _is_rank_zero(),
-    ):
-        pass
+    table = weights_verification_table(bridge, megatron_model)
+    if _is_rank_zero():
+        console.print(table)
     _sync_cuda()
     _maybe_barrier()
     export_duration = perf_counter() - export_start
