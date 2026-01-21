@@ -34,11 +34,37 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
   Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
 
-## Step 3. Run instructions
+### Step 3. Run instructions
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
+
+You can also create a bash file to define the experiment arguments and launch it. For e.g.-
+
+```
+CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
+MBRIDGE_PATH="</path/to/mbridge>"
+
+JOB_NAME="dsv3_gb300"
+RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
+
+python scripts/performance/setup_experiment.py 
+  --account <slurm_account> \
+  -i ${CONTAINER} \
+  --partition <slurm_partition> \
+  -m deepseek \
+  -mr deepseek_v3 \
+  --log_dir ${RESULTS_DIR} \
+  --num_gpus 256 \
+  --gpus_per_node 4 \
+  -t "00:15:00" \
+  -g gb300 \ 
+  -c fp8_mx \
+  -hf <HF_TOKEN>
+```
+
+    - Generate your personal HuggingFace Access Token from huggingface.co/settings/tokens/new?
 
 #### Mandatory arguments
 - `-m/--model_family_name`
@@ -143,16 +169,19 @@ The following line shows an example of how you can launch a pre-training benchma
 
 #### Performance arguments
 
-- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`).
+- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
+- `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.
 - `--profiling_stop_step`: Defines stop step for profiling. Default `11`.
+- `-mh/--record_memory_history`: Enable PyTorch profiler memory history recording. Pass `true` or `false`. Enabled by default (if pytorch_profiler is enabled).
 - `--profiling_gpu_metrics`: Enable nsys GPU metrics. Disabled by default.
 - `--profiling_ranks`: Comma-separated list of ranks to target for profiling. Defaults to just the first rank.
 - `--use_tokendrop`: Enable token drop (currently DeepSeek v3 only). Pass `true` or `false`. Disabled by default.
 - `--use_megatron_fsdp`: Enable Megatron FSDP integration. Pass `true` or `false`. Disabled by default.
+- `--nccl_ub`: Enable NCCL user buffer for FSDP communication. Pass `true` or `false`. Disabled by default.
 - `--cuda_graph_impl`: CUDA graph implementation (`none`, `local`, `transformer_engine`).
 - `--cuda_graph_scope`: CUDA graph capture scope (`full_iteration`, `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba`). Comma-separated list of scopes is allowed.
 - `--moe_a2a_overlap`: Set the `moe_a2a_overlap` configuration flag. Pass `true` or `false`.
@@ -170,6 +199,11 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-wde/--wandb_entity_name`: Weights & Biases entity name.
 - `-wdj/--wandb_experiment_name`: Weights & Biases experiment/run name.
 - `-wds/--wandb_save_dir`: Weights & Biases save directory.
+
+#### Config variant arguments
+
+- `-cv/--config_variant`: Config variant to use (e.g., `v1`, `v2`). Default `v2`. Use `--list_config_variants` to see available options.
+- `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 #### Testing arguments
 
