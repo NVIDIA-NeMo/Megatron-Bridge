@@ -15,11 +15,12 @@
 from dataclasses import fields
 from typing import Any, Callable, Dict, Optional, Type, Union
 
-from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 from megatron.training.datasets.fim_dataset import GPTFIMDataset
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
@@ -36,7 +37,7 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-def is_dataset_built_on_rank() -> bool:
+def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection) -> bool:
     """Determines whether the dataset should be built on the current rank.
 
     Datasets are typically built only on the first and last pipeline stages
@@ -45,9 +46,9 @@ def is_dataset_built_on_rank() -> bool:
     Returns:
         True if the dataset should be built on the current rank, False otherwise.
     """
-    return (
-        mpu.is_pipeline_first_stage() or mpu.is_pipeline_last_stage()
-    ) and mpu.get_tensor_model_parallel_rank() == 0
+    return (is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)) and (
+        pg_collection.tp.rank() == 0
+    )
 
 
 def pretrain_train_valid_test_datasets_provider(

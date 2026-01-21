@@ -13,9 +13,10 @@
 # limitations under the License.
 
 
-from typing import List
+from typing import List, Optional
 
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
 from torch import Tensor
 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLTextRotaryEmbedding
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
@@ -24,7 +25,13 @@ from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTex
 class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
     """Qwen3-VL MoE text rotary position embedding."""
 
-    def forward(self, position_ids: torch.Tensor, mrope_section: List[int]) -> Tensor:
+    def forward(
+        self,
+        position_ids: torch.Tensor,
+        mrope_section: List[int],
+        packed_seq_params: Optional[PackedSeqParams] = None,
+        **kwargs,
+    ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
 
         Args:
@@ -36,7 +43,8 @@ class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
             Tensor: Raw frequency embeddings for Megatron Core (shape: [seq_length, bs, 1, dim]).
                     Megatron Core will compute cos/sin internally and apply attention_scaling.
         """
-        seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        # Use fp32 for position indices to avoid precision loss when inv_freq is bf16.
+        seq = position_ids.to(device=self.inv_freq.device, dtype=torch.float32)
 
         # if self.seq_len_interpolation_factor is not None:
         #     seq *= 1 / self.seq_len_interpolation_factor
@@ -50,13 +58,20 @@ class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
         freqs = self.apply_interleaved_mrope(freqs, mrope_section)
         emb = torch.cat((freqs, freqs), dim=-1)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
+        _ = packed_seq_params  # packed sequences not supported yet
         return emb
 
 
 class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
     """Qwen3-VL text rotary position embedding for non-MoE models."""
 
-    def forward(self, position_ids: torch.Tensor, mrope_section: List[int] = None) -> Tensor:
+    def forward(
+        self,
+        position_ids: torch.Tensor,
+        mrope_section: List[int] = None,
+        packed_seq_params: Optional[PackedSeqParams] = None,
+        **kwargs,
+    ) -> Tensor:
         """Forward pass for non-MoE Qwen3-VL RoPE.
 
         Args:
@@ -74,4 +89,5 @@ class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
         freqs = self.apply_interleaved_mrope(freqs, mrope_section)
         emb = torch.cat((freqs, freqs), dim=-1)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
+        _ = packed_seq_params  # packed sequences not supported yet
         return emb

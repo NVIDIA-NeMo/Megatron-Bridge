@@ -52,7 +52,7 @@ scheduler:
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
-  save: "./distill_llama32_3b-1b"
+  save: "./llama32_3b-1b_distilled"
 
 dist:
   use_megatron_fsdp: false
@@ -69,14 +69,3 @@ rng:
 
 ddp:
   grad_reduce_in_fp32: true
-
-profiling:
-  # For optional fields in the config, specify the target to instantiate the object.
-  _target_: megatron.bridge.training.config.ProfilingConfig
-  use_nsys_profiler: false
-  profile_step_start: 5
-  profile_step_end: 10
-  use_pytorch_profiler: true
-  profile_ranks: [0, 1]
-  record_shapes: true
-

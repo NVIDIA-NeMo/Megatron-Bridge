@@ -16,14 +16,13 @@ import logging
 
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
+from utils.utils import get_workload_base_config
 
 from megatron.bridge.recipes.llama import llama3_8b_finetune_config, llama3_70b_finetune_config
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
 )
 from megatron.bridge.training.config import ConfigContainer
-
-from . import workload_base_configs as base_cfgs
 
 
 logger = logging.getLogger(__name__)
@@ -46,16 +45,17 @@ def set_llama3_common_peft_configs(cfg: ConfigContainer) -> None:
     cfg.optimizer.use_distributed_optimizer = True
 
 
-def llama3_8b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_sft_config_gb200(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
     """GB200, SFT config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        task="sft",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_finetune_config(
         peft="none",
@@ -73,16 +73,17 @@ def llama3_8b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_8b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_sft_config_h100(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
     """H100, SFT config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        task="sft",
+        gpu="h100",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_finetune_config(
         peft="none",
@@ -96,16 +97,59 @@ def llama3_8b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_sft_config_gb300(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+    """GB300, SFT config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="sft",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = llama3_70b_finetune_config(
+        peft="none",
+        precision_config=precision_config,
+        packed_sequence=True,
+        seq_length=4096,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+        defer_embedding_wgrad_compute=True,
+        wgrad_deferral_limit=22,
+    )
+
+    # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
+    # This ensures consistent cu_seqlens tensor shapes across batches, which is required
+    # for CUDA graphs and avoids NaN issues in attention kernels.
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
+            cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
+    return cfg
+
+
+def llama3_70b_sft_config_gb200(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
     """GB200, SFT config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="sft",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
         peft="none",
@@ -130,16 +174,17 @@ def llama3_70b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_sft_config_h100(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
     """H100, SFT config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="sft",
+        gpu="h100",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
         peft="none",
@@ -159,16 +204,53 @@ def llama3_70b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+    """GB300, LORA config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="lora",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = llama3_70b_finetune_config(
+        peft="lora",
+        precision_config=precision_config,
+        packed_sequence=True,
+        seq_length=2048,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
+    # This ensures consistent cu_seqlens tensor shapes across batches, which is required
+    # for CUDA graphs and avoids NaN issues in attention kernels.
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
+            cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
+    return cfg
+
+
+def llama3_70b_lora_config_gb200(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
     """GB200, LORA config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_LORA_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_LORA_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_GB200_LORA_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="lora",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
         peft="lora",
@@ -188,16 +270,17 @@ def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_h100_lora_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_lora_config_h100(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
     """H100, LORA config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_H100_LORA_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.LLAMA3_70B_H100_LORA_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.LLAMA3_70B_H100_LORA_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="lora",
+        gpu="h100",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
 
     cfg = llama3_70b_finetune_config(
         peft="lora",

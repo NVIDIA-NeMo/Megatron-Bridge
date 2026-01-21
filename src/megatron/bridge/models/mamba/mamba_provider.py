@@ -18,9 +18,11 @@ from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
@@ -33,8 +35,8 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 logger = logging.getLogger(__name__)
 
 
-def get_default_mamba_stack_spec():
-    """Return the default Mamba stack spec.
+def transformer_engine_mamba_stack_spec() -> ModuleSpec:
+    """Return the default Mamba stack spec with Transformer Engine layers.
 
     This is a named function (not a lambda) to allow proper serialization
     and reconstruction from checkpoints. Named functions can be imported
@@ -44,6 +46,39 @@ def get_default_mamba_stack_spec():
         Default Mamba stack specification from megatron.core
     """
     return default_mamba_stack_spec
+
+
+def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
+    """Mamba stack specification for quantization with ModelOpt.
+
+    Uses Norm instead of TENorm and ColumnParallelLinear/RowParallelLinear
+    instead of TE layers to enable proper quantizer insertion by ModelOpt.
+
+    Args:
+        config: Mamba configuration object
+
+    Returns:
+        ModuleSpec: Module specification for quantization-ready Mamba stack
+    """
+    return get_mamba_stack_modelopt_spec(
+        local_core_attention=False,
+        remap_te_layernorm=False,
+    )
+
+
+def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
+    """Determine the most appropriate Mamba stack specification based on configuration.
+
+    Args:
+        config: Mamba configuration object
+
+    Returns:
+        ModuleSpec: Appropriate module specification based on config
+    """
+    if config.restore_modelopt_state:
+        return modelopt_mamba_stack_spec(config)
+    else:
+        return transformer_engine_mamba_stack_spec()
 
 
 @dataclass
@@ -85,11 +120,18 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
-    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_mamba_stack_spec
+    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
+        get_default_mamba_stack_spec
+    )
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
+    _pg_collection: Optional[ProcessGroupCollection] = None
     """Optional HuggingFace model identifier associated with this provider."""
+
+    # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
+    # When resuming modelopt_state, we also change the mamba_stack_spec to use quantization-ready layers.
+    restore_modelopt_state: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
@@ -104,7 +146,13 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         """
         mamba_stack_spec = self.mamba_stack_spec
         if not isinstance(mamba_stack_spec, ModuleSpec):
-            mamba_stack_spec = mamba_stack_spec()
+            # Check if the function accepts config parameter
+            import inspect
+
+            if len(inspect.signature(mamba_stack_spec).parameters) > 0:
+                mamba_stack_spec = mamba_stack_spec(self)
+            else:
+                mamba_stack_spec = mamba_stack_spec()
 
         assert getattr(self, "virtual_pipeline_model_parallel_size", None) is None and vp_stage is None, (
             "Virtual pipeline model parallelism is temporarily unsupported in SSM/Mamaba "
@@ -134,8 +182,9 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             rotary_percent=self.rotary_percent,
             rotary_base=self.rotary_base,
             seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
-            post_process=post_process or parallel_state.is_pipeline_last_stage(),
+            pre_process=pre_process or is_pp_first_stage(self._pg_collection.pp),
+            post_process=post_process or is_pp_last_stage(self._pg_collection.pp),
+            pg_collection=self._pg_collection,
         )
 
 

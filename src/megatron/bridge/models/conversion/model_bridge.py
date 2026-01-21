@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import contextlib
 import fnmatch
 import itertools
 import logging
@@ -44,7 +45,10 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+from megatron.bridge.models.conversion.param_mapping import (
+    MegatronParamMapping,
+)
+from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -91,6 +95,7 @@ class WeightConversionTask(Generic[MappingT]):
 
     Attributes:
         param_name (str): *unwrapped, local* parameter name (no ``module.`` prefixes).
+        global_param_name (str): *unwrapped, global* parameter name (no ``module.`` prefixes).
         mapping (MappingT): Concrete :pyclass:`MegatronParamMapping` instance responsible
             for weight transformation and distribution.
 
@@ -104,6 +109,7 @@ class WeightConversionTask(Generic[MappingT]):
     """
 
     param_name: str
+    global_param_name: str
     mapping: MappingT
     pp_rank: Optional[int] = None
     vp_stage: Optional[int] = None
@@ -136,19 +142,14 @@ def _megatron_local_name_to_global(
 
     # EP
     ep_group = parallel_state.get_expert_model_parallel_group()
-    if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1:
+    # For now adapters are not sharded across EP ranks
+    if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1 and not ".adapter." in param_name:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
         def _update_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
-            suffix = param_name.split(f".{param_type}")[-1]
-            # Check if suffix contains a valid expert number
-            # (this can be missing from PEFT adapters weight)
-            if not suffix or not suffix.isdigit():
-                # No expert number suffix, return original param_name
-                return param_name
-            local_expert_number = int(suffix)
+            local_expert_number = int(param_name.split(f".{param_type}")[-1])
             global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
             return param_name.replace(
                 f".{param_type}{local_expert_number}",
@@ -163,7 +164,7 @@ def _megatron_local_name_to_global(
     return param_name
 
 
-class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
+class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
     """
     High-level orchestrator for HuggingFace ↔ Megatron model conversions.
 
@@ -400,15 +401,19 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return hf_weights
 
     def maybe_modify_converted_hf_weight(
-        self, task: WeightConversionTask, converted_weights_dict: Dict[str, torch.Tensor]
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         """Modify the converted weights after conversion. By default, no modification is done.
         This function can be overridden by subclasses to postprocess the converted weights, such as merging the
         weights of multiple experts or quantizing the weights.
 
         Args:
-            task: The WeightConversionTask object
+            task: The WeightConversionTask object.
             converted_weights_dict: The converted weights dictionary.
+            hf_state_dict: The HuggingFace state dict accessor for expected-key checks.
 
         Returns:
             The modified weights dictionary.
@@ -467,7 +472,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+        # [ModelOpt]: Hide extra parameters registered in Distillation mode
+        with contextlib.ExitStack() as stack:
+            if hasattr(megatron_model[0], "hide_teacher_model"):
+                stack.enter_context(megatron_model[0].hide_teacher_model())
+            if hasattr(megatron_model[0], "hide_loss_modules"):
+                stack.enter_context(megatron_model[0].hide_loss_modules())
+
+            hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
@@ -591,6 +603,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         cpu: bool = True,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = True,
     ) -> Iterable[HFWeightTuple]:
         """Export Megatron weights to HuggingFace format.
 
@@ -614,6 +627,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 Defaults to True.
             conversion_tasks (Optional[List[WeightConversionTask]]): Pre-built conversion tasks.
                 If not provided, tasks will be built automatically from the models.
+            merge_adapter_weights (bool, optional): When True, materialize and merge LoRA adapter
+                weights back into their base tensors so the resulting HF checkpoint contains merged
+                weights. Set to False to skip adapter gathering/merge and emit only the base tensors.
+                Defaults to True.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format.
@@ -646,21 +663,45 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
+        # Collect adapter conversion tasks when merge is requested
+        adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
+        if merge_adapter_weights:
+            adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+
+        hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
+
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
-                task, converted_weights_dict
+                task,
+                converted_weights_dict,
+                hf_state_dict,
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
 
-            converted_weights_dict = self._merge_lora_adapter_weights(task, megatron_model, converted_weights_dict)
+            adapter_tasks = None
+            if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
+                task_global_base_prefix, _, _ = task.global_param_name.partition(".to_wrap.weight")
+                adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
+            if merge_adapter_weights and adapter_tasks:
+                adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                # Merge LoRA adapter weights back into the base tensor for HF export
+                converted_weights_dict = self._merge_lora_adapter_weights(
+                    megatron_model,
+                    converted_weights_dict,
+                    adapter_weights,
+                )
 
             for hf_name, tensor in converted_weights_dict.items():
                 final_tensor = tensor.cpu() if cpu else tensor
+
+                if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
+                    hf_name = hf_name[: -len("weight")] + "base_layer.weight"
 
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
@@ -681,91 +722,6 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 else:
                     # Regular case - yield the tensor normally
                     yield HFWeightTuple(hf_name, final_tensor)
-
-    def _merge_lora_adapter_weights(
-        self,
-        task: WeightConversionTask,
-        megatron_model: List[MegatronModel],
-        converted_weights_dict: Dict[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
-        """Merge LoRA adapter weights back into the base tensor for HF export."""
-
-        if not converted_weights_dict:
-            return converted_weights_dict
-
-        if not task.param_name.endswith(".to_wrap.weight") or task.megatron_module is None:
-            return converted_weights_dict
-
-        # Get the LoRALinear wrapper by navigating up from to_wrap.weight
-        parent_name = task.param_name[: -len(".to_wrap.weight")]
-        try:
-            lora_module, _ = get_module_and_param_from_name(megatron_model, parent_name, task.vp_stage)
-        except ValueError:
-            return converted_weights_dict
-
-        adapter = getattr(lora_module, "adapter", None)
-        to_wrap = getattr(lora_module, "to_wrap", None)
-        if adapter is None or to_wrap is None:
-            return converted_weights_dict
-
-        required_attrs = ("linear_in", "linear_out", "alpha", "dim")
-        if not all(hasattr(adapter, attr) for attr in required_attrs):
-            return converted_weights_dict
-
-        from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
-
-        from megatron.bridge.models.conversion.param_mapping import ColumnParallelMapping, RowParallelMapping
-        from megatron.bridge.peft.lora import LoRAMerge
-        from megatron.bridge.peft.utils import HAVE_TE, TECL, TERL
-
-        mapping_class = None
-        if to_wrap is not None:
-            # Determine which mapping to use based on the base layer's parallel type
-            if (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TECL)) or isinstance(
-                to_wrap, ColumnParallelLinear
-            ):
-                # Base layer is ColumnParallel, so use ColumnParallelMapping for linear_in
-                mapping_class = ColumnParallelMapping
-            elif (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TERL)) or isinstance(
-                to_wrap, RowParallelLinear
-            ):
-                # Base layer is RowParallel, so use RowParallelMapping for linear_in
-                mapping_class = RowParallelMapping
-
-        # Gather LoRA adapter weights using the determined mapping class
-        if mapping_class is not None:
-            # Gather linear_in weights
-            linear_in_name = parent_name + ".adapter.linear_in.weight"
-            linear_in_mapping = mapping_class(linear_in_name, linear_in_name)
-            linear_in_dict = linear_in_mapping.megatron_to_hf(adapter.linear_in.weight, adapter.linear_in)
-            linear_in_weight = linear_in_dict.get(linear_in_name) if linear_in_dict else None
-        else:
-            # Non-parallel case: use weights directly
-            linear_in_weight = adapter.linear_in.weight
-
-        # Always no parallel for linear_out
-        linear_out_weight = getattr(adapter.linear_out, "weight", None)
-        if linear_in_weight is None or linear_out_weight is None:
-            return converted_weights_dict
-
-        alpha = adapter.alpha
-        dim = adapter.dim
-        merger = LoRAMerge()
-
-        # All ranks get the gathered weights, so we can merge on all ranks
-        for hf_name, base_weight in list(converted_weights_dict.items()):
-            # Merge LoRA weights for each converted weight in the dict
-            base_device = base_weight.device
-            merged_weight = merger.merge(
-                base_weight,
-                linear_out_weight.to(base_device),
-                linear_in_weight.to(base_device),
-                alpha,
-                dim,
-            )
-            converted_weights_dict[hf_name] = merged_weight
-
-        return converted_weights_dict
 
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.
@@ -937,15 +893,6 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 if hasattr(unwrapped_model, "output_layer"):
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
-    def _get_lora_unwrapped_name(self, megatron_param: str) -> str:
-        """Remove .to_wrap from LoRA parameter names."""
-        return megatron_param.replace(".to_wrap.", ".")
-
-    def _is_adapter_param_name(self, param_name: str) -> bool:
-        """Return True if the parameter only belongs to a PEFT adapter."""
-
-        return ".adapter." in param_name
-
     def build_conversion_tasks(
         self,
         hf_pretrained: HFPreTrained,
@@ -1027,6 +974,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
                     param_name=local_name,
+                    global_param_name=global_name,
                     megatron_module=local_module,
                     param_weight=local_weights,
                     mapping=mapping,
@@ -1046,6 +994,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     pp_rank=pp_rank,
                     vp_stage=None,
                     param_name=global_name,
+                    global_param_name=global_name,
                     megatron_module=None,
                     param_weight=None,
                     mapping=mapping,
@@ -1124,8 +1073,20 @@ def stream_weights_megatron_to_hf(
     cpu: bool = True,
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
+    merge_adapter_weights: bool = True,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
+    ...
+
+
+@dispatch
+def stream_adapter_weights_megatron_to_hf(
+    dispatch_instance: MegatronModel,
+    megatron_model: Union[MegatronModel, List[MegatronModel]],
+    cpu: bool = True,
+    show_progress: bool = True,
+) -> Iterable[HFWeightTuple]:
+    """Bridge only adapter weights from Megatron to HuggingFace format."""
     ...
 
 
@@ -1159,19 +1120,40 @@ def register_bridge_implementation(
         cpu: bool = True,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = True,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
-        # allow bridge to access model config
-        bridge.hf_config = hf_pretrained.config
+        # allow bridge to access model config (config-only shims or raw configs lack .config)
+        bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         return bridge.stream_weights_megatron_to_hf(
-            megatron_model, hf_pretrained, cpu=cpu, show_progress=show_progress, conversion_tasks=conversion_tasks
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+    @stream_adapter_weights_megatron_to_hf.impl((source, target))
+    def _adapter_stream_registered_impl(
+        _,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        cpu: bool = True,
+        show_progress: bool = True,
+    ) -> Iterable[HFWeightTuple]:
+        bridge = bridge_class()
+        return bridge.stream_adapter_weights_megatron_to_hf(
+            megatron_model,
+            cpu=cpu,
+            show_progress=show_progress,
         )
 
     # Set meaningful names for debugging
     _get_model_bridge_impl.__name__ = f"_bridge_with_{bridge_class_name}"
     _megatron_to_hf_registered_impl.__name__ = f"_megatron_to_hf_with_{bridge_class_name}"
+    _adapter_stream_registered_impl.__name__ = f"_adapter_stream_with_{bridge_class_name}"
 
 
 def create_bridge_decorator(

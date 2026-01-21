@@ -44,7 +44,6 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.utils.weight_decay_utils import get_no_weight_decay_cond
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -222,16 +221,11 @@ def setup(
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    no_weight_decay_cond = get_no_weight_decay_cond(
-        cfg.scheduler.no_weight_decay_cond_type,
-        default_skip_embedding_weight_decay=cfg.model.embedding_init_method_std is not None,
-    )
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        no_weight_decay_cond=no_weight_decay_cond,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -287,6 +281,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=pg_collection.dp,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
