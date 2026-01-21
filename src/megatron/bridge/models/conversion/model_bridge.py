@@ -35,6 +35,7 @@ from typing import (
 )
 
 import torch
+from torch.distributed._tensor import DTensor
 from megatron.core import parallel_state
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.transformer.module import MegatronModule
@@ -790,7 +791,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             if converted_weights is not None:
                 # Assert that param_weight is not None for HF->Megatron tasks
                 assert task.param_weight is not None, "param_weight is required for HF->Megatron conversion"
-                if use_megatron_fsdp:
+                if isinstance(task.param_weight, DTensor):
                     task.param_weight._local_tensor.reshape(-1).copy_(converted_weights)
                     continue
 

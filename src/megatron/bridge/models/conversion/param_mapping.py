@@ -334,7 +334,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         megatron_weights = self.hf_to_megatron(hf_weights, megatron_module)
 
         if isinstance(param_weight, DTensor):
-            local_data = megatron_weights.view(-1)[param_weight.megatron_fsdp_slice]
+            local_data = megatron_weights.reshape(-1)[param_weight.megatron_fsdp_slice]
         else:
             local_data = megatron_weights
         return local_data
