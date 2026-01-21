@@ -394,7 +394,7 @@ def write_golden_values_to_disk(current_values: Dict[str, Any], golden_values_pa
 
     wandb_run.log_artifact(artifact)
 
-    logger.info(f"Golden values were saved for {golden_values_path}: {current_values}")
+    logger.info(f"Golden values were saved for {golden_values_path}.")
 
 
 def calc_convergence_and_performance(
@@ -494,8 +494,8 @@ def calc_convergence_and_performance(
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
     current_train_loss_values = np.array([current_train_loss[s] for s in steps])
-    logger.info(f"Current loss values: {current_train_loss_values}")
-    logger.info(f"Golden loss values: {golden_train_loss_values}")
+    logger.info(f"Current loss values (last 15): {current_train_loss_values[-15:]}")
+    logger.info(f"Golden loss values (last 15): {golden_train_loss_values[-15:]}")
     convergence_result = validate_convergence(
         current_values=current_train_loss_values,
         golden_values=golden_train_loss_values,
@@ -513,8 +513,8 @@ def calc_convergence_and_performance(
     # check for performance
     golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
     current_iter_time_values = np.array([current_iter_time[s] for s in steps])
-    logger.info(f"Current timing values: {current_iter_time_values}")
-    logger.info(f"Golden timing values: {golden_iter_time_values}")
+    logger.info(f"Current timing values (last 15): {current_iter_time_values[-15:]}")
+    logger.info(f"Golden timing values (last 15): {golden_iter_time_values[-15:]}")
     performance_result = validate_performance(
         current_values=current_iter_time_values,
         golden_values=golden_iter_time_values,
