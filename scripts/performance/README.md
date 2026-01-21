@@ -36,7 +36,7 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ### Step 3. Run instructions
 
-#### <ins>a. Examples</ins>
+#### <ins>Examples</ins>
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
@@ -69,7 +69,7 @@ python scripts/performance/setup_experiment.py
 
   Generate your personal HuggingFace Access Token from <https://huggingface.co/settings/tokens/new?>
 
-#### <ins>b. Mandatory arguments</ins>
+#### <ins>Mandatory arguments</ins>
 - `-m/--model_family_name`
 - `-mr/--model_recipe_name`
 - `-ng/--num_gpus`
@@ -77,7 +77,7 @@ python scripts/performance/setup_experiment.py
 - `-a/--account` (Mandatory for Slurm based clusters)
 - `-p/--partition` (Mandatory for Slurm based clusters)
 
-#### <ins>c. Configuration Options</ins>
+#### <ins>Configuration Options</ins>
 
 ##### Container Image
 
