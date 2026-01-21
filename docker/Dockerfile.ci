@@ -36,6 +36,7 @@ ARG MCORE_COMMIT
 ARG MCORE_HOST
 WORKDIR /src/Megatron-LM
 
+# Clone Custom MCore Installation
 RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
     CI_JOB_TOKEN=$(cat /run/secrets/CI_JOB_TOKEN) && \
     git clone ${MCORE_HOST}:${CI_JOB_TOKEN}@${MCORE_REPO} . && \
@@ -51,6 +52,7 @@ RUN --mount=type=secret,id=CI_JOB_TOKEN,target=/run/secrets/CI_JOB_TOKEN \
 
 FROM mbridge_base as mbridge_submodule_mcore
 
+WORKDIR /src
 COPY 3rdparty/Megatron-LM/pyproject.toml /tmp/Megatron-LM/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /tmp/Megatron-LM/megatron/core/
 
@@ -78,4 +80,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     uv cache prune
 
 COPY . /opt/Megatron-Bridge
-COPY --from=mbridge_mcore /src/Megatron-L[M] /opt/Megatron-Bridge/3rdparty/Megatron-LM
+COPY --from=mbridge_mcore /src/Megatron-LM* /opt/Megatron-Bridge/3rdparty
