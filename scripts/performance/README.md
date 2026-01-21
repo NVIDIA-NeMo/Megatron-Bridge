@@ -64,6 +64,7 @@ python scripts/performance/setup_experiment.py
   -hf <HF_TOKEN>
 ```
 
+
     - Generate your personal HuggingFace Access Token from huggingface.co/settings/tokens/new?
 
 #### Mandatory arguments
