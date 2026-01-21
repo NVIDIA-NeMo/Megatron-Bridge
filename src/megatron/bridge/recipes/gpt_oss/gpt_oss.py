@@ -343,8 +343,8 @@ def gpt_oss_120b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) ->
     """Return a finetuning config for GPT-OSS 120B variant.
 
     Default configuration: 2 nodes, 16 GPUs total
-    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=1e-4
-    - Full SFT: TP=1, PP=4, EP=8, lower LR (5e-6)
+    - LoRA/DoRA: TP=1, PP=4, EP=8, LR=1e-4
+    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
     """
     peft_value = user_kwargs.get("peft", "lora")
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
@@ -384,7 +384,7 @@ def _gpt_oss_finetune_common(
     micro_batch_size: int = 1,
     seq_length: int = 2048,
     eval_interval: int = 50,
-    save_interval: int = 250,
+    save_interval: int = 50,
     # Optimizer
     finetune_lr: float = 1e-4,
     min_lr: float = 0.0,
@@ -406,6 +406,8 @@ def _gpt_oss_finetune_common(
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
+    assert not packed_sequence, "Packed sequence is not supported for GPT-OSS finetuning"
+
     # Create model config
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
@@ -417,9 +419,6 @@ def _gpt_oss_finetune_common(
     model_cfg.expert_model_parallel_size = expert_model_parallel_size
     model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
-    if context_parallel_size > 1:
-        model_cfg.calculate_per_token_loss = True
-        model_cfg.cp_comm_type = "a2a"  # only a2a cp is supported for sink attention.
 
     # Optimizer and LR scheduler
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
