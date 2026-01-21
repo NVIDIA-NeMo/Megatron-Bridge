@@ -36,11 +36,13 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ### Step 3. Run instructions
 
+#### Examples
+
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
-You can also create a bash file to define the experiment arguments and launch it. For e.g.-
+You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
 
 ```
 CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
