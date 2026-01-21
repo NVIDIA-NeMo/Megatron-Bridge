@@ -21,7 +21,7 @@ from megatron.core import tensor_parallel
 from megatron.core.enums import ModelType
 from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.core.models.gpt import GPTModel
-from megatron.core.models.gpt.experimental_attention_variant import (
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_layer_specs import (
