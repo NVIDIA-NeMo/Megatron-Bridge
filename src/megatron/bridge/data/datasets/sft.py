@@ -225,7 +225,6 @@ class GPTSFTDataset(Dataset):
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
         get_attention_mask_from_fusion: bool = True,
-        sanity_check_dist_workers: bool = True,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -274,7 +273,6 @@ class GPTSFTDataset(Dataset):
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
         get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
             of adding it to the batch dict.
-        sanity_check_dist_workers (bool): if true, will run sanity check across workers when making mapping.
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
@@ -303,7 +301,6 @@ class GPTSFTDataset(Dataset):
         self.output_original_text = output_original_text
         self.ceil_to_power_2 = ceil_to_power_2
         self.get_attention_mask_from_fusion = get_attention_mask_from_fusion
-        self.sanity_check_dist_workers = sanity_check_dist_workers
 
         if special_tokens is None:
             self.special_tokens = {
@@ -385,7 +382,6 @@ class GPTSFTDataset(Dataset):
                 binary_head=False,
                 index_mapping_dir=self.index_mapping_dir,
                 samples_mapping=osm,
-                sanity_check_dist_workers=self.sanity_check_dist_workers,
             )
         else:
             self.samples_mapping = None
@@ -914,13 +910,10 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             for i in range(len(item["seq_boundaries"]) - 1):
                 current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                # since the data could be prepadded with tokenizer's eos_id,
-                # we can find out the index of all the eos_id
-                eos_idx = np.where(np.array(current_seq) == self.tokenizer.eos_id)
-
-                # The second eos_id index marks the length of the original unpadded sequence if the sequence is
-                # prepadded for cp_size > 1. Otherwise, there is no extra padding.
-                seqlen_unpadded = eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1 else len(current_seq)
+                # Stop unpadded lengths at the last non-eos token so padding eos are excluded.
+                current_seq_arr = np.array(current_seq)
+                non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
+                seqlen_unpadded = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
                 cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
 
             # if extra paddings are added in the packed sequence, they can't be counted as
@@ -944,10 +937,15 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         loss_mask = self._collate_item(loss_mask, max_length=max_length, pad_id=0)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
 
+        tokens = torch.LongTensor(input_ids)
+        loss_mask = torch.LongTensor(loss_mask)
+        # drop any padding/eos tokens from contributing to the loss
+        loss_mask[tokens == self.tokenizer.eos_id] = 0
+
         processed_batch = {
-            "tokens": torch.LongTensor(input_ids),
+            "tokens": tokens,
             "labels": torch.LongTensor(labels),
-            "loss_mask": torch.LongTensor(loss_mask),
+            "loss_mask": loss_mask,
             "position_ids": torch.LongTensor(position_ids),
             "token_count": token_count,
         }
