@@ -276,7 +276,9 @@ class OptimizerConfigOverrideProviderContext:
 class OptimizerConfigOverrideProvider:
     """Abstract base class for providing config overrides."""
 
-    def build_config_overrides(self, context: OptimizerConfigOverrideProviderContext) -> dict[str, Any]:
+    def build_config_overrides(
+        self, context: OptimizerConfigOverrideProviderContext
+    ) -> dict[ParamKey, ParamGroupOverride] | None:
         """Build config overrides for weight decay based on scheduler configuration.
 
         This function creates parameter-specific overrides for weight decay behavior.
