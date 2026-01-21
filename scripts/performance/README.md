@@ -36,7 +36,7 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
 ### Step 3. Run instructions
 
-#### Examples
+#### a. Examples
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
@@ -69,7 +69,7 @@ python scripts/performance/setup_experiment.py
 
   Generate your personal HuggingFace Access Token from <https://huggingface.co/settings/tokens/new?>
 
-#### Mandatory arguments
+#### b. Mandatory arguments
 - `-m/--model_family_name`
 - `-mr/--model_recipe_name`
 - `-ng/--num_gpus`
@@ -77,15 +77,15 @@ python scripts/performance/setup_experiment.py
 - `-a/--account` (Mandatory for Slurm based clusters)
 - `-p/--partition` (Mandatory for Slurm based clusters)
 
-### Configuration Options
+#### c. Configuration Options
 
-#### Container Image
+##### Container Image
 
 - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY.
   For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
   Defaults to `nvcr.io/nvidia/nemo:dev`.
 
-#### General arguments
+##### General arguments
 
 - `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
 - `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
@@ -96,7 +96,7 @@ python scripts/performance/setup_experiment.py
 - `-ng/--num_gpus`: Number of GPUs.
 - `-d/--dryrun`: Print the generated `sbatch` script without launching.
 
-#### Training arguments
+##### Training arguments
 
 - `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
@@ -104,13 +104,13 @@ python scripts/performance/setup_experiment.py
 - `-mb/--micro_batch_size`: Override micro-batch size.
 - `-sl/--seq_length`: Sequence length.
 
-#### Optimizer arguments
+##### Optimizer arguments
 
 - `--lr`: Learning rate.
 - `--min_lr`: Minimum learning rate.
 - `--warmup_iters`: Warmup iterations. Default `10`.
 
-#### Checkpointing arguments
+##### Checkpointing arguments
 
 - `--pretrained_checkpoint`: Path to pretrained checkpoint.
 - `--save_dir`: Directory to save checkpoints.
@@ -119,7 +119,7 @@ python scripts/performance/setup_experiment.py
 - `--most_recent_k`: Number of latest checkpoints to keep.
 - `--save_config_filepath`: Path to save the task configuration file.
 
-#### Data arguments
+##### Data arguments
 
 - `--data`: Dataset type to use (`mock`, `rp2`, `squad`, `squad_packed`). Default `mock`.
 - `--dataset_paths`: Dataset paths (for rp2 dataset). Accepts multiple paths.
@@ -129,7 +129,7 @@ python scripts/performance/setup_experiment.py
 - `--packed_sequence`: Enable packed sequences.
 - `--head_only`: Use only head data (for rp2 dataset).
 
-#### Tokenizer arguments
+##### Tokenizer arguments
 
 - `--tokenizer_type`: Tokenizer type (`NullTokenizer`, `HuggingFaceTokenizer`, `SentencePieceTokenizer`).
 - `--tokenizer_model`: Path to tokenizer model (automatically provided by launcher).
@@ -138,7 +138,7 @@ python scripts/performance/setup_experiment.py
   - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
   - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
 
-#### Parallelism arguments
+##### Parallelism arguments
 
 - `-tp/--tensor_model_parallel_size`: Tensor parallel degree. Intra-layer model parallelism; splits tensors across GPU ranks.
 - `-pp/--pipeline_model_parallel_size`: Pipeline parallel degree. Inter-layer model parallelism; splits transformer layers across GPU ranks.
@@ -147,7 +147,7 @@ python scripts/performance/setup_experiment.py
 - `-ep/--expert_model_parallel_size`: MoE expert parallel degree. Distributes MoE experts across sub data parallel dimension.
 - `-et/--expert_tensor_parallel_size`: Expert tensor parallel degree. Intra-layer tensor model parallelism for expert layer. Use `-et` (no value) for `None` or `-et <int>`.
 
-#### Slurm arguments
+##### Slurm arguments
 
 - `-a/--account`: Slurm account to use for experiment.
 - `-p/--partition`: Slurm partition to use for experiment.
@@ -159,7 +159,7 @@ python scripts/performance/setup_experiment.py
 - `--gres`: Slurm generic resources to request (e.g., `gpu:4`).
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
 
-#### DGXCloud arguments
+##### DGXCloud arguments
 
 - `--dgxc_cluster`: DGXCloud cluster to use for experiment.
 - `--dgxc_base_url`: DGXCloud base URL.
@@ -170,7 +170,7 @@ python scripts/performance/setup_experiment.py
 - `--dgxc_pvc_claim_name`: DGXCloud PVC claim name.
 - `--dgxc_pvc_mount_path`: DGXCloud PVC mount path.
 
-#### Performance arguments
+##### Performance arguments
 
 - `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
@@ -192,7 +192,7 @@ python scripts/performance/setup_experiment.py
 - `-ol/--activation_offload_layers`: Number of transformer layers to offload activations to CPU memory.
 - `--recompute_modules`: Comma-separated list of modules to recompute.
 
-#### Logging arguments
+##### Logging arguments
 
 - `-l/--log_dir`: Directory for logging experiment results. Defaults to `NEMORUN_HOME`.
   - Make sure the environment variable `NEMORUN_HOME=<log_dir>` is accessible and set correctly in your virtual environment.
@@ -203,12 +203,12 @@ python scripts/performance/setup_experiment.py
 - `-wdj/--wandb_experiment_name`: Weights & Biases experiment/run name.
 - `-wds/--wandb_save_dir`: Weights & Biases save directory.
 
-#### Config variant arguments
+##### Config variant arguments
 
 - `-cv/--config_variant`: Config variant to use (e.g., `v1`, `v2`). Default `v2`. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
-#### Testing arguments
+##### Testing arguments
 
 - `--is_long_convergence_run`: If set, runs a long convergence run.
 - `--golden_values_path`: Path to golden values file.
