@@ -132,9 +132,11 @@ def main(
     else:
         plugins.append(
             PyTorchProfilerPlugin(
-                profile_step_start=profiling_start_step,
-                profile_step_end=profiling_stop_step,
+                profile_step_start=5,
+                profile_step_end=10,
                 profile_ranks=list(range(num_gpus)),
+                record_memory_history=True,
+                memory_snapshot_path="snapshot.pickle",
             )
         )
 
