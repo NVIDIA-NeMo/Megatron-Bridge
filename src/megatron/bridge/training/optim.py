@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+from typing import Optional, Union
 
 from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
 from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.training.config import SchedulerConfig
@@ -27,6 +28,7 @@ def setup_optimizer(
     scheduler_config: SchedulerConfig,
     model: Union[MegatronModule, list[MegatronModule]],
     use_gloo_process_groups: bool = False,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -35,6 +37,7 @@ def setup_optimizer(
         scheduler_config: Configuration for the scheduler
         model: The model to optimize
         use_gloo_process_groups: Whether to use Gloo process groups
+        pg_collection: Optional process group collection for distributed training
 
     Returns:
         tuple containing the optimizer and scheduler
@@ -44,6 +47,7 @@ def setup_optimizer(
             optimizer_config,
             model,
             use_gloo_process_groups=use_gloo_process_groups,
+            pg_collection=pg_collection,
         )
     else:
         optimizer = get_megatron_muon_optimizer(
@@ -51,6 +55,7 @@ def setup_optimizer(
             model,
             use_gloo_process_groups=use_gloo_process_groups,
             layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
+            pg_collection=pg_collection,
         )
 
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
