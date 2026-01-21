@@ -135,11 +135,6 @@ def qwen3_235b_a22b_pretrain_config_b300(
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
-    # if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-    #     cfg.comm_overlap.overlap_param_gather = False
-    #     cfg.ddp.overlap_param_gather = False
-    #     cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
@@ -165,11 +160,6 @@ def qwen3_235b_a22b_pretrain_config_b200(
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-
-    # if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-    #     cfg.comm_overlap.overlap_param_gather = False
-    #     cfg.ddp.overlap_param_gather = False
-    #     cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
