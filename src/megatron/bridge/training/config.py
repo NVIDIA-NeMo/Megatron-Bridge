@@ -23,9 +23,7 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
-from megatron.core.optimizer import (
-    OptimizerConfig as MCoreOptimizerConfig,
-)
+from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
@@ -286,8 +284,8 @@ class OptimizerConfigOverrideProvider:
         For Qwen3-Next models, weight decay is applied to q_layernorm and k_layernorm.
 
         Args:
-            scheduler_config: Scheduler configuration containing weight decay settings
-            model: The model or list of model chunks to collect parameter names from
+            context: OptimizerConfigOverrideProviderContext which packages the scheduler
+                configuration, optimizer configuration, and model.
 
         Returns:
             Dictionary of ParamKey to ParamGroupOverride for the optimizer
@@ -302,7 +300,7 @@ class OptimizerConfigOverrideProvider:
         # NOTE: this can be simplified once https://github.com/NVIDIA/Megatron-LM/pull/2753
         #  is merged into dev. Then we can re-use megatron's apply_wd_to_qk_layernorm option
         #  and call megatron.core.optimizer.get_standard_config_overrides(optimizer_config)
-        #  directly for standard settings.
+        #  directly for standard settings, replacing the custom logic below for qwen3-next.
         no_wd_names: list[str] = []
         is_qwen3_next = scheduler_config.no_weight_decay_cond_type == "qwen3_next"
 
