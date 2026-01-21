@@ -403,13 +403,14 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             sharded_state_dict.update(layer_sharded_state_dict)
 
         len_deepstack = len(self.deepstack_merger_list)
+        deepstack_prefix = f"{prefix}deepstack_merger_list."
         for global_layer_offset, layer in enumerate(self.deepstack_merger_list):
-            state_dict_prefix = f"{layer_prefix}{global_layer_offset}."  # module list index in TransformerBlock # pylint: disable=line-too-long
+            state_dict_prefix = f"{deepstack_prefix}{global_layer_offset}."  # module list index in TransformerBlock # pylint: disable=line-too-long
             if non_homogeneous_layers:
-                sharded_prefix = f"{layer_prefix}{global_layer_offset}."
+                sharded_prefix = f"{deepstack_prefix}{global_layer_offset}."
                 sharded_pp_offset = []
             else:
-                sharded_prefix = layer_prefix
+                sharded_prefix = deepstack_prefix
                 sharded_pp_offset = [(0, global_layer_offset, len_deepstack)]  # PP sharding offset for ShardedTensors
             layer_sharded_state_dict = layer.sharded_state_dict(state_dict_prefix, sharded_pp_offset, metadata)
             replace_prefix_for_sharding(layer_sharded_state_dict, state_dict_prefix, sharded_prefix)
