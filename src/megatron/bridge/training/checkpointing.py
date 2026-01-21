@@ -638,7 +638,8 @@ def save_checkpoint(
                 content_metadata=sharded_sd_metadata,
             )
             # [ModelOpt]: save sharded modelopt_state
-            if not cfg.dist.use_decentralized_pg:
+            # cfg.dist can be None during checkpoint conversion (save_megatron_model)
+            if not (cfg.dist and cfg.dist.use_decentralized_pg):
                 save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
     else:
         # [ModelOpt]: Inject modelopt_state into state_dict
