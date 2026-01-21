@@ -252,7 +252,7 @@ def _qwen3_vl_common(
     context_parallel_size: int = 1,
     expert_model_parallel_size: Optional[int] = 4,
     expert_tensor_parallel_size: int = 1,
-    sequence_parallel: bool = True,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     enable_recompute: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
@@ -378,9 +378,9 @@ def _qwen3_vl_common(
 
     # Determine dataset selection strategy.
     _processor_model = tokenizer_model or hf_path
+    mock = mock or dataset_type == "mock"
 
     if mock:
-        assert dataset_type is None, "dataset_type must be None when mock is True"
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
             seq_length=seq_length,
             hf_processor_path=_processor_model,

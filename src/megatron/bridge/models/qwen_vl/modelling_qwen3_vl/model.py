@@ -102,11 +102,12 @@ class Qwen3VLModel(MegatronModule):
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
         )
-        assert len(vision_transformer_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), (
-            "the deepstack_visual_embeds should on the first pp-stage",
-            f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
-            f" {len(self.language_model.decoder.layers)} language model layers",
-        )
+        if pre_process:
+            assert len(vision_transformer_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), (
+                "the deepstack_visual_embeds should on the first pp-stage of language model",
+                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f" {len(self.language_model.decoder.layers)} language model layers",
+            )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
