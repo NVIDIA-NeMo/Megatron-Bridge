@@ -78,4 +78,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     uv cache prune
 
 COPY . /opt/Megatron-Bridge
-COPY --from=mbrdige_mcore /src/Megatron-L[M] /opt/Megatron-Bridge/3rdparty/Megatron-LM
+COPY --from=mbridge_mcore /src/Megatron-L[M] /opt/Megatron-Bridge/3rdparty/Megatron-LM
