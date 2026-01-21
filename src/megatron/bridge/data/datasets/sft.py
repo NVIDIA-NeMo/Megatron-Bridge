@@ -178,6 +178,20 @@ def create_sft_dataset(
             **gpt_sft_dataset_kwargs,
             **kwargs,
         )
+
+    # Lazy import to avoid circular dependency (packed_parquet imports from sft)
+    from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+
+    if is_packed_parquet_file(path):
+        # Lazy import to avoid circular dependency
+        from megatron.bridge.data.datasets.packed_parquet import GPTSFTPackedParquetDataset
+
+        return GPTSFTPackedParquetDataset(
+            pack_metadata_file_path=pack_metadata_file_path,
+            pad_cu_seqlens=pad_cu_seqlens,
+            **gpt_sft_dataset_kwargs,
+            **kwargs,
+        )
     elif chat:
         return GPTSFTChatDataset(
             **gpt_sft_dataset_kwargs,

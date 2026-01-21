@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
 
+from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.data.datasets.sft import create_sft_dataset
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -252,8 +253,14 @@ class PackedSequenceSpecs:
                 self.packed_train_data_path = msc.Path(self.packed_train_data_path)
             else:
                 self.packed_train_data_path = Path(self.packed_train_data_path)
-            assert self.packed_train_data_path.suffix == ".npy", (
-                f"packed training data file must be a .npy file: {self.packed_train_data_path}"
+            # Accept .npy or packed Parquet files (.idx.parquet, .idx.pq)
+            is_valid_format = (
+                self.packed_train_data_path.suffix == ".npy"
+                or is_packed_parquet_file(self.packed_train_data_path)
+            )
+            assert is_valid_format, (
+                f"packed training data file must be a .npy or .idx.parquet/.idx.pq file: "
+                f"{self.packed_train_data_path}"
             )
             assert self.packed_train_data_path.exists(), (
                 f"packed training data file does not exist: {self.packed_train_data_path}"
@@ -265,8 +272,14 @@ class PackedSequenceSpecs:
                 self.packed_val_data_path = msc.Path(self.packed_val_data_path)
             else:
                 self.packed_val_data_path = Path(self.packed_val_data_path)
-            assert self.packed_val_data_path.suffix == ".npy", (
-                f"packed validation data file must be a .npy file: {self.packed_val_data_path}"
+            # Accept .npy or packed Parquet files (.idx.parquet, .idx.pq)
+            is_valid_format = (
+                self.packed_val_data_path.suffix == ".npy"
+                or is_packed_parquet_file(self.packed_val_data_path)
+            )
+            assert is_valid_format, (
+                f"packed validation data file must be a .npy or .idx.parquet/.idx.pq file: "
+                f"{self.packed_val_data_path}"
             )
             assert self.packed_val_data_path.exists(), (
                 f"packed validation data file does not exist: {self.packed_val_data_path}"
