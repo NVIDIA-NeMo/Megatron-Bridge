@@ -41,13 +41,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
-        description="Finetune Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
+        description="Finetune Nemotron 3 Nano model using Megatron-Bridge with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--config-file",
         type=str,
-        help="Path to the YAML OmegaConf override file. Default: conf/nemotron_3_nano_finetune_override_example.yaml",
+        help="Path to the YAML OmegaConf override file.",
     )
     parser.add_argument("--peft", type=str, help="Type of PEFT to use")
     parser.add_argument("--packed-sequence", action="store_true", help="Whether to use sequence packing")
@@ -60,7 +60,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 def main() -> None:
     """
-    Entry point for the Mamba 8B finetuning script.
+    Entry point for the Nemotron 3 Nano finetuning script.
     """
     args, cli_overrides = parse_cli_args()
 

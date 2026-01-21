@@ -41,13 +41,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
-        description="Pretrain Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
+        description="Pretrain Nemotron 3 Nano model using Megatron-Bridge with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--config-file",
         type=str,
-        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
+        help="Path to the YAML OmegaConf override file.",
     )
     parser.add_argument("--per-split-data-args-path", type=str, help="Path to the per split data args file.")
     parser.add_argument("--tokenizer-model", type=str, help="Path to the tokenizer model file.")
@@ -59,7 +59,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 def main() -> None:
     """
-    Entry point for the Mamba 8B pretraining script.
+    Entry point for the Nemotron 3 Nano pretraining script.
     """
     args, cli_overrides = parse_cli_args()
 
