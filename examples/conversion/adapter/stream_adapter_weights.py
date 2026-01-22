@@ -53,9 +53,9 @@ from __future__ import annotations
 import argparse
 import math
 import os
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable
 
 import torch
 import torch.distributed as dist

@@ -21,7 +21,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 from transformers import AutoProcessor
 
@@ -31,13 +31,13 @@ from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 def _split_text_by_placeholders(
-    text: str, image_paths: List[str], video_paths: Optional[List[str]] = None
-) -> List[Dict[str, Any]]:
+    text: str, image_paths: list[str], video_paths: list[str] | None = None
+) -> list[dict[str, Any]]:
     """
     Split legacy text containing "<image>"/"<video>" markers into an alternating
     sequence of text and media parts, preserving the original order and spacing.
     """
-    parts: List[Dict[str, Any]] = []
+    parts: list[dict[str, Any]] = []
     img_idx = 0
     vid_idx = 0
 
@@ -72,10 +72,10 @@ def _split_text_by_placeholders(
     return parts
 
 
-def _normalize_paths(paths: Optional[List[Any]], base_folder: Optional[str]) -> Optional[List[Any]]:
+def _normalize_paths(paths: list[Any] | None, base_folder: str | None) -> list[Any] | None:
     if not paths or base_folder is None:
         return paths
-    normalized: List[Any] = []
+    normalized: list[Any] = []
     for p in paths:
         if not isinstance(p, str):
             normalized.append(p)
@@ -87,7 +87,7 @@ def _normalize_paths(paths: Optional[List[Any]], base_folder: Optional[str]) -> 
     return normalized
 
 
-def _record_to_conversation(record: Dict[str, Any], image_folder: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+def _record_to_conversation(record: dict[str, Any], image_folder: str | None) -> list[dict[str, Any]] | None:
     """
     Transform a single legacy record into an AutoProcessor-friendly conversation schema.
     Supports two input styles:
@@ -104,7 +104,7 @@ def _record_to_conversation(record: Dict[str, Any], image_folder: Optional[str])
         return None
 
     # Build images/videos list from several possible fields
-    images: List[Any] = []
+    images: list[Any] = []
     if "images" in record and isinstance(record["images"], list):
         images = record["images"]
     elif "image" in record and record["image"] is not None:
@@ -113,11 +113,11 @@ def _record_to_conversation(record: Dict[str, Any], image_folder: Optional[str])
             images = record["image"]
         else:
             images = [record["image"]]
-    videos: List[Any] = record.get("videos", []) or []
+    videos: list[Any] = record.get("videos", []) or []
     images = _normalize_paths(images, image_folder) or []
     videos = _normalize_paths(videos, image_folder) or []
 
-    conversation: List[Dict[str, Any]] = []
+    conversation: list[dict[str, Any]] = []
     source_msgs = messages if messages is not None else llava_conversations
     for msg in source_msgs:
         # LLaVA uses {'from': 'human'|'gpt', 'value': '...'}
@@ -144,8 +144,8 @@ def _record_to_conversation(record: Dict[str, Any], image_folder: Optional[str])
     return conversation
 
 
-def _load_preloaded_examples(path: str) -> List[Dict[str, Any]]:
-    examples: List[Dict[str, Any]] = []
+def _load_preloaded_examples(path: str) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
     if path.endswith(".jsonl"):
         with open(path, "r") as f:
             for line in f:
@@ -186,32 +186,32 @@ class PreloadedVLMConversationProvider(DatasetProvider):
     hf_processor_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
 
     # Paths to preloaded datasets (JSON/JSONL). Any can be None.
-    train_data_path: Optional[str] = None
-    valid_data_path: Optional[str] = None
-    test_data_path: Optional[str] = None
+    train_data_path: str | None = None
+    valid_data_path: str | None = None
+    test_data_path: str | None = None
 
     # Optional image/video root to resolve relative paths
-    image_folder: Optional[str] = None
+    image_folder: str | None = None
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
     skip_getting_attention_mask_from_dataset: bool = True
 
     # Default dataloader type for VLM providers
-    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
+    dataloader_type: Literal["single", "cyclic", "external"] | None = "single"
 
     # Enable batch-level online sequence packing
     pack_sequences_in_batch: bool = False
 
     def _build_split_dataset(
         self,
-        split_path: Optional[str],
+        split_path: str | None,
         target_length: int,
         processor: Any,
-    ) -> Optional[VLMConversationDataset]:
+    ) -> VLMConversationDataset | None:
         if not split_path or target_length <= 0:
             return None
         raw_examples = _load_preloaded_examples(split_path)
-        base_examples: List[Dict[str, Any]] = []
+        base_examples: list[dict[str, Any]] = []
         for rec in raw_examples:
             conv = _record_to_conversation(rec, self.image_folder)
             if conv is None:
@@ -226,7 +226,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
             processor=processor,
         )
 
-    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+    def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
         processor = AutoProcessor.from_pretrained(
             self.hf_processor_path,
             trust_remote_code=is_safe_repo(

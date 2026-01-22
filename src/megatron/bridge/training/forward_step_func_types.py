@@ -68,8 +68,9 @@ Example Usage:
     >>> pretrain(config, functor)
 """
 
+from collections.abc import Iterable
 from functools import partial
-from typing import Any, Iterable, Protocol, overload
+from typing import Any, Protocol, overload
 
 import torch
 from megatron.core.models.gpt import GPTModel

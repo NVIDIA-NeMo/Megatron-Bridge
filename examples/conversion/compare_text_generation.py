@@ -54,7 +54,6 @@ Usage examples:
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import torch
 from megatron.core import parallel_state
@@ -320,8 +319,8 @@ def get_torch_dtype(dtype_str: str) -> torch.dtype:
 def import_hf_to_megatron(
     hf_model: str,
     megatron_path: str,
-    torch_dtype: Optional[str] = None,
-    device_map: Optional[str] = None,
+    torch_dtype: str | None = None,
+    device_map: str | None = None,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -588,7 +587,7 @@ def compare_generated(
     hf_postconvert: GeneratedData,
     crossfw_token_method: str,
     crossfw_logit_method: str,
-    jaccard_threshold: Optional[float] = None,
+    jaccard_threshold: float | None = None,
 ):
     """
     Make assertions on generated ids, tokens, and logits.

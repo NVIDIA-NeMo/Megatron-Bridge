@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Union
 
 import nemo_run as run
 from nemo_run import Plugin
@@ -31,7 +31,7 @@ class FaultTolerancePluginScriptArgs:
     calc_ft_timeouts: bool
 
 
-def _default_fault_tolerance_converter(args: FaultTolerancePluginScriptArgs) -> List[str]:
+def _default_fault_tolerance_converter(args: FaultTolerancePluginScriptArgs) -> list[str]:
     """Default converter for FaultTolerancePlugin that generates hydra-style overrides."""
     return [
         f"ft.enable_ft_package={str(args.enable_ft_package).lower()}",
@@ -56,7 +56,7 @@ class FaultTolerancePlugin(Plugin):
             that a rank is not alive. This is the max timeout for the initial heartbeat. Default is 1800.
         rank_heartbeat_timeout (int): This is the timeout for subsequent hearbeats after the initial heartbeat.
             Default is 300.
-        script_args_converter_fn (Optional[Callable]): A function that takes FaultTolerancePluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes FaultTolerancePluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
 
@@ -71,9 +71,9 @@ class FaultTolerancePlugin(Plugin):
     num_job_retries_on_failure: int = 2
     initial_rank_heartbeat_timeout: int = 1800
     rank_heartbeat_timeout: int = 300
-    script_args_converter_fn: Optional[Callable[[FaultTolerancePluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[FaultTolerancePluginScriptArgs] | list[str]] | None = None
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         """Set up the fault tolerance plugin."""
         # Set up fault tolerance launcher for both task types
         executor.launcher = run.FaultTolerance(

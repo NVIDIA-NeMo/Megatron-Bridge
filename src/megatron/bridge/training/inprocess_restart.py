@@ -16,8 +16,8 @@ import logging
 import os
 import socket
 import warnings
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Callable, Optional
 
 import nvidia_resiliency_ext.inprocess as inprocess
 import torch
@@ -150,7 +150,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     # Why this is needed:
     # - NVRx 0.4.1 calls wrapped functions via CallWrapper.__call__(fn, args, kwargs)
     # - NVRx injects the active CallWrapper instance for parameters annotated with
-    #   Optional[CallWrapper] or CallWrapper after binding arguments
+    #   CallWrapper | None or CallWrapper after binding arguments
     # - Our _pretrain function expects the CallWrapper as a keyword argument named
     #   'inprocess_call_wrapper', but NVRx may pass it differently
     # - This adapter ensures compatibility by extracting the CallWrapper and passing
@@ -194,7 +194,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
 
 def maybe_wrap_for_inprocess_restart(
     train_fn: Callable, config: InProcessRestartConfig, state: GlobalState
-) -> tuple[Callable, Optional[torch.distributed.Store]]:
+) -> tuple[Callable, torch.distributed.Store | None]:
     """Conditionally wrap function for in-process restart."""
 
     if not config.enabled:

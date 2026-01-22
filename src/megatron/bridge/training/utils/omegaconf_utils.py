@@ -21,7 +21,7 @@ import inspect
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, TypeVar
+from typing import Any, TypeVar
 
 import torch
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
@@ -43,7 +43,7 @@ _EXCLUDE_FIELD = object()
 _SERIALIZABLE_CALLABLE_FIELDS: frozenset[str] = frozenset({"activation_func"})
 
 
-def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
+def create_omegaconf_dict_config(config_container: Any) -> tuple[DictConfig, dict[str, Any]]:
     """Create OmegaConf while tracking excluded fields for later restoration.
 
     This function combines the conversion to OmegaConf with tracking of excluded
@@ -81,7 +81,7 @@ def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dic
 
 
 def apply_overrides(
-    config_obj: DataclassInstance, overrides_dict: Dict[str, Any], excluded_fields: Dict[str, Any]
+    config_obj: DataclassInstance, overrides_dict: dict[str, Any], excluded_fields: dict[str, Any]
 ) -> None:
     """Apply overrides while preserving excluded callable fields.
 
@@ -160,7 +160,7 @@ def process_config_with_overrides(
     return config
 
 
-def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
+def parse_hydra_overrides(cfg: DictConfig, overrides: list[str]) -> DictConfig:
     """Parse and apply Hydra overrides to an OmegaConf config.
 
     This function uses Hydra's override parser to support advanced override syntax
@@ -346,7 +346,7 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
         return val_to_convert
 
 
-def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
+def _track_excluded_fields(obj: Any, path: str = "") -> dict[str, Any]:
     """Track all excluded callable fields and their original values.
 
     This function recursively traverses a dataclass structure and builds a mapping
@@ -386,7 +386,7 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
     return excluded_fields
 
 
-def _restore_excluded_fields(config_obj: Any, excluded_fields: Dict[str, Any]) -> None:
+def _restore_excluded_fields(config_obj: Any, excluded_fields: dict[str, Any]) -> None:
     """Restore excluded callable fields to their original values.
 
     After applying overrides from OmegaConf, this function restores the callable
@@ -451,7 +451,7 @@ def _verify_no_callables(obj: Any, path: str = "") -> bool:
     return True
 
 
-def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, Any]) -> None:
+def _apply_overrides(config_obj: DataclassInstance, overrides_dict: dict[str, Any]) -> None:
     """Recursively apply overrides from a Python dictionary to a dataclass instance.
 
     This function traverses nested dataclass structures and applies override values

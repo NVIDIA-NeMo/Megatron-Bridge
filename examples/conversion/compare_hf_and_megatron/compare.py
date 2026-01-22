@@ -95,7 +95,6 @@ import gc
 import importlib
 import os
 import sys
-from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -372,7 +371,7 @@ def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0)
     return input_ids
 
 
-def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str, is_vl_model: bool, tp_size: int = 1):
+def process_inputs(tokenizer, processor, image_path: str | None, prompt: str, is_vl_model: bool, tp_size: int = 1):
     """Process inputs for both vision-language and regular LLM models.
 
     Args:

@@ -15,7 +15,6 @@
 """Profiling utilities for training loop."""
 
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.profiler
@@ -27,7 +26,7 @@ from megatron.bridge.training.config import ProfilingConfig
 TNvtxContext = torch.autograd.profiler.emit_nvtx
 
 
-def should_profile_rank(config: Optional[ProfilingConfig], rank: int) -> bool:
+def should_profile_rank(config: ProfilingConfig | None, rank: int) -> bool:
     """Check if current rank should be profiled.
 
     Args:
@@ -45,11 +44,11 @@ def should_profile_rank(config: Optional[ProfilingConfig], rank: int) -> bool:
 
 
 def handle_profiling_step(
-    config: Optional[ProfilingConfig],
+    config: ProfilingConfig | None,
     iteration: int,
     rank: int,
-    pytorch_prof: Optional[torch.profiler.profile],
-) -> Optional[TNvtxContext]:
+    pytorch_prof: torch.profiler.profile | None,
+) -> TNvtxContext | None:
     """Handle profiling logic for a single training step.
 
     Args:
@@ -78,11 +77,11 @@ def handle_profiling_step(
 
 
 def handle_profiling_stop(
-    config: Optional[ProfilingConfig],
+    config: ProfilingConfig | None,
     iteration: int,
     rank: int,
-    pytorch_prof: Optional[torch.profiler.profile],
-    nsys_nvtx_context: Optional[TNvtxContext] = None,
+    pytorch_prof: torch.profiler.profile | None,
+    nsys_nvtx_context: TNvtxContext | None = None,
 ) -> None:
     """Handle profiling cleanup at designated stop iteration.
 
@@ -170,7 +169,7 @@ def start_nsys_profiler(config: ProfilingConfig) -> TNvtxContext:
     return nvtx_context
 
 
-def stop_nsys_profiler(nvtx_context: Optional[TNvtxContext]) -> None:
+def stop_nsys_profiler(nvtx_context: TNvtxContext | None) -> None:
     """Stop CUDA profiler for nsys profiling.
 
     Args:

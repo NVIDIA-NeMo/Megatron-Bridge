@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Iterable
 from functools import partial
-from typing import Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel

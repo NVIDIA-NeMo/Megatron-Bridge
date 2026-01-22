@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from copy import deepcopy
-from typing import Optional, Tuple, Union
 
 import torch
 from einops import rearrange
@@ -48,7 +47,7 @@ def chunkify_cu_seqlens(cu_seqlens, cu_seqlens_padded, attention_chunk_size):
         attention_chunk_size (int): The maximum size of each chunk.
 
     Returns:
-        Tuple[list[int], list[int]]: A tuple containing the new chunked cumulative
+        tuple[list[int], list[int]]: A tuple containing the new chunked cumulative
         sequence lengths and the new chunked padded cumulative sequence lengths.
     """
     new_cu_seqlens = [cu_seqlens[0]]
@@ -169,37 +168,37 @@ class Llama4SelfAttention(MCoreSelfAttention):
         self,
         hidden_states: Tensor,
         attention_mask: Tensor,
-        key_value_states: Optional[Tensor] = None,
-        inference_context: Optional[BaseInferenceContext] = None,
-        rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
-        rotary_pos_cos: Optional[Tensor] = None,
-        rotary_pos_sin: Optional[Tensor] = None,
-        attention_bias: Optional[Tensor] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
-        sequence_len_offset: Optional[int] = None,
+        key_value_states: Tensor | None = None,
+        inference_context: BaseInferenceContext | None = None,
+        rotary_pos_emb: Tensor | tuple[Tensor, Tensor] | None = None,
+        rotary_pos_cos: Tensor | None = None,
+        rotary_pos_sin: Tensor | None = None,
+        attention_bias: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        sequence_len_offset: int | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
-    ) -> Tuple[Tensor, Tensor]:
+        inference_params: BaseInferenceContext | None = None,
+    ) -> tuple[Tensor, Tensor]:
         """
         Perform a forward pass through the attention module.
 
         Args:
             hidden_states (Tensor): Hidden states.
             attention_mask (Tensor): Attention mask.
-            key_value_states (Optional[Tensor]): Key/value states (for cross attention).
-            inference_context (Optional[BaseInferenceContext]): Inference context that manages
+            key_value_states (Tensor | None): Key/value states (for cross attention).
+            inference_context (BaseInferenceContext | None): Inference context that manages
                 KV cache.
-            rotary_pos_emb (Optional[Union[Tensor, Tuple[Tensor, Tensor]]]): Rotary
+            rotary_pos_emb (Tensor | tuple[Tensor, Tensor] | None): Rotary
                 embedding tensor(s).
-            rotary_pos_cos (Optional[Tensor]): Rotary embedding cosine.
-            rotary_pos_sin (Optional[Tensor]): Rotary embedding sine.
-            attention_bias (Optional[Tensor]): Attention bias.
-            packed_seq_params (Optional[PackedSeqparams]): Parameters used for THD format.
-            sequence_len_offset (Optional[int]): Sequence length offset used for
+            rotary_pos_cos (Tensor | None): Rotary embedding cosine.
+            rotary_pos_sin (Tensor | None): Rotary embedding sine.
+            attention_bias (Tensor | None): Attention bias.
+            packed_seq_params (PackedSeqParams | None): Parameters used for THD format.
+            sequence_len_offset (int | None): Sequence length offset used for
                 inference CUDA graphs.
 
         Return:
-            (Tuple[Tensor, Tensor]) Attention output and bias.
+            (tuple[Tensor, Tensor]) Attention output and bias.
 
         """
 

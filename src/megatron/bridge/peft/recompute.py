@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from functools import wraps
-from typing import Iterable, Set
 
 import torch
 from megatron.core.utils import unwrap_model
@@ -25,7 +25,7 @@ from megatron.core.utils import unwrap_model
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-PEFT_RECOMPUTE_PATCHED: Set[int] = set()
+PEFT_RECOMPUTE_PATCHED: set[int] = set()
 
 
 def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
@@ -40,7 +40,7 @@ def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
             yield unwrapped
 
 
-def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: Set[int] | None = None) -> Set[int]:
+def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: set[int] | None = None) -> set[int]:
     """Enable grad on TransformerBlock inputs when only adapters are trainable.
 
     Root cause analysis:

@@ -18,8 +18,9 @@ This module provides a dispatch-based polymorphism system allowing extensible
 behavior for different types using the `impl` decorator.
 """
 
+from collections.abc import Callable
 from functools import _find_impl  # type: ignore
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, TypeVar
 
 
 _SignatureType = TypeVar("_SignatureType", bound=Callable)
@@ -40,8 +41,8 @@ class _Dispatch:
     def __init__(self, signature: Callable) -> None:
         self._signature = signature
         self._name = signature.__name__
-        self._exact_types: Dict[Any, Callable] = {}
-        self._dispatch_cache: Dict[Any, Callable] = {}
+        self._exact_types: dict[Any, Callable] = {}
+        self._dispatch_cache: dict[Any, Callable] = {}
 
         # Extract docstring and module info for rich repr
         self._doc = signature.__doc__
@@ -169,7 +170,7 @@ class _Dispatch:
         lines.append(")")
         return "\n".join(lines)
 
-    def _dispatch(self, instance: Any, instance_type: type) -> Optional[Callable]:
+    def _dispatch(self, instance: Any, instance_type: type) -> Callable | None:
         """Find the implementation for a given type.
 
         Fallback order:

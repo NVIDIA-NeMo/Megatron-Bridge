@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Any, Literal, Optional, Tuple, Union
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -39,7 +39,7 @@ class LoRALinear(AdapterWrapper):
     class to provide a specific implementation of the forward method.
     """
 
-    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Forward pass that combines the wrapped module output with the adapter output.
 
         Args:
@@ -105,7 +105,7 @@ class TELinearAdapter(te.Linear):
         dropout: float = 0.0,
         dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
+        lora_dtype: torch.dtype | None = None,
     ) -> None:
         """Initialize TELinearAdapter by copying from original TELinear and adding LoRA components.
 
@@ -155,13 +155,13 @@ class TELinearAdapter(te.Linear):
     @torch.no_grad
     @staticmethod
     def _init_adapter(
-        obj: Union["TELinearAdapter", nn.Module],
+        obj: "TELinearAdapter" | nn.Module,
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
         dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
+        lora_dtype: torch.dtype | None = None,
     ) -> None:
         """Add LoRA weights to obj. The obj is either a LinearAdapter or an nn.Module (when monkey-patching).
 
@@ -233,7 +233,7 @@ class TEFusedLoRALinear(LoRALinear):
 
     def __init__(self, to_wrap: nn.Module, adapter: nn.Module):
         super().__init__(to_wrap, adapter)
-        self._fused_branches: Optional[tuple[te.ops.Sequential, te.ops.Sequential]] = None
+        self._fused_branches: tuple[te.ops.Sequential, te.ops.Sequential] | None = None
 
     def _make_fused_branches(self) -> tuple[te.ops.Sequential, te.ops.Sequential]:
         """Construct fused modules for main and LoRA branches"""
@@ -306,8 +306,8 @@ class TEFusedLoRALinear(LoRALinear):
         *,
         in_features: int,
         out_features: int,
-        tensor_parallel_mode: Optional[str],
-        tensor_parallel_group: Optional[torch.distributed.ProcessGroup],
+        tensor_parallel_mode: str | None,
+        tensor_parallel_group: torch.distributed.ProcessGroup | None,
         sequence_parallel: bool,
         accumulate_into_main_grad: bool,
     ) -> te.ops.Sequential:
@@ -373,8 +373,8 @@ class TEFusedLoRALinear(LoRALinear):
         *,
         in_features: int,
         out_features: int,
-        tensor_parallel_mode: Optional[str],
-        tensor_parallel_group: Optional[torch.distributed.ProcessGroup],
+        tensor_parallel_mode: str | None,
+        tensor_parallel_group: torch.distributed.ProcessGroup | None,
         sequence_parallel: bool,
         accumulate_into_main_grad: bool,
     ) -> te.ops.Sequential:
@@ -511,7 +511,7 @@ class LinearAdapter(nn.Linear):
         dropout: float = 0.0,
         dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
+        lora_dtype: torch.dtype | None = None,
     ) -> None:
         """Initialize LinearAdapter by copying from original Linear and adding LoRA components.
 
@@ -559,13 +559,13 @@ class LinearAdapter(nn.Linear):
     @torch.no_grad
     @staticmethod
     def _init_adapter(
-        obj: Union["LinearAdapter", nn.Module],
+        obj: "LinearAdapter" | nn.Module,
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
         dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
+        lora_dtype: torch.dtype | None = None,
     ) -> None:
         """Add LoRA weights to obj. The obj is either a LinearAdapter or an nn.Module (when monkey-patching).
 
@@ -639,14 +639,14 @@ class LinearAdapter(nn.Linear):
 
 
 def patch_linear_module(
-    orig_linear: Union[nn.Linear, "te.Linear"],
+    orig_linear: nn.Linear | "te.Linear",
     dim: int = 8,
     alpha: int = 32,
     dropout: float = 0.0,
     dropout_position: Literal["pre", "post"] = "pre",
     lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-    lora_dtype: Optional[torch.dtype] = None,
-) -> Union[nn.Linear, "te.Linear"]:
+    lora_dtype: torch.dtype | None = None,
+) -> nn.Linear | "te.Linear":
     """Monkey-patch a nn.Linear or te.Linear to be a LinearAdapter.
 
     This function replaces a nn.Linear with a LinearAdapter without copying weights,

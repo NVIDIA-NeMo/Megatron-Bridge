@@ -90,7 +90,6 @@ import argparse
 import logging
 import os
 from pathlib import Path
-from typing import Tuple
 
 from omegaconf import OmegaConf
 
@@ -116,7 +115,7 @@ DEFAULT_CONFIG_FILENAME: str = "qwen3_vl_pretrain_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
-def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+def parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse known script args and return remaining as Hydra-style overrides."""
     parser = argparse.ArgumentParser(
         description="Finetune Qwen-VL models (Qwen2.5-VL and Qwen3-VL) with YAML and CLI overrides",

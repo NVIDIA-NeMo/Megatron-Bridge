@@ -14,14 +14,14 @@
 
 """Processing functions for Squad dataset."""
 
-from typing import Any, Optional
+from typing import Any
 
 from megatron.bridge.data.builders.hf_dataset import ProcessExampleOutput
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 def process_squad_example(
-    example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+    example: dict[str, Any], tokenizer: MegatronTokenizer | None = None
 ) -> ProcessExampleOutput:
     """Process a single Squad example into the required format.
 

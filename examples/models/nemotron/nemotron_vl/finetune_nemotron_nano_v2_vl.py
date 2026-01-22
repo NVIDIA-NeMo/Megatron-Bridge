@@ -24,7 +24,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Tuple
 
 import torch
 from omegaconf import OmegaConf
@@ -47,7 +46,7 @@ DEFAULT_CONFIG_FILENAME: str = "nemotron_nano_v2_vl_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
-def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+def parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse command-line flags and return `(argparse.Namespace, overrides)`."""
 
     parser = argparse.ArgumentParser(

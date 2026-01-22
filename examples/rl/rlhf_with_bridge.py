@@ -55,8 +55,8 @@ Notes
 
 import argparse
 import os
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Iterable, Iterator
 
 import torch
 import torch.nn.functional as F

@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -287,7 +287,7 @@ class Gemma2OutputLayer(ColumnParallelLinear):
         return output, bias
 
 
-def logit_softcapping(logits: torch.Tensor, scale: Optional[float]) -> torch.Tensor:
+def logit_softcapping(logits: torch.Tensor, scale: float | None) -> torch.Tensor:
     """Prevents logits from growing excessively by scaling them to a fixed range"""
     if not scale:
         return logits
@@ -362,7 +362,7 @@ class Gemma2ModelProvider(GPTModelProvider):
     window_size: tuple[int, int] = (4096, 0)
     vocab_size: int = 256000
 
-    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = gemma2_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = gemma2_layer_spec
 
     query_pre_attn_scalar: int = 224
     attn_logit_softcapping: float = 50.0

@@ -14,8 +14,8 @@
 
 """Tests for state injection logic with type hint detection."""
 
+from collections.abc import Iterable
 from functools import partial
-from typing import Iterable
 from unittest.mock import Mock
 
 import torch
