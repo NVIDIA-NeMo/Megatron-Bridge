@@ -119,7 +119,7 @@ def set_user_overrides(config, args):
         config.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size:
         config.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size != -1:
+    if args.virtual_pipeline_model_parallel_size is not None:
         config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size:
         config.model.expert_model_parallel_size = args.expert_model_parallel_size

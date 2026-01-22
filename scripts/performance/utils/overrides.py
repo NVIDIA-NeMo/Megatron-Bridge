@@ -248,7 +248,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size != -1:
+    if args.virtual_pipeline_model_parallel_size is not None:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
         recipe.model.expert_model_parallel_size = args.expert_model_parallel_size
@@ -260,6 +260,23 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.train.micro_batch_size = args.micro_batch_size
     if args.pretrained_checkpoint is not None:
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+
+    # Handle checkpoint configuration
+    if args.save_dir is not None:
+        recipe.checkpoint.save = args.save_dir
+        logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+    if args.load_dir is not None:
+        recipe.checkpoint.load = args.load_dir
+        logger.info(f"Checkpoint load directory set to: {args.load_dir}")
+    if args.save_interval is not None:
+        recipe.checkpoint.save_interval = args.save_interval
+        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
+    if args.most_recent_k is not None:
+        recipe.checkpoint.most_recent_k = args.most_recent_k
+        logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
+    if args.save_config_filepath is not None:
+        recipe.logger.save_config_filepath = args.save_config_filepath
+
     if args.tokenizer_type == "NullTokenizer":
         recipe.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
     elif args.tokenizer_type == "HuggingFaceTokenizer":
