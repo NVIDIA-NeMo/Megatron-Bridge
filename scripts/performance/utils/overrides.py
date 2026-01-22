@@ -275,7 +275,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+        if args.domain == "llm":
+            # Override the dataset configuration for LLM models.
+            # For vlm models, use the default dataset configuration in model recipe,
+            # becuase preprocess of dataset is different for each vlm model.
+            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
