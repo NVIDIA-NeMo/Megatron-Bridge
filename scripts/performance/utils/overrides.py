@@ -265,6 +265,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if args.save_dir is not None:
         recipe.checkpoint.save = args.save_dir
         logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+    elif args.save_interval is not None:
+        # If save_interval is specified but no directory, use default location
+        recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
+        logger.info("Checkpoint save enabled with default directory: /nemo_run/code/nemo_experiments/default/checkpoints")
+    
     if args.load_dir is not None:
         recipe.checkpoint.load = args.load_dir
         logger.info(f"Checkpoint load directory set to: {args.load_dir}")
