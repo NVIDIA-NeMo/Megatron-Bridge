@@ -40,6 +40,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
     _validate_and_sync_distributed_optimizer_settings,
+    _validate_mixed_precision_consistency,
 )
 
 
@@ -1586,6 +1587,286 @@ class TestCheckpointConfig:
             assert container.optimizer.use_precision_aware_optimizer is False
             assert container.dist.use_megatron_fsdp is True
             # preserve_fp32_weights should remain at its default
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestMixedPrecisionConsistencyValidation:
+    """Tests for _validate_mixed_precision_consistency function.
+
+    These tests verify that precision settings (bf16/fp16) are properly validated
+    between model and optimizer configs, especially when use_precision_aware_optimizer=True.
+
+    See: https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/1665
+    """
+
+    def test_bf16_model_bf16_optimizer_with_precision_aware_passes(self):
+        """Test that bf16 model + bf16 optimizer + precision_aware passes validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=True,
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            # Should pass without error
+            _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fp16_model_fp16_optimizer_with_precision_aware_passes(self):
+        """Test that fp16 model + fp16 optimizer + precision_aware passes validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=True)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=True,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            # Should pass without error
+            _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fp32_model_fp32_optimizer_with_precision_aware_passes(self):
+        """Test that fp32 model + fp32 optimizer + precision_aware passes validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            # Should pass without error
+            _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_bf16_model_fp16_optimizer_with_precision_aware_fails(self):
+        """Test that bf16 model + fp16 optimizer + precision_aware fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=True,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="optimizer.bf16=True must be set when model.bf16=True"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_bf16_model_fp32_optimizer_with_precision_aware_fails(self):
+        """Test that bf16 model + fp32 optimizer + precision_aware fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="optimizer.bf16=True must be set when model.bf16=True"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fp16_model_bf16_optimizer_with_precision_aware_fails(self):
+        """Test that fp16 model + bf16 optimizer + precision_aware fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=True)
+        optim_cfg = create_test_optimizer_config(
+            bf16=True,
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="optimizer.fp16=True must be set when model.fp16=True"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fp16_model_fp32_optimizer_with_precision_aware_fails(self):
+        """Test that fp16 model + fp32 optimizer + precision_aware fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=True)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="optimizer.fp16=True must be set when model.fp16=True"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fp32_model_bf16_optimizer_with_precision_aware_fails(self):
+        """Test that fp32 model + bf16 optimizer + precision_aware fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=True,
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="optimizer.bf16 and optimizer.fp16 must both be False"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fp32_model_fp16_optimizer_with_precision_aware_fails(self):
+        """Test that fp32 model + fp16 optimizer + precision_aware fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=True,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="optimizer.bf16 and optimizer.fp16 must both be False"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_mismatch_without_precision_aware_optimizer_passes(self):
+        """Test that mismatched settings pass when use_precision_aware_optimizer=False."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp16=False)
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,
+            fp16=False,
+            use_precision_aware_optimizer=False,
+            use_distributed_optimizer=False,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            # Should pass without error when precision_aware_optimizer is disabled
+            _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_model_both_bf16_fp16_true_fails(self):
+        """Test that model with both bf16=True and fp16=True fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp16=True)
+        optim_cfg = create_test_optimizer_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="Model config cannot have both bf16=True and fp16=True"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_optimizer_both_bf16_fp16_true_fails(self):
+        """Test that optimizer with both bf16=True and fp16=True fails validation."""
+        gpt_model_cfg = create_test_gpt_config(bf16=False, fp16=False)
+        optim_cfg = create_test_optimizer_config(bf16=True, fp16=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            optimizer_config=optim_cfg,
+        )
+        try:
+            with pytest.raises(AssertionError, match="Optimizer config cannot have both bf16=True and fp16=True"):
+                _validate_mixed_precision_consistency(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_validation_called_during_container_validate(self):
+        """Test that mixed precision validation is called during ConfigContainer.validate()."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, fp16=False)
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+        optim_cfg = create_test_optimizer_config(
+            bf16=False,  # Mismatch with model
+            fp16=False,
+            use_precision_aware_optimizer=True,
+            use_distributed_optimizer=True,
+        )
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+            optimizer_config=optim_cfg,
+            ddp_config=ddp_cfg,
+        )
+        try:
+            # Should fail during validate() because of precision mismatch
+            with pytest.raises(AssertionError, match="optimizer.bf16=True must be set when model.bf16=True"):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
