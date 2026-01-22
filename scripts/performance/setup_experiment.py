@@ -337,7 +337,7 @@ def main(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
-                profile_ranks=list(range(num_gpus)) if profiling_ranks is None else profiling_ranks,
+                profile_ranks=list(range(num_gpus)),
                 nsys_trace=["cuda"],
                 nsys_extra_args=[
                     "--force-overwrite=true",
