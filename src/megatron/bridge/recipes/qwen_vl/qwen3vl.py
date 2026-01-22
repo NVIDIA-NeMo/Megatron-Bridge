@@ -26,7 +26,9 @@ from megatron.bridge.data.vlm_datasets import (
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
 )
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -86,17 +88,30 @@ class Qwen3VLCommonKwargs(TypedDict, total=False):
     freeze_vision_projection: bool
     # Checkpoint options
     pretrained_checkpoint: Optional[str]
+    # PEFT options
+    peft: Optional[Union[str, PEFT]]
+    finetune_lr: float
 
 
 def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Qwen3-VL 8B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=4, PP=1, LR=1e-5
+
     See `_qwen3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen3VLCommonKwargs = {
         "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
-        "tensor_parallelism": 4,
+        "tensor_parallelism": 4 if is_full_sft else 1,
         "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 1e-5 if is_full_sft else 1e-4,
         "freeze_language_model": True,
         "freeze_vision_model": True,
         "freeze_vision_projection": False,
@@ -115,12 +130,22 @@ def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
 
     This is a Mixture-of-Experts model with 128 experts and top-8 routing.
     Recommended to use with expert parallelism (EP) for efficient training.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=2e-4
+    - Full SFT: TP=1, PP=1, EP=8, LR=2e-5
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen3VLCommonKwargs = {
         "hf_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
         "expert_parallelism": 8,
+        "peft": peft_value,
+        "finetune_lr": 2e-5 if is_full_sft else 2e-4,
         "freeze_language_model": True,
         "freeze_vision_model": True,
         "freeze_vision_projection": False,
@@ -139,13 +164,23 @@ def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs
 
     This is a Mixture-of-Experts model with 128 experts and top-8 routing.
     Recommended to use with expert parallelism (EP) for efficient training.
+
+    Default configuration: 4 nodes, 32 GPUs total
+    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=2e-4
+    - Full SFT: TP=4, PP=1, EP=8, LR=2e-5
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen3VLCommonKwargs = {
         "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-        "tensor_parallelism": 4,
+        "tensor_parallelism": 4 if is_full_sft else 1,
         "pipeline_parallelism": 1,
         "expert_parallelism": 8,
         "expert_tensor_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 2e-5 if is_full_sft else 2e-4,
         "freeze_language_model": True,
         "freeze_vision_model": True,
         "freeze_vision_projection": False,
@@ -199,6 +234,9 @@ def _qwen3_vl_common(
     freeze_language_model: bool = True,
     freeze_vision_model: bool = True,
     freeze_vision_projection: bool = False,
+    # PEFT options
+    peft: Optional[Union[str, PEFT]] = None,
+    finetune_lr: Optional[float] = None,
 ) -> ConfigContainer:
     """
     Create a fine-tuning configuration for Qwen2.5-VL models using a given HuggingFace path.
@@ -230,13 +268,17 @@ def _qwen3_vl_common(
     if expert_tensor_parallelism is not None:
         model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
 
-    # Optimizer and scheduler
+    # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
+    effective_lr = finetune_lr if finetune_lr is not None else lr
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=lr,
+        max_lr=effective_lr,
         min_lr=min_lr,
     )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
     _dataset_choice = dataset_type or "mock"
@@ -346,6 +388,7 @@ def _qwen3_vl_common(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        peft=peft_config,
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
