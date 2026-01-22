@@ -31,7 +31,7 @@ def apply_flex_dispatcher_backend(
     """Apply DeepEP or HybridEP optimizations to the model config.
 
     DeepEP is applicable only for MoE models on Ampere, Hopper, and B200/B300 GPUs.
-    HybridEP is applicable only for MoE models.
+    HybridEP is applicable only for MoE models on GB200/GB300 with NVL72 and on Hopper, B200, B300 GPUs.
     """
     num_moe_experts = getattr(model_config, "num_moe_experts", None)
     if num_moe_experts is None or num_moe_experts == 0:
@@ -55,7 +55,7 @@ def apply_flex_dispatcher_backend(
         if not device_properties.major in [8, 9, 10]:
             if get_rank_safe() == 0:
                 logger.warning(
-                    f"HybridEP is only applicable for Hopper, B200, B300, GB200, and GB300 GPUs. "
+                    f"HybridEP is only applicable for GB200/GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs. "
                     f"Current GPU: {device_properties.name}. Skipping HybridEP configuration."
                 )
             return
@@ -79,4 +79,6 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
             if not device_properties.major in [8, 9, 10]:
-                raise ValueError("HybridEP is supported for Hopper, B200, B300, GB200, and GB300 GPUs")
+                raise ValueError(
+                    "HybridEP is supported for GB200/GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs"
+                )
