@@ -55,7 +55,7 @@ def apply_flex_dispatcher_backend(
         if not device_properties.major in [8, 9, 10]:
             if get_rank_safe() == 0:
                 logger.warning(
-                    f"HybridEP is only applicable to Hopper, B200, B300, GB200, and GB300 GPUs. "
+                    f"HybridEP is only applicable for Hopper, B200, B300, GB200, and GB300 GPUs. "
                     f"Current GPU: {device_properties.name}. Skipping HybridEP configuration."
                 )
             return
