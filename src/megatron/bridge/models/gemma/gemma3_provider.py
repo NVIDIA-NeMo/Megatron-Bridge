@@ -368,10 +368,16 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
         )
 
     @lru_cache(maxsize=32)
-    def forward(self, max_seq_len: int, offset: int = 0, packed_seq: bool = False) -> Tensor:
+    def forward(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+        cp_group: Optional[torch.distributed.ProcessGroup] = None,
+    ) -> Tensor:
         """Get global and local rope embedding"""
-        rope_global = super().forward(max_seq_len, offset, packed_seq)
-        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq)
+        rope_global = super().forward(max_seq_len, offset, packed_seq, cp_group)
+        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, cp_group)
         return rope_local, rope_global
 
 
