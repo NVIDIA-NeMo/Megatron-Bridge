@@ -342,7 +342,7 @@ def set_post_overrides(
         model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
     )
 
-    if compute_dtype == "bf16":
+    if compute_dtype == "bf16" and not recipe.ddp.use_megatron_fsdp:
         recipe.optimizer.use_precision_aware_optimizer = True
 
     tp = recipe.model.tensor_model_parallel_size
