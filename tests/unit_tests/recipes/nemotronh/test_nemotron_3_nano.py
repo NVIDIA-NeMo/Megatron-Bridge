@@ -99,7 +99,7 @@ class TestNemotron3NanoPretrain:
             mock=True,
             tensor_model_parallel_size=2,
             pipeline_model_parallel_size=2,
-            context_parallelism=2,
+            context_parallel_size=2,
             sequence_parallelism=False,
             expert_tensor_parallelism=2,
             expert_model_parallelism=4,
@@ -250,7 +250,7 @@ class TestNemotron3NanoFinetune:
         config = nemotron_3_nano_finetune_config(
             tensor_model_parallel_size=2,
             pipeline_model_parallel_size=2,
-            context_parallelism=2,
+            context_parallel_size=2,
             sequence_parallelism=True,
             expert_tensor_parallelism=2,
             expert_model_parallelism=4,
