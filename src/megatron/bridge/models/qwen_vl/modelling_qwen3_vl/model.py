@@ -103,7 +103,9 @@ class Qwen3VLModel(MegatronModule):
             scatter_embedding_sequence_parallel=False,
         )
         if pre_process:
-            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(self.language_model.decoder.layers), (
+            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
+                self.language_model.decoder.layers
+            ), (
                 "the deepstack_visual_embeds should on the first pp-stage of language model",
                 f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
                 f" {len(self.language_model.decoder.layers)} language model layers",
