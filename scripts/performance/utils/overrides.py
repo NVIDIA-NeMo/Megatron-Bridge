@@ -264,21 +264,32 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
     # Handle checkpoint configuration
-    if args.save_dir is not None:
+    # Note: max_steps is already set above, which sets train_iters
+    
+    # When save_interval is provided, enable checkpointing
+    if args.save_interval is not None:
+        recipe.checkpoint.save_interval = args.save_interval
+        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
+        
+        # Set save directory (use provided or default)
+        if args.save_dir is not None:
+            recipe.checkpoint.save = args.save_dir
+            logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        else:
+            recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
+            logger.info("Checkpoint save directory defaulting to: /nemo_run/code/nemo_experiments/default/checkpoints")
+    
+    # If only save_dir is provided without save_interval, still enable checkpointing
+    elif args.save_dir is not None:
         recipe.checkpoint.save = args.save_dir
         logger.info(f"Checkpoint save directory set to: {args.save_dir}")
-        # Default save_interval to train_iters if not specified
-        if args.save_interval is None:
-            recipe.checkpoint.save_interval = recipe.train.train_iters
-            logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
+        # Default save_interval to train_iters
+        recipe.checkpoint.save_interval = recipe.train.train_iters
+        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
     
     if args.load_dir is not None:
         recipe.checkpoint.load = args.load_dir
         logger.info(f"Checkpoint load directory set to: {args.load_dir}")
-    
-    if args.save_interval is not None:
-        recipe.checkpoint.save_interval = args.save_interval
-        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
     
     if args.most_recent_k is not None:
         recipe.checkpoint.most_recent_k = args.most_recent_k
