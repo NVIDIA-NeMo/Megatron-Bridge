@@ -43,8 +43,9 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
 
-    # Checkpoint save is now enabled by default in set_user_overrides
-    # Users can disable it via command-line arguments if needed
+    # Checkpoint save is disabled by default for performance benchmarks
+    # Users can enable it via command-line arguments
+    recipe.checkpoint.save = None
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
@@ -263,14 +264,13 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
     # Handle checkpoint configuration
-    # Enable checkpointing by default with default directory and interval
     if args.save_dir is not None:
         recipe.checkpoint.save = args.save_dir
         logger.info(f"Checkpoint save directory set to: {args.save_dir}")
-    else:
-        # Use default directory if not specified
-        recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
-        logger.info("Using default checkpoint directory: /nemo_run/code/nemo_experiments/default/checkpoints")
+        # Default save_interval to train_iters if not specified
+        if args.save_interval is None:
+            recipe.checkpoint.save_interval = recipe.train.train_iters
+            logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
     
     if args.load_dir is not None:
         recipe.checkpoint.load = args.load_dir
@@ -279,10 +279,6 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if args.save_interval is not None:
         recipe.checkpoint.save_interval = args.save_interval
         logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
-    else:
-        # Default to saving at end of training
-        recipe.checkpoint.save_interval = recipe.train.train_iters
-        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
     
     if args.most_recent_k is not None:
         recipe.checkpoint.most_recent_k = args.most_recent_k
