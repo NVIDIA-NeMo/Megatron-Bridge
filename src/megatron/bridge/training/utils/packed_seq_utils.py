@@ -46,7 +46,7 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     if cu_seqlens_argmin is not None:
         cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
         assert cu_seqlens_padded[cu_seqlens_argmin.item()] == -1  # cu_seqlens padding is -1
-    elif torch.min(cu_seqlens) == -1:
+    elif torch.min(cu_seqlens_padded) == -1:
         cu_seqlens_padded = cu_seqlens_padded[: torch.argmin(cu_seqlens_padded)]
 
     if cu_seqlens_unpadded is not None:
