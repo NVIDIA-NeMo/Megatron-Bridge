@@ -54,7 +54,7 @@ class ModuleParallelismConfig:
 
 
 @dataclass
-class MIMOConfig:
+class MimoParallelismConfig:
     """Configuration for multi-module (MIMO) heterogeneous parallelism."""
 
     llm_module_name: str

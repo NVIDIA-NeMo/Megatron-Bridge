@@ -35,8 +35,7 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.models.encoder_provider import EncoderProvider
-from megatron.bridge.training.mimo_config import MIMOConfig
+from megatron.bridge.training.mimo_config import MimoParallelismConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -1200,8 +1199,7 @@ class ConfigContainer(Container):
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
     model: GPTModelProvider | T5ModelProvider | MambaModelProvider
-    mimo: Optional[MIMOConfig] = None
-    encoder_providers: Optional[dict[str, EncoderProvider]] = None
+    mimo: Optional[MimoParallelismConfig] = None
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
@@ -1297,19 +1295,6 @@ class ConfigContainer(Container):
                     f"MIMO LLM parallelism mismatch for {attr_name}: "
                     f"model={actual}, mimo={expected}."
                 )
-
-        module_names = set(self.mimo.module_parallelisms.keys())
-        expected_encoders = module_names - {self.mimo.llm_module_name}
-        if expected_encoders:
-            if self.encoder_providers is None:
-                raise ValueError("encoder_providers must be set when MIMO encoders are configured.")
-            provided = set(self.encoder_providers.keys())
-            unknown = provided - expected_encoders
-            missing = expected_encoders - provided
-            if unknown:
-                raise ValueError(f"encoder_providers contains unknown modules: {sorted(unknown)}")
-            if missing:
-                raise ValueError(f"encoder_providers missing modules: {sorted(missing)}")
 
         if self.train.global_batch_size is None:
             raise ValueError("train.global_batch_size must be set when MIMO is enabled.")
