@@ -40,6 +40,13 @@ from megatron.core.distributed import (
     TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
@@ -162,6 +169,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         if not parallel_state.is_initialized():
             print("Model parallel not initialized, initializing...")
             self.initialize_model_parallel(seed=0)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        # Providers (GPT, Mamba, Gemma, etc.) expect pg_collection on self for PP/TP role checks.
+        setattr(self, "_pg_collection", pg_collection)
 
         # Convert list of hooks to a single composed callable
         if isinstance(pre_wrap_hook, list):
@@ -191,6 +201,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
+            pg_collection=pg_collection,
         )
 
         if final_post_wrap_hook:
@@ -475,6 +486,8 @@ def get_model(
     ]
     | None = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -518,71 +531,66 @@ def get_model(
         model_provider.bf16 = bf16
 
     model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
-    create_model_stream = torch.cuda.Stream()
-    # make sure current stream is complete before starting create_model_stream
-    create_model_stream.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(create_model_stream):
-        if init_model_with_meta_device:
-            model_provider.init_model_with_meta_device = True
-            with torch.device("meta"):
-                model = _create_model(model_provider, model_type)
-        else:
-            model = _create_model(model_provider, model_type)
+    if init_model_with_meta_device:
+        model_provider.init_model_with_meta_device = True
+        with torch.device("meta"):
+            model = _create_model(model_provider, model_type, pg_collection=pg_collection)
+    else:
+        model = _create_model(model_provider, model_type, pg_collection=pg_collection)
 
-        if pre_wrap_hook:
-            if isinstance(pre_wrap_hook, list):
-                # Execute hooks in order
-                for hook in pre_wrap_hook:
-                    if not callable(hook):
-                        raise RuntimeError("All elements in pre_wrap_hook list must be callable")
-                    _model = hook(model)
-                    if _model is not None:
-                        model = _model
-            else:
-                if not callable(pre_wrap_hook):
-                    raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
-                _model = pre_wrap_hook(model)
+    if pre_wrap_hook:
+        if isinstance(pre_wrap_hook, list):
+            # Execute hooks in order
+            for hook in pre_wrap_hook:
+                if not callable(hook):
+                    raise RuntimeError("All elements in pre_wrap_hook list must be callable")
+                _model = hook(model)
                 if _model is not None:
                     model = _model
+        else:
+            if not callable(pre_wrap_hook):
+                raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
+            _model = pre_wrap_hook(model)
+            if _model is not None:
+                model = _model
 
-        # Set tensor model parallel attributes if not set
-        # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
+    # Set tensor model parallel attributes if not set
+    # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+    _print_num_params(model, pg_collection=pg_collection)
+
+    model_config = get_model_config(model[0])
+
+    # GPU allocation.
+    # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
+    # in the fully_shard function of FSDP2 instead.
+    if (
+        not use_torch_fsdp2
+        and not model_config.use_cpu_initialization
+        and not model_config.init_model_with_meta_device
+    ):
         for model_module in model:
-            for param in model_module.parameters():
-                tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+            model_module.cuda(torch.cuda.current_device())
 
-        _print_num_params(model)
+    if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
+        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
 
-        model_config = get_model_config(model[0])
+    if correct_amax_history_if_needed is not None:
+        correct_amax_history_if_needed(model)
 
-        # GPU allocation.
-        # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
-        # in the fully_shard function of FSDP2 instead.
-        if (
-            not use_torch_fsdp2
-            and not model_config.use_cpu_initialization
-            and not model_config.init_model_with_meta_device
-        ):
-            for model_module in model:
-                model_module.cuda(torch.cuda.current_device())
-
-        if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-            model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
-
-        if correct_amax_history_if_needed is not None:
-            correct_amax_history_if_needed(model)
-
-        if wrap_with_ddp:
-            model = _ddp_wrap(
-                model,
-                data_parallel_random_init,
-                ddp_config,
-                overlap_param_gather_with_optimizer_step,
-                use_megatron_fsdp=use_megatron_fsdp,
-                use_torch_fsdp2=use_torch_fsdp2,
-            )
-    # Critical: ensure side-stream work completes before touching params on default stream
-    torch.cuda.current_stream().wait_stream(create_model_stream)
+    if wrap_with_ddp:
+        model = _ddp_wrap(
+            model,
+            data_parallel_random_init,
+            ddp_config,
+            overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=use_megatron_fsdp,
+            use_torch_fsdp2=use_torch_fsdp2,
+            pg_collection=pg_collection,
+        )
 
     return model
 
@@ -590,6 +598,7 @@ def get_model(
 def _create_model(
     model_provider: ModelProviderMixin,
     model_type: ModelType,
+    pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
     """Create model instances with appropriate pipeline parallel configuration.
 
@@ -604,18 +613,16 @@ def _create_model(
     Returns:
         list: List of model instances. Multiple instances for VPP, otherwise single
     """
-
-    if (
-        parallel_state.get_pipeline_model_parallel_world_size() > 1
-        and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
-    ):
+    vp_size = getattr(model_provider, "virtual_pipeline_model_parallel_size", None)
+    pp_group = pg_collection.pp
+    if (pp_group.size() > 1) and (vp_size is not None):
         assert model_type != ModelType.encoder_and_decoder, (
             "Interleaved schedule not supported for model with both encoder and decoder"
         )
         model = []
-        for i in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
-            pre_process = parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=i)
-            post_process = parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=i)
+        for i in range(vp_size):
+            pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
+            post_process = is_vp_last_stage(vp_stage=i, vp_size=vp_size) and is_pp_last_stage(pp_group)
             this_model = model_provider.provide(
                 pre_process=pre_process,
                 post_process=post_process,
@@ -624,15 +631,10 @@ def _create_model(
             this_model.model_type = model_type
             model.append(this_model)
     else:
-        pre_process = parallel_state.is_pipeline_first_stage()
-        post_process = parallel_state.is_pipeline_last_stage()
+        pre_process = is_pp_first_stage(pp_group)
+        post_process = is_pp_last_stage(pp_group)
         if model_type == ModelType.encoder_and_decoder:
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-                rank = parallel_state.get_pipeline_model_parallel_rank()
-                first_decoder_rank = parallel_state.get_pipeline_model_parallel_decoder_start()
-                world_size = parallel_state.get_pipeline_model_parallel_world_size()
-                pre_process = rank == 0 or rank == first_decoder_rank
-                post_process = (rank == (first_decoder_rank - 1)) or (rank == (world_size - 1))
+            # Deprecated in upstream; simplify to first/last stage semantics
             model = model_provider.provide()
         else:
             model = model_provider.provide(
@@ -662,6 +664,8 @@ def _ddp_wrap(
     overlap_param_gather_with_optimizer_step: bool,
     use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
     """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
 
@@ -699,6 +703,7 @@ def _ddp_wrap(
                 # Turn off bucketing for model_chunk 2 onwards, since communication for these
                 # model chunks is overlapped with compute anyway.
                 disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
+                pg_collection=pg_collection,
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
@@ -713,7 +718,7 @@ def _ddp_wrap(
     return model
 
 
-def _print_num_params(model: list[MegatronModule]) -> None:
+def _print_num_params(model: list[MegatronModule], pg_collection: ProcessGroupCollection) -> None:
     """Print the number of parameters in the model on rank 0.
 
     Only prints on data parallel rank 0 to avoid duplicate output.
@@ -722,11 +727,11 @@ def _print_num_params(model: list[MegatronModule]) -> None:
     Args:
         model: List of model modules to count parameters from
     """
-    if parallel_state.get_data_parallel_rank() == 0 and parallel_state.get_context_parallel_rank() == 0:
+    if (pg_collection.dp.rank() == 0) and (pg_collection.cp.rank() == 0):
         print(
             " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
-                parallel_state.get_tensor_model_parallel_rank(),
-                parallel_state.get_pipeline_model_parallel_rank(),
+                pg_collection.tp.rank(),
+                pg_collection.pp.rank(),
                 sum([sum([p.nelement() for p in model_module.parameters()]) for model_module in model]),
             ),
             flush=True,

@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 import pytest
 
-from megatron.bridge.models.gpt_provider import GPTDistillationProvider
+from megatron.bridge.models.gpt_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import (
     llama32_1b_pretrain_config,
     llama32_3b_pretrain_config,
@@ -88,22 +88,21 @@ def run_distill_recipe_test(
     shared_base_dir = broadcast_path(tmp_path)
 
     try:
-        # Load student config and wrap it with GPTDistillationProvider
+        # Load student config
         config: ConfigContainer = student_config_func(
             dir=str(shared_base_dir),
             name=f"{recipe_name}_functional_test",
             mock=True,
             load_weights=True,
         )
-        config.model.__class__ = GPTDistillationProvider
-
-        # Load teacher config and add to student config
+        # Load teacher config
         teacher_config = teacher_config_func(
             dir=str(shared_base_dir), name=f"{recipe_name}_teacher_functional_test", mock=True
         )
-        config.model.teacher = teacher_config.model
+        # Combine into a distillation provider
+        config.model = convert_to_distillation_provider(config.model, teacher_config.model)
 
-        # Set default distillation
+        # Set default distillation configuration
         config.model.kd_config = ModelOptDistillConfig()
 
         config.train.train_iters = 10
