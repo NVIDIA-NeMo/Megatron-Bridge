@@ -245,9 +245,6 @@ def parse_cli_args():
     checkpointing_args.add_argument("--load_dir", type=str, help="Directory to load checkpoints")
     checkpointing_args.add_argument("--save_interval", type=int, help="Number of iterations between checkpoint saves")
     checkpointing_args.add_argument("--most_recent_k", type=int, help="Number of latest checkpoints to keep")
-    checkpointing_args.add_argument(
-        "--save_config_filepath", type=str, help="Path to save the task configuration file"
-    )
 
     # Data
     data_args = parser.add_argument_group("Data arguments")
@@ -631,6 +628,7 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")

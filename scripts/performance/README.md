@@ -88,7 +88,6 @@ The following line shows an example of how you can launch a pre-training benchma
 - `--load_dir`: Directory to load checkpoints.
 - `--save_interval`: Number of iterations between checkpoint saves.
 - `--most_recent_k`: Number of latest checkpoints to keep.
-- `--save_config_filepath`: Path to save the task configuration file.
 
 #### Data arguments
 
@@ -170,6 +169,7 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-wde/--wandb_entity_name`: Weights & Biases entity name.
 - `-wdj/--wandb_experiment_name`: Weights & Biases experiment/run name.
 - `-wds/--wandb_save_dir`: Weights & Biases save directory.
+- - `--save_config_filepath`: Path to save the task configuration file.
 
 #### Testing arguments
 
