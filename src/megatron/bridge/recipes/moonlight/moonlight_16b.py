@@ -657,7 +657,6 @@ def _moonlight_finetune_common(
         hf_tokenizer_kwargs={"trust_remote_code": True},
     )
 
-    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
     cfg = ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -680,7 +679,7 @@ def _moonlight_finetune_common(
             average_in_collective=True,
             use_distributed_optimizer=True,
         ),
-        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
+        dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

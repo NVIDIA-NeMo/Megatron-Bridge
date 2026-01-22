@@ -486,8 +486,6 @@ def _glm45_finetune_common(
         tokenizer_model=hf_path,
     )
 
-    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
-
     return ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -500,7 +498,7 @@ def _glm45_finetune_common(
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
         ddp=DistributedDataParallelConfig(check_for_nan_in_grad=True, use_megatron_fsdp=use_megatron_fsdp),
-        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
+        dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

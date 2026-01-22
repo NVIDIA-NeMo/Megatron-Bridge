@@ -991,10 +991,6 @@ def _llama3_finetune_common(
         tokenizer_model=hf_path,
     )
     ddp_cfg = DistributedDataParallelConfig(check_for_nan_in_grad=True)
-    pad_seq_to_mult = (
-        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
-    )
-
     return ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -1010,7 +1006,7 @@ def _llama3_finetune_common(
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
         ddp=ddp_cfg,
-        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
+        dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

@@ -584,10 +584,6 @@ def _nemotronh_finetune_common(
         hf_tokenizer_kwargs=hf_tokenizer_kwargs,
     )
 
-    pad_seq_to_mult = (
-        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
-    )
-
     cfg = ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -606,7 +602,7 @@ def _nemotronh_finetune_common(
             overlap_param_gather=False,
             use_distributed_optimizer=True,
         ),
-        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
+        dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

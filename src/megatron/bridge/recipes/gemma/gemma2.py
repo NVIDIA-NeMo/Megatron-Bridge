@@ -422,10 +422,8 @@ def _gemma2_finetune_common(
     if not is_full_sft:
         opt_cfg.use_distributed_optimizer = False
 
-    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
-
     # Dataset config
-    dataset_config = default_squad_config(seq_length, packed_sequence, pad_seq_to_mult)
+    dataset_config = default_squad_config(seq_length, packed_sequence)
 
     # Logger
     logger_cfg = LoggerConfig(
