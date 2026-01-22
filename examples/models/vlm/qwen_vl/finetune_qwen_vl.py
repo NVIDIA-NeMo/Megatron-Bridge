@@ -216,14 +216,27 @@ def main() -> None:
     use_preloaded_flag = bool(args.data_path) or bool(getattr(args, "use_preloaded", False))
     dataset_type = args.dataset_type or ("preloaded" if use_preloaded_flag else "mock")
 
-    cfg: ConfigContainer = pretrain_config(
-        dataset_type=dataset_type,
-        train_data_path=args.data_path,
-        valid_data_path=None,
-        test_data_path=None,
-        image_folder=args.image_folder,
-        pretrained_checkpoint=args.pretrained_checkpoint,
-    )
+    peft_value = None
+    for override in cli_overrides:
+        if override.startswith("peft=") or override.startswith("+peft="):
+            peft_value = override.split("=", 1)[1]
+            break
+
+    # Build recipe kwargs
+    recipe_kwargs = {
+        "dataset_type": dataset_type,
+        "train_data_path": args.data_path,
+        "valid_data_path": None,
+        "test_data_path": None,
+        "image_folder": args.image_folder,
+        "pretrained_checkpoint": args.pretrained_checkpoint,
+    }
+
+    # Add peft parameter if specified
+    if peft_value is not None:
+        recipe_kwargs["peft"] = peft_value
+
+    cfg: ConfigContainer = pretrain_config(**recipe_kwargs)
     logger.info("Loaded base configuration")
 
     if get_rank_safe() == 0:

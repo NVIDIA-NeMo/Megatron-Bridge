@@ -86,6 +86,35 @@ Note:
 - For dataset formats and additional information, refer to the [Qwen2.5-VL documentation]
 - See the full script with examples at [`examples/models/vlm/qwen_vl/finetune_qwen_vl.py`](../../../examples/models/vlm/qwen_vl/finetune_qwen_vl.py)
 
+### PEFT (Parameter-Efficient Fine-Tuning)
+
+Qwen3-VL supports PEFT methods including LoRA and DoRA for memory-efficient training. PEFT trains only adapter parameters (~1-2% of model), significantly reducing memory requirements and enabling faster training.
+
+**LoRA with 8B Dense Model (1 GPU):**
+```bash
+torchrun --nproc-per-node=1 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
+--pretrained-checkpoint $MEGATRON_MODEL_PATH \
+--recipe qwen3_vl_8b_finetune_config \
+--dataset-type hf \
++peft=lora \
+checkpoint.save=$SAVE_DIR/<experiment name>
+```
+
+**LoRA with 30B MoE Model (8 GPUs with Expert Parallelism):**
+```bash
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
+--pretrained-checkpoint $MEGATRON_MODEL_PATH \
+--recipe qwen3_vl_30b_a3b_finetune_config \
+--dataset-type hf \
++peft=lora \
+checkpoint.save=$SAVE_DIR/<experiment name>
+```
+
+**DoRA Training:**
+```bash
++peft=dora
+```
+
 ## Hugging Face Model Cards
 - Qwen3-VL-8B: `https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct`
 - Qwen3-VL-30B-A3B (MoE): `https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct`
