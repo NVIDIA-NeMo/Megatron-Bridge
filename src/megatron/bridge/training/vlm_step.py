@@ -250,7 +250,8 @@ def forward_step(
     if data_format == "thd":
         batch_size = tokens.shape[0]
         # construct packed_seq_params for thd data_format.
-        seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * cur_len
+        # this seqlens_in_batch will affect the calculation of attention, we align this to verl. 
+        seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
         seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
 
         cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
