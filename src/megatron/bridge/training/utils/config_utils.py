@@ -35,41 +35,25 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound="_ConfigContainerBase")
 
 
-@lru_cache(maxsize=128)
-def _get_init_false_fields(target_class: type) -> frozenset[str]:
-    """Get the set of field names with init=False for a dataclass.
+def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Apply backward compatibility transformations to run config.
+
+    This function handles dataclass config fields that should not be passed to
+    the constructor when loading older checkpoints. It automatically detects
+    init=False fields by inspecting the target class.
+
+    The entire config is sanitized recursively to handle init=False fields in any part of the configuration hierarchy.
 
     Args:
-        target_class: A dataclass type to inspect.
+        config_dict: The full run configuration dictionary.
 
     Returns:
-        A frozenset of field names that have init=False.
+        The config dictionary with backward compatibility fixes applied.
     """
-    if not is_dataclass(target_class):
-        return frozenset()
-
-    return frozenset(f.name for f in dataclass_fields(target_class) if not f.init)
+    return sanitize_dataclass_config(config_dict)
 
 
-def _resolve_target_class(target: str) -> Optional[type]:
-    """Resolve a _target_ string to a class.
-
-    Args:
-        target: A fully qualified class path (e.g., "module.submodule.ClassName").
-
-    Returns:
-        The resolved class, or None if resolution fails.
-    """
-    try:
-        module_path, class_name = target.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name, None)
-    except (ValueError, ImportError, AttributeError) as e:
-        logger.debug(f"Could not resolve target '{target}': {e}")
-        return None
-
-
-def sanitize_dataclass_config(config: dict[str, Any], _visited: Optional[set] = None) -> dict[str, Any]:
+def sanitize_dataclass_config(config: dict[str, Any], _visited: set | None = None) -> dict[str, Any]:
     """Remove init=False fields from a dataclass config dict for backward compatibility.
 
     This function automatically detects fields with init=False by inspecting the
@@ -88,7 +72,6 @@ def sanitize_dataclass_config(config: dict[str, Any], _visited: Optional[set] = 
     if not isinstance(config, dict):
         return config
 
-    # Prevent infinite recursion on circular references
     if _visited is None:
         _visited = set()
     config_id = id(config)
@@ -118,35 +101,45 @@ def sanitize_dataclass_config(config: dict[str, Any], _visited: Optional[set] = 
         if isinstance(value, dict):
             value = sanitize_dataclass_config(value, _visited)
         elif isinstance(value, list):
-            value = [
-                sanitize_dataclass_config(item, _visited) if isinstance(item, dict) else item for item in value
-            ]
+            value = [sanitize_dataclass_config(item, _visited) if isinstance(item, dict) else item for item in value]
 
         sanitized[key] = value
 
     return sanitized
 
 
-def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, Any]:
-    """Apply backward compatibility transformations to run config.
-
-    This function handles dataclass config fields that should not be passed to
-    the constructor when loading older checkpoints. It automatically detects
-    init=False fields by inspecting the target class.
+@lru_cache(maxsize=128)
+def _get_init_false_fields(target_class: type) -> frozenset[str]:
+    """Get the set of field names with init=False for a dataclass.
 
     Args:
-        config_dict: The full run configuration dictionary.
+        target_class: A dataclass type to inspect.
 
     Returns:
-        The config dictionary with backward compatibility fixes applied.
+        A frozenset of field names that have init=False.
     """
-    if not isinstance(config_dict, dict):
-        return config_dict
+    if not is_dataclass(target_class):
+        return frozenset()
 
-    if "model" in config_dict and isinstance(config_dict["model"], dict):
-        config_dict["model"] = sanitize_dataclass_config(config_dict["model"])
+    return frozenset(f.name for f in dataclass_fields(target_class) if not f.init)
 
-    return config_dict
+
+def _resolve_target_class(target: str) -> type | None:
+    """Resolve a _target_ string to a class.
+
+    Args:
+        target: A fully qualified class path (e.g., "module.submodule.ClassName").
+
+    Returns:
+        The resolved class, or None if resolution fails.
+    """
+    try:
+        module_path, class_name = target.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name, None)
+    except (ValueError, ImportError, AttributeError) as e:
+        logger.warning(f"Could not resolve target '{target}': {e}")
+        return None
 
 
 @dataclass(kw_only=True)
