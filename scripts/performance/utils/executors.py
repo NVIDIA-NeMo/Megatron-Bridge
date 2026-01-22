@@ -37,13 +37,13 @@ bash -c '{{ pre_cmds }} {{ command }}'
 
 PERF_ENV_VARS = {
     "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
-    "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
+    "TRANSFORMERS_OFFLINE": "1",  # Disable online downloads from HuggingFace
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
-    "HF_HUB_OFFLINE": "0",
+    "HF_HUB_OFFLINE": "1",
 }
 
 
@@ -103,7 +103,9 @@ def slurm_executor(
         PERF_ENV_VARS["NEMO_HOME"] = nemo_home
         mounts.extend([f"{nemo_home}:{nemo_home}"])
     if hf_token is not None:
-        PERF_ENV_VARS.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
+        PERF_ENV_VARS["HF_TOKEN"] = hf_token
+        PERF_ENV_VARS["TRANSFORMERS_OFFLINE"] = "0"
+        PERF_ENV_VARS["HF_HUB_OFFLINE"] = "0"
 
     PERF_ENV_VARS.update(custom_env_vars)
     mounts.extend(custom_mounts)
