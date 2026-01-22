@@ -94,10 +94,8 @@ def _gpt_provider(
         config = _transformer_config_from_args(args)
 
     if args.experimental_attention_variant is not None:
-        transformer_layer_spec = (
-            get_transformer_block_with_experimental_attention_variant_spec(
-                config=config, vp_stage=vp_stage
-            )
+        transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
+            config=config, vp_stage=vp_stage
         )
     elif args.num_experts:
         # Define the decoder block spec

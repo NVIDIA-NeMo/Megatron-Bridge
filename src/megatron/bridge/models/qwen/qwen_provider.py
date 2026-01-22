@@ -14,7 +14,6 @@
 
 import logging
 from dataclasses import dataclass
-from functools import partial
 from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
