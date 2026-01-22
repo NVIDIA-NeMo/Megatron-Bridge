@@ -108,7 +108,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=1024,
-    tensor_model_parallel_size=2,
+    tensor_model_parallel_size=4,  # TODO: TP=2 is OOM. Resolve it and revert it to recover perf
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
