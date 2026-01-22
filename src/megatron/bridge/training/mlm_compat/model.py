@@ -93,7 +93,7 @@ def _gpt_provider(
     if config is None:
         config = _transformer_config_from_args(args)
 
-    if args.experimental_attention_variant is not None:
+    if getattr(args, "experimental_attention_variant", None) is not None:
         transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
             config=config, vp_stage=vp_stage
         )
