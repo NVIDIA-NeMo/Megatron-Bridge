@@ -231,6 +231,9 @@ def _gpt_oss_common(
     if account_for_loss_in_pipeline_split:
         model_cfg.account_for_loss_in_pipeline_split = True
     model_cfg.cp_comm_type = cp_comm_type
+    if context_parallel_size > 1:
+        model_cfg.calculate_per_token_loss = True
+        model_cfg.cp_comm_type = "a2a"  # only a2a cp is supported for sink attention.
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -286,7 +289,7 @@ def _gpt_oss_common(
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
-            average_in_collective=True,
+            average_in_collective=context_parallel_size == 1,
             use_distributed_optimizer=True,
             use_megatron_fsdp=use_megatron_fsdp,
         ),
