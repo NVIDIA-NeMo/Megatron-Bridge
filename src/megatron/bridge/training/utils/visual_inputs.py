@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import Optional
 
 import torch
 
@@ -29,10 +28,10 @@ class Qwen2_5_VLVisualInputs:
     """
 
     # Image tensors, e.g., Qwen2.5-VL processor output.
-    pixel_values: Optional[torch.Tensor] = None
+    pixel_values: torch.Tensor | None = None
 
     # Per-image temporal/spatial grid metadata (T, H, W) for videos, Qwen2.5-VL.
-    image_grid_thw: Optional[torch.Tensor] = None
+    image_grid_thw: torch.Tensor | None = None
 
     def as_model_kwargs(self) -> dict[str, torch.Tensor]:
         """Return a mapping of non-None fields suitable for model forward kwargs."""

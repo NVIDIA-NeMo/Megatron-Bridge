@@ -14,7 +14,6 @@
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import pytest
 import torch
@@ -165,7 +164,7 @@ def create_base_dataset_config(seq_length: int, **kwargs) -> MockGPTDatasetConfi
     return MockGPTDatasetConfig(**base_config)
 
 
-def create_base_logger_config(tensorboard_dir: Optional[str] = None, log_interval: int = 5, **kwargs) -> LoggerConfig:
+def create_base_logger_config(tensorboard_dir: str | None = None, log_interval: int = 5, **kwargs) -> LoggerConfig:
     """Create a standardized logger configuration."""
     base_config = {
         "log_interval": log_interval,
@@ -188,7 +187,7 @@ def create_base_tokenizer_config(**kwargs) -> TokenizerConfig:
 
 
 def create_base_checkpoint_config(
-    checkpoint_dir: Optional[str] = None, load_dir: Optional[str] = None, save_interval: Optional[int] = None, **kwargs
+    checkpoint_dir: str | None = None, load_dir: str | None = None, save_interval: int | None = None, **kwargs
 ) -> CheckpointConfig:
     """Create a standardized checkpoint configuration."""
     base_config = {
@@ -209,10 +208,10 @@ def create_base_checkpoint_config(
 def create_fsdp_config_container(
     seq_length: int,
     train_iters: int,
-    checkpoint_dir: Optional[str] = None,
-    load_dir: Optional[str] = None,
-    save_interval: Optional[int] = None,
-    tensorboard_dir: Optional[str] = None,
+    checkpoint_dir: str | None = None,
+    load_dir: str | None = None,
+    save_interval: int | None = None,
+    tensorboard_dir: str | None = None,
     overlap_param_gather: bool = True,
     **overrides,
 ) -> ConfigContainer:

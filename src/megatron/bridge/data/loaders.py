@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import json
-from typing import Any, Callable, Iterable, Iterator, Optional, Union
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any
 
 import torch
 from megatron.core.datasets.utils import get_blend_from_list
@@ -28,13 +29,13 @@ from megatron.bridge.utils.common_utils import print_rank_0
 
 
 def get_blend_and_blend_per_split(
-    data_paths: Optional[list[str]] = None,
-    data_args_path: Optional[str] = None,
-    per_split_data_args_path: Optional[str] = None,
-    train_data_paths: Optional[list[str]] = None,
-    valid_data_paths: Optional[list[str]] = None,
-    test_data_paths: Optional[list[str]] = None,
-) -> tuple[Optional[list[str]], Optional[list[list[str]]]]:
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    per_split_data_args_path: str | None = None,
+    train_data_paths: list[str] | None = None,
+    valid_data_paths: list[str] | None = None,
+    test_data_paths: list[str] | None = None,
+) -> tuple[list[str] | None, list[list[str]] | None]:
     """Determine dataset blends from command-line arguments or config files.
 
     Parses different ways dataset paths/weights can be specified (single list,
@@ -161,7 +162,7 @@ def build_train_valid_test_data_loaders(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
-) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
+) -> tuple[DataLoader | None, DataLoader | None, DataLoader | None]:
     """Build train, validation, and test data loaders.
 
     First builds the datasets using the provided provider function, then constructs
@@ -283,7 +284,7 @@ def build_train_valid_test_data_iterators(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
-) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
+) -> tuple[RerunDataIterator | None, RerunDataIterator | None, RerunDataIterator | None]:
     """Build train, validation, and test data iterators.
 
     Builds the data loaders first, then wraps them in appropriate iterators
@@ -353,9 +354,9 @@ def setup_data_iterators(
     train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
 ) -> tuple[
-    Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
-    Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
-    Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
+    RerunDataIterator | None | list[RerunDataIterator | None],
+    RerunDataIterator | None | list[RerunDataIterator | None],
+    RerunDataIterator | None | list[RerunDataIterator | None],
 ]:
     """Set up data iterators, handling virtual pipeline parallelism if enabled.
 

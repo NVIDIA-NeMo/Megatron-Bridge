@@ -66,7 +66,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Tuple
 
 import torch
 from omegaconf import OmegaConf
@@ -95,7 +94,7 @@ DEFAULT_CONFIG_FILENAME: str = "quantized_llama3_8b_pretrain_override_example.ya
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
-def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+def parse_cli_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
         description="Pretrain Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",

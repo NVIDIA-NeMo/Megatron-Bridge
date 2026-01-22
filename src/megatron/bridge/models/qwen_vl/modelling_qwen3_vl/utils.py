@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Optional
-
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -76,11 +74,11 @@ def get_rope_index(
     image_token_id: int,
     video_token_id: int,
     vision_start_token_id: int,
-    input_ids: Optional[torch.LongTensor] = None,
-    image_grid_thw: Optional[torch.LongTensor] = None,
-    video_grid_thw: Optional[torch.LongTensor] = None,
-    attention_mask: Optional[torch.Tensor] = None,
-    packed_seq_params: Optional[PackedSeqParams] = None,
+    input_ids: torch.LongTensor | None = None,
+    image_grid_thw: torch.LongTensor | None = None,
+    video_grid_thw: torch.LongTensor | None = None,
+    attention_mask: torch.Tensor | None = None,
+    packed_seq_params: PackedSeqParams | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
 

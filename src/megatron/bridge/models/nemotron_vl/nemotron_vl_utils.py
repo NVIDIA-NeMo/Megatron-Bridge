@@ -16,7 +16,6 @@ import base64
 import io
 import mimetypes
 import os
-from typing import Dict, List
 
 import torch
 from PIL import Image
@@ -199,11 +198,11 @@ def pil_image_from_base64(b64_str: str) -> Image.Image:
 
 
 def adjust_image_tokens(
-    input_ids: torch.Tensor | Dict[str, torch.Tensor],
-    num_tiles: int | List[int],
+    input_ids: torch.Tensor | dict[str, torch.Tensor],
+    num_tiles: int | list[int],
     img_start_token_id: int,
     img_end_token_id: int,
-) -> torch.Tensor | Dict[str, torch.Tensor]:
+) -> torch.Tensor | dict[str, torch.Tensor]:
     """
     Ensures the input_ids tensor contains the correct number of <image> tokens as specified by num_tiles.
     This adjustment is necessary to bridge the gap between from HF processor to Megatron LLaVAModel.

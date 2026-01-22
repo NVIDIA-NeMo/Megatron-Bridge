@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from dataclasses import fields
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any
 
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
@@ -156,7 +157,7 @@ def finetuning_train_valid_test_datasets_provider(
     return train_ds, valid_ds, test_ds
 
 
-_REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig]], Callable] = {
+_REGISTRY: dict[type[FinetuningDatasetConfig | BlendedMegatronDatasetConfig | HFDatasetConfig], Callable] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     HFDatasetConfig: hf_train_valid_test_datasets_provider,
@@ -165,7 +166,7 @@ _REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig
 
 
 def get_dataset_provider(
-    dataset_config: Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig, DatasetProvider],
+    dataset_config: FinetuningDatasetConfig | BlendedMegatronDatasetConfig | HFDatasetConfig | DatasetProvider,
 ) -> Callable:
     """Get the appropriate dataset provider function based on the config type.
 
@@ -183,8 +184,8 @@ def get_dataset_provider(
         def protocol_adapter(
             train_val_test_num_samples: list[int],
             config: DatasetProvider,
-            tokenizer: Optional[MegatronTokenizer] = None,
-        ) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            tokenizer: MegatronTokenizer | None = None,
+        ) -> tuple[Any | None, Any | None, Any | None]:
             """Adapter function that bridges the protocol interface with the legacy interface."""
             context = DatasetBuildContext(
                 train_samples=train_val_test_num_samples[0],

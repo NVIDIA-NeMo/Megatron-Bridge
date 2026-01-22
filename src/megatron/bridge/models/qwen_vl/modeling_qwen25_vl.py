@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import types
-from typing import Optional
 
 import torch
 import transformers
@@ -80,7 +79,7 @@ class Qwen25VLModel(MegatronModule):
         scatter_embedding_sequence_parallel (bool, optional):
             Whether embeddings should be scattered across sequence parallel
             region or not. Defaults to True.
-        seq_len_interpolation_factor (Optional[float], optional):
+        seq_len_interpolation_factor (float | None, optional):
             scale of linearly interpolating RoPE for longer sequences.
             The value must be a float larger than 1.0. Defaults to None.
         pg_collection (ProcessGroupCollection): Model communication process groups
@@ -91,7 +90,7 @@ class Qwen25VLModel(MegatronModule):
         config: GPTModelProvider,
         pre_process: bool = True,
         post_process: bool = True,
-        vp_stage: Optional[int] = None,
+        vp_stage: int | None = None,
     ) -> None:
         super().__init__(config=config)
 
@@ -133,22 +132,22 @@ class Qwen25VLModel(MegatronModule):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        pixel_values: Optional[torch.Tensor] = None,
-        pixel_values_videos: Optional[torch.FloatTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
-        second_per_grid_ts: Optional[torch.Tensor] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
+        image_grid_thw: torch.LongTensor | None = None,
+        video_grid_thw: torch.LongTensor | None = None,
+        second_per_grid_ts: torch.Tensor | None = None,
         labels: Tensor = None,
         inference_context: BaseInferenceContext = None,
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
-        runtime_gather_output: Optional[bool] = None,
+        runtime_gather_output: bool | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
-        loss_mask: Optional[Tensor] = None,
+        inference_params: BaseInferenceContext | None = None,
+        loss_mask: Tensor | None = None,
     ) -> Tensor:
         r"""
         image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):

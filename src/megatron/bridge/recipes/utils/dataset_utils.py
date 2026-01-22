@@ -12,25 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple
 
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
 
 
-_BLEND_TYPE = Optional[Tuple[List[str], Optional[List[float]]]]
-_BLEND_PER_SPLIT_TYPE = Optional[List[Optional[Tuple[List[str], Optional[List[float]]]]]]
-_SPLIT_TYPE = Optional[str]
+_BLEND_TYPE = tuple[list[str], list[float] | None] | None
+_BLEND_PER_SPLIT_TYPE = list[tuple[list[str], list[float] | None] | None] | None
+_SPLIT_TYPE = str | None
 
 
 def get_blend_fields_from_data_paths(
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
-) -> Tuple[_BLEND_TYPE, _BLEND_PER_SPLIT_TYPE, _SPLIT_TYPE]:
+) -> tuple[_BLEND_TYPE, _BLEND_PER_SPLIT_TYPE, _SPLIT_TYPE]:
     """
     Common configuration logic for blend, blend_per_split, split dataset config fields.
 
@@ -41,12 +40,12 @@ def get_blend_fields_from_data_paths(
     list of weights and prefixes, e.g. ["30", "path/to/dataset_1_prefix", "70", "path/to/dataset_2_prefix"]
 
     Args:
-        data_paths (Optional[List[str]]): List of paths to dataset files.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
+        data_paths (list[str] | None): List of paths to dataset files.
+        data_args_path (str | None): Path to file containing data arguments.
+        train_data_path (list[str] | None): List of training data paths.
+        valid_data_path (list[str] | None): List of validation data paths.
+        test_data_path (list[str] | None): List of test data paths.
+        per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
 
     Returns:

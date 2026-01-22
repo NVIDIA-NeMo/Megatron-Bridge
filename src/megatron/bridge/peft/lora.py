@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -55,7 +55,7 @@ class LoRA(PEFT, ModuleMatcher):
     This class facilitates the application of LoRA to specific modules within the model architecture.
 
     Args:
-        target_modules (List[str], optional): A list of module names to apply LoRA to.
+        target_modules (list[str], optional): A list of module names to apply LoRA to.
             Defaults to all linear layers ['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2'].
                 - 'linear_qkv': Apply LoRA to the fused linear layer used for query, key, and value projections
                                 in self-attention.
@@ -65,7 +65,7 @@ class LoRA(PEFT, ModuleMatcher):
             Target modules can also contain wildcards. For example, you can specify
                 target_modules=['*.layers.0.*.linear_qkv', '*.layers.1.*.linear_qkv'] to add LoRA to only linear_qkv
                 on the first two layers.
-        exclude_modules (List[str], optional): A list of module names not to apply LoRa to. It will
+        exclude_modules (list[str], optional): A list of module names not to apply LoRa to. It will
             match all nn.Linear & nn.Linear-adjacent modules whose name does not match any string in
             exclude_modules. If used, will require target_modules to be empty list or None.
         dim (int): Dimension of the low-rank projection space. Defaults to 32.
@@ -79,7 +79,7 @@ class LoRA(PEFT, ModuleMatcher):
         lora_dtype (torch.dtype): Parameter data type for LoRA weights. Default None (will use model's dtype).
     """
 
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=lambda: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
     )
     dim: int = 32
@@ -91,7 +91,7 @@ class LoRA(PEFT, ModuleMatcher):
     a2a_experimental: bool = False
     lora_dtype: torch.dtype = None
 
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(self, module: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
         """
         Applies LoRA to a specific module within the model architecture.
 
@@ -250,7 +250,7 @@ class LoRAMerge(PEFT):
         return base_weight + lora_weight
 
     @torch.no_grad()
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(self, module: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
         """
         Merges the LoRA adapter with the base model weights.
 

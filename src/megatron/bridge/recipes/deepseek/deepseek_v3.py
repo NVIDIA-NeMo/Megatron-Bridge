@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -39,7 +38,7 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def set_deepseek_v3_pipeline_model_parallel_layout(
-    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+    model_cfg: GPTModelProvider, layout: str | list[list[str]] | None = None
 ) -> None:
     """Set the DeepSeek-V3 pipeline model parallel layout."""
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
@@ -66,34 +65,34 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     sequence_parallel: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
     # Recompute configuration
-    recompute_granularity: Optional[str]
-    recompute_modules: Optional[List[str]]
-    recompute_method: Optional[str]
-    recompute_num_layers: Optional[int]
+    recompute_granularity: str | None
+    recompute_modules: list[str] | None
+    recompute_method: str | None
+    recompute_num_layers: int | None
     # MTP support
-    mtp_num_layers: Optional[int]
-    mtp_loss_scaling_factor: Optional[float]
+    mtp_num_layers: int | None
+    mtp_loss_scaling_factor: float | None
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -102,16 +101,16 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
     moe_flex_dispatcher_backend: str
     apply_rope_fusion: bool
-    layout: Optional[Union[str, List[List[str]]]]
+    layout: str | list[list[str]] | None
 
 
 def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
@@ -169,34 +168,34 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
 
 def _deepseek_v3_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
     tensor_model_parallel_size: int = 2,
     pipeline_model_parallel_size: int = 16,
-    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 64,
     sequence_parallel: bool = True,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
-    recompute_granularity: Optional[str] = "selective",
-    recompute_modules: Optional[List[str]] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
+    recompute_granularity: str | None = "selective",
+    recompute_modules: list[str] | None = None,
+    recompute_method: str | None = None,
+    recompute_num_layers: int | None = None,
     # MTP support
-    mtp_num_layers: Optional[int] = 1,
-    mtp_loss_scaling_factor: Optional[float] = 0.1,
+    mtp_num_layers: int | None = 1,
+    mtp_loss_scaling_factor: float | None = 0.1,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 4096,
@@ -205,16 +204,16 @@ def _deepseek_v3_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 2000,
     save_interval: int = 2000,
     use_null_tokenizer: bool = True,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = None,
+    comm_overlap_config: CommOverlapConfig | None = None,
     moe_flex_dispatcher_backend: str = None,
     apply_rope_fusion: bool = False,
-    layout: Optional[Union[str, List[List[str]]]] = None,
+    layout: str | list[list[str]] | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 models using a given HuggingFace path.

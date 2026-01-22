@@ -230,16 +230,16 @@ def _qwen3_common(
         hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-1.7B").
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
+        data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
         data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
+        train_data_path (list[str] | None): List of training data paths.
+        valid_data_path (list[str] | None): List of validation data paths.
+        test_data_path (list[str] | None): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
         tensor_model_parallel_size (int): Degree of tensor model parallelism.
         pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        pipeline_dtype (torch.dtype | None): Data type for pipeline parallelism.
         virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
         context_parallel_size (int): Degree of context parallelism to be passed to model_config.
         sequence_parallel (bool): Whether to use sequence parallelism.
@@ -254,8 +254,8 @@ def _qwen3_common(
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
 
     Returns:
         ConfigContainer: Configuration for pre-training.

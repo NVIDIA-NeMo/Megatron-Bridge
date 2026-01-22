@@ -39,7 +39,6 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional
 
 import torch
 from megatron.core import dist_checkpointing
@@ -90,7 +89,7 @@ def parse_args() -> argparse.Namespace:
 # -----------------------------------------------------------------------------
 
 
-def _resolve_pretrained(lora_dir: Path, explicit: Optional[str]) -> Path:
+def _resolve_pretrained(lora_dir: Path, explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
     cfg_path = lora_dir / "run_config.yaml"

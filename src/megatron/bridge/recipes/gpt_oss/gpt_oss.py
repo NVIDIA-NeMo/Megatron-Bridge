@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -45,31 +44,31 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Provide dataset directly
-    dataset: Optional[Union[GPTDatasetConfig, FinetuningDatasetConfig, DatasetProvider]]
+    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider | None
     # Model configuration
     num_layers: int  # for ci testing
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
+    expert_model_parallel_size: int | None
     sequence_parallel: bool
     use_megatron_fsdp: bool
     account_for_embedding_in_pipeline_split: bool
     account_for_loss_in_pipeline_split: bool
-    cp_comm_type: Optional[str]
+    cp_comm_type: str | None
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -78,15 +77,15 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
     # Checkpointing
-    pretrained_checkpoint: Optional[str]
+    pretrained_checkpoint: str | None
 
 
 class GPTOSSFinetuneKwargs(TypedDict, total=False):
@@ -94,39 +93,39 @@ class GPTOSSFinetuneKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Model parallelism
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
+    expert_model_parallel_size: int | None
     sequence_parallel: bool
     use_megatron_fsdp: bool
     # Finetuning specifics
-    pretrained_checkpoint: Optional[str]
-    peft: Optional[Union[str, PEFT]]
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
     packed_sequence: bool
     # Training hyperparameters
     train_iters: int
-    global_batch_size: Optional[int]
+    global_batch_size: int | None
     micro_batch_size: int
     seq_length: int
     finetune_lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
     # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
 
 def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> ConfigContainer:
@@ -159,31 +158,31 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
 
 def _gpt_oss_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Dataset override option
-    dataset: Optional[Union[GPTDatasetConfig, FinetuningDatasetConfig, DatasetProvider]] = None,
+    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider | None = None,
     # Model configuration
     num_layers: int = None,  # for ci testing
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
     sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
     account_for_loss_in_pipeline_split: bool = False,
-    cp_comm_type: Optional[str] = None,
+    cp_comm_type: str | None = None,
     # Training hyperparameters
     train_iters: int = 1000000,
     global_batch_size: int = 512,
@@ -192,15 +191,15 @@ def _gpt_oss_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 2000,
     save_interval: int = 500,
     use_null_tokenizer: bool = True,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
     # Checkpointing
-    pretrained_checkpoint: Optional[str] = None,
+    pretrained_checkpoint: str | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for GPT-OSS family models using a given HuggingFace path.
@@ -363,20 +362,20 @@ def gpt_oss_120b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) ->
 
 def _gpt_oss_finetune_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Model configuration
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
     sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     # Finetuning-specific params
-    pretrained_checkpoint: Optional[str] = None,
-    peft: Optional[Union[str, PEFT]] = "lora",
+    pretrained_checkpoint: str | None = None,
+    peft: str | PEFT | None = "lora",
     packed_sequence: bool = False,
     # Training params
     train_iters: int = 1000,
@@ -389,14 +388,14 @@ def _gpt_oss_finetune_common(
     finetune_lr: float = 1e-4,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 50,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     # Precision / overlap
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
     # W&B
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
 ) -> ConfigContainer:
     """Common finetuning configuration for GPT-OSS models using a given HuggingFace path."""
 

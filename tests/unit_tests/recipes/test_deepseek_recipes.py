@@ -22,7 +22,7 @@ built with small overrides.
 """
 
 import importlib
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 

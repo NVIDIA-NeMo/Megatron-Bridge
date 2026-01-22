@@ -20,7 +20,6 @@ import importlib
 import logging
 import traceback
 from contextlib import contextmanager
-from typing import Tuple
 
 import torch
 from packaging.version import Version as PkgVersion
@@ -260,7 +259,7 @@ class UnavailableNullContext:
         pass
 
 
-def safe_import(module, *, msg=None, alt=None) -> Tuple[object, bool]:
+def safe_import(module, *, msg=None, alt=None) -> tuple[object, bool]:
     """A function used to import modules that may not be available.
 
     This function will attempt to import a module with the given name, but it
@@ -295,7 +294,7 @@ def safe_import(module, *, msg=None, alt=None) -> Tuple[object, bool]:
         return alt, False
 
 
-def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None) -> Tuple[object, bool]:
+def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None) -> tuple[object, bool]:
     """A function used to import symbols from modules that may not be available.
 
     This function will attempt to import a symbol with the given name from
@@ -342,7 +341,7 @@ def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None
         return alt, False
 
 
-def gpu_only_import(module, *, alt=None) -> Tuple[object, bool]:
+def gpu_only_import(module, *, alt=None) -> tuple[object, bool]:
     """A function used to import modules required only in GPU installs.
 
     This function will attempt to import a module with the given name.
@@ -369,7 +368,7 @@ def gpu_only_import(module, *, alt=None) -> Tuple[object, bool]:
     )
 
 
-def gpu_only_import_from(module, symbol, *, alt=None) -> Tuple[object, bool]:
+def gpu_only_import_from(module, symbol, *, alt=None) -> tuple[object, bool]:
     """A function used to import symbols required only in GPU installs.
 
     This function will attempt to import a module with the given name.

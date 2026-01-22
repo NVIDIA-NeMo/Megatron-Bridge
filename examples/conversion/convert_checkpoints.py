@@ -55,7 +55,6 @@ Usage examples:
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
 
 import torch
 
@@ -85,8 +84,8 @@ def get_torch_dtype(dtype_str: str) -> torch.dtype:
 def import_hf_to_megatron(
     hf_model: str,
     megatron_path: str,
-    torch_dtype: Optional[str] = None,
-    device_map: Optional[str] = None,
+    torch_dtype: str | None = None,
+    device_map: str | None = None,
     trust_remote_code: bool = False,
 ) -> None:
     """

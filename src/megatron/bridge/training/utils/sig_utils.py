@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import signal
-from typing import Any, Optional
+from typing import Any
 
 import torch
 import torch.distributed
@@ -21,7 +21,7 @@ import torch.distributed
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
-def get_device(local_rank: Optional[int] = None) -> torch.device:
+def get_device(local_rank: int | None = None) -> torch.device:
     """Get the appropriate torch device based on the distributed backend.
 
     Args:
@@ -50,9 +50,9 @@ def get_device(local_rank: Optional[int] = None) -> torch.device:
 def all_gather_item(
     item: Any,
     dtype: torch.dtype,
-    group: Optional[torch.distributed.ProcessGroup] = None,
+    group: torch.distributed.ProcessGroup | None = None,
     async_op: bool = False,
-    local_rank: Optional[int] = None,
+    local_rank: int | None = None,
 ) -> list[Any]:
     """Perform an all_gather operation on a single Python object.
 
@@ -62,10 +62,10 @@ def all_gather_item(
     Args:
         item (Any): The Python object to gather.
         dtype (torch.dtype): The torch dtype to use for the intermediate tensor.
-        group (Optional[torch.distributed.ProcessGroup]): The process group to gather within
+        group (torch.distributed.ProcessGroup | None): The process group to gather within
             (defaults to the global group).
         async_op (bool): Whether the operation should be asynchronous.
-        local_rank (Optional[int]): The local rank to determine the device.
+        local_rank (int | None): The local rank to determine the device.
 
     Returns:
         list[Any]: A list containing the gathered items (of type Any) from all ranks in the group.
@@ -123,7 +123,7 @@ class DistributedSignalHandler:
         self.released = False
         self.original_handler = signal.getsignal(self.sig)
 
-        def handler(signum: int, frame: Optional[Any]) -> None:
+        def handler(signum: int, frame: Any | None) -> None:
             print_rank_0(f"Received signal {signum}, initiating graceful stop")
             self._signal_received = True
 
@@ -132,7 +132,7 @@ class DistributedSignalHandler:
 
         return self
 
-    def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception], exc_tb: Optional[Any]) -> None:
+    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: Any | None) -> None:
         """Release the signal handler and restore the original handler."""
         self.release()
 

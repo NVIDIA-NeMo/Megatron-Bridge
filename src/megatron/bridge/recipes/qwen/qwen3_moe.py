@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -44,23 +43,23 @@ class Qwen3MoeCommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
+    expert_model_parallel_size: int | None
     expert_tensor_parallel_size: int
     sequence_parallel: bool
     use_megatron_fsdp: bool
@@ -75,13 +74,13 @@ class Qwen3MoeCommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
     moe_flex_dispatcher_backend: str | None
 
 
@@ -93,35 +92,35 @@ class Qwen3MoeFinetuneKwargs(TypedDict, total=False):
     """
 
     # Core identifiers
-    dir: Optional[str]
+    dir: str | None
     name: str
 
     # Finetuning-specific
-    pretrained_checkpoint: Optional[str]
-    peft: Union[str, PEFT, None]
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
     packed_sequence: bool
 
     # Training hyperparameters
     train_iters: int
-    global_batch_size: Optional[int]
+    global_batch_size: int | None
     micro_batch_size: int
-    seq_length: Optional[int]
+    seq_length: int | None
     eval_interval: int
     save_interval: int
 
     # Optimizer
-    finetune_lr: Optional[float]
+    finetune_lr: float | None
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
 
     # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
     # Precision
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    precision_config: MixedPrecisionConfig | str | None
 
 
 def qwen3_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3MoeCommonKwargs]) -> ConfigContainer:
@@ -167,23 +166,23 @@ def qwen3_235b_a22b_pretrain_config(**user_kwargs: Unpack[Qwen3MoeCommonKwargs])
 
 def _qwen3_moe_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
     tensor_model_parallel_size: int = 4,
     pipeline_model_parallel_size: int = 2,
-    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
-    expert_model_parallel_size: Optional[int] = 4,
+    expert_model_parallel_size: int | None = 4,
     expert_tensor_parallel_size: int = 1,
     sequence_parallel: bool = True,
     use_megatron_fsdp: bool = False,
@@ -198,35 +197,35 @@ def _qwen3_moe_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 500,
     save_interval: int = 500,
     use_null_tokenizer: bool = False,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-    moe_flex_dispatcher_backend: Optional[str] = None,
+    precision_config: MixedPrecisionConfig | str | None = None,
+    comm_overlap_config: CommOverlapConfig | None = None,
+    moe_flex_dispatcher_backend: str | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3 MoE models using a given HuggingFace path.
 
     Args:
         hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B").
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
+        dir (str | None): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
+        data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
+        data_args_path (str | None): Path to file containing data arguments.
+        train_data_path (list[str] | None): List of training data paths.
+        valid_data_path (list[str] | None): List of validation data paths.
+        test_data_path (list[str] | None): List of test data paths.
+        per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
         tensor_model_parallel_size (int): Degree of tensor model parallelism.
         pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        pipeline_dtype (torch.dtype | None): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (int | None): Size of virtual pipeline parallelism.
         context_parallel_size (int): Degree of context parallelism to be passed to model_config.
-        expert_model_parallel_size (Optional[int]): Degree of expert parallelism for MoE.
+        expert_model_parallel_size (int | None): Degree of expert parallelism for MoE.
         expert_tensor_parallel_size (int): Expert tensor parallelism for MoE.
         sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
@@ -240,9 +239,9 @@ def _qwen3_moe_common(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
+        lr_decay_iters (int | None): Number of iterations over which to decay the LR.
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
         moe_flex_dispatcher_backend (str | None): Token dispatcher type [deepep, hybridep].
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -468,54 +467,54 @@ def qwen3_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3MoeFinetuneKwargs
 
 def _qwen3_moe_finetune_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Finetuning-specific
-    pretrained_checkpoint: Optional[str] = None,
+    pretrained_checkpoint: str | None = None,
     packed_sequence: bool = False,
     # Training hyperparameters
     train_iters: int = 100,
-    global_batch_size: Optional[int] = None,
+    global_batch_size: int | None = None,
     micro_batch_size: int = 1,
-    seq_length: Optional[int] = None,
+    seq_length: int | None = None,
     eval_interval: int = 50,
     save_interval: int = 100,
     # Optimizer
-    finetune_lr: Optional[float] = None,
+    finetune_lr: float | None = None,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 10,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     # W&B logging
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
     # Precision
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    moe_flex_dispatcher_backend: Optional[str] = None,
+    precision_config: MixedPrecisionConfig | str | None = None,
+    moe_flex_dispatcher_backend: str | None = None,
 ) -> ConfigContainer:
     """
     Create a finetuning configuration for Qwen3 MoE models using a given HuggingFace path.
 
     Args:
         hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B").
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
+        dir (str | None): Base directory for saving logs and checkpoints.
         name (str): Name of the finetuning run.
-        pretrained_checkpoint (Optional[str]): Path to pretrained checkpoint to load.
+        pretrained_checkpoint (str | None): Path to pretrained checkpoint to load.
         packed_sequence (bool): Whether to use packed sequences for training efficiency.
         train_iters (int): Total number of training iterations.
-        global_batch_size (Optional[int]): Global batch size for training.
+        global_batch_size (int | None): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
-        seq_length (Optional[int]): Sequence length for training data.
+        seq_length (int | None): Sequence length for training data.
         eval_interval (int): Evaluation interval.
         save_interval (int): Checkpoint save interval.
-        finetune_lr (Optional[float]): Learning rate for finetuning.
+        finetune_lr (float | None): Learning rate for finetuning.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
-        wandb_project (Optional[str]): Weights & Biases project name.
-        wandb_entity (Optional[str]): Weights & Biases entity name.
-        wandb_exp_name (Optional[str]): Weights & Biases experiment name.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
+        lr_decay_iters (int | None): Number of iterations over which to decay the LR.
+        wandb_project (str | None): Weights & Biases project name.
+        wandb_entity (str | None): Weights & Biases entity name.
+        wandb_exp_name (str | None): Weights & Biases experiment name.
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
         moe_flex_dispatcher_backend (str | None): Token dispatcher type [deepep, hybridep].
     Returns:
         ConfigContainer: Configuration for finetuning.

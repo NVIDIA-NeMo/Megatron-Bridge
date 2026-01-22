@@ -22,9 +22,10 @@ import pickle
 import re
 import signal
 import time
+from collections.abc import Callable
 from functools import lru_cache, partial
 from queue import Empty
-from typing import Any, Callable, Optional, Pattern, Type
+from typing import Any
 
 import numpy as np
 import torch
@@ -49,7 +50,7 @@ TYPE_INSTRUCTION: dict[str, str] = {
     "VALUE_TO_TEXT": "",
 }
 
-GENERATION_REGEX: Pattern[str] = re.compile(r"\{%-?\s+generation\s+-?%\}")
+GENERATION_REGEX: re.Pattern[str] = re.compile(r"\{%-?\s+generation\s+-?%\}")
 
 __idx_version__: str = "0.2"  # index file version
 __idx_suffix__: str = "idx"  # index file suffix
@@ -183,7 +184,7 @@ class _TextMemMapDataset(Dataset):
         newline_int: int | None = 10,
         header_lines: int | None = 0,
         workers: int | None = None,
-        tokenizer: Type["MegatronTokenizer"] | None = None,
+        tokenizer: type["MegatronTokenizer"] | None = None,
         build_index_fn: Callable[[str, int | None], bool] | None = build_index_from_memdata,
         sort_dataset_paths: bool | None = True,
         index_mapping_dir: str | None = None,
@@ -350,7 +351,7 @@ class _TextMemMapDataset(Dataset):
 
         return data
 
-    def load_file(self, fn, index_mapping_dir: Optional[str] = None):
+    def load_file(self, fn, index_mapping_dir: str | None = None):
         """
         Loads a text file as np.int8.
 
@@ -422,7 +423,7 @@ class _JSONLMemMapDataset(_TextMemMapDataset):
         newline_int: int | None = 10,
         header_lines: int | None = 0,
         workers: int | None = None,
-        tokenizer: Type["MegatronTokenizer"] | None = None,
+        tokenizer: type["MegatronTokenizer"] | None = None,
         sort_dataset_paths: bool | None = True,
         index_mapping_dir: str | None = None,
     ):
@@ -878,7 +879,7 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
     return chat
 
 
-def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
+def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: list[Any] | None = None) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
 
