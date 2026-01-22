@@ -287,6 +287,8 @@ class TestNemotron3NanoConversion:
     variant of the NemotronH architecture.
     """
 
+    _TOY_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
     @pytest.fixture(scope="class")
     def nemotron_3_nano_toy_model_path(self, tmp_path_factory):
         """
@@ -302,7 +304,7 @@ class TestNemotron3NanoConversion:
         temp_dir = tmp_path_factory.mktemp("nemotron_3_nano_toy_model")
         model_dir = temp_dir / "nemotron_3_nano_toy"
 
-        repo_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16"
+        repo_id = self._TOY_MODEL_ID
 
         # Create Nemotron-3-Nano toy model config by starting with the HF model and applying overrides
         config = AutoConfig.from_pretrained(repo_id, trust_remote_code=True)
@@ -401,6 +403,7 @@ class TestNemotron3NanoConversion:
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
                 trust_remote_code=True,
+                cache_dir=nemotron_3_nano_toy_model_path,
             )
 
             # Try loading the tokenizer as well
