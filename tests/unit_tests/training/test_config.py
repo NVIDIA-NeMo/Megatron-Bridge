@@ -1596,8 +1596,6 @@ class TestMixedPrecisionConsistencyValidation:
 
     These tests verify that precision settings (bf16/fp16) are properly validated
     between model and optimizer configs, especially when use_precision_aware_optimizer=True.
-
-    See: https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/1665
     """
 
     def test_bf16_model_bf16_optimizer_with_precision_aware_passes(self):
