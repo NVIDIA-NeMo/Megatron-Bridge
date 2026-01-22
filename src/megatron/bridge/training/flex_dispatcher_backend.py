@@ -30,8 +30,8 @@ def apply_flex_dispatcher_backend(
 ) -> None:
     """Apply DeepEP or HybridEP optimizations to the model config.
 
-    DeepEP is applicable only for MoE models on Ampere, Hopper, and B200/B300 GPUs.
-    HybridEP is applicable only for MoE models on GB200, GB300 with NVL72 and on Ampere, Hopper, B200, B300 GPUs.
+    DeepEP is applicable only for MoE models on Ampere, Hopper, B200 and B300 GPUs.
+    HybridEP is applicable only for MoE models on GB200, GB300 with NVL72 and on Ampere, Hopper, B200 and B300 GPUs.
     """
     num_moe_experts = getattr(model_config, "num_moe_experts", None)
     if num_moe_experts is None or num_moe_experts == 0:
