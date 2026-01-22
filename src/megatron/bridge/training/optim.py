@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Union
 
 from megatron.core.optimizer import (
     MegatronOptimizer,
@@ -34,10 +33,10 @@ from megatron.bridge.training.config import (
 def setup_optimizer(
     optimizer_config: OptimizerConfig,
     scheduler_config: SchedulerConfig,
-    model: Union[MegatronModule, list[MegatronModule]],
+    model: MegatronModule | list[MegatronModule],
     use_gloo_process_groups: bool = False,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-    optimizer_config_override_provider: Optional[OptimizerConfigOverrideProvider] = None,
+    pg_collection: ProcessGroupCollection | None = None,
+    optimizer_config_override_provider: OptimizerConfigOverrideProvider | None = None,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 

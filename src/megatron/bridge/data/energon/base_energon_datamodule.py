@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from megatron.core import parallel_state
 from megatron.energon import WorkerConfig, get_savable_loader, get_train_dataset
@@ -59,11 +59,11 @@ class EnergonMultiModalDataModule:
         pin_memory: bool = True,
         shuffle_buffer_size: int = 100,
         max_samples_per_sequence: int | None = None,
-        multimodal_sample_config: Optional[Any] = None,
-        task_encoder: Optional[Any] = None,
-        decoder_seq_length: Optional[int] = None,
-        packing_buffer_size: Optional[int] = None,
-        validation_task_encoder: Optional[Any] = None,
+        multimodal_sample_config: Any | None = None,
+        task_encoder: Any | None = None,
+        decoder_seq_length: int | None = None,
+        packing_buffer_size: int | None = None,
+        validation_task_encoder: Any | None = None,
         **kwargs,
     ) -> None:
         """

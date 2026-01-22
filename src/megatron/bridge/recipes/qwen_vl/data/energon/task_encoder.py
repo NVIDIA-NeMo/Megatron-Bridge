@@ -19,7 +19,6 @@ import pickle
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List
 
 import numpy as np
 import torch
@@ -158,8 +157,8 @@ class ChatMLSample(Sample):
 
     # __key__: str
     # __subflavors__: Dict
-    imgs: List[Image.Image]
-    videos: List[torch.Tensor | list[Image.Image]]
+    imgs: list[Image.Image]
+    videos: list[torch.Tensor | list[Image.Image]]
     conversation: str  # JSON string of GPT-format conversations
 
 
@@ -168,13 +167,13 @@ class QwenVLTaskSample:
     """Encoded Sample Format For QwenVL"""
 
     __key__: str
-    __subflavors__: Dict
+    __subflavors__: dict
 
-    imgs: List[torch.Tensor]  # (c, h, w)
-    videos: List[torch.Tensor]  # (c, h, w)
+    imgs: list[torch.Tensor]  # (c, h, w)
+    videos: list[torch.Tensor]  # (c, h, w)
 
-    image_thw_grids: List[torch.Tensor]
-    video_thw_grids: List[torch.Tensor]
+    image_thw_grids: list[torch.Tensor]
+    video_thw_grids: list[torch.Tensor]
     image_input_mask: torch.Tensor
     video_input_mask: torch.Tensor
     text: torch.Tensor
@@ -185,8 +184,8 @@ class QwenVLTaskSample:
 class QwenVLTaskBatch(Batch):
     """Encoded Batch Format For QwenVL"""
 
-    __keys__: List[str]
-    __subflavors__: List[Dict]
+    __keys__: list[str]
+    __subflavors__: list[dict]
     # (num_tiles, c, h, w)
     pixel_values: torch.Tensor
     pixel_values_videos: torch.Tensor
@@ -496,7 +495,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             target=torch.from_numpy(target),
         )
 
-    def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:
+    def batch(self, samples: list[QwenVLTaskSample]) -> QwenVLTaskBatch:
         """
         Put encoded sample into Batch, do padding, add labels and visual input masks
 

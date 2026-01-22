@@ -14,29 +14,29 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 
 @dataclass
 class TokenizerConfig:
     """Configuration settings for the tokenizer."""
 
-    metadata_path: Optional[Union[str | dict]] = None
+    metadata_path: str | dict | None = None
     """Path to the tokenizer metadata file."""
 
-    vocab_size: Optional[int] = None
+    vocab_size: int | None = None
     """Size of vocab before EOD or padding."""
 
-    vocab_file: Optional[str] = None
+    vocab_file: str | None = None
     """Path to the vocab file."""
 
-    merge_file: Optional[str] = None
+    merge_file: str | None = None
     """Path to the BPE merge file."""
 
     vocab_extra_ids: int = 0
     """Number of additional vocabulary tokens. They are used for span masking in the T5 model"""
 
-    tokenizer_type: Optional[
+    tokenizer_type: (
         Literal[
             "BertWordPieceLowerCase",
             "BertWordPieceCase",
@@ -51,30 +51,31 @@ class TokenizerConfig:
             "NullTokenizer",
             "SFTTokenizer",
         ]
-    ] = None
+        | None
+    ) = None
     """What type of tokenizer to use."""
 
-    tokenizer_model: Optional[Union[str, Path]] = None
+    tokenizer_model: str | Path | None = None
     """Sentencepiece tokenizer model or the `pretrained_model_name_or_path` for a HuggingFace tokenizer."""
 
-    special_tokens: Optional[list[str]] = None
+    special_tokens: list[str] | None = None
     """List of special tokens. For TikToken, needs to have ["<unk>", "<s>", "</s>"]"""
 
-    chat_template: Optional[str] = None
+    chat_template: str | None = None
     """Custom chat template in jinja format for conversation formatting"""
 
-    tiktoken_pattern: Optional[str] = None
+    tiktoken_pattern: str | None = None
     """Which tiktoken pattern to use. Options: [v1, v2]"""
 
     tiktoken_num_special_tokens: int = 1000
     """Number of special tokens in tiktoken tokenizer"""
 
-    tiktoken_special_tokens: Optional[list[str]] = None
+    tiktoken_special_tokens: list[str] | None = None
     """List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]"""
 
-    tokenizer_prompt_format: Optional[str] = None
-    image_tag_type: Optional[str] = None
-    force_system_message: Optional[bool] = False
+    tokenizer_prompt_format: str | None = None
+    image_tag_type: str | None = None
+    force_system_message: bool | None = False
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.

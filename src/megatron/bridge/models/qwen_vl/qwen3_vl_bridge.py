@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Dict, Mapping, Union
+from collections.abc import Mapping
 
 import torch
 import torch.nn as nn
@@ -226,7 +226,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
 
     def __init__(self):
         super().__init__()
-        self.hf_weights_cache: Dict[str, Dict[int, torch.Tensor]] = {}
+        self.hf_weights_cache: dict[str, dict[int, torch.Tensor]] = {}
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3VLMoEModelProvider:
         hf_config = hf_pretrained.config
@@ -395,9 +395,9 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
-        converted_weights_dict: Dict[str, torch.Tensor],
+        converted_weights_dict: dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         num_experts = self.hf_config.text_config.num_experts
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         experts_per_rank = num_experts // ep_size
@@ -463,7 +463,7 @@ class ExpertMLPDownProjMapping(AutoMapping):
         expert_weight = hf_weights[global_expert_number].transpose(0, 1).contiguous()
         return super().hf_to_megatron(expert_weight, megatron_module)
 
-    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> dict[str, torch.Tensor]:
         # [ep_size, down_in, mlp_out]
         # experts need subsequently merged by maybe_modify_converted_hf_weight
         converted_weights_dict = super().megatron_to_hf(megatron_weights, megatron_module)
@@ -493,7 +493,7 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
             up=f"{self.hf_param}.up",
         )
 
-    def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
+    def hf_to_megatron(self, hf_weights: torch.Tensor | dict, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         # hf_weights: [num_experts, mlp_in, fused_gate_up_out]
         expert_weight = hf_weights[global_expert_number].transpose(0, 1).contiguous()
@@ -502,13 +502,13 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
         gate, up = torch.chunk(expert_weight, 2, dim=0)
         return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
 
-    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> dict[str, torch.Tensor]:
         # Let the shared mapping handle TP/PP/EP gather.
         converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
         if not converted:
             return {}
 
-        fused: Dict[str, torch.Tensor] = {}
+        fused: dict[str, torch.Tensor] = {}
 
         # only one pair of gate and up for current group of experts
         for name, tensor in converted.items():

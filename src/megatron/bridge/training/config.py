@@ -19,7 +19,7 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Tuple, Union
+from typing import Any, Literal
 
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
@@ -152,7 +152,7 @@ class DistributedInitConfig:
     It is still not in a stable release stage, and may therefore contain bugs or other
     potential issues."""
 
-    nccl_communicator_config_path: Optional[str] = None
+    nccl_communicator_config_path: str | None = None
     """Path to the yaml file with NCCL communicator configurations. The number of min/max thread
     groups and thread group cluster size of each communicator can be configured by setting
     `min_ctas`, `max_ctas`, and `cga_cluster_size`."""
@@ -171,13 +171,13 @@ class DistributedInitConfig:
     which specifies the SHARP application target groups.
     """
 
-    sharp_enabled_group: Optional[Literal["dp", "dp_replica"]] = None
+    sharp_enabled_group: Literal["dp", "dp_replica"] | None = None
     """IB SHARP can be enabled from only one communication group.
     By default, it is enabled from dp group if not specified and use_sharp=True.
     Available options: [dp, dp_replica]
     """
 
-    high_priority_stream_groups: Optional[list[str]] = None
+    high_priority_stream_groups: list[str] | None = None
     """Specify which communicator groups should use high priority streams during creation.
     Assigning high priority to communication streams ensures that communication kernels
     are scheduled with higher priority, minimizing the exposed communication when it is
@@ -236,7 +236,7 @@ class RerunStateMachineConfig:
 class DataloaderConfig:
     """Base configuration for data loading."""
 
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = None
     """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
     'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
@@ -252,7 +252,7 @@ class DataloaderConfig:
     persistent_workers: bool = False
     """Whether to keep data loading workers persistent across epochs."""
 
-    trust_remote_code: Optional[bool] = None
+    trust_remote_code: bool | None = None
     """Whether remote code execution should be trusted for a given HF path."""
 
 
@@ -273,7 +273,7 @@ class DatasetBuildContext:
     train_samples: int
     valid_samples: int
     test_samples: int
-    tokenizer: Optional[MegatronTokenizer] = None
+    tokenizer: MegatronTokenizer | None = None
 
 
 @dataclass(frozen=True)
@@ -282,7 +282,7 @@ class OptimizerConfigOverrideProviderContext:
 
     scheduler_config: "SchedulerConfig"
     optimizer_config: OptimizerConfig
-    model: Union[MegatronModule, list[MegatronModule]]
+    model: MegatronModule | list[MegatronModule]
 
 
 @dataclass
@@ -369,7 +369,7 @@ class DatasetProvider(DataloaderConfig, ABC):
             data_prefix: str
             seq_length: int
 
-            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
                 # Custom implementation to load data from S3
                 train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
                 valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
@@ -378,7 +378,7 @@ class DatasetProvider(DataloaderConfig, ABC):
     """
 
     @abstractmethod
-    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+    def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
         """Build train, validation, and test datasets.
 
         This method is called by the framework during dataset initialization.
@@ -470,10 +470,10 @@ class GPTFIMDatasetConfig(GPTDatasetConfig):
         self,
         fim_rate: float = None,
         fim_spm_rate: float = None,
-        fim_extra_tokens: Dict = None,
-        fim_split_sample: Optional[str] = None,
-        fim_fragment_rate: Optional[float] = None,
-        fim_no_prefix: Optional[str] = None,
+        fim_extra_tokens: dict = None,
+        fim_split_sample: str | None = None,
+        fim_fragment_rate: float | None = None,
+        fim_no_prefix: str | None = None,
         **kwargs,
     ):
         """
@@ -532,16 +532,16 @@ class FinetuningDatasetConfig(DataloaderConfig):
     within each global batch are padded to the same length.
     """
 
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "batch"
     """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
 
-    dataset_root: Optional[Union[str, Path]] = None
+    dataset_root: str | Path | None = None
     seq_length: int
     seed: int = 1234
     memmap_workers: int = 1
-    max_train_samples: Optional[int] = None
-    packed_sequence_specs: Optional[PackedSequenceSpecs] = None
-    dataset_kwargs: Optional[dict[str, Any]] = None
+    max_train_samples: int | None = None
+    packed_sequence_specs: PackedSequenceSpecs | None = None
+    dataset_kwargs: dict[str, Any] | None = None
     do_validation: bool = True
     do_test: bool = True
 
@@ -557,19 +557,19 @@ class SchedulerConfig:
     lr_wsd_decay_style: Literal["exponential", "linear", "cosine"] = "exponential"
     """Decay style for the annealing phase of WSD"""
 
-    lr_decay_iters: Optional[int] = None
+    lr_decay_iters: int | None = None
     """number of iterations to decay learning rate over, If None defaults to `train.train_iters`"""
 
-    lr_decay_samples: Optional[int] = None
+    lr_decay_samples: int | None = None
     """number of samples to decay learning rate over, If None defaults to `train.train_samples`"""
 
-    lr_wsd_decay_iters: Optional[int] = None
+    lr_wsd_decay_iters: int | None = None
     """number of iterations for the annealing phase in the wsd schedule"""
 
-    lr_wsd_decay_samples: Optional[int] = None
+    lr_wsd_decay_samples: int | None = None
     """number of samples for the annealing phase in the wsd schedule"""
 
-    lr_warmup_fraction: Optional[float] = None
+    lr_warmup_fraction: float | None = None
     """fraction of lr-warmup-(iters/samples) to use for warmup (as a float)"""
 
     lr_warmup_iters: int = 0
@@ -593,25 +593,25 @@ class SchedulerConfig:
 
     # ---------------- Regularization config. ----------------
 
-    start_weight_decay: Optional[float] = None
+    start_weight_decay: float | None = None
     """Initial weight decay coefficient for L2 regularization."""
 
-    end_weight_decay: Optional[float] = None
+    end_weight_decay: float | None = None
     """End of run weight decay coefficient for L2 regularization."""
 
     weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
     """Weight decay increment function."""
 
-    no_weight_decay_cond_type: Optional[Literal["qwen3_next"]] = None
+    no_weight_decay_cond_type: Literal["qwen3_next"] | None = None
     """Type of no weight decay condition. Choices:
     None (default): param no weight decay if and only if it is 1D; or it is bias;
     or it is embedding and embedding_init_method_std is not None.
     "qwen3_next": In addition to the default rules, apply weight decay to qk layernorm as a special case."""
 
-    lr_warmup_steps: Optional[int] = field(init=False, default=None)
-    lr_decay_steps: Optional[int] = field(init=False, default=None)
-    wd_incr_steps: Optional[int] = field(init=False, default=None)
-    wsd_decay_steps: Optional[int] = field(init=False, default=None)
+    lr_warmup_steps: int | None = field(init=False, default=None)
+    lr_decay_steps: int | None = field(init=False, default=None)
+    wd_incr_steps: int | None = field(init=False, default=None)
+    wsd_decay_steps: int | None = field(init=False, default=None)
 
     def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
@@ -651,16 +651,16 @@ class TrainingConfig:
 
     # ---------------- Training config. ----------------
 
-    micro_batch_size: Optional[int] = None
+    micro_batch_size: int | None = None
     """Batch size per model instance (local batch size). Global batch size is local batch size times
     data parallel size times number of micro batches."""
 
-    global_batch_size: Optional[int] = None
+    global_batch_size: int | None = None
     """Training batch size. If set, it should be a multiple of micro-batch-size times
     data-parallel-size. If this value is None, then use micro-batch-size * data-parallel-size
     as the global batch size. This choice will result in 1 for number of micro-batches."""
 
-    rampup_batch_size: Optional[list[int]] = None
+    rampup_batch_size: list[int] | None = None
     """Batch size ramp up with the following values: <start batch size>, <batch size increment>,
     <ramp-up samples>
     For example:
@@ -682,7 +682,7 @@ class TrainingConfig:
     0=off, 1=moderate, 2=aggressive.
     """
 
-    check_weight_hash_across_dp_replicas_interval: Optional[int] = None
+    check_weight_hash_across_dp_replicas_interval: int | None = None
     """Interval to check weight hashes are same across DP replicas. If not specified, weight hashes not checked."""
 
     check_optimizer_step_success: bool = True
@@ -691,22 +691,22 @@ class TrainingConfig:
     skip_sync_grad_norm_across_mp: bool = False
     """Skips syncing the grad norm across the model parallel group."""
 
-    train_sync_interval: Optional[int] = None
+    train_sync_interval: int | None = None
     """Training CPU-GPU synchronization interval, to ensure that CPU is not running too far ahead of GPU."""
 
-    train_iters: Optional[int] = None
+    train_iters: int | None = None
     """Total number of iterations to train over all training runs.
     Note that either train_iters or train_samples should be provided.
     """
 
-    train_samples: Optional[int] = None
+    train_samples: int | None = None
     """Total number of samples to train over all training runs.
     Note that either train_iters or train_samples should be provided."""
 
-    exit_interval: Optional[int] = None
+    exit_interval: int | None = None
     """Exit the program after the iteration is divisible by this value."""
 
-    exit_duration_in_mins: Optional[int] = None
+    exit_duration_in_mins: int | None = None
     """Exit the program after this many minutes."""
 
     exit_signal_handler: bool = False
@@ -787,13 +787,13 @@ class CheckpointConfig:
 
     # ---------------- Checkpointing config. ----------------
 
-    save: Optional[str] = None
+    save: str | None = None
     """Output directory to save checkpoints to."""
 
-    save_interval: Optional[int] = None
+    save_interval: int | None = None
     """Number of iterations between persistent checkpoint saves."""
 
-    most_recent_k: Optional[int] = -1
+    most_recent_k: int | None = -1
     """Number of latest checkpoint to be saved."""
 
     save_optim: bool = True
@@ -802,7 +802,7 @@ class CheckpointConfig:
     save_rng: bool = True
     """Do not save current rng state."""
 
-    load: Optional[str] = None
+    load: str | None = None
     """Directory containing a model checkpoint."""
 
     load_optim: bool = True
@@ -817,20 +817,20 @@ class CheckpointConfig:
     load_rng: bool = True
     """Do not load rng state when loading checkpoint."""
 
-    non_persistent_save_interval: Optional[int] = None
+    non_persistent_save_interval: int | None = None
     """Number of iterations between non-persistent saves."""
 
-    non_persistent_ckpt_type: Optional[Literal["global", "local", "in_memory", "None"]] = None
+    non_persistent_ckpt_type: Literal["global", "local", "in_memory", "None"] | None = None
     """Type of non-persistent model checkpoints.
     "global" - Saved as a standard checkpoint (e.g., on Lustre) with old checkpoints being removed.
     "local" - [TBD] Each rank saves a portion of the checkpoint locally (e.g., on SSD/ramdisk).
     "in_memory" - [TBD] A special kind of local checkpoint that avoids serialization.
     None - No non-persistent checkpointing (default option)."""
 
-    non_persistent_global_ckpt_dir: Optional[str] = None
+    non_persistent_global_ckpt_dir: str | None = None
     """Directory containing global non-persistent model checkpoints."""
 
-    non_persistent_local_ckpt_dir: Optional[str] = None
+    non_persistent_local_ckpt_dir: str | None = None
     """Directory containing local non-persistent model checkpoints."""
 
     non_persistent_local_ckpt_algo: Literal["fully_parallel", "atomic"] = "fully_parallel"
@@ -840,10 +840,10 @@ class CheckpointConfig:
     """Load model for finetuning. Do not load optimizer or rng state from checkpoint and set iteration to 0.
     Assumed when loading a release checkpoint."""
 
-    pretrained_checkpoint: Optional[str] = None
+    pretrained_checkpoint: str | None = None
     """Directory containing a pretrained model checkpoint for finetuning."""
 
-    ckpt_step: Optional[int] = None
+    ckpt_step: int | None = None
     """Checkpoint step to load model from."""
 
     use_checkpoint_args: bool = False
@@ -855,10 +855,10 @@ class CheckpointConfig:
     ckpt_format: Literal["torch_dist", "zarr", "fsdp_dtensor"] = "torch_dist"
     """Checkpoint format to use."""
 
-    ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
+    ckpt_convert_format: Literal["torch", "torch_dist", "zarr"] | None = None
     """Checkpoint format for conversion."""
 
-    ckpt_convert_save: Optional[str] = None
+    ckpt_convert_save: str | None = None
     """Save directory for converted checkpoint."""
 
     fully_parallel_save: bool = True
@@ -912,7 +912,7 @@ class CheckpointConfig:
     replication: bool = False
     """If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks."""
 
-    replication_jump: Optional[int] = None
+    replication_jump: int | None = None
     """Specifies `J`, the spacing between ranks storing replicas of a given rank's data. Replicas
     for rank `n` may be on ranks `n+J`, `n+2J`, ..., or `n-J`, `n-2J`, etc. This flag has an
     effect only if --replication is used. and must be consistent across all ranks."""
@@ -989,7 +989,7 @@ class LoggerConfig:
     all: report timings of all ranks.
     """
 
-    tensorboard_dir: Optional[str] = None
+    tensorboard_dir: str | None = None
     """Write TensorBoard logs to this directory."""
 
     tensorboard_log_interval: int = 1
@@ -1027,28 +1027,28 @@ class LoggerConfig:
     log_world_size_to_tensorboard: bool = False
     """Enable world size logging to tensorboard."""
 
-    wandb_project: Optional[str] = None
+    wandb_project: str | None = None
     """The wandb project name. Ignore wandb by default."""
 
-    wandb_exp_name: Optional[str] = None
+    wandb_exp_name: str | None = None
     """The wandb experiment name."""
 
-    wandb_save_dir: Optional[str] = None
+    wandb_save_dir: str | None = None
     """Path to save the wandb results locally."""
 
-    wandb_entity: Optional[str] = None
+    wandb_entity: str | None = None
     """The wandb entity name."""
 
-    mlflow_experiment: Optional[str] = None
+    mlflow_experiment: str | None = None
     """The MLFlow experiment name."""
 
-    mlflow_run_name: Optional[str] = None
+    mlflow_run_name: str | None = None
     """The MLFlow run name."""
 
-    mlflow_tracking_uri: Optional[str] = None
+    mlflow_tracking_uri: str | None = None
     """Optional MLFlow tracking URI."""
 
-    mlflow_tags: Optional[dict[str, str]] = None
+    mlflow_tags: dict[str, str] | None = None
     """Optional tags to apply to the MLFlow run."""
 
     logging_level: int = logging.INFO
@@ -1057,7 +1057,7 @@ class LoggerConfig:
     filter_warnings: bool = True
     """Filter out warning messages"""
 
-    modules_to_filter: Optional[list[str]] = None
+    modules_to_filter: list[str] | None = None
     """List of modules to filter out from the logs"""
 
     set_level_for_all_loggers: bool = False
@@ -1066,7 +1066,7 @@ class LoggerConfig:
     log_energy: bool = False
     """If set, log energy consumption (in Joules)."""
 
-    save_config_filepath: Optional[str] = None
+    save_config_filepath: str | None = None
     """If set, save the task configuration (ConfigContainer) to this file."""
 
     def finalize(self) -> None:
@@ -1211,7 +1211,7 @@ class FaultToleranceConfig:
     simulated_fault_type: Literal["rank_hung", "rank_killed", "random"] = "random"
     """How the simulated fault should behave. 'random' will randomly choose one of the other two options."""
 
-    simulated_fault_rank: Optional[int] = None
+    simulated_fault_rank: int | None = None
     """Rank on which simulated fault should occur."""
 
     simulated_fault_base_delay: int = 0
@@ -1299,7 +1299,7 @@ class InProcessRestartConfig:
     enabled: bool = False
     """Enable in-process restart mechanism from nvidia-resiliency-ext."""
 
-    max_iterations: Optional[int] = None
+    max_iterations: int | None = None
     """Maximum number of in-process restart iterations."""
 
     monitor_thread_interval: float = 1.0
@@ -1338,7 +1338,7 @@ class InProcessRestartConfig:
     granularity: Literal["node", "rank"] = "node"
     """Granularity for in-process restart."""
 
-    active_world_size: Optional[int] = None
+    active_world_size: int | None = None
     """The number of ranks initially executing the workload.
     The remaining ranks from the allocation are set aside as warm reserve.
     If None, defaults to WORLD_SIZE environment variable."""
@@ -1346,10 +1346,10 @@ class InProcessRestartConfig:
     empty_cuda_cache: bool = True
     """Empty CUDA cache during restart finalization."""
 
-    max_rank_faults: Optional[int] = None
+    max_rank_faults: int | None = None
     """Maximum number of rank faults allowed before terminating the job."""
 
-    monitor_process_logdir: Optional[str] = None
+    monitor_process_logdir: str | None = None
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
 
@@ -1374,15 +1374,15 @@ class ConfigContainer(Container):
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
     dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
-    ft: Optional[FaultToleranceConfig] = None
-    straggler: Optional[StragglerDetectionConfig] = None
-    nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
+    ft: FaultToleranceConfig | None = None
+    straggler: StragglerDetectionConfig  | None = None
+    nvrx_straggler: NVRxStragglerDetectionConfig | None = None
     profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
-    peft: Optional[PEFT] = None
-    comm_overlap: Optional[CommOverlapConfig] = None
-    mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    peft: PEFT | None = None
+    comm_overlap: CommOverlapConfig | None = None
+    mixed_precision: MixedPrecisionConfig | str | None = None
     tensor_inspect: TensorInspectConfig | None = None
-    inprocess_restart: Optional[InProcessRestartConfig] = None
+    inprocess_restart: InProcessRestartConfig | None = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -1800,7 +1800,7 @@ def _get_mcore_transformer_parent(model_config: Any) -> type:
     return MCoreTransformerConfig
 
 
-def _get_non_default_values(config_obj: Any, mcore_class: type) -> Dict[str, Tuple[Any, Any]]:
+def _get_non_default_values(config_obj: Any, mcore_class: type) -> dict[str, tuple[Any, Any]]:
     """Get values that differ from Mcore parent class defaults.
 
     Args:
@@ -1846,7 +1846,7 @@ def _get_non_default_values(config_obj: Any, mcore_class: type) -> Dict[str, Tup
     return non_defaults
 
 
-def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
+def _get_key_config_values(config_obj: Any) -> dict[str, Any]:
     """Get key configuration values for non-Mcore configs.
 
     Args:

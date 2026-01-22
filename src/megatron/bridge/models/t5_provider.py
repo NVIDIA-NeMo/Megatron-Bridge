@@ -14,8 +14,9 @@
 
 import copy
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
 
 from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
@@ -71,7 +72,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     relative_attention_num_buckets: int = 32
     relative_attention_max_distance: int = 128
     rotary_percent: float = 1.0
-    seq_len_interpolation_factor: Optional[float] = None
+    seq_len_interpolation_factor: float | None = None
     seq_length: int = 512
     seq_length_dec: int = 128
     encoder_pipeline_model_parallel_size: int = 0
@@ -81,19 +82,19 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     persist_layer_norm: bool = True
     bias_dropout_fusion: bool = True
     deallocate_pipeline_outputs: bool = True
-    num_moe_experts: Optional[int] = None
+    num_moe_experts: int | None = None
     recompute_num_layers: int = 1
     distribute_saved_activations: bool = False
     enable_autocast: bool = False
 
-    transformer_layer_spec: Union[ModuleSpec, Callable[["T5ModelProvider"], ModuleSpec]] = (
+    transformer_layer_spec: ModuleSpec | Callable[["T5ModelProvider"], ModuleSpec] = (
         transformer_engine_layer_spec
     )
 
-    vocab_size: Optional[int] = None
+    vocab_size: int | None = None
     should_pad_vocab: bool = False
-    tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
-    _pg_collection: Optional[ProcessGroupCollection] = None
+    tp_comm_overlap_cfg: str | dict[str, Any] | None = None
+    _pg_collection: ProcessGroupCollection | None = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""

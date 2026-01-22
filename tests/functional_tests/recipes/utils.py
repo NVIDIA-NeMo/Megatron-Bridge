@@ -14,8 +14,8 @@
 
 """Utilities for recipe functional tests."""
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
@@ -32,10 +32,10 @@ def run_pretrain_recipe_test(
     config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_model_parallel_size: Optional[int] = None,
-    pipeline_model_parallel_size: Optional[int] = None,
-    expert_model_parallel_size: Optional[int] = None,
-    model_overrides: Optional[dict] = None,
+    tensor_model_parallel_size: int | None = None,
+    pipeline_model_parallel_size: int | None = None,
+    expert_model_parallel_size: int | None = None,
+    model_overrides: dict | None = None,
 ):
     """
     Common test implementation for pretrain recipe configurations.
@@ -128,7 +128,7 @@ def run_pretrain_recipe_test(
 def run_pretrain_recipe_perf_test(
     config_func: Callable,
     recipe_name: str,
-    config_overrides: Optional[dict] = None,
+    config_overrides: dict | None = None,
 ):
     """
     Common test implementation for pretrain perf recipe configurations.
@@ -195,11 +195,11 @@ def run_pretrain_vl_recipe_test(
     config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_model_parallel_size: Optional[int] = None,
-    pipeline_model_parallel_size: Optional[int] = None,
-    model_overrides: Optional[dict] = None,
-    dataset_overrides: Optional[dict] = None,
-    forward_step_func: Optional[Callable] = None,
+    tensor_model_parallel_size: int | None = None,
+    pipeline_model_parallel_size: int | None = None,
+    model_overrides: dict | None = None,
+    dataset_overrides: dict | None = None,
+    forward_step_func: Callable | None = None,
 ):
     """
     VLM variant of run_pretrain_recipe_test that uses the VLM forward step.

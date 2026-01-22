@@ -14,7 +14,6 @@
 
 import argparse
 import logging
-from typing import List, Optional
 
 from omegaconf import OmegaConf
 
@@ -100,7 +99,7 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
 
 
 def _set_cuda_graph_overrides(
-    recipe: ConfigContainer, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str | List[str]] = None
+    recipe: ConfigContainer, cuda_graph_impl: str | None = None, cuda_graph_scope: str | list[str] | None = None
 ) -> ConfigContainer:
     """Set the CUDA graph overrides."""
     if isinstance(cuda_graph_scope, str):
@@ -126,9 +125,9 @@ def _set_cuda_graph_overrides(
 
 def _set_recompute_overrides(
     recipe: ConfigContainer,
-    cpu_offloading_num_layers: Optional[int] = None,
-    recompute_num_layers: Optional[int] = None,
-    recompute_modules: Optional[List[str]] = None,
+    cpu_offloading_num_layers: int | None = None,
+    recompute_num_layers: int | None = None,
+    recompute_modules: list[str] | None = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
     if cpu_offloading_num_layers is not None:
@@ -224,7 +223,7 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     return cfg
 
 
-def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> ConfigContainer:
+def set_cli_overrides(recipe: ConfigContainer, cli_overrides: list[str]) -> ConfigContainer:
     """Set Hydra-style CLI overrides."""
     if not cli_overrides:
         return recipe
@@ -424,7 +423,7 @@ def set_post_overrides(
     num_gpus: int,
     compute_dtype: str,
     task: str,
-    user_gbs: Optional[int] = None,
+    user_gbs: int | None = None,
     config_variant: str = "v1",
 ) -> ConfigContainer:
     """Set the post overrides."""

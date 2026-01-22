@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
@@ -59,7 +60,7 @@ class Qwen2ModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     vocab_size: int = 151936
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
@@ -263,7 +264,7 @@ class Qwen3ModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     add_qkv_bias: bool = False
     qk_layernorm: bool = True
-    kv_channels: Optional[int] = 128
+    kv_channels: int | None = 128
     num_query_groups: int = 8
     seq_length: int = 40960
     max_position_embeddings: int = 40960
@@ -271,7 +272,7 @@ class Qwen3ModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     vocab_size: int = 151936
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
@@ -370,7 +371,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     add_qkv_bias: bool = False
     qk_layernorm: bool = True
-    kv_channels: Optional[int] = 128
+    kv_channels: int | None = 128
     num_query_groups: int = 8
     seq_length: int = 40960
     max_position_embeddings: int = 40960
@@ -378,7 +379,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     vocab_size: int = 151936
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
@@ -479,4 +480,4 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     ffn_hidden_size: int = 5120
     moe_ffn_hidden_size: int = 512
     moe_shared_expert_intermediate_size: int = 512
-    mtp_num_layers: Optional[int] = None
+    mtp_num_layers: int | None = None

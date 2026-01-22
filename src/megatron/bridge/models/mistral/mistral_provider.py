@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List
 
 import torch
 import torch.nn.functional as F
@@ -49,7 +49,7 @@ class MistralModelProvider(GPTModelProvider):
 
     init_method_std: float = 0.02
     layernorm_epsilon: float = 1e-5
-    window_size: List[int] = None
+    window_size: list[int] = None
     rotary_base: float = 1000000.0
     params_dtype: torch.dtype = torch.bfloat16
     vocab_size: int = 32768
@@ -74,7 +74,7 @@ class MistralSmall3ModelProvider24B(MistralModelProvider):
     kv_channels: int = 128
     seq_length: int = 32768
 
-    window_size: List[int] = None
+    window_size: list[int] = None
     cp_comm_type: str = None
     rotary_percent: float = 1.0
     rotary_base: float = 100000000.0

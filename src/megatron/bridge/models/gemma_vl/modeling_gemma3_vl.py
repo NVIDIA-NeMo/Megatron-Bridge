@@ -14,7 +14,7 @@
 
 import types
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
@@ -48,12 +48,12 @@ class Gemma3VLModel(MegatronModule):
         config (GPTModelProvider): Model provider containing configuration for language and vision modules.
         pre_process (bool, optional): Whether to construct the vision tower and projector. Default: True.
         post_process (bool, optional): Whether to apply post-processing. Default: True.
-        vp_stage (Optional[int], optional): Pipeline stage for model parallelism. Default: None.
+        vp_stage (int | None, optional): Pipeline stage for model parallelism. Default: None.
 
     Attributes:
         pre_process (bool): If True, enables vision and multimodal components.
         post_process (bool): If True, enables post-processing.
-        vp_stage (Optional[int]): Pipeline stage for model parallelism.
+        vp_stage (int | None): Pipeline stage for model parallelism.
         vision_tower (nn.Module): Vision encoder (e.g., SigLIP or other vision backbone).
         multi_modal_projector (nn.Module): Projects vision features to language model space.
         language_model (nn.Module): The underlying language model.
@@ -83,7 +83,7 @@ class Gemma3VLModel(MegatronModule):
         config: GPTModelProvider,
         pre_process: bool = True,
         post_process: bool = True,
-        vp_stage: Optional[int] = None,
+        vp_stage: int | None = None,
     ) -> None:
         super().__init__(config=config)
 
@@ -112,15 +112,15 @@ class Gemma3VLModel(MegatronModule):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        pixel_values: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        runtime_gather_output: Optional[bool] = None,
-        packed_seq_params: Optional["PackedSeqParams"] = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        pixel_values: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
+        runtime_gather_output: bool | None = None,
+        packed_seq_params: "PackedSeqParams" | None = None,
         *,
-        loss_mask: Optional[Tensor] = None,
+        loss_mask: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | None]:
         r"""
         Forward pass combining HuggingFace vision encoder with Megatron language model.
@@ -223,7 +223,7 @@ class Gemma3VLModel(MegatronModule):
     def _compute_attention_mask(
         self,
         input_ids: torch.Tensor,
-    ) -> Optional[torch.Tensor]:
+    ) -> torch.Tensor | None:
         if not self.pre_process:
             return None
         batch_size, seq_len = input_ids.shape

@@ -11,9 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
@@ -43,7 +44,7 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     https://moonshotai.github.io/Kimi-K2/
     """
 
-    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
+    transformer_layer_spec: "ModuleSpec" | Callable[["GPTModelProvider"], "ModuleSpec"] = partial(
         get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
     )
 
@@ -54,7 +55,7 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     num_moe_experts: int = 384
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 60)  # first layer are dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] + [1] * 60)  # first layer are dense
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True  # swiglu
@@ -67,8 +68,8 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     seq_length: int = 4096
     rotary_base: float = 50000.0
     make_vocab_size_divisible_by: int = 1280
-    mtp_num_layers: Optional[int] = None
-    mtp_loss_scaling_factor: Optional[float] = None
+    mtp_num_layers: int | None = None
+    mtp_loss_scaling_factor: float | None = None
 
     # Regularization
     attention_dropout: float = 0.0
@@ -89,7 +90,7 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     moe_token_dispatcher_type: str = "alltoall"
     moe_router_load_balancing_type: str = "seq_aux_loss"
     moe_shared_expert_overlap: bool = True
-    moe_router_dtype: Optional[str] = "fp32"
+    moe_router_dtype: str | None = "fp32"
 
     # MLA
     multi_latent_attention: bool = True
@@ -112,8 +113,8 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     async_tensor_model_parallel_allreduce: bool = True
     attention_softmax_in_fp32: bool = False
     persist_layer_norm: bool = True
-    num_layers_in_first_pipeline_stage: Optional[int] = None
-    num_layers_in_last_pipeline_stage: Optional[int] = None
+    num_layers_in_first_pipeline_stage: int | None = None
+    num_layers_in_last_pipeline_stage: int | None = None
     account_for_embedding_in_pipeline_split: bool = False
     account_for_loss_in_pipeline_split: bool = False
     vocab_size: int = 163840

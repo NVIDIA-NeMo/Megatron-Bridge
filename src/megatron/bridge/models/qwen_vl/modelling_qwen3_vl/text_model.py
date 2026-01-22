@@ -18,7 +18,7 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 3e5a40f2ee42a2c74/mbridge/models/qwen3_vl/gpt_model.py
 """
 
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 from megatron.core.inference.contexts import BaseInferenceContext
@@ -54,9 +54,9 @@ class Qwen3VLGPTModel(GPTModel):
         rope_scaling: bool = False,
         rope_scaling_factor: float = 8.0,
         scatter_embedding_sequence_parallel: bool = True,
-        seq_len_interpolation_factor: Optional[float] = None,
-        mtp_block_spec: Optional[ModuleSpec] = None,
-        vp_stage: Optional[int] = None,
+        seq_len_interpolation_factor: float | None = None,
+        mtp_block_spec: ModuleSpec | None = None,
+        vp_stage: int | None = None,
         pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(
@@ -114,13 +114,13 @@ class Qwen3VLGPTModel(GPTModel):
         inference_context: BaseInferenceContext = None,
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
-        runtime_gather_output: Optional[bool] = None,
+        runtime_gather_output: bool | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
-        loss_mask: Optional[Tensor] = None,
+        inference_params: BaseInferenceContext | None = None,
+        loss_mask: Tensor | None = None,
         # args for deepstack
-        visual_pos_masks: Optional[torch.Tensor] = None,
-        deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        visual_pos_masks: torch.Tensor | None = None,
+        deepstack_visual_embeds: list[torch.Tensor] | None = None,
     ) -> Tensor:
         """Forward function of the GPT Model This function passes the input tensors
         through the embedding layer, and then the decoeder and finally into the post

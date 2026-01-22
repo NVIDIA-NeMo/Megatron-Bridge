@@ -14,7 +14,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -36,29 +36,29 @@ class FinetuningDatasetBuilder:
     fine-tuning scenarios.
 
     Args:
-        dataset_root (Union[str, Path]): The root directory containing training, validation, and test data.
+        dataset_root (str | Path): The root directory containing training, validation, and test data.
         tokenizer: The tokenizer to use for preprocessing text.
         is_built_on_rank (Callable): Function that returns True if the dataset should be built on current rank.
         seq_length (int, optional): The maximum sequence length. Defaults to 2048.
         seed (int, optional): Random seed for data shuffling. Defaults to 1234.
         memmap_workers (int, optional): Number of worker processes for memmap datasets. Defaults to 1.
         max_train_samples (int, optional): Maximum number of training samples. Defaults to None.
-        packed_sequence_specs (Optional[PackedSequenceSpecs], optional): Specifications for packed sequences. Defaults to None.
-        dataset_kwargs (Optional[dict[str, Any]], optional): Additional dataset creation arguments. Defaults to None.
+        packed_sequence_specs (PackedSequenceSpecs | None, optional): Specifications for packed sequences. Defaults to None.
+        dataset_kwargs (dict[str, Any] | None, optional): Additional dataset creation arguments. Defaults to None.
         do_validation (bool, optional): Whether to build the validation dataset. Defaults to True.
         do_test (bool, optional): Whether to build the test dataset. Defaults to True.
     """
 
     def __init__(
         self,
-        dataset_root: Union[str, Path],
+        dataset_root: str | Path,
         tokenizer,
         seq_length: int = 2048,
         seed: int = 1234,
         memmap_workers: int = 1,
-        max_train_samples: Optional[int] = None,
-        packed_sequence_specs: Optional[PackedSequenceSpecs] = None,
-        dataset_kwargs: Optional[dict[str, Any]] = None,
+        max_train_samples: int | None = None,
+        packed_sequence_specs: PackedSequenceSpecs | None = None,
+        dataset_kwargs: dict[str, Any] | None = None,
         do_validation: bool = True,
         do_test: bool = True,
     ):
@@ -123,7 +123,7 @@ class FinetuningDatasetBuilder:
                     pad_seq_to_mult=self._pad_seq_to_mult,
                 )
 
-    def build(self) -> list[Optional[Any]]:
+    def build(self) -> list[Any | None]:
         """Build train, validation, and test datasets.
 
         This method creates the necessary datasets based on the configuration.
@@ -143,14 +143,14 @@ class FinetuningDatasetBuilder:
             torch.distributed.barrier()
 
         # This needs to be called on all ranks
-        datasets: list[Optional[Any]] = self._build_datasets()
+        datasets: list[Any | None] = self._build_datasets()
         return datasets
 
-    def _build_datasets(self) -> list[Optional[Any]]:
+    def _build_datasets(self) -> list[Any | None]:
         """Internal method to build all datasets.
 
         Returns:
-            list[Optional[Any]]: The train, validation, and test datasets.
+            list[Any | None]: The train, validation, and test datasets.
         """
         train_ds = self._create_dataset(
             self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
@@ -182,11 +182,11 @@ class FinetuningDatasetBuilder:
 
     def _create_dataset(
         self,
-        path: Union[str, Path],
-        pack_metadata_path: Optional[Union[str, Path]] = None,
+        path: str | Path,
+        pack_metadata_path: str | Path | None = None,
         is_test: bool = False,
         **kwargs: Any,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Create a single dataset instance (train, validation, or test).
 
         Args:

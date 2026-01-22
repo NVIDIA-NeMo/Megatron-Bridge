@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Any, Generic, TypeVar
 
 import torch
 from transformers import (
@@ -171,9 +171,9 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
 
     def __init__(
         self,
-        model_name_or_path: Optional[Union[str, Path]] = None,
-        device: Optional[Union[str, torch.device]] = None,
-        torch_dtype: Optional[torch.dtype] = None,
+        model_name_or_path: str | Path | None = None,
+        device: str | torch.device | None = None,
+        torch_dtype: torch.dtype | None = None,
         trust_remote_code: bool = False,
         **kwargs,
     ):
@@ -252,7 +252,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
                 "This model might require manual processor setup."
             )
 
-    def _load_tokenizer(self) -> Optional[PreTrainedTokenizer]:
+    def _load_tokenizer(self) -> PreTrainedTokenizer | None:
         """
         Lazy load and return the tokenizer.
         For VLMs, the tokenizer might be included in the processor.
@@ -280,7 +280,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
                 pass
         return None
 
-    def _load_image_processor(self) -> Optional[Any]:
+    def _load_image_processor(self) -> Any | None:
         """
         Lazy load and return the image processor.
         For VLMs, the image processor might be included in the processor.
@@ -303,7 +303,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
                 pass
         return None
 
-    def _load_generation_config(self) -> Optional[GenerationConfig]:
+    def _load_generation_config(self) -> GenerationConfig | None:
         """Lazy load and return the generation config."""
         if self.model_name_or_path is not None:
             try:
@@ -318,7 +318,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         return None
 
     @property
-    def model_name_or_path(self) -> Optional[Union[str, Path]]:
+    def model_name_or_path(self) -> str | Path | None:
         """Return the model name or path."""
         return self._model_name_or_path
 
@@ -354,7 +354,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         self._processor = value
 
     @property
-    def tokenizer(self) -> Optional[PreTrainedTokenizer]:
+    def tokenizer(self) -> PreTrainedTokenizer | None:
         """Lazy load and return the tokenizer."""
         if not hasattr(self, "_tokenizer"):
             self._tokenizer = self._load_tokenizer()
@@ -366,7 +366,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         self._tokenizer = value
 
     @property
-    def image_processor(self) -> Optional[Any]:
+    def image_processor(self) -> Any | None:
         """Lazy load and return the image processor."""
         if not hasattr(self, "_image_processor"):
             self._image_processor = self._load_image_processor()
@@ -378,7 +378,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         self._image_processor = value
 
     @property
-    def generation_config(self) -> Optional[GenerationConfig]:
+    def generation_config(self) -> GenerationConfig | None:
         """Lazy load and return the generation config."""
         if not hasattr(self, "_generation_config"):
             self._generation_config = self._load_generation_config()
@@ -393,16 +393,16 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
             self._model.generation_config = value
 
     @property
-    def kwargs(self) -> Dict[str, Any]:
+    def kwargs(self) -> dict[str, Any]:
         """Additional initialization kwargs."""
         return self.init_kwargs
 
     @classmethod
     def from_pretrained(
         cls,
-        model_name_or_path: Union[str, Path],
-        device: Optional[Union[str, torch.device]] = None,
-        torch_dtype: Optional[torch.dtype] = None,
+        model_name_or_path: str | Path,
+        device: str | torch.device | None = None,
+        torch_dtype: torch.dtype | None = None,
         trust_remote_code: bool = False,
         **kwargs,
     ) -> "PreTrainedVLM[VLMType]":
@@ -427,7 +427,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
             **kwargs,
         )
 
-    def generate(self, **kwargs) -> Union[torch.LongTensor, GenerateOutput]:
+    def generate(self, **kwargs) -> torch.LongTensor | GenerateOutput:
         """
         Generate sequences using the model.
 
@@ -443,7 +443,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         """Forward pass through the model."""
         return self.model(*args, **kwargs)
 
-    def encode_text(self, text: Union[str, List[str]], **kwargs) -> Dict[str, torch.Tensor]:
+    def encode_text(self, text: str | list[str], **kwargs) -> dict[str, torch.Tensor]:
         """
         Encode text input using the tokenizer.
 
@@ -475,10 +475,10 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
 
     def process_images_and_text(
         self,
-        images: Optional[Any] = None,
-        text: Optional[Union[str, List[str]]] = None,
+        images: Any | None = None,
+        text: str | list[str] | None = None,
         **kwargs,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         Process images and text together using the processor.
 
@@ -498,7 +498,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
                     inputs[key] = value.to(self.device)
         return inputs
 
-    def save_pretrained(self, save_directory: Union[str, Path]):
+    def save_pretrained(self, save_directory: str | Path):
         """
         Save the model and all components to a directory.
 
@@ -515,7 +515,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         # Save artifacts through base class
         self.save_artifacts(save_path)
 
-    def to(self, device: Union[str, torch.device]) -> "PreTrainedVLM[VLMType]":
+    def to(self, device: str | torch.device) -> "PreTrainedVLM[VLMType]":
         """
         Move model to a device.
 
@@ -555,7 +555,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         return self
 
     @property
-    def dtype(self) -> Optional[torch.dtype]:
+    def dtype(self) -> torch.dtype | None:
         """Return the dtype of the model."""
         if hasattr(self, "_model") and self._model is not None:
             return next(self._model.parameters()).dtype

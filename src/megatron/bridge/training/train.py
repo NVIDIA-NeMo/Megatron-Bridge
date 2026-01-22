@@ -17,8 +17,9 @@ import os
 import sys
 import time
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import torch
 import torch.profiler
@@ -90,13 +91,13 @@ def train(
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
-    valid_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
+    valid_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
     global_state: GlobalState,
     checkpointing_context: dict[str, Any],
     pg_collection: ProcessGroupCollection,
-    process_non_loss_data_func: Optional[Callable] = None,
-    non_loss_data_func: Optional[Callable] = None,
+    process_non_loss_data_func: Callable | None = None,
+    non_loss_data_func: Callable | None = None,
     callback_manager: CallbackManager | None = None,
 ) -> None:
     """Main training loop.
@@ -643,7 +644,7 @@ def train(
 
 def train_step(
     forward_step_func: ForwardStepCallable,
-    data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
@@ -651,7 +652,7 @@ def train_step(
     pg_collection: ProcessGroupCollection,
     forward_backward_func: Callable,
     p2p_communicator: P2PCommunicator,
-) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
+) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, float | None, int | None]:
     """Single training step.
 
     Args:
@@ -831,7 +832,7 @@ def train_step(
     )
 
 
-def maybe_synchronize_training_step(train_sync_interval: Optional[int], iteration: int) -> None:
+def maybe_synchronize_training_step(train_sync_interval: int | None, iteration: int) -> None:
     """Synchronizes CUDA streams when the configured interval is reached.
 
     Args:
@@ -877,7 +878,7 @@ def maybe_report_stragglers(
 
 def maybe_check_weight_hash_across_dp_replicas(
     model: list[MegatronModule],
-    check_weight_hash_across_dp_replicas_interval: Optional[int],
+    check_weight_hash_across_dp_replicas_interval: int | None,
     iteration: int,
     should_toggle_forward_pre_hook: bool,
 ) -> None:
@@ -1070,7 +1071,7 @@ def save_checkpoint_and_time(
     num_floating_point_operations_so_far: float,
     checkpointing_context: dict[str, Any],
     non_persistent_ckpt: bool = False,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]] = None,
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None = None,
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
@@ -1144,7 +1145,7 @@ def checkpoint_and_decide_exit(
     opt_param_scheduler: OptimizerParamScheduler,
     num_floating_point_operations_so_far: float,
     checkpointing_context: dict[str, Any],
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
 ) -> bool:
     """Handles checkpointing decisions and determines if training should exit.
 
@@ -1292,7 +1293,7 @@ def _finish_train(global_state: GlobalState):
 
 def _should_skip_and_handle_iteration(
     global_state: GlobalState,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
     pg_collection: ProcessGroupCollection,
 ) -> bool:
     """Check if the current iteration should be skipped and handle it if so.
@@ -1326,7 +1327,7 @@ def _should_skip_and_handle_iteration(
 
 def _dummy_train_step(
     global_state: GlobalState,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
     pg_collection: ProcessGroupCollection,
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.

@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import List, Optional
-
 import torch
 import torch.nn as nn
 from megatron.core import parallel_state
@@ -50,7 +48,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         kv_channels: int,
         rotary_percent: float = 1.0,
         rotary_interleaved: bool = False,
-        seq_len_interpolation_factor: Optional[float] = None,
+        seq_len_interpolation_factor: float | None = None,
         rotary_base: int = 10000,
     ) -> None:
         super().__init__()
@@ -90,8 +88,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
     def forward(
         self,
         position_ids: torch.Tensor,
-        mrope_section: List[int] | None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
+        mrope_section: list[int] | None,
+        packed_seq_params: PackedSeqParams | None = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
@@ -140,11 +138,11 @@ def get_rope_index(
     image_token_id: int,
     video_token_id: int,
     vision_start_token_id: int,
-    input_ids: Optional[torch.LongTensor] = None,
-    image_grid_thw: Optional[torch.LongTensor] = None,
-    video_grid_thw: Optional[torch.LongTensor] = None,
-    attention_mask: Optional[torch.Tensor] = None,
-    packed_seq_params: Optional[PackedSeqParams] = None,
+    input_ids: torch.LongTensor | None = None,
+    image_grid_thw: torch.LongTensor | None = None,
+    video_grid_thw: torch.LongTensor | None = None,
+    attention_mask: torch.Tensor | None = None,
+    packed_seq_params: PackedSeqParams | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
 
@@ -291,7 +289,7 @@ def apply_rotary_pos_emb_absolute(
     t: Tensor,
     freqs: Tensor,
     config: Qwen3VLTransformerConfig,
-    cu_seqlens: Optional[Tensor] = None,
+    cu_seqlens: Tensor | None = None,
 ):
     """
     Reroute to the appropriate apply_rotary_pos_emb function depending on

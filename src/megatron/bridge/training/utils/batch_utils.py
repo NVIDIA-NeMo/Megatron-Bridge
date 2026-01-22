@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import torch
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage

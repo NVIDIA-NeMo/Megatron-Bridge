@@ -20,7 +20,7 @@ import warnings
 from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from functools import lru_cache
-from typing import Any, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -158,7 +158,7 @@ class _ConfigContainerBase:
 
     @classmethod
     def from_dict(
-        cls: Type[T],
+        cls: type[T],
         config_dict: dict[str, Any],
         mode: InstantiationMode = InstantiationMode.STRICT,
     ) -> T:
@@ -200,7 +200,7 @@ class _ConfigContainerBase:
         return instance
 
     @classmethod
-    def from_yaml(cls: Type[T], yaml_path: str, mode: InstantiationMode = InstantiationMode.LENIENT) -> T:
+    def from_yaml(cls: type[T], yaml_path: str, mode: InstantiationMode = InstantiationMode.LENIENT) -> T:
         """
         Create a config container from a YAML file.
 
@@ -302,7 +302,7 @@ class _ConfigContainerBase:
         else:
             return value
 
-    def to_yaml(self, yaml_path: Optional[str] = None) -> None:
+    def to_yaml(self, yaml_path: str | None = None) -> None:
         """
         Save the config container to a YAML file.
 

@@ -14,9 +14,9 @@
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import Callable, Dict, Optional, Tuple
 
 import packaging
 import torch
@@ -205,7 +205,7 @@ def is_expert_linear(fqn: str) -> bool:
     return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None and not ".shared_experts." in fqn
 
 
-def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
+def wildcard_match(pattern: str, key: str | None) -> bool | None:
     """Return whether the pattern (target module to add LoRA) matches the key (model weight name).
 
     This function performs wildcard matching using '*' as a placeholder for any substring.
@@ -278,7 +278,7 @@ def init_method_const(val: float) -> Callable[[torch.Tensor], torch.Tensor]:
     return init_
 
 
-def pad_seq_to_mult(x: torch.Tensor, mult: int) -> Tuple[torch.Tensor, int]:
+def pad_seq_to_mult(x: torch.Tensor, mult: int) -> tuple[torch.Tensor, int]:
     """Pad sequence length to be a multiple of mult.
 
     This function pads the first dimension of the tensor to ensure it's divisible by mult.
@@ -423,8 +423,8 @@ class ParallelLinearAdapter(nn.Module):
         row_init_method: str = "zero",
         input_is_parallel: bool = False,
         dropout: float = 0.0,
-        model_parallel_config: Optional[ModelParallelConfig] = None,
-        alpha: Optional[float] = None,
+        model_parallel_config: ModelParallelConfig | None = None,
+        alpha: float | None = None,
         dropout_position: str = "pre",
         a2a_experimental: bool = False,
         is_expert: bool = False,
@@ -656,9 +656,9 @@ class ParallelLinearAdapter(nn.Module):
     def sharded_state_dict(
         self,
         prefix: str = "",
-        sharded_offsets: Tuple = (),
-        metadata: Optional[Dict] = None,
-        mamba_dim_info: Optional[Dict] = None,
+        sharded_offsets: tuple = (),
+        metadata: dict | None = None,
+        mamba_dim_info: dict | None = None,
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 

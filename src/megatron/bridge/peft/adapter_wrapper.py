@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 
 
-def _compute_mamba_dim_info(wrapped_module: nn.Module) -> Dict[str, int]:
+def _compute_mamba_dim_info(wrapped_module: nn.Module) -> dict[str, int]:
     """Compute Mamba dimension information from a wrapped module's config.
 
     This follows the same logic as mamba_mixer.py to derive local tensor parallel
@@ -112,7 +112,7 @@ class AdapterWrapper(nn.Module):
 
     def base_linear_forward(
         self, x: torch.Tensor, *args: Any, **kwargs: Any
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
         """Run the forward method of the linear module `to_wrap`.
 
         This method handles the complex return patterns of Megatron's linear layers,
@@ -157,8 +157,8 @@ class AdapterWrapper(nn.Module):
         return linear_output, bias, layernorm_output
 
     def state_dict(
-        self, destination: Optional[Dict[str, Any]] = None, prefix: str = "", keep_vars: bool = False
-    ) -> Dict[str, Any]:
+        self, destination: dict[str, Any] | None = None, prefix: str = "", keep_vars: bool = False
+    ) -> dict[str, Any]:
         """Retrieve the state dictionary of the wrapped module and adapter.
 
         This method overrides the default state_dict behavior to include both
@@ -187,8 +187,8 @@ class AdapterWrapper(nn.Module):
     def sharded_state_dict(
         self,
         prefix: str = "",
-        sharded_offsets: Tuple[Tuple[int, int, int]] = (),
-        metadata: Optional[Dict[str, Any]] = None,
+        sharded_offsets: tuple[tuple[int, int, int]] = (),
+        metadata: dict[str, Any] | None = None,
     ) -> "ShardedStateDict":
         """Retrieve the sharded state dictionary of the wrapped module and adapter.
 

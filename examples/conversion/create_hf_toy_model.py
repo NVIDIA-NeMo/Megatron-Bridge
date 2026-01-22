@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional
 
 import torch
 from transformers import (
@@ -101,8 +100,8 @@ def _adjust_config(
     *,
     num_hidden_layers: int,
     num_experts: int,
-    num_experts_per_tok: Optional[int],
-    moe_intermediate_size: Optional[int],
+    num_experts_per_tok: int | None,
+    moe_intermediate_size: int | None,
 ) -> None:
     """Mutate the config in-place so it matches the requested toy topology."""
 

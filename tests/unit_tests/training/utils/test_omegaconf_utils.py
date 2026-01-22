@@ -19,7 +19,7 @@ import dataclasses
 import functools
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pytest
 import torch
@@ -71,8 +71,8 @@ class ConfigWithOptionalFields:
     """Config with optional fields for testing None handling."""
 
     name: str = "test"
-    optional_str: Optional[str] = None  # Should be preserved
-    optional_int: Optional[int] = None  # Should be preserved
+    optional_str: str | None = None  # Should be preserved
+    optional_int: int | None = None  # Should be preserved
     activation_func: Any = torch.nn.functional.relu  # Should be excluded
     value: int = 42
 
@@ -83,7 +83,7 @@ class ProfilingConfig:
 
     use_pytorch_profiler: bool = False
     profile_ranks: list = dataclasses.field(default_factory=list)
-    pytorch_profiler_config: Optional[dict] = None
+    pytorch_profiler_config: dict | None = None
 
 
 @dataclasses.dataclass
@@ -91,7 +91,7 @@ class ConfigWithOptionalProfilingConfig:
     """Config with optional profiling config for testing _target_ mechanism."""
 
     name: str = "test"
-    profiling: Optional[ProfilingConfig] = None
+    profiling: ProfilingConfig | None = None
 
 
 def dummy_function():
@@ -367,7 +367,7 @@ class TestTrackExcludedFields:
         class ConfigWithDict:
             """Config with dictionary fields for testing."""
 
-            funcs: Dict[str, Any] = dataclasses.field(
+            funcs: dict[str, Any] = dataclasses.field(
                 default_factory=lambda: {"relu": torch.nn.functional.relu, "value": 42}
             )
 

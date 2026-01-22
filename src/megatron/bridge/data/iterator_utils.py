@@ -15,7 +15,8 @@
 """Iterator utilities for handling virtual pipeline parallelism."""
 
 import queue
-from typing import Iterator, TypeVar, Union
+from collections.abc import Iterator
+from typing import TypeVar
 
 
 DataT = TypeVar("DataT")
@@ -23,7 +24,7 @@ DataT = TypeVar("DataT")
 
 def make_data_iterator_list(
     model: list, data_iterator: Iterator[DataT]
-) -> Union[Iterator[DataT], list[Iterator[DataT]]]:
+) -> Iterator[DataT] | list[Iterator[DataT]]:
     """Convert data iterator into form expected by Megatron with virtual pipeline parallelism.
 
     With interleaved/virtual pipeline parallelism, Megatron expects a list of one data

@@ -20,11 +20,12 @@ import random
 import shutil
 import sys
 import threading
+from collections.abc import Callable
 from enum import Enum, auto
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -125,7 +126,7 @@ def set_checkpoint_version(value: float) -> None:
     _CHECKPOINT_VERSION = value
 
 
-def get_checkpoint_version() -> Optional[float]:
+def get_checkpoint_version() -> float | None:
     """Get the global checkpoint version number.
 
     Returns:
@@ -202,7 +203,7 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
         raise NotImplementedError(f"Unknown checkpoint format in {checkpoint_path}")
 
 
-def find_checkpoint_rank_0(checkpoints_path: str, iteration: int, release: bool = False) -> Optional[str]:
+def find_checkpoint_rank_0(checkpoints_path: str, iteration: int, release: bool = False) -> str | None:
     """Find the checkpoint directory for a given iteration, assuming distributed checkpoints.
 
     Args:
@@ -463,17 +464,17 @@ class CheckpointType(Enum):
 def save_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
-    optimizer: Optional[MegatronOptimizer],
-    opt_param_scheduler: Optional[Any],
+    optimizer: MegatronOptimizer | None,
+    opt_param_scheduler: Any | None,
     num_floating_point_operations_so_far: int,
-    checkpointing_context: Optional[dict[str, Any]] = None,
-    pipeline_rank: Optional[int] = None,
-    tensor_rank: Optional[int] = None,
+    checkpointing_context: dict[str, Any] | None = None,
+    pipeline_rank: int | None = None,
+    tensor_rank: int | None = None,
     non_persistent_ckpt: bool = False,
-    train_data_iterator: Optional[Any] = None,
-    preprocess_common_state_dict_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
-    prebuilt_state_dict: Optional[dict[str, Any]] = None,
-    pg_collection: Optional[ProcessGroupCollection] = None,
+    train_data_iterator: Any | None = None,
+    preprocess_common_state_dict_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    prebuilt_state_dict: dict[str, Any] | None = None,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -1073,7 +1074,7 @@ def save_tokenizer_assets(
 
 def _generate_model_state_dict(
     model: list[MegatronModule],
-    model_sd_kwargs: Optional[dict[str, Any]] = None,
+    model_sd_kwargs: dict[str, Any] | None = None,
     ckpt_format: str = "torch_dist",
     *,
     pg_collection: ProcessGroupCollection | None = None,
@@ -1110,13 +1111,13 @@ def _generate_model_state_dict(
 def generate_state_dict(
     ckpt_cfg: CheckpointConfig,
     model: list[MegatronModule],
-    optimizer: Optional[MegatronOptimizer],
-    opt_param_scheduler: Optional[Any],
-    rng_state: Optional[ShardedObject],
-    iteration: Optional[int] = None,
-    optim_sd_kwargs: Optional[dict[str, Any]] = None,
-    model_sd_kwargs: Optional[dict[str, Any]] = None,
-    rerun_state: Optional[dict[str, Any]] = None,
+    optimizer: MegatronOptimizer | None,
+    opt_param_scheduler: Any | None,
+    rng_state: ShardedObject | None,
+    iteration: int | None = None,
+    optim_sd_kwargs: dict[str, Any] | None = None,
+    model_sd_kwargs: dict[str, Any] | None = None,
+    rerun_state: dict[str, Any] | None = None,
     *,
     pg_collection: ProcessGroupCollection | None = None,
 ) -> dict[str, Any]:
@@ -1239,7 +1240,7 @@ def _load_model_weights_from_checkpoint(
         "ignore_all",
     ] = "assume_ok_unexpected",
     strict: bool = True,
-) -> Optional[Union[StateDict, tuple[StateDict, set[str], set[str]]]]:
+) -> StateDict | tuple[StateDict, set[str], set[str]] | None:
     """Load model weights from a checkpoint.
 
     MCore distributed checkpoints from both Megatron Bridge and MegatronLM are supported.
@@ -1301,10 +1302,10 @@ def _load_model_weights_from_checkpoint(
 def load_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
-    optimizer: Optional[MegatronOptimizer],
-    opt_param_scheduler: Optional[Any],
+    optimizer: MegatronOptimizer | None,
+    opt_param_scheduler: Any | None,
     strict: bool = True,
-    checkpointing_context: Optional[dict[str, Any]] = None,
+    checkpointing_context: dict[str, Any] | None = None,
     skip_load_to_model_and_opt: bool = False,
 ) -> tuple[int, int]:
     """Load a model checkpoint.
@@ -1367,10 +1368,10 @@ def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
     model: list[MegatronModule],
-    optimizer: Optional[MegatronOptimizer],
-    opt_param_scheduler: Optional[Any],
+    optimizer: MegatronOptimizer | None,
+    opt_param_scheduler: Any | None,
     strict: bool = True,
-    checkpointing_context: Optional[dict[str, Any]] = None,
+    checkpointing_context: dict[str, Any] | None = None,
     skip_load_to_model_and_opt: bool = False,
     ignore_ckpt_step: bool = False,
 ) -> tuple[int, int]:
@@ -1984,8 +1985,8 @@ def _transpose_first_dim(
 
 def _get_non_persistent_iteration(
     non_persistent_global_dir: str,
-    non_persistent_ckpt_type: Optional[Literal["global", "local"]] = None,
-    checkpointing_context: Optional[dict[str, Any]] = None,
+    non_persistent_ckpt_type: Literal["global", "local"] | None = None,
+    checkpointing_context: dict[str, Any] | None = None,
 ) -> int:
     """Get iteration number from non-persistent checkpoint."""
     if non_persistent_ckpt_type is None:
@@ -2012,9 +2013,9 @@ def _load_non_persistent_base_checkpoint(
     non_persistent_global_dir: str,
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
-    sharded_state_dict: Optional[dict[str, Any]],
+    sharded_state_dict: dict[str, Any] | None,
     non_persistent_iteration: int,
-    checkpointing_context: Optional[dict[str, Any]] = None,
+    checkpointing_context: dict[str, Any] | None = None,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
@@ -2051,10 +2052,10 @@ def _load_global_dist_base_checkpoint(
     load_dir: str,
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
-    sharded_state_dict: Optional[dict[str, Any]],
+    sharded_state_dict: dict[str, Any] | None,
     iteration: int,
     release: bool,
-    checkpointing_context: Optional[dict[str, Any]] = None,
+    checkpointing_context: dict[str, Any] | None = None,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
@@ -2080,16 +2081,16 @@ def _load_global_dist_base_checkpoint(
 
 
 def _load_base_checkpoint(
-    load_dir: Optional[str],
+    load_dir: str | None,
     ckpt_cfg: CheckpointConfig,
     rank0: bool = False,
-    sharded_state_dict: Optional[dict[str, Any]] = None,
-    checkpointing_context: Optional[dict[str, Any]] = None,
+    sharded_state_dict: dict[str, Any] | None = None,
+    checkpointing_context: dict[str, Any] | None = None,
     ignore_ckpt_step: bool = False,
-    cfg: Optional[ConfigContainer] = None,
+    cfg: ConfigContainer | None = None,
     *,
     pg_collection: ProcessGroupCollection,
-) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
+) -> tuple[dict[str, Any] | None, str, bool, CheckpointType | None]:
     """Load the base state_dict from the given directory.
 
     Args:
@@ -2196,11 +2197,11 @@ def _load_fsdp_dtensor_base_checkpoint(
     load_dir: str,
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
-    sharded_state_dict: Optional[dict[str, Any]],
+    sharded_state_dict: dict[str, Any] | None,
     iteration: int,
     release: bool,
-    checkpointing_context: Optional[dict[str, Any]] = None,
-    cfg: Optional[ConfigContainer] = None,
+    checkpointing_context: dict[str, Any] | None = None,
+    cfg: ConfigContainer | None = None,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
     """Load the base state_dict from an FSDP DTensor checkpoint.
 

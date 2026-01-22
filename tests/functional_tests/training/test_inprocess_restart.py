@@ -20,7 +20,6 @@ by running actual training with simulated failures and verifying restart behavio
 """
 
 import os
-from typing import Optional
 
 import pytest
 import torch
@@ -51,7 +50,7 @@ def build_test_config(
     seq_length: int = 512,
     async_save: bool = False,
     save_interval: int = 10,
-    fault_delay: Optional[float] = None,
+    fault_delay: float | None = None,
 ) -> ConfigContainer:
     """Build training configuration with in-process restart enabled for testing.
 

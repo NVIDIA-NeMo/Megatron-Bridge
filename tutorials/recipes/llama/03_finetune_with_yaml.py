@@ -55,7 +55,6 @@ For a pure Python usage see 01_quickstart_finetune.py.
 import argparse
 import logging
 from pathlib import Path
-from typing import Tuple
 
 from megatron.bridge.recipes.llama import llama32_1b_finetune_config
 from megatron.bridge.training.config import ConfigContainer
@@ -71,7 +70,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILE = SCRIPT_DIR / "conf" / "llama32_1b_finetune.yaml"
 
 
-def parse_args() -> Tuple[argparse.Namespace, list[str]]:
+def parse_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Finetune with YAML configuration and CLI overrides",
