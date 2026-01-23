@@ -115,18 +115,18 @@ def kuberay_executor(
         image=container_image,
         head_cpu=head_cpu,
         head_memory=head_memory,
-        ray_head_start_params={"num-gpus": "0"},
-        ray_worker_start_params={"num-gpus": "8"},
+        ray_head_start_params={"num-gpus": "0", "num-cpus": "0"},
+        ray_worker_start_params={"num-gpus": "8", "num-cpus": "128"},
         worker_groups=[
             KubeRayWorkerGroup(
-                group_name="worker",  # arbitrary string
-                min_replicas=nodes,  # two worker pods
-                max_replicas=nodes,  # two worker pods
+                group_name="worker",
+                min_replicas=nodes,
+                max_replicas=nodes,
                 replicas=nodes,
                 gpus_per_worker=num_gpus_per_node,
-                cpu_requests="64",
+                cpu_requests="128",
+                cpu_limits="128",
                 memory_requests="512Gi",
-                cpu_limits="64",
                 memory_limits="512Gi",
             )
         ],

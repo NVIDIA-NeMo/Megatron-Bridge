@@ -79,103 +79,6 @@ class CustomJobDetailsRay(SlurmJobDetails):
         return os.path.join(self.folder, "ray-job.log")
 
 
-RAY_DEPLOY_SCRIPT = """
-# Unset SLURM/PMI/PMIX env vars to prevent MPI initialization issues
-for i in $(env | grep ^SLURM_ | cut -d"=" -f 1); do unset -v $i; done
-for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
-for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
-
-python \
-  /opt/Export-Deploy/scripts/deploy/nlp/deploy_ray_inframework.py \
-  --megatron_checkpoint {megatron_checkpoint} \
-  --model_id megatron_model \
-  --host {host} \
-  --port {port} \
-  --num_gpus {num_gpus} \
-  --num_replicas {num_replicas} \
-  --tensor_model_parallel_size {tensor_model_parallel_size} \
-  --pipeline_model_parallel_size {pipeline_model_parallel_size} \
-  --context_parallel_size {context_model_parallel_size}
-"""
-
-EVAL_SCRIPT = """
-# Unset SLURM/PMI/PMIX env vars to prevent MPI initialization issues
-for i in $(env | grep ^SLURM_ | cut -d"=" -f 1); do unset -v $i; done
-for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
-for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
-
-# Install missing dependency for lm-evaluation-harness
-pip install math_verify --quiet
-
-python << 'EVAL_EOF'
-import subprocess
-import time
-
-from nemo_evaluator.api.api_dataclasses import (
-    ApiEndpoint,
-    ConfigParams,
-    EvaluationConfig,
-    EvaluationTarget,
-)
-from nemo_evaluator.api import check_endpoint, evaluate
-
-# Configuration
-endpoint_url = "{endpoint_url}"
-endpoint_type = "{endpoint_type}"
-model_id = "megatron_model"
-eval_task = "{eval_task}"
-limit_samples = {limit_samples}
-parallelism = {parallelism}
-request_timeout = {request_timeout}
-temperature = {temperature}
-top_p = {top_p}
-top_k = {top_k}
-output_dir = "/nemo_run/results/"
-
-# Check server readiness
-server_ready = check_endpoint(
-    endpoint_url=endpoint_url,
-    endpoint_type=endpoint_type,
-    model_name=model_id,
-)
-if not server_ready:
-    raise RuntimeError(
-        "Server is not ready to accept requests. Check the deployment logs for errors."
-    )
-
-# Build configs
-api_endpoint = ApiEndpoint(
-    url=endpoint_url,
-    type=endpoint_type,
-    model_id=model_id,
-)
-target_cfg = EvaluationTarget(api_endpoint=api_endpoint)
-eval_params = ConfigParams(
-    limit_samples=limit_samples,
-    parallelism=parallelism,
-    request_timeout=request_timeout,
-    temperature=temperature,
-    top_p=top_p,
-    top_k=top_k,
-)
-eval_cfg = EvaluationConfig(
-    type=eval_task,
-    params=eval_params,
-    output_dir=output_dir,
-)
-
-# Run evaluation
-result = evaluate(target_cfg=target_cfg, eval_cfg=eval_cfg)
-
-# Shutdown Ray server
-print("Evaluation completed. Shutting down Ray server...")
-subprocess.run(["ray", "stop", "--force"], check=False, timeout=30)
-print("Ray server shutdown command sent.")
-time.sleep(5)
-EVAL_EOF
-"""
-
-
 def main(args):
     """Deploys the inference and evaluation server with NemoRun."""
 
@@ -210,7 +113,8 @@ def main(args):
         executor=executor,
     )
     job.start(
-        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} | tee -a deploy.log & bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} | tee -a eval.log",
+        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
+        # command="sleep infinity",
         workdir=None,
         pre_ray_start_commands=[
             "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
@@ -219,8 +123,17 @@ def main(args):
     )
 
     register_pipeline_terminator(job=job)
-    time.sleep(90)
+
+    status = "Initializing"
+    while status != "Running":
+        status = job.status(display=False)["jobDeploymentStatus"]
+        print(status)
+        time.sleep(1)
+        if status == "Failed":
+            raise RuntimeError("Job failed")
+
     job.logs(follow=True, timeout=10 * 60 * 60)
+    job.stop()
 
     with open(os.path.join(args.output_dir, "results.yml"), "r") as f:
         results = yaml.safe_load(f)

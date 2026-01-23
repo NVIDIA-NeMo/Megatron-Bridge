@@ -4,6 +4,7 @@ for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
 
 OUTPUT_DIR=$1
+PARALLELISM=$2
 
 # Install missing dependency for lm-evaluation-harness
 uv pip install math_verify --quiet
@@ -26,7 +27,7 @@ endpoint_type = "completions"
 model_id = "megatron_model"
 eval_task = "mmlu"
 limit_samples = 100
-parallelism = 8
+parallelism = $PARALLELISM
 request_timeout = 1000
 temperature = None
 top_p = None
