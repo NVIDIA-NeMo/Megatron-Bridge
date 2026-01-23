@@ -133,21 +133,21 @@ jobs:
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure --color=always
 
-  cicd-wait-in-queue:
-    needs: [pre-flight, lint-check]
-    runs-on: ubuntu-latest
-    environment: test
-    if: |
-      !(needs.pre-flight.outputs.is_ci_workload == 'true'
-      || needs.pre-flight.outputs.is_deployment_workflow == 'true'
-      || needs.pre-flight.outputs.docs_only == 'true')
-    steps:
-      - name: Running CI tests
-        run: |
-          echo "Running CI tests"
+  # cicd-wait-in-queue:
+  #   needs: [pre-flight, lint-check]
+  #   runs-on: ubuntu-latest
+  #   environment: test
+  #   if: |
+  #     !(needs.pre-flight.outputs.is_ci_workload == 'true'
+  #     || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+  #     || needs.pre-flight.outputs.docs_only == 'true')
+  #   steps:
+  #     - name: Running CI tests
+  #       run: |
+  #         echo "Running CI tests"
 
   cicd-container-build:
-    needs: [pre-flight, cicd-wait-in-queue]
+    needs: [pre-flight]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     environment: nemo-ci
     if: |
@@ -407,7 +407,7 @@ jobs:
           # - script: L2_Launch_quantization_aware_training
           # - script: L2_Launch_quantization_export
           # - script: L2_Launch_recipes_llama_cuda_graphs
-    needs: [pre-flight]
+    needs: [pre-flight, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
