@@ -180,7 +180,7 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
             )
 
     if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
-        cfg.tokenizer_model = Path(checkpoint_path) / 'tokenizer'
+        cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
 
     return build_tokenizer(cfg)
 
