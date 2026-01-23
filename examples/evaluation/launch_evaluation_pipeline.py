@@ -26,10 +26,8 @@ import sys
 import time
 from dataclasses import dataclass
 
-import nemo_run as run
 import yaml
 from nemo_run.core.execution.slurm import SlurmJobDetails
-from nemo_run.run.ray.cluster import RayCluster
 from nemo_run.run.ray.job import RayJob
 
 
@@ -42,10 +40,10 @@ except (ImportError, ModuleNotFoundError):
     wandb = None
 
 try:
-    from argument_parser import ENDPOINT_TYPES, parse_cli_args
+    from argument_parser import parse_cli_args
     from utils.executors import kuberay_executor, slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import ENDPOINT_TYPES, parse_cli_args
+    from .argument_parser import parse_cli_args
     from .utils.executors import kuberay_executor, slurm_executor
 
 logging.basicConfig(level=logging.DEBUG)
@@ -157,7 +155,7 @@ def main(args):
         wandb_run.log_artifact(artifact)
 
         for category in ["tasks", "groups"]:
-            for task_or_group_name, result in results[category].items():
+            for task_or_group_name, result in results["results"][category].items():
                 for metric_name, metric_result in result["metrics"].items():
                     field_key = f"{category.rstrip('s')}/{task_or_group_name}/{metric_name}"
                     wandb_run.log(
