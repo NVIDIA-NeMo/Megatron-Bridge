@@ -205,7 +205,7 @@ python scripts/performance/setup_experiment.py
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use (e.g., `v1`, `v2`). Default `v2`. Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use (e.g., `"v1"`, `"v2"`). Defaults to `"v2"` (`"v1"` if `"v2"` doens't exist). Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments
