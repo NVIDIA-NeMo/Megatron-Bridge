@@ -141,10 +141,19 @@ def main(args):
 
     if HAVE_WANDB and args.wandb_key:
         wandb.login(key=args.wandb_key)
+        api = wandb.Api()
+        runs = api.runs(
+            args.wandb_entity_name, args.wandb_project_name, filters={"display_name": args.wandb_experiment_name}
+        )
+
+        if runs:
+            run_id = runs[0].id
+            print(f"Found run with ID: {run_id}")
+
         wandb_run = wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity_name,
-            id=args.wandb_experiment_name,
+            id=run_id,
             resume="allow",
         )
         artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
