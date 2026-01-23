@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import dynamic_module_utils
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 
@@ -356,7 +357,15 @@ class TestNemotron3NanoConversion:
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, nemotron_3_nano_toy_model_path):
+    @pytest.fixture
+    def temp_hf_modules(self, tmp_path, monkeypatch):
+        """Change transformers.dynamic_module_utils.HF_MODULES_CACHE to a temp path"""
+        temp_hf_modules_cache = tmp_path / "hf_modules_cache"
+        temp_hf_modules_cache.mkdir(exist_ok=True)
+        monkeypatch.setattr(dynamic_module_utils, "HF_MODULES_CACHE", temp_hf_modules_cache)
+        yield temp_hf_modules_cache
+
+    def test_toy_model_creation(self, nemotron_3_nano_toy_model_path, temp_hf_modules):
         """
         Test that the Nemotron-3-Nano toy model is created correctly and can be loaded.
 
