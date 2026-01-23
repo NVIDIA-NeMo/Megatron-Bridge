@@ -68,7 +68,7 @@ If you are using VSCode/Cursor you can also use Dev Containers. Here's a devcont
 
 If you're an external contributor, you'll need to fork the repository:
 
-1. **Create a fork**: Click the "Fork" button on the [GitHub repository page](https://github.com/NVIDIA-NeMo/Megatron-Bridge) or follow this direct link: https://github.com/NVIDIA-NeMo/Megatron-Bridge/fork
+1. **Create a fork**: Click the "Fork" button on the [GitHub repository page](https://github.com/NVIDIA-NeMo/Megatron-Bridge) or follow this [direct link to fork](https://github.com/NVIDIA-NeMo/Megatron-Bridge/fork)
 
 2. **Clone your fork**:
    ```bash
@@ -154,7 +154,7 @@ If you have write access to the repository (NVIDIA contributors):
 
 Format your commit messages and PR titles as:
 
-```
+```text
 [{modules}] {type}: {description}
 ```
 
@@ -182,7 +182,7 @@ Format your commit messages and PR titles as:
 **Breaking Changes**: If your PR breaks any API (CLI arguments, config, function signature, etc.), add `[BREAKING]` to the beginning of the title.
 
 **Examples**:
-```
+```text
 [model] feat: Add Qwen3 model bridge
 [recipe, doc] feat: Add Llama 3.1 70B recipe with documentation
 [ckpt] fix: Handle missing keys in HF checkpoint conversion
@@ -197,7 +197,7 @@ We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and fu
 **Unit tests** aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.
 Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if none matches.
 
-**Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.Run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
+**Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
 
 ## 📦 Dependencies Management
 

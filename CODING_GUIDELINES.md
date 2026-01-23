@@ -155,7 +155,7 @@ Do:
 
 ```python
 def make_complex(x, y):
-    return {'x': x, 'y': y}
+    return {"x": x, "y": y}
 ```
 
 ### Error Handling
@@ -291,7 +291,7 @@ Recipes should be placed under `src/megatron/bridge/recipes/<model_name>/` and i
 
 Use descriptive names that include the model size and configuration:
 
-```
+```text
 llama3_8b.py
 llama3_70b.py
 qwen2_7b_instruct.py
