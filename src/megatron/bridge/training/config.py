@@ -191,42 +191,6 @@ class DistributedInitConfig:
     disable_jit_fuser: bool = False
     """Disable the JIT fuser."""
 
-    nccl_ub: bool = False
-    """If true, allocate and register NCCL userbuffer for param and grad buffer.
-      This flag enables SM efficient nccl algorithm that could improve the performance
-      of FSDP and DP with comm_overlap. This flag will be much more effective when used
-      together with sharp.
-    """
-
-    fsdp_double_buffer: bool = False
-    """If true, use persistently allocated double buffers for the
-      temporary memory needed in the Megatron FSDP communications.
-      This option will cause additional memory overhead, however, it is necessary for
-      to register user buffer (nccl_ub=True) for the Megatron FSDP.
-      This option will be automatically set to True when nccl_ub=True.
-    """
-
-    outer_dp_sharding_strategy: str = "no_shard"
-    """
-    Sharding strategy for outer data parallel group in Hybrid Sharded Data Parallel (HSDP) mode.
-    Valid values are 'no_shard', 'optim', 'optim_grads', 'optim_grads_params'.
-    This option is only effective when Hybrid FSDP is enabled.
-    """
-
-    disable_symmetric_registration: bool = False
-    """If true, disable symmetric (window) registration for NCCL userbuffer registration.
-      This option will force to use conventional (local) userbuffer registration
-      when nccl_ub is set.
-    """
-
-    fsdp_manual_registration: bool = False
-    """If true, manually register the FSDP communication buffers to NCCL user buffer.
-      This option is only effective when use_megatron_fsdp and nccl_ub is set.
-      For symmetric registration with large models, the registration itself can take
-      a significant amount of time. This option minimizes the number of registration calls
-      to minimize the registration time.
-    """
-
 
 @dataclass
 class RerunStateMachineConfig:
@@ -239,7 +203,7 @@ class RerunStateMachineConfig:
     error_injection_type: Literal["correct_result", "transient_error", "persistent_error"] = "transient_error"
     """Type of error to inject. """
 
-    rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "disabled"
+    rerun_mode: Literal["disabled", "validate_results", "report_determinism_stats"] = "disabled"
     """Use re-run engine to validate results (default) or to emit stats
     on variability of computations due to non-deterministic algorithms."""
 
@@ -1318,6 +1282,7 @@ class ConfigContainer(Container):
 
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
+        _validate_mixed_precision_consistency(self)
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1569,3 +1534,45 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
             )
         config.ddp.use_distributed_optimizer = True
         config.optimizer.use_distributed_optimizer = True
+
+
+def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
+    """Validate that mixed precision settings are consistent between model and optimizer configs.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        AssertionError: If precision settings are inconsistent in a way that would
+            indicate ambiguous behavior.
+    """
+    model_cfg = config.model
+    optimizer_cfg = config.optimizer
+
+    # Mutually exclusive: cannot have both bf16 and fp16 enabled
+    assert not (model_cfg.bf16 and model_cfg.fp16), (
+        "Model config cannot have both bf16=True and fp16=True. Please set only one precision mode."
+    )
+    assert not (optimizer_cfg.bf16 and optimizer_cfg.fp16), (
+        "Optimizer config cannot have both bf16=True and fp16=True. Please set only one precision mode."
+    )
+
+    # Validate across model and optimizer configs
+    if optimizer_cfg.use_precision_aware_optimizer:
+        # For bf16 training: optimizer.bf16 must match model.bf16
+        if model_cfg.bf16:
+            assert optimizer_cfg.bf16, (
+                "optimizer.bf16=True must be set when model.bf16=True and use_precision_aware_optimizer=True."
+            )
+        # For fp16 training: optimizer.fp16 must match model.fp16
+        if model_cfg.fp16:
+            assert optimizer_cfg.fp16, (
+                "optimizer.fp16=True must be set when model.fp16=True and use_precision_aware_optimizer=True."
+            )
+        # For fp32 training (neither bf16 nor fp16 on model)
+        if not model_cfg.bf16 and not model_cfg.fp16:
+            assert not optimizer_cfg.bf16 and not optimizer_cfg.fp16, (
+                "optimizer.bf16 and optimizer.fp16 must both be False when "
+                "model is using fp32 precision (model.bf16=False, model.fp16=False) and "
+                "use_precision_aware_optimizer=True."
+            )

@@ -43,7 +43,8 @@ class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
             Tensor: Raw frequency embeddings for Megatron Core (shape: [seq_length, bs, 1, dim]).
                     Megatron Core will compute cos/sin internally and apply attention_scaling.
         """
-        seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        # Use fp32 for position indices to avoid precision loss when inv_freq is bf16.
+        seq = position_ids.to(device=self.inv_freq.device, dtype=torch.float32)
 
         # if self.seq_len_interpolation_factor is not None:
         #     seq *= 1 / self.seq_len_interpolation_factor
