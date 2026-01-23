@@ -440,7 +440,9 @@ class TestNemotron3NanoConversion:
             (1, 2, "PP"),
         ],
     )
-    def test_nemotron_3_nano_conversion_parallelism(self, nemotron_3_nano_toy_model_path, tmp_path, tp, pp, test_name):
+    def test_nemotron_3_nano_conversion_parallelism(
+        self, nemotron_3_nano_toy_model_path, tmp_path, tp, pp, test_name, temp_hf_modules
+    ):
         """
         Test Nemotron-3-Nano MoE model conversion with different parallelism configurations.
 
@@ -483,7 +485,11 @@ class TestNemotron3NanoConversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent,
+                env={**os.environ, "HF_MODULES_CACHE": str(temp_hf_modules)},
             )
 
             # Check that the conversion completed successfully
