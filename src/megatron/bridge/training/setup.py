@@ -230,6 +230,7 @@ def setup(
         # Only pass pg_collection when use_decentralized_pg is True.
         # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
         pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
+        optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
