@@ -312,7 +312,7 @@ class TestNemotron3NanoConversion:
 
         # # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = gdynamic_module_utils.get_class_from_dynamic_module(
+        model_class = dynamic_module_utils.get_class_from_dynamic_module(
             class_reference=model_class_ref,
             pretrained_model_name_or_path=repo_id,
             cache_dir=None,
