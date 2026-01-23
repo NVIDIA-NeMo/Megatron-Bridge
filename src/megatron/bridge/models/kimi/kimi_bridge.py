@@ -22,13 +22,13 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 @MegatronModelBridge.register_bridge(
-    source="DeepseekV2ForCausalLM",
+    source="KimiK2ForCausalLM",
     target=GPTModel,
     provider=MLAModelProvider,
-    model_type="deepseek_v2",
+    model_type="kimi_k2",
 )
-class DeepSeekV2Bridge(MegatronModelBridge):
-    """Megatron Bridge for DeepSeek-V2."""
+class KimiK2Bridge(MegatronModelBridge):
+    """Megatron Bridge for Kimi K2."""
 
     MEGATRON_DEFAULTS = {
         "normalization": "RMSNorm",
@@ -43,12 +43,13 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         "moe_token_dispatcher_type": "alltoall",
         "moe_router_load_balancing_type": "seq_aux_loss",
         "moe_shared_expert_overlap": True,
+        "moe_router_enable_expert_bias": True,
         "moe_router_dtype": "fp32",
         "apply_rope_fusion": False,
         "bias_activation_fusion": True,
         "bias_dropout_fusion": True,
         "cross_entropy_fusion_impl": "te",
-        "make_vocab_size_divisible_by": 3200,
+        "make_vocab_size_divisible_by": 1280,
     }
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:

@@ -234,8 +234,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         - MegatronModel: The Megatron model type
     """
 
+    # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
+    # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
+    PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
+
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
-    # Subclasses can extend this with model-specific mappings
+    # Some mappings may not be used by all models - that's fine, unused fields are skipped
     CONFIG_MAPPING = [
         ("num_hidden_layers", "num_layers"),
         ("hidden_size", "hidden_size"),
@@ -249,13 +253,34 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("rms_norm_eps", "layernorm_epsilon"),
         ("initializer_range", "init_method_std"),
         ("attention_dropout", "attention_dropout"),
+        ("hidden_dropout", "hidden_dropout"),
         ("tie_word_embeddings", "share_embeddings_and_output_weights"),
         ("attention_bias", "add_qkv_bias"),
         ("mlp_bias", "add_bias_linear"),
+        # Scoring function for MoE routers (DeepSeek V3 uses "sigmoid")
+        ("scoring_func", "moe_router_score_function"),
         # MoE-related mappings (used by Qwen3 MoE, Mixtral, DeepSeek, etc.)
         ("num_experts", "num_moe_experts"),
         ("num_experts_per_tok", "moe_router_topk"),
         ("moe_intermediate_size", "moe_ffn_hidden_size"),
+        ("aux_loss_alpha", "moe_aux_loss_coeff"),
+        # DeepSeek/Kimi MoE uses different field names
+        ("n_routed_experts", "num_moe_experts"),
+        ("n_group", "moe_router_num_groups"),
+        ("topk_group", "moe_router_group_topk"),
+        ("routed_scaling_factor", "moe_router_topk_scaling_factor"),
+        # MLA (Multi-Latent Attention) fields (DeepSeek, Kimi)
+        ("q_lora_rank", "q_lora_rank"),
+        ("kv_lora_rank", "kv_lora_rank"),
+        ("qk_nope_head_dim", "qk_head_dim"),
+        ("qk_rope_head_dim", "qk_pos_emb_head_dim"),
+        ("v_head_dim", "v_head_dim"),
+        # RoPE scaling fields (nested dict access via dot notation)
+        ("rope_scaling.factor", "rotary_scaling_factor"),
+        ("rope_scaling.mscale", "mscale"),
+        ("rope_scaling.mscale_all_dim", "mscale_all_dim"),
+        ("rope_scaling.beta_fast", "beta_fast"),
+        ("rope_scaling.beta_slow", "beta_slow"),
     ]
 
     # Common bidirectional activation function mapping: hf_name <-> megatron_func
@@ -296,8 +321,18 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         provider_kwargs = {}
 
         # Map config fields using CONFIG_MAPPING
+        # Supports dot notation for nested dict access (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in self.CONFIG_MAPPING:
-            value = getattr(hf_config, hf_name, None)
+            if "." in hf_name:
+                # Nested dict access: "parent.child" -> getattr(config, parent).get(child)
+                parts = hf_name.split(".", 1)
+                parent = getattr(hf_config, parts[0], None)
+                if parent is not None and isinstance(parent, dict):
+                    value = parent.get(parts[1])
+                else:
+                    value = None
+            else:
+                value = getattr(hf_config, hf_name, None)
             if value is not None:
                 provider_kwargs[megatron_name] = value
 
@@ -331,10 +366,18 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_config = {}
 
         # Map config fields using CONFIG_MAPPING (reverse direction)
+        # Supports dot notation for nested dict building (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in cls.CONFIG_MAPPING:
             value = getattr(provider, megatron_name, None)
             if value is not None:
-                hf_config[hf_name] = value
+                if "." in hf_name:
+                    # Nested dict: "parent.child" -> hf_config["parent"]["child"] = value
+                    parts = hf_name.split(".", 1)
+                    if parts[0] not in hf_config:
+                        hf_config[parts[0]] = {}
+                    hf_config[parts[0]][parts[1]] = value
+                else:
+                    hf_config[hf_name] = value
 
         # Convert activation function back to HF format
         activation_func = getattr(provider, "activation_func", None)
@@ -355,9 +398,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # Subclasses should override this with their model-specific settings
     MEGATRON_DEFAULTS: dict = {}
 
-    # Model-specific defaults for HF config (used in provider_to_hf_config)
-    # Subclasses should override this with their model-specific settings
+    # Model-specific defaults for HF config (used in megatron_to_hf_config)
+    # Only needed for fields beyond architectures/model_type (which come from decorator)
     HF_DEFAULTS: dict = {}
+
+    # Set by @register_bridge decorator
+    SOURCE_NAME: Optional[str] = None
+    MODEL_TYPE: Optional[str] = None
 
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.
@@ -390,7 +437,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Apply model-specific defaults
         provider_kwargs.update(self.MEGATRON_DEFAULTS)
 
-        return GPTModelProvider(**provider_kwargs)
+        # Use specified provider class, defaulting to GPTModelProvider
+        provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
+        return provider_class(**provider_kwargs)
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
@@ -398,7 +447,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         Default implementation that:
         1. Converts provider to HF config using CONFIG_MAPPING (via provider_to_hf_config)
-        2. Applies model-specific HF_DEFAULTS
+        2. Adds architectures and model_type from decorator
+        3. Applies model-specific HF_DEFAULTS
 
         Subclasses can override this for special handling (e.g., RoPE scaling).
 
@@ -410,6 +460,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
         # Build base HF config using CONFIG_MAPPING
         hf_config = cls.provider_to_hf_config(provider)
+
+        # Add architectures and model_type from decorator
+        if cls.SOURCE_NAME is not None:
+            hf_config["architectures"] = [cls.SOURCE_NAME]
+        if cls.MODEL_TYPE is not None:
+            hf_config["model_type"] = cls.MODEL_TYPE
 
         # Apply model-specific HF defaults
         hf_config.update(cls.HF_DEFAULTS)
@@ -1156,7 +1212,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
     @classmethod
     def register_bridge(
-        cls, *, source: Type[PreTrainedModel] | str, target: Type[MegatronModel]
+        cls,
+        *,
+        source: Type[PreTrainedModel] | str,
+        target: Type[MegatronModel],
+        provider: Optional[Type[ModelProviderTarget]] = None,
+        model_type: Optional[str] = None,
     ) -> Callable[[_BridgeImplClass], _BridgeImplClass]:
         """Class decorator for registering bridge implementations.
 
@@ -1170,6 +1231,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 string allows registering bridges for architectures that are only
                 available via auto_map.
             target (Type[MegatronModel]): Megatron model class (e.g., GPTModel).
+            provider (Type[ModelProviderTarget], optional): Provider class to use
+                for this model (e.g., DeepSeekModelProvider for MLA models).
+                Defaults to GPTModelProvider if not specified.
+            model_type (str, optional): HuggingFace model_type string (e.g., "llama").
+                Used for megatron_to_hf_config conversion.
 
         Returns:
             Callable[[_BridgeImplClass], _BridgeImplClass]: Decorator function
@@ -1178,7 +1244,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         Example:
             .. code-block:: python
 
-                @MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
+                @MegatronModelBridge.register_bridge(
+                    source=LlamaForCausalLM, target=GPTModel, model_type="llama"
+                )
                 class MegatronCausalLlamaBridge(MegatronModelBridge):
                     def provider_bridge(self, hf_pretrained):
                         # Implementation
@@ -1188,11 +1256,16 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                         # Implementation
                         pass
 
-            String-based registration is also supported:
+            String-based registration with custom provider:
 
             .. code-block:: python
 
-                @MegatronModelBridge.register_bridge(source="DeepseekV3ForCausalLM", target=GPTModel)
+                @MegatronModelBridge.register_bridge(
+                    source="DeepseekV3ForCausalLM",
+                    target=GPTModel,
+                    provider=DeepSeekModelProvider,
+                    model_type="deepseek_v3",
+                )
                 class MegatronDeepseekV3Bridge(MegatronModelBridge):
                     ...
 
@@ -1202,7 +1275,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             class is defined.
         """
 
-        return create_bridge_decorator(source=source, target=target)
+        return create_bridge_decorator(source=source, target=target, provider=provider, model_type=model_type)
 
 
 def is_tensor_parallel(param) -> bool:
@@ -1309,7 +1382,11 @@ def register_bridge_implementation(
 
 
 def create_bridge_decorator(
-    *, source: Type["PreTrainedModel"] | str, target: Type["MegatronModule"]
+    *,
+    source: Type["PreTrainedModel"] | str,
+    target: Type["MegatronModule"],
+    provider: Optional[Type["ModelProviderMixin"]] = None,
+    model_type: Optional[str] = None,
 ) -> Callable[[Type["MegatronModelBridge"]], Type["MegatronModelBridge"]]:
     """Create a decorator for registering bridge implementations.
 
@@ -1317,12 +1394,22 @@ def create_bridge_decorator(
         source: HuggingFace PreTrainedModel class or the class name as a string
             (useful for auto_map architectures)
         target: Megatron model class
+        provider: Provider class to use for this model (e.g., DeepSeekModelProvider)
+        model_type: HuggingFace model_type string (e.g., "llama", "deepseek_v3")
 
     Returns:
         Decorator function that registers the bridge implementation
     """
 
     def decorator(bridge_class: Type["MegatronModelBridge"]) -> Type["MegatronModelBridge"]:
+        # Store source name for HF config generation
+        bridge_class.SOURCE_NAME = source if isinstance(source, str) else source.__name__
+        # Store model_type for HF config generation
+        if model_type is not None:
+            bridge_class.MODEL_TYPE = model_type
+        # Set the provider class on the bridge
+        if provider is not None:
+            bridge_class.PROVIDER_CLASS = provider
         register_bridge_implementation(source=source, target=target, bridge_class=bridge_class)
         return bridge_class
 
