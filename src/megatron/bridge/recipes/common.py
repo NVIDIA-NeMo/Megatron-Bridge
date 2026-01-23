@@ -117,6 +117,7 @@ def _pretrain_common() -> ConfigContainer:
         rng=RNGConfig(seed=1234),
         # Distributed init config
         dist=DistributedInitConfig(),
+        comm_overlap=None,
         # Mixed precision - bf16 by default
         mixed_precision="bf16_mixed",
     )
