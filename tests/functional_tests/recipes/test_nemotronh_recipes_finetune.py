@@ -317,13 +317,21 @@ class TestNemotron3NanoFinetuneRecipes:
 
     _TOY_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
-    @pytest.fixture
-    def temp_hf_modules(self, tmp_path, monkeypatch):
+    @pytest.fixture(scope="class")
+    def temp_hf_modules(self, tmp_path_factory):
         """Change transformers.dynamic_module_utils.HF_MODULES_CACHE to a temp path"""
-        temp_hf_modules_cache = tmp_path / "hf_modules_cache"
-        temp_hf_modules_cache.mkdir(exist_ok=True)
-        monkeypatch.setattr(dynamic_module_utils, "HF_MODULES_CACHE", temp_hf_modules_cache)
+        temp_hf_modules_cache = tmp_path_factory.mktemp("hf_modules_cache")
+
+        # Store original value
+        original_cache = dynamic_module_utils.HF_MODULES_CACHE
+
+        # Patch
+        dynamic_module_utils.HF_MODULES_CACHE = temp_hf_modules_cache
+
         yield temp_hf_modules_cache
+
+        # Restore
+        dynamic_module_utils.HF_MODULES_CACHE = original_cache
 
     @pytest.fixture(scope="class")
     def nemotron_3_nano_toy_model_path(self, tmp_path_factory: pytest.TempPathFactory) -> str:
