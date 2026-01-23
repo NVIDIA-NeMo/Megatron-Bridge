@@ -127,6 +127,7 @@ def main(args):
     while job_deployment_status != "Running" and job_status != "RUNNING":
         status = job.status(display=False)
         job_deployment_status = status["jobDeploymentStatus"]
+        print(status)
         time.sleep(1)
         if job_deployment_status == "Failed":
             raise RuntimeError("Job failed")
