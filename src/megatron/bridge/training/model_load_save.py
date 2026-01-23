@@ -654,18 +654,6 @@ def save_megatron_model(
             prebuilt_state_dict=state_dict,
         )
     else:
-        # Standard save flow
-        # Clone parameter data to release oversized storage allocations.
-        # During weight loading, .copy_() preserves the original parameter storage,
-        # which may be larger than needed. Cloning creates right-sized storage,
-        # eliminating the memory spike from cloning during checkpoint save.
-        for m in model:
-            for param in m.parameters():
-                storage_size = param.data.untyped_storage().size()
-                tensor_size = param.data.numel() * param.data.element_size()
-                if storage_size != tensor_size:
-                    param.data = param.data.clone()
-
         # Save the checkpoint
         save_checkpoint(
             state=state,

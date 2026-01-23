@@ -689,7 +689,6 @@ class AutoBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
-        low_memory_save: bool = True,
         **kwargs,
     ) -> None:
         """
@@ -704,11 +703,6 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
-            low_memory_save: If True (default), uses a memory-optimized save flow that
-                reduces peak memory by ~50% for models with merged weights (e.g., gate+up
-                projections). The model is deleted after state dict generation and
-                cannot be used afterward. Set to False if you need to use the model
-                after saving.
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -717,7 +711,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 - attn_implementation: Attention implementation ("flash_attention_2", etc.)
 
         Example:
-            >>> # Basic import (uses low-memory save by default)
+            >>> # Basic import
             >>> AutoBridge.import_ckpt(
             ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b"
@@ -731,12 +725,6 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     device_map="auto"
             ... )
 
-            >>> # Disable low-memory save to preserve model after import
-            >>> AutoBridge.import_ckpt(
-            ...     "meta-llama/Meta-Llama-3-8B",
-            ...     "./megatron_checkpoints/llama3_8b",
-            ...     low_memory_save=False
-            ... )
         """
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
@@ -749,11 +737,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
         bridge.save_megatron_model(
-            megatron_model,
-            megatron_path,
-            hf_tokenizer_path=hf_model_id,
-            low_memory_save=low_memory_save,
-            hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+            megatron_model, megatron_path, hf_tokenizer_path=hf_model_id, hf_tokenizer_kwargs=hf_tokenizer_kwargs
         )
 
     def export_ckpt(

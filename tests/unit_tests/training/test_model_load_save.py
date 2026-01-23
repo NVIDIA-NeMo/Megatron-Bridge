@@ -619,7 +619,7 @@ class TestSaveMegatronModel:
 
         # Test
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist")
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -681,7 +681,11 @@ class TestSaveMegatronModel:
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
             save_megatron_model(
-                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=False,
             )
 
         # Assertions
@@ -749,7 +753,9 @@ class TestSaveMegatronModel:
 
         # Test without tokenizer path (should be None)
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None)
+            save_megatron_model(
+                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None, low_memory_save=False
+            )
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)

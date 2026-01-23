@@ -878,7 +878,11 @@ class TestAutoBridge:
             bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
 
             mock_save_megatron_model.assert_called_once_with(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path=None, hf_tokenizer_kwargs=None
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path=None,
+                hf_tokenizer_kwargs=None,
+                low_memory_save=True,
             )
 
     def test_save_megatron_model_with_tokenizer(self):
@@ -902,6 +906,7 @@ class TestAutoBridge:
                 mock_megatron_model,
                 "./checkpoint_path",
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
                 hf_tokenizer_kwargs=None,
             )
 
