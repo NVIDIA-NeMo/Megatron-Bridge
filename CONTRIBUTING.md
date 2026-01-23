@@ -62,7 +62,7 @@ If you are using VSCode/Cursor you can also use Dev Containers. Here's a devcont
 }
 ```
 
-## Making Changes
+## 🔄 Making Changes
 
 ### Workflow: For External Contributors (Fork Required)
 
@@ -150,7 +150,7 @@ If you have write access to the repository (NVIDIA contributors):
 
 6. **Create a pull request** from your branch to the `main` branch.
 
-## Commit and PR Title Format
+## 📋 Commit and PR Title Format
 
 Format your commit messages and PR titles as:
 
@@ -188,23 +188,6 @@ Format your commit messages and PR titles as:
 [ckpt] fix: Handle missing keys in HF checkpoint conversion
 [BREAKING][training] refactor: Change optimizer config structure
 [ci, build] chore: Update ruff version
-```
-
-## Linting and Formatting
-
-We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting. CI does not auto-fix linting and formatting issues, but most issues can be fixed by running the following command:
-
-```bash
-uv run ruff check --fix .
-uv run ruff format .
-```
-
-### Pre-commit Hooks
-
-Pre-commit hooks are configured to run automatically on commit. To manually run all hooks:
-
-```bash
-uv run pre-commit run --all-files
 ```
 
 ## 📝 Writing Tests
@@ -250,7 +233,7 @@ uv run ruff format .
 Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
 
 
-## 📝 Documentation Requirement
+## 📄 Documentation Requirement
 
 **Important**: All new key features (e.g., enabling a new model, enabling a new parallelism strategy) must include documentation update (either a new doc or updating an existing one). This document update should:
 
@@ -365,6 +348,6 @@ You can find the commit SHA in several ways:
 - Run `git log --oneline -1` in your local repository
 - Check the commit details in your Git client
 
-## Contributing Models
+## 🤖 Contributing Models
 
 Please see our [documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html) for a detailed guide on contributing new models.
