@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3MoeForCausalLM
 
@@ -23,8 +22,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel)
@@ -36,41 +33,49 @@ class Qwen3MoEBridge(MegatronModelBridge):
     and Megatron-Core GPTModel formats. Qwen3 MoE models use mixture of experts
     architecture with QK layernorm.
 
+    Qwen3 MoE inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class.
+    The base class CONFIG_MAPPING includes MoE-related field mappings:
+    - num_experts → num_moe_experts
+    - num_experts_per_tok → moe_router_topk
+    - moe_intermediate_size → moe_ffn_hidden_size
+
+    Model-specific settings are defined in MEGATRON_DEFAULTS.
+
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3MoEModelProvider:
-        hf_config = hf_pretrained.config
+    # Qwen3 MoE-specific defaults for Megatron provider
+    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
+    MEGATRON_DEFAULTS = {
+        # Common transformer settings
+        "normalization": "RMSNorm",
+        "gated_linear_unit": True,
+        "position_embedding_type": "rope",
+        "add_bias_linear": False,
+        "add_qkv_bias": False,  # Qwen3 MoE does NOT have QKV bias
+        "hidden_dropout": 0.0,
+        "qk_layernorm": True,  # Qwen3 MoE uses QK layernorm
+        # MoE-specific settings
+        "moe_grouped_gemm": True,
+        "moe_router_load_balancing_type": "aux_loss",
+        "moe_aux_loss_coeff": 1e-3,
+        "moe_router_pre_softmax": False,
+        "moe_token_dispatcher_type": "alltoall",
+        "moe_permute_fusion": True,
+    }
 
-        provider = Qwen3MoEModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,  # Maps to moe_intermediate_size in HF
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            num_moe_experts=hf_config.num_experts,
-            moe_router_topk=hf_config.num_experts_per_tok,  # Maps to num_experts_per_tok in HF
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
-            moe_grouped_gemm=True,
-        )
+    # Qwen3 MoE-specific defaults for HF config
+    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
+    HF_DEFAULTS = {
+        "architectures": ["Qwen3MoeForCausalLM"],
+        "model_type": "qwen3_moe",
+    }
 
-        return provider
+    # No provider_bridge override needed - base class handles everything!
+    # No megatron_to_hf_config override needed - base class handles everything!
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

@@ -34,6 +34,7 @@ from typing import (
 )
 
 import torch
+import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -233,36 +234,187 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         - MegatronModel: The Megatron model type
     """
 
-    @abc.abstractmethod
+    # Common bidirectional config field name mapping: (hf_name, megatron_name)
+    # Subclasses can extend this with model-specific mappings
+    CONFIG_MAPPING = [
+        ("num_hidden_layers", "num_layers"),
+        ("hidden_size", "hidden_size"),
+        ("intermediate_size", "ffn_hidden_size"),
+        ("num_attention_heads", "num_attention_heads"),
+        ("num_key_value_heads", "num_query_groups"),
+        ("head_dim", "kv_channels"),
+        ("vocab_size", "vocab_size"),
+        ("max_position_embeddings", "seq_length"),
+        ("rope_theta", "rotary_base"),
+        ("rms_norm_eps", "layernorm_epsilon"),
+        ("initializer_range", "init_method_std"),
+        ("attention_dropout", "attention_dropout"),
+        ("tie_word_embeddings", "share_embeddings_and_output_weights"),
+        ("attention_bias", "add_qkv_bias"),
+        ("mlp_bias", "add_bias_linear"),
+        # MoE-related mappings (used by Qwen3 MoE, Mixtral, DeepSeek, etc.)
+        ("num_experts", "num_moe_experts"),
+        ("num_experts_per_tok", "moe_router_topk"),
+        ("moe_intermediate_size", "moe_ffn_hidden_size"),
+    ]
+
+    # Common bidirectional activation function mapping: hf_name <-> megatron_func
+    ACTIVATION_MAPPING = {
+        "silu": F.silu,
+        "gelu": F.gelu,
+        "relu": F.relu,
+        "tanh": torch.tanh,
+    }
+
+    @classmethod
+    def hf_to_megatron_activation(cls, hidden_act: str):
+        """Convert HF activation name string to Megatron activation function."""
+        if hidden_act not in cls.ACTIVATION_MAPPING:
+            raise ValueError(
+                f"Unsupported activation function: {hidden_act}. Supported: {list(cls.ACTIVATION_MAPPING.keys())}"
+            )
+        return cls.ACTIVATION_MAPPING[hidden_act]
+
+    @classmethod
+    def megatron_to_hf_activation(cls, activation_func) -> str:
+        """Convert Megatron activation function to HF activation name string."""
+        for hf_name, megatron_func in cls.ACTIVATION_MAPPING.items():
+            if activation_func is megatron_func:
+                return hf_name
+        # Default to silu if not found
+        return "silu"
+
+    def hf_config_to_provider_kwargs(self, hf_config) -> dict:
+        """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
+
+        Args:
+            hf_config: HuggingFace model configuration object
+
+        Returns:
+            dict: Provider kwargs ready for GPTModelProvider or similar
+        """
+        provider_kwargs = {}
+
+        # Map config fields using CONFIG_MAPPING
+        for hf_name, megatron_name in self.CONFIG_MAPPING:
+            value = getattr(hf_config, hf_name, None)
+            if value is not None:
+                provider_kwargs[megatron_name] = value
+
+        # Handle vocab_size_divisible_by
+        vocab_size = provider_kwargs.get("vocab_size")
+        if vocab_size is not None:
+            provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(vocab_size)
+
+        # Determine dtype
+        params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        provider_kwargs["fp16"] = params_dtype == torch.float16
+        provider_kwargs["bf16"] = params_dtype == torch.bfloat16
+        provider_kwargs["params_dtype"] = params_dtype
+
+        # Convert activation function
+        hidden_act = getattr(hf_config, "hidden_act", "silu")
+        provider_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
+
+        return provider_kwargs
+
+    @classmethod
+    def provider_to_hf_config(cls, provider) -> dict:
+        """Convert Megatron provider to HF config dict using CONFIG_MAPPING.
+
+        Args:
+            provider: Megatron model provider instance
+
+        Returns:
+            dict: HuggingFace config dict
+        """
+        hf_config = {}
+
+        # Map config fields using CONFIG_MAPPING (reverse direction)
+        for hf_name, megatron_name in cls.CONFIG_MAPPING:
+            value = getattr(provider, megatron_name, None)
+            if value is not None:
+                hf_config[hf_name] = value
+
+        # Convert activation function back to HF format
+        activation_func = getattr(provider, "activation_func", None)
+        if activation_func is not None:
+            hf_config["hidden_act"] = cls.megatron_to_hf_activation(activation_func)
+
+        # Determine torch_dtype
+        if getattr(provider, "bf16", False):
+            hf_config["torch_dtype"] = "bfloat16"
+        elif getattr(provider, "fp16", False):
+            hf_config["torch_dtype"] = "float16"
+        else:
+            hf_config["torch_dtype"] = "float32"
+
+        return hf_config
+
+    # Model-specific defaults for Megatron provider
+    # Subclasses should override this with their model-specific settings
+    MEGATRON_DEFAULTS: dict = {}
+
+    # Model-specific defaults for HF config (used in provider_to_hf_config)
+    # Subclasses should override this with their model-specific settings
+    HF_DEFAULTS: dict = {}
+
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.
 
-        This abstract method must be implemented by subclasses to translate
-        HuggingFace model configurations into Megatron model provider instances.
-        The provider contains all necessary configuration for creating Megatron models.
+        Default implementation that:
+        1. Converts HF config to provider kwargs using CONFIG_MAPPING
+        2. Adds generation_config
+        3. Applies model-specific MEGATRON_DEFAULTS
+        4. Creates and returns a GPTModelProvider
+
+        Subclasses can override this for special handling (e.g., RoPE scaling).
 
         Args:
             hf_pretrained (HFPreTrained): HuggingFace model or configuration
                 containing the source model's architecture details.
 
         Returns:
-            ModelProviderTarget: A configured model provider instance (e.g.,
-                GPTModelProvider, LlamaModelProvider) ready to create Megatron
-                models.
-
-        Example:
-            .. code-block:: python
-
-                def provider_bridge(self, hf_pretrained):
-                    return LlamaModelProvider(
-                        num_layers=hf_pretrained.config.num_hidden_layers,
-                        hidden_size=hf_pretrained.config.hidden_size,
-                        num_attention_heads=hf_pretrained.config.num_attention_heads,
-                        ffn_hidden_size=hf_pretrained.config.intermediate_size,
-                        # ... other configuration mappings
-                    )
+            ModelProviderTarget: A configured model provider instance
         """
-        raise NotImplementedError("Subclass must implement bridge method")
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+        hf_config = hf_pretrained.config
+
+        # Build base provider kwargs using CONFIG_MAPPING
+        provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
+
+        # Add generation config
+        provider_kwargs["generation_config"] = hf_pretrained.generation_config
+
+        # Apply model-specific defaults
+        provider_kwargs.update(self.MEGATRON_DEFAULTS)
+
+        return GPTModelProvider(**provider_kwargs)
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Convert Megatron provider config to HuggingFace config dict.
+
+        Default implementation that:
+        1. Converts provider to HF config using CONFIG_MAPPING (via provider_to_hf_config)
+        2. Applies model-specific HF_DEFAULTS
+
+        Subclasses can override this for special handling (e.g., RoPE scaling).
+
+        Args:
+            provider: Megatron model provider instance
+
+        Returns:
+            dict: HuggingFace config dictionary
+        """
+        # Build base HF config using CONFIG_MAPPING
+        hf_config = cls.provider_to_hf_config(provider)
+
+        # Apply model-specific HF defaults
+        hf_config.update(cls.HF_DEFAULTS)
+
+        return hf_config
 
     @abc.abstractmethod
     def mapping_registry(self) -> MegatronMappingRegistry:

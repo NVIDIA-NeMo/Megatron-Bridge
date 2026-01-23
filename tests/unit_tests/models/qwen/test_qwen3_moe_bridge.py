@@ -23,9 +23,9 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_moe_bridge import Qwen3MoEBridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
 
 
 class TestQwen3MoEBridge:
@@ -120,8 +120,8 @@ class TestQwen3MoEBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_moe)
 
-        # Check that it returns a Qwen3MoEModelProvider instance
-        assert isinstance(result, Qwen3MoEModelProvider)
+        # Check that it returns a GPTModelProvider instance (after refactoring)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_qwen3_moe_config.num_hidden_layers
