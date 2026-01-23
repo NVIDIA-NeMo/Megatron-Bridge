@@ -85,9 +85,7 @@ class TestMoonlightConversion:
         auto_map = getattr(config, "auto_map", None) or {}
         model_class_ref = auto_map.get("AutoModelForCausalLM")
         if model_class_ref is None:
-            raise RuntimeError(
-                f"Expected config.auto_map['AutoModelForCausalLM'] for {hf_model_id}, got: {auto_map}"
-            )
+            raise RuntimeError(f"Expected config.auto_map['AutoModelForCausalLM'] for {hf_model_id}, got: {auto_map}")
 
         model_class = get_class_from_dynamic_module(
             class_reference=model_class_ref,
@@ -200,4 +198,3 @@ class TestMoonlightConversion:
 
         print(f"SUCCESS: Moonlight {test_name} conversion test completed successfully")
         print(f"Converted model saved at: {converted_dir}")
-

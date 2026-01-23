@@ -58,7 +58,7 @@ def weights_verification_table(bridge, megatron_model) -> Table:
                 else (
                     "✅" if torch.allclose(param_for_comparison, original_param.to(param.device), atol=1e-6) else "❌"
                 )
-            )
+            ),
         )
 
     return table
