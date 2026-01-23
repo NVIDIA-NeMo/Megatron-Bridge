@@ -142,6 +142,7 @@ def main(args):
     logger.info("Results: %s", results)
 
     if HAVE_WANDB and args.wandb_key:
+        wandb.login(key=args.wandb_key)
         wandb_run = wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity_name,
@@ -150,8 +151,8 @@ def main(args):
         )
         artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
         artifact.add_file(
-            local_path=os.path.join(args.output_dir, "results", "results.json"),
-            name="results.json",
+            local_path=os.path.join(args.output_dir, "results", "results.yml"),
+            name="results.yml",
         )
         wandb_run.log_artifact(artifact)
 
