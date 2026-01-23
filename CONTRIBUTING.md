@@ -207,7 +207,7 @@ Pre-commit hooks are configured to run automatically on commit. To manually run 
 uv run pre-commit run --all-files
 ```
 
-## Writing Tests
+## 📝 Writing Tests
 
 We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and functional tests.
 
@@ -216,7 +216,7 @@ Unit tests are stored at `tests/unit_tests`. Please add your test to an existing
 
 **Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.Run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
 
-## Dependencies Management
+## 📦 Dependencies Management
 
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.
 On a weekly basis, the CI attempts an update of the lock file to test against upstream dependencies.
