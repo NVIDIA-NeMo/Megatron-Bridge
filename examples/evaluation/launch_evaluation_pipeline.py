@@ -143,7 +143,9 @@ def main(args):
         wandb.login(key=args.wandb_key)
         api = wandb.Api()
         runs = api.runs(
-            args.wandb_entity_name, args.wandb_project_name, filters={"display_name": args.wandb_experiment_name}
+            entity=args.wandb_entity_name,
+            project=args.wandb_project_name,
+            filters={"display_name": args.wandb_experiment_name},
         )
 
         if runs:
