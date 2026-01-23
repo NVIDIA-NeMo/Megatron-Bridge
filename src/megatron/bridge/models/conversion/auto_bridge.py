@@ -724,7 +724,6 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
             ... )
-
         """
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
