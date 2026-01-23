@@ -20,6 +20,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_deepstack_embs,
@@ -62,7 +63,7 @@ class Qwen3VLModel(MegatronModule):
         self,
         language_transformer_config: Qwen3VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
-        vision_transformer_config: Qwen3VLTransformerConfig,
+        vision_transformer_config: Qwen3VLConfigHF,
         vision_transformer_layer_spec: ModuleSpec,
         vision_patch_merger_spec: ModuleSpec,
         parallel_output: bool = True,
@@ -94,15 +95,37 @@ class Qwen3VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = False
 
         if self.pre_process:
-            from .vision_model import Qwen3VLVisionModel
+            if not language_transformer_config.use_hf_vision_model:
+                # use megatron vision model
+                from .vision_model import Qwen3VLVisionModel
+                from copy import deepcopy
+                from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+                megatron_vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), vision_transformer_config)
+                megatron_vision_transformer_config.pipeline_model_parallel_size = 1
+                megatron_vision_transformer_config.first_pipeline_num_layers = None
 
-            self.vision_model = Qwen3VLVisionModel(
-                vision_transformer_config,
-                vision_transformer_layer_spec,
-                vision_patch_merger_spec,
-                pre_process=True,
-                post_process=True,
-            )
+                self.vision_model = Qwen3VLVisionModel(
+                    megatron_vision_transformer_config,
+                    vision_transformer_layer_spec,
+                    vision_patch_merger_spec,
+                    pre_process=True,
+                    post_process=True,
+                )
+                print(f"rank {torch.distributed.get_rank()} use megatron vision model")
+            else:
+                # use hf vision model
+                from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
+                from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+                # Initialize vision model with random weights from config
+                self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
+                # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
+                hook_hf_module_setattr_for_tp_grad_sync(self.vision_model)
+                # Move to device if available
+                if torch.cuda.is_available():
+                    self.vision_model = self.vision_model.to("cuda")
+                print(f"rank {torch.distributed.get_rank()} use hf vision model")
+
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -165,24 +188,51 @@ class Qwen3VLModel(MegatronModule):
             freeze_vision_projection (bool): Freeze the vision projection module.
         """
         modules = []
-        if freeze_language_model and self.language_model is not None:
-            modules.append(self.language_model)
-        if freeze_vision_model and self.vision_model is not None:
-            modules.append(self.vision_model)
-        if freeze_vision_projection and self.vision_model is not None:
-            modules.append(self.vision_model.decoder.deepstack_merger_list)
-            modules.append(self.vision_model.merger)
+        if not self.config.use_hf_vision_model:
+            if freeze_language_model and self.language_model is not None:
+                modules.append(self.language_model)
+            if freeze_vision_model and self.vision_model is not None:
+                modules.append(self.vision_model)
+            if freeze_vision_projection and self.vision_model is not None:
+                modules.append(self.vision_model.decoder.deepstack_merger_list)
+                modules.append(self.vision_model.merger)
 
-        for module in modules:
-            for param in module.parameters():
-                param.requires_grad = False
+            for module in modules:
+                for param in module.parameters():
+                    param.requires_grad = False
 
-        if freeze_vision_model and not freeze_vision_projection:
-            if self.vision_model is not None:
-                for param in self.vision_model.decoder.deepstack_merger_list.parameters():
-                    param.requires_grad = True
-                for param in self.vision_model.merger.parameters():
-                    param.requires_grad = True
+            if freeze_vision_model and not freeze_vision_projection:
+                if self.vision_model is not None:
+                    for param in self.vision_model.decoder.deepstack_merger_list.parameters():
+                        param.requires_grad = True
+                    for param in self.vision_model.merger.parameters():
+                        param.requires_grad = True
+        else:
+            modules = []
+            if freeze_language_model and self.language_model is not None:
+                modules.append(self.language_model)
+
+            if freeze_vision_model and self.vision_model is not None:
+                # Freeze vision encoder components (patch_embed, blocks, pos_embed, rotary_pos_emb)
+                if hasattr(self.vision_model, "patch_embed"):
+                    modules.append(self.vision_model.patch_embed)
+                if hasattr(self.vision_model, "blocks"):
+                    modules.append(self.vision_model.blocks)
+                if hasattr(self.vision_model, "pos_embed"):
+                    modules.append(self.vision_model.pos_embed)
+                if hasattr(self.vision_model, "rotary_pos_emb"):
+                    modules.append(self.vision_model.rotary_pos_emb)
+
+            if freeze_vision_projection and self.vision_model is not None:
+                # Freeze vision projection components (merger and deepstack_merger_list)
+                if hasattr(self.vision_model, "merger"):
+                    modules.append(self.vision_model.merger)
+                if hasattr(self.vision_model, "deepstack_merger_list"):
+                    modules.append(self.vision_model.deepstack_merger_list)
+
+            for module in modules:
+                for param in module.parameters():
+                    param.requires_grad = False
 
     def forward(
         self,

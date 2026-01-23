@@ -120,6 +120,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     
     bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
 
+    use_hf_vision_model: bool = False
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
         Provide a Qwen3VL model instance with vision and language components.
@@ -127,10 +129,6 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         language_transformer_config = self
 
         hf_vision_config = self.vision_config
-
-        vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), hf_vision_config)
-        vision_transformer_config.pipeline_model_parallel_size = 1
-        vision_transformer_config.first_pipeline_num_layers = None
 
         # Spec for the Qwen3VLTransformerLayer
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
@@ -149,7 +147,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=vision_transformer_config,
+            vision_transformer_config=hf_vision_config,
             vision_transformer_layer_spec=vision_transformer_layer_spec,
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
@@ -280,6 +278,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     async_tensor_model_parallel_allreduce: bool = True  # Async tensor parallel
     distribute_saved_activations: bool = False  # Don't distribute saved activations
     cp_comm_type: str = "p2p"  # Point-to-point communication for context parallel
+    
+    use_hf_vision_model: bool = False
 
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
@@ -296,11 +296,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         # Create vision transformer config - placeholder for future use
         # vision_transformer_config = deepcopy(self)
         hf_vision_config = self.vision_config
-
-        vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), hf_vision_config)
-        vision_transformer_config.pipeline_model_parallel_size = 1
-        vision_transformer_config.first_pipeline_num_layers = None
-
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=True,
@@ -319,7 +314,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=vision_transformer_config,
+            vision_transformer_config=hf_vision_config,
             vision_transformer_layer_spec=vision_transformer_layer_spec,
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
