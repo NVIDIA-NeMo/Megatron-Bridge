@@ -72,64 +72,6 @@ Exception: `docker/Dockerfile.ci` is exempt from this rule.
 
 ### Imports
 
-Use import statements for packages and modules only, not for individual types, classes, or functions.
-
-#### Import Rules
-
-1. Use `import x` for importing packages and modules.
-2. Use `from x import y` where `x` is the package prefix and `y` is the module name with no prefix.
-3. Use `from x import y as z` in any of the following circumstances:
-   - Two modules named `y` are to be imported.
-   - `y` conflicts with a top-level name defined in the current module.
-   - `y` conflicts with a common parameter name that is part of the public API (e.g., `features`).
-   - `y` is an inconveniently long name.
-   - `y` is too generic in the context of your code (e.g., `from storage.file_system import options as fs_options`).
-4. Use `import y as z` only when `z` is a standard abbreviation (e.g., `import numpy as np`).
-
-For example, the module `sound.effects.echo` may be imported as follows:
-
-```python
-from sound.effects import echo
-...
-echo.EchoFilter(input, output, delay=0.7, atten=4)
-```
-
-#### No Relative Imports
-
-Do not use relative names in imports. Even if the module is in the same package, use the full package name. This helps prevent unintentionally importing a package twice.
-
-Don't:
-
-```python
-from . import sibling_module
-from ..parent import other_module
-```
-
-Do:
-
-```python
-from megatron.bridge.models import sibling_module
-from megatron.bridge import other_module
-```
-
-#### Exemptions
-
-Symbols from the following modules may be imported directly to support static analysis and type checking:
-
-- `typing` module
-- `collections.abc` module
-- `typing_extensions` module
-
-Example:
-
-```python
-from typing import TypeVar, Protocol
-from collections.abc import Callable, Sequence
-from typing_extensions import Self
-```
-
-#### Import Order
-
 Organize imports in the following order, separated by blank lines:
 
 1. Future imports
