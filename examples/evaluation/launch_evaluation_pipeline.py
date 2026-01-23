@@ -113,7 +113,7 @@ def main(args):
         executor=executor,
     )
     job.start(
-        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
+        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & sleep 120; bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
         # command="sleep infinity",
         workdir=None,
         pre_ray_start_commands=[
@@ -124,12 +124,14 @@ def main(args):
 
     register_pipeline_terminator(job=job)
 
-    status = "Initializing"
-    while status != "Running":
-        status = job.status(display=False)["jobDeploymentStatus"]
+    job_deployment_status = "Initializing"
+    job_status = "UNKNOWN"
+    while job_deployment_status != "Running" and job_status != "RUNNING":
+        status = job.status(display=False)
+        job_deployment_status = status["jobDeploymentStatus"]
         print(status)
         time.sleep(1)
-        if status == "Failed":
+        if job_deployment_status == "Failed":
             raise RuntimeError("Job failed")
 
     job.logs(follow=True, timeout=10 * 60 * 60)
