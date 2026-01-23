@@ -105,7 +105,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
 )
 from megatron.bridge.training.vlm_step import forward_step
 from megatron.bridge.utils.common_utils import get_rank_safe
-
+from functools import partial
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -185,6 +185,8 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         help="Use preloaded dataset provider (enabled automatically when --data-path is set).",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--data-format", type=str, default="bshd", choices=["thd", "bshd"], help="Data format to use")
+
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
 
@@ -263,7 +265,10 @@ def main() -> None:
         cfg.print_yaml()
         logger.info("----------------------------------")
 
-    pretrain(config=cfg, forward_step_func=forward_step)
+    # For qwen_vl, we need to set vision_model and thd to be True
+    partial_forward_step = partial(forward_step, vision_model=True, data_format=args.data_format)
+
+    pretrain(config=cfg, forward_step_func=partial_forward_step)
 
 
 if __name__ == "__main__":
