@@ -124,7 +124,7 @@ def main(args):
 
     job_deployment_status = "Initializing"
     job_status = "UNKNOWN"
-    while job_deployment_status != "Running" and job_status != "RUNNING":
+    while job_deployment_status != "Running" or job_status != "RUNNING":
         status = job.status(display=False)
         job_deployment_status = status["jobDeploymentStatus"]
         print(status)
