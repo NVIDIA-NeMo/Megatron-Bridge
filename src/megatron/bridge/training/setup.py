@@ -221,8 +221,6 @@ def setup(
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    if cfg.scheduler.no_weight_decay_cond_type == "qwen3_next":
-        raise NotImplementedError("qwen3_next style weight decay disabled until mcore fix.")
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
@@ -283,6 +281,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=pg_collection.dp,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")

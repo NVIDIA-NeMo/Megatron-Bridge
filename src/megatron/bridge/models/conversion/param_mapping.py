@@ -2064,7 +2064,8 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
     """
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
-        hf_weights.data = hf_weights.data - 1
+        hf_weights = hf_weights.clone()
+        hf_weights.data -= 1
         return super().hf_to_megatron(hf_weights, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
@@ -2072,9 +2073,10 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
         assert isinstance(hf_weights, dict) and len(hf_weights) == 1, (
             f"Expected a dictionary with one element, got {hf_weights.keys()=}"
         )
-        inner_hf_weight = list(hf_weights.values())[0]
-        inner_hf_weight.data = inner_hf_weight.data + 1
-        return hf_weights
+        key = list(hf_weights.keys())[0]
+        value = hf_weights[key].clone()
+        value.data += 1
+        return {key: value}
 
 
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:

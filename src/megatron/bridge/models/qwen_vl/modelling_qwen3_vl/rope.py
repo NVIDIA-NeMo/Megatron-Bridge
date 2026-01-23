@@ -101,7 +101,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         Returns:
             Tensor: Embeddings after applying RoPE.
         """
-        seq = position_ids.to(device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        # Use fp32 for position indices to avoid precision loss when inv_freq is bf16.
+        seq = position_ids.to(device=self.inv_freq.device, dtype=torch.float32)
 
         if self.seq_len_interpolation_factor is not None:
             seq *= 1 / self.seq_len_interpolation_factor

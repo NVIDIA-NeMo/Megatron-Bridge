@@ -27,27 +27,43 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     packed sequence attention kernels.
 
     Args:
-        batch: A dictionary possibly containing `cu_seqlens`, optional
-            `cu_seqlens_argmin`, and optional `max_seqlen` tensors.
+        batch: A dictionary containing packed-sequence metadata. Expected keys:
+            `cu_seqlens`, optional `cu_seqlens_unpadded`, optional argmins, and
+            optional `max_seqlen`.
 
     Returns:
         PackedSeqParams with identical q/kv parameters and `qkv_format` set to
         "thd".
     """
 
-    cu_seqlens = batch["cu_seqlens"].squeeze()
+    cu_seqlens_padded = batch["cu_seqlens"].squeeze()
+    cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")
+    if cu_seqlens_unpadded is not None:
+        cu_seqlens_unpadded = cu_seqlens_unpadded.squeeze()
 
-    cu_seqlens_argmin = batch.get("cu_seqlens_argmin", None)
+    cu_seqlens_argmin = batch.get("cu_seqlens_argmin")
+    cu_seqlens_unpadded_argmin = batch.get("cu_seqlens_unpadded_argmin")
+
     if cu_seqlens_argmin is not None:
-        cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
+        cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
     else:
-        cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
+        cu_seqlens_padded = cu_seqlens_padded[: torch.argmin(cu_seqlens_padded)]
+
+    if cu_seqlens_unpadded is not None:
+        if cu_seqlens_unpadded_argmin is not None:
+            cu_seqlens_unpadded = cu_seqlens_unpadded[: cu_seqlens_unpadded_argmin.item()]
+        else:
+            cu_seqlens_unpadded = cu_seqlens_unpadded[: torch.argmin(cu_seqlens_unpadded)]
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
 
+    # When unpadded lengths are available, use them for q/kv and keep padded
+    # offsets for kernels that support padded variants.
     return PackedSeqParams(
-        cu_seqlens_q=cu_seqlens,
-        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q=cu_seqlens_unpadded if cu_seqlens_unpadded is not None else cu_seqlens_padded,
+        cu_seqlens_kv=cu_seqlens_unpadded if cu_seqlens_unpadded is not None else cu_seqlens_padded,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
         max_seqlen_q=max_seqlen,
         max_seqlen_kv=max_seqlen,
         qkv_format="thd",

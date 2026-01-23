@@ -137,7 +137,6 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             num_experts=None,
             moe_grouped_gemm=False,
             qk_layernorm=self.qk_layernorm,
-            normalization="RMSNorm",
             fp8=False,
         )
         vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
@@ -307,7 +306,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             moe_grouped_gemm=True,
             qk_layernorm=self.qk_layernorm,
             fp8=False,
-            normalization="RMSNorm",
         )
 
         vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()

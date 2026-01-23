@@ -119,11 +119,14 @@ class Qwen3VLModel(MegatronModule):
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
         )
-        assert len(vision_transformer_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), (
-            "the deepstack_visual_embeds should on the first pp-stage",
-            f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
-            f" {len(self.language_model.decoder.layers)} language model layers",
-        )
+        if pre_process:
+            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
+                self.language_model.decoder.layers
+            ), (
+                "the deepstack_visual_embeds should on the first pp-stage of language model",
+                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f" {len(self.language_model.decoder.layers)} language model layers",
+            )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
@@ -232,8 +235,9 @@ class Qwen3VLModel(MegatronModule):
         # position ids is computed within the model
         position_ids = None
 
-        cp_size = mpu.get_context_parallel_world_size()
+        torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
 
+        cp_size = mpu.get_context_parallel_world_size()
         if self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
@@ -402,6 +406,9 @@ class Qwen3VLModel(MegatronModule):
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
 
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
+
         output = self.language_model(
             input_ids=None,
             position_ids=position_ids,  # None in encoder
@@ -415,5 +422,6 @@ class Qwen3VLModel(MegatronModule):
             **(extra_block_kwargs or {}),
             **kwargs,
         )
+        torch.cuda.nvtx.range_pop()
 
         return output

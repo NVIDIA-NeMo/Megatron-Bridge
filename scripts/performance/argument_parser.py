@@ -143,6 +143,13 @@ def parse_cli_args():
         argument_default=None,
     )
     parser.add_argument(
+        "--domain",
+        type=lower_str,
+        choices=["llm", "vlm"],
+        help="Domain to use for experiment.",
+        default="llm",
+    )
+    parser.add_argument(
         "-m",
         "--model_family_name",
         type=lower_str,
@@ -245,9 +252,6 @@ def parse_cli_args():
     checkpointing_args.add_argument("--load_dir", type=str, help="Directory to load checkpoints")
     checkpointing_args.add_argument("--save_interval", type=int, help="Number of iterations between checkpoint saves")
     checkpointing_args.add_argument("--most_recent_k", type=int, help="Number of latest checkpoints to keep")
-    checkpointing_args.add_argument(
-        "--save_config_filepath", type=str, help="Path to save the task configuration file"
-    )
 
     # Data
     data_args = parser.add_argument_group("Data arguments")
@@ -631,6 +635,7 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")
@@ -638,8 +643,8 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v1'. Use --list_config_variants to see available options.",
-        default="v1",
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2'. Use --list_config_variants to see available options.",
+        default="v2",
     )
     config_variant_args.add_argument(
         "--list_config_variants",
