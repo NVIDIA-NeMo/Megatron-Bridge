@@ -18,12 +18,12 @@ import json
 import os
 import shutil
 import sys
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoTokenizer
-from transformers import dynamic_module_utils
+from transformers import AutoConfig, AutoTokenizer, dynamic_module_utils
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.recipes.nemotronh import (
