@@ -24,13 +24,13 @@ Usage:
     # Test locally (single node)
     python launch_with_nemo_run.py \
         --local \
-        --script train.py \
+        --script run_recipe.py \
         --recipe llama32_1b_pretrain_config \
         --devices 2
 
     # Launch on Slurm from the cluster (LocalTunnel)
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe llama32_1b_pretrain_config \
         --nodes 2 \
         --partition gpu \
@@ -38,7 +38,7 @@ Usage:
 
     # Launch on Slurm from your local machine (SSHTunnel)
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe llama32_1b_finetune_config \
         --nodes 1 \
         --partition gpu \
@@ -50,7 +50,7 @@ Usage:
 
     # With CLI overrides
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe gemma3_1b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -60,7 +60,7 @@ Usage:
 
     # With containers (uses PatternPackager by default)
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe qwen3_8b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -70,7 +70,7 @@ Usage:
 
     # With custom packager (git archive)
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe llama3_8b_pretrain_config \
         --nodes 2 \
         --partition gpu \
@@ -80,7 +80,7 @@ Usage:
 
     # With environment variables (HF token, W&B key, etc.)
     python launch_with_nemo_run.py \
-        --script /opt/Megatron-Bridge/scripts/training/train.py \
+        --script /opt/Megatron-Bridge/scripts/training/run_recipe.py \
         --recipe llama32_1b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -92,7 +92,7 @@ Usage:
 
     # With fault-tolerant launcher
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe llama32_1b_pretrain_config \
         --launcher ft \
         --nodes 2 \
@@ -101,7 +101,7 @@ Usage:
 
     # Wait for completion and tail logs
     python launch_with_nemo_run.py \
-        --script train.py \
+        --script run_recipe.py \
         --recipe llama32_1b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -146,7 +146,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--script",
         type=str,
         required=True,
-        help="Training script to run (e.g., train.py, pretrain_vlm.py, finetune_vlm.py)",
+        help="Training script to run (e.g., run_recipe.py, pretrain_vlm.py, finetune_vlm.py)",
     )
     parser.add_argument(
         "--recipe",
