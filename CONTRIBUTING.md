@@ -250,7 +250,7 @@ uv run ruff format .
 Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
 
 
-## Documentation Requirement
+## 📝 Documentation Requirement
 
 **Important**: All new key features (e.g., enabling a new model, enabling a new parallelism strategy) must include documentation update (either a new doc or updating an existing one). This document update should:
 
