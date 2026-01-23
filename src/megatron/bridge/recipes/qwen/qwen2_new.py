@@ -40,28 +40,20 @@ def qwen2_500m_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     # Qwen2 uses NullTokenizer by default for pretraining
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -71,51 +63,50 @@ def qwen2_500m_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
     # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False  # Qwen2 default
     cfg.ddp.overlap_param_gather = False  # Qwen2 default
@@ -135,27 +126,19 @@ def qwen2_1p5b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -165,51 +148,50 @@ def qwen2_1p5b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
     # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -229,27 +211,19 @@ def qwen2_7b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -259,51 +233,50 @@ def qwen2_7b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
     # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -323,27 +296,19 @@ def qwen2_72b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
@@ -353,51 +318,50 @@ def qwen2_72b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
     # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -422,27 +386,19 @@ def qwen25_500m_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-0.5B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -452,51 +408,45 @@ def qwen25_500m_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
     # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -516,27 +466,19 @@ def qwen25_1p5b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -546,51 +488,45 @@ def qwen25_1p5b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
     # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -610,27 +546,19 @@ def qwen25_7b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -640,51 +568,45 @@ def qwen25_7b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
     # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -704,27 +626,19 @@ def qwen25_14b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -734,51 +648,50 @@ def qwen25_14b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
     # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -798,27 +711,19 @@ def qwen25_32b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
@@ -828,51 +733,45 @@ def qwen25_32b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
     # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -892,27 +791,19 @@ def qwen25_72b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # =========================================================================
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
-    # =========================================================================
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").to_megatron_provider(load_weights=False)
 
-    # =========================================================================
     # Tokenizer (--tokenizer-model)
-    # =========================================================================
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # =========================================================================
     # Dataset config - mock data by default
-    # =========================================================================
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
-    # =========================================================================
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
-    # =========================================================================
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
@@ -922,51 +813,50 @@ def qwen25_72b_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
-    # =========================================================================
     # Training config
-    # =========================================================================
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # =========================================================================
     # TE (Transformer Engine)
-    # =========================================================================
     cfg.model.transformer_impl = "transformer_engine"
 
-    # =========================================================================
     # CUDA Graph
-    # =========================================================================
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # =========================================================================
     # Kernel selections
-    # =========================================================================
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
 
-    # =========================================================================
     # Memory saving (recompute & offloading)
-    # =========================================================================
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # =========================================================================
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
     # Optimizer precision settings
-    # =========================================================================
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # =========================================================================
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
     # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
-    # =========================================================================
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
