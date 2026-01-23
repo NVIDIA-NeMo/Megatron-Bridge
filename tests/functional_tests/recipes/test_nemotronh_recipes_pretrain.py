@@ -52,7 +52,14 @@ NEMOTRON_3_NANO_PRETRAIN_RECIPES = [
         nemotron_3_nano_pretrain_config,
         "nemotron_3_nano",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1, "expert_model_parallel_size": 2},
-        {"hidden_size": 672, "num_layers": 3, "hybrid_override_pattern": "M*E", "n_routed_experts": 16},
+        {
+            "hidden_size": 672,
+            "num_layers": 3,
+            "hybrid_override_pattern": "M*E",
+            "n_routed_experts": 16,
+            "moe_token_dispatcher_type": "alltoall",
+            "moe_shared_expert_overlap": True,
+        },
     ),
 ]
 
