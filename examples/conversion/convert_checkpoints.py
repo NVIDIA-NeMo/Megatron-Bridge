@@ -44,11 +44,11 @@ Usage examples:
     --torch-dtype bfloat16 \
     --device-map auto
 
-  # Import large model with low-memory save (reduces peak memory by ~50%)
+  # Import large model without low-memory save (uses more memory but preserves model)
   uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.1-70B \
     --megatron-path ./checkpoints/llama3_1_70b \
-    --low-memory-save
+    --no-low-memory-save
 
   # Export without progress bar (useful for scripting)
   uv run python examples/conversion/convert_checkpoints.py export \
@@ -94,7 +94,7 @@ def import_hf_to_megatron(
     torch_dtype: Optional[str] = None,
     device_map: Optional[str] = None,
     trust_remote_code: bool = False,
-    low_memory_save: bool = False,
+    low_memory_save: bool = True,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -105,7 +105,7 @@ def import_hf_to_megatron(
         torch_dtype: Model precision ("float32", "float16", "bfloat16")
         device_map: Device placement strategy ("auto", "cuda:0", etc.)
         trust_remote_code: Allow custom model code execution
-        low_memory_save: Use memory-optimized save flow for large models
+        low_memory_save: Use memory-optimized save flow for large models (default: True)
     """
     print(f"🔄 Starting import: {hf_model} -> {megatron_path}")
 
@@ -123,8 +123,8 @@ def import_hf_to_megatron(
         kwargs["trust_remote_code"] = trust_remote_code
         print(f"   Trust remote code: {trust_remote_code}")
 
-    if low_memory_save:
-        print("   Low memory save: enabled")
+    if not low_memory_save:
+        print("   Low memory save: disabled")
 
     # Import using the convenience method
     print(f"📥 Loading HuggingFace model: {hf_model}")
@@ -236,10 +236,12 @@ def main():
     import_parser.add_argument("--device-map", help='Device placement strategy (e.g., "auto", "cuda:0")')
     import_parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
     import_parser.add_argument(
-        "--low-memory-save",
-        action="store_true",
-        help="Use memory-optimized save flow for large models (reduces peak memory by ~50%%)",
+        "--no-low-memory-save",
+        action="store_false",
+        dest="low_memory_save",
+        help="Disable memory-optimized save flow (uses more memory but preserves model after save)",
     )
+    import_parser.set_defaults(low_memory_save=True)
 
     # Export subcommand (Megatron -> HF)
     export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
