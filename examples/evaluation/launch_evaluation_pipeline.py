@@ -112,12 +112,7 @@ def main(args):
     )
     job.start(
         command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & sleep 120; bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
-        # command="sleep infinity",
         workdir=None,
-        pre_ray_start_commands=[
-            "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
-            "cp -a /nemo-workspace/Megatron-Bridge/. /opt/Megatron-Bridge/ || true",
-        ],
     )
 
     register_pipeline_terminator(job=job)
