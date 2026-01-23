@@ -23,7 +23,7 @@ python examples/models/generate_from_hf.py
 Do:
 
 ```bash
-uv run examples/models/generate_from_hf.py
+uv run python examples/models/generate_from_hf.py
 ```
 
 Exception: `docker/Dockerfile.ci` is exempt from this rule.
@@ -87,7 +87,6 @@ from __future__ import annotations
 
 import abc
 import logging
-from typing import Dict, Optional
 
 import torch
 from megatron.core import parallel_state as mpu
@@ -120,7 +119,7 @@ def convert_weights(
     source_model: torch.nn.Module,
     target_model: torch.nn.Module,
     mapping: MegatronParamMapping,
-) -> Dict[str, torch.Tensor]:
+) -> dict[str, torch.Tensor]:
     """Convert weights from source to target model format.
 
     This function handles the conversion of weights between HuggingFace
@@ -208,23 +207,30 @@ else:
 ### Type Hints
 
 1. Use type hints for function arguments and return types.
-2. Use `Optional[T]` or `T | None` for nullable types.
-3. Use `TypeVar` for generic type parameters.
-4. Import types from `typing` module for complex types.
+2. Use `T | None` for nullable types (not `Optional[T]`).
+3. Use `X | Y` for union types (not `Union[X, Y]`).
+4. Use `TypeVar` for generic type parameters.
+5. Use built-in generics (`list`, `dict`, `tuple`) instead of `typing` equivalents.
 
 Example:
 
 ```python
-from typing import Dict, List, Optional, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T", bound=torch.nn.Module)
 
 def get_module_by_name(
     model: T,
     name: str,
-    default: Optional[torch.nn.Module] = None,
-) -> Optional[torch.nn.Module]:
+    default: torch.nn.Module | None = None,
+) -> torch.nn.Module | None:
     """Get a module from a model by its name."""
+    ...
+
+def convert_weights(
+    weights: torch.Tensor | dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Convert weights, accepting either a single tensor or a dict."""
     ...
 ```
 
@@ -238,7 +244,6 @@ Example:
 
 ```python
 from dataclasses import dataclass
-from typing import Optional
 
 @dataclass
 class ModelConfig:
@@ -251,7 +256,7 @@ class ModelConfig:
     max_position_embeddings: int = 2048
     hidden_dropout: float = 0.1
     attention_dropout: float = 0.1
-    use_flash_attention: Optional[bool] = None
+    use_flash_attention: bool | None = None
 ```
 
 ## Model Bridge Guidelines
@@ -358,57 +363,4 @@ Add the following NVIDIA copyright header to all Python files and shell scripts.
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-```
-
-## Linting and Formatting
-
-We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting. Fix issues by running:
-
-```bash
-uv run ruff check --fix .
-uv run ruff format .
-```
-
-### Pre-commit Hooks
-
-Pre-commit hooks are configured to run automatically. To manually run all hooks:
-
-```bash
-uv run pre-commit run --all-files
-```
-
-## Git Commit Guidelines
-
-### Commit Message Format
-
-Use the conventional commit format:
-
-```
-<category>: <description>
-
-[optional body]
-
-[optional footer]
-```
-
-Categories:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation only changes
-- `style`: Code style changes (formatting, missing semicolons, etc.)
-- `refactor`: Code refactoring without changing functionality
-- `perf`: Performance improvements
-- `test`: Adding or updating tests
-- `build`: Build system or dependency changes
-- `ci`: CI/CD configuration changes
-- `chore`: Other changes that don't modify src or test files
-- `revert`: Reverting a previous commit
-- `cp`: Cherry-pick
-
-### Sign-off Commits
-
-All commits must be signed off using the `-s` flag:
-
-```bash
-git commit -s -m "feat: Add new model bridge for Llama 3"
 ```

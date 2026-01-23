@@ -32,7 +32,7 @@ reviews:
   auto_title_placeholder: '@coderabbitai title'
   # Auto Title Instructions - Custom instructions for auto-generating the PR/MR title.
   # Default: ""
-  auto_title_instructions: 'Format: "<category>: <title>". Category must be one of: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert, cp. The category must be followed by a colon. Title should be concise (<= 80 chars). Example: "feat: Add logit_bias support".'
+  auto_title_instructions: 'Format: "[{modules}] {type}: {description}". Modules: model, recipe, training, data, ckpt, peft, perf, ci, doc, test, build, misc. Use comma to separate multiple modules. Type must be one of: feat, fix, refactor, chore, test. Title should be concise (<= 80 chars). Example: "[model] feat: Add Qwen3 model bridge" or "[recipe, doc] feat: Add Llama 3.1 70B recipe".'
   # Set the commit status to 'pending' when the review is in progress and 'success' when it is complete.
   # Default: true
   commit_status: false
