@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 import pytest
 import torch
 from transformers import AutoConfig, AutoTokenizer
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers import dynamic_module_utils
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.recipes.nemotronh import (
@@ -85,7 +85,7 @@ class TestNemotronNanoV2FinetuneRecipes:
 
         # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
+        model_class = dynamic_module_utils.get_class_from_dynamic_module(
             class_reference=model_class_ref,
             pretrained_model_name_or_path=repo_id,
             cache_dir=None,
@@ -317,6 +317,14 @@ class TestNemotron3NanoFinetuneRecipes:
 
     _TOY_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
+    @pytest.fixture
+    def temp_hf_modules(self, tmp_path, monkeypatch):
+        """Change transformers.dynamic_module_utils.HF_MODULES_CACHE to a temp path"""
+        temp_hf_modules_cache = tmp_path / "hf_modules_cache"
+        temp_hf_modules_cache.mkdir(exist_ok=True)
+        monkeypatch.setattr(dynamic_module_utils, "HF_MODULES_CACHE", temp_hf_modules_cache)
+        yield temp_hf_modules_cache
+
     @pytest.fixture(scope="class")
     def nemotron_3_nano_toy_model_path(self, tmp_path_factory: pytest.TempPathFactory) -> str:
         """
@@ -341,7 +349,7 @@ class TestNemotron3NanoFinetuneRecipes:
 
         # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
+        model_class = dynamic_module_utils.get_class_from_dynamic_module(
             class_reference=model_class_ref,
             pretrained_model_name_or_path=repo_id,
             cache_dir=None,
@@ -387,7 +395,10 @@ class TestNemotron3NanoFinetuneRecipes:
 
     @pytest.fixture(scope="class")
     def nemotron_3_nano_megatron_checkpoint(
-        self, nemotron_3_nano_toy_model_path: str, tmp_path_factory: pytest.TempPathFactory
+        self,
+        nemotron_3_nano_toy_model_path: str,
+        tmp_path_factory: pytest.TempPathFactory,
+        temp_hf_modules: Path,
     ) -> str:
         """
         Convert the toy HuggingFace model to Megatron checkpoint format.
@@ -395,6 +406,7 @@ class TestNemotron3NanoFinetuneRecipes:
         Args:
             nemotron_3_nano_toy_model_path: Path to the toy HuggingFace model (from fixture)
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
+            temp_hf_modules: Temporary HF modules cache path (from fixture)
 
         Returns:
             str: Path to the Megatron checkpoint directory
