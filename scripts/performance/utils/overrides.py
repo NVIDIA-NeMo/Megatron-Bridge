@@ -324,7 +324,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
 
-    if args.pytorch_profiler:
+    if args.enable_torch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
 
     return recipe

@@ -145,11 +145,6 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
-- `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
-- `--profiling_start_step`: Defines start step for profiling. Default `10`.
-- `--profiling_stop_step`: Defines stop step for profiling. Default `11`.
-- `--profiling_gpu_metrics`: Enable nsys GPU metrics. Disabled by default.
-- `--profiling_ranks`: Comma-separated list of ranks to target for profiling. Defaults to just the first rank.
 - `--use_tokendrop`: Enable token drop (currently DeepSeek v3 only). Pass `true` or `false`. Disabled by default.
 - `--use_megatron_fsdp`: Enable Megatron FSDP integration. Pass `true` or `false`. Disabled by default.
 - `--cuda_graph_impl`: CUDA graph implementation (`none`, `local`, `transformer_engine`).
@@ -158,6 +153,16 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-rl/--recompute_num_layers`: Number of transformer layers to recompute (intermediate activations).
 - `-ol/--activation_offload_layers`: Number of transformer layers to offload activations to CPU memory.
 - `--recompute_modules`: Comma-separated list of modules to recompute.
+
+#### Profiling arguments
+
+- `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default. Mutually exclusive with `--enable_torch_profiler`.
+- `-entp/--enable_torch_profiler`: Enable PyTorch profiler. Disabled by default. Mutually exclusive with `--enable_nsys`.
+- `--profiling_start_step`: Defines start step for profiling. Default `10`.
+- `--profiling_stop_step`: Defines stop step for profiling. Default `11`.
+- `-mh/--record_memory_history`: Enable PyTorch profiler memory history recording. Disabled by default.
+- `--profiling_gpu_metrics`: Enable nsys GPU metrics. Disabled by default.
+- `--profiling_ranks`: Comma-separated list of ranks to target for profiling. Defaults to just the first rank.
 
 #### Logging arguments
 

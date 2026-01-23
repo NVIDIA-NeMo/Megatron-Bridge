@@ -485,55 +485,6 @@ def parse_cli_args():
         required=False,
     )
     performance_args.add_argument(
-        "-en",
-        "--enable_nsys",
-        help="Enable Nsys profiling. Disabled by default",
-        action="store_true",
-    )
-    performance_args.add_argument(
-        "-pyp",
-        "--pytorch_profiler",
-        type=bool_arg,
-        help="Enable PyTorch profiler. Disabled by default",
-        required=False,
-        default=False,
-    )
-    performance_args.add_argument(
-        "--profiling_start_step",
-        type=int,
-        help="Defines start step for profiling",
-        required=False,
-        default=10,
-    )
-    performance_args.add_argument(
-        "--profiling_stop_step",
-        type=int,
-        help="Defines stop step for profiling",
-        required=False,
-        default=11,
-    )
-    performance_args.add_argument(
-        "-mh",
-        "--record_memory_history",
-        type=bool_arg,
-        help="Enable PyTorch profiler memory history recording. Enabled by default (if pytorch_profiler is enabled)",
-        required=False,
-        default=True,
-    )
-    performance_args.add_argument(
-        "--profiling_gpu_metrics",
-        help="Enable nsys gpu metrics. Disabled by default.",
-        action="store_true",
-    )
-    performance_args.add_argument(
-        "--profiling_ranks",
-        type=list_of_ints,
-        metavar="N[,N...]",
-        help="List of ranks to target for profiling (defaults to just first rank)",
-        required=False,
-        default=None,
-    )
-    performance_args.add_argument(
         "--use_tokendrop",
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
         type=bool_arg,
@@ -588,6 +539,55 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated list of modules to recompute. Defaults to None",
         required=False,
+    )
+
+    # Profiling
+    profile_group = parser.add_argument_group("Profiling arguments")
+    profiler_exclusive_subgroup = profile_group.add_mutually_exclusive_group()
+    profiler_exclusive_subgroup.add_argument(
+        "-en",
+        "--enable_nsys",
+        help="Enable Nsys profiling. Disabled by default",
+        action="store_true",
+    )
+    profiler_exclusive_subgroup.add_argument(
+        "-entp",
+        "--enable_torch_profiler",
+        help="Enable PyTorch profiler. Disabled by default",
+        action="store_true",
+    )
+    profile_group.add_argument(
+        "--profiling_start_step",
+        type=int,
+        help="Defines start step for profiling",
+        required=False,
+        default=10,
+    )
+    profile_group.add_argument(
+        "--profiling_stop_step",
+        type=int,
+        help="Defines stop step for profiling",
+        required=False,
+        default=11,
+    )
+    profile_group.add_argument(
+        "-mh",
+        "--record_memory_history",
+        help="Enable PyTorch profiler memory history recording. Disabled by default",
+        action="store_true",
+    )
+    profile_group.add_argument(
+        "--profiling_gpu_metrics",
+        help="Enable nsys gpu metrics. Disabled by default.",
+        action="store_true",
+    )
+    profile_group.add_argument(
+        "--profiling_ranks",
+        type=list_of_ints,
+        metavar="N[,N...]",
+        help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
     )
 
     # Logging

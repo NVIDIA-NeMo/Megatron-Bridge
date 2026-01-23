@@ -179,7 +179,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     enable_nsys: bool,
-    pytorch_profiler: bool,
+    enable_torch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
     pp_size: Optional[int],
@@ -341,7 +341,7 @@ def main(
                 profile_ranks=profiling_ranks,
             )
         )
-    if pytorch_profiler:
+    elif enable_torch_profiler:
         plugins.append(
             PyTorchProfilerPlugin(
                 profile_step_start=profiling_start_step,
@@ -497,10 +497,6 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
 
-    assert not (args.enable_nsys and args.pytorch_profiler), (
-        "Both NSys and PyTorch profiler cannot be enabled at the same time"
-    )
-
     # probably better to use parser.parse_args() and make unknowns an error,
     # but for now we'll just issue a warning.
     if unknown_args:
@@ -529,7 +525,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
-        pytorch_profiler=args.pytorch_profiler,
+        enable_torch_profiler=args.enable_torch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
