@@ -16,9 +16,17 @@ import argparse
 import logging
 from typing import List, Optional
 
+from omegaconf import OmegaConf
+
+from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+from megatron.bridge.training.utils.omegaconf_utils import (
+    apply_overrides,
+    create_omegaconf_dict_config,
+    parse_hydra_overrides,
+)
 from utils.datasets import (
     create_mock_dataset_config,
     create_rp2_dataset_config,
@@ -62,7 +70,9 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     return recipe
 
 
-def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: bool = False) -> ConfigContainer:
+def _set_megatron_fsdp_overrides(
+    recipe: ConfigContainer, use_megatron_fsdp: bool = False, nccl_ub: bool = False
+) -> ConfigContainer:
     """Set the Megatron FSDP overrides."""
     if not use_megatron_fsdp:
         return
@@ -72,6 +82,10 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
     recipe.ddp.keep_fp8_transpose_cache = False
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
+
+    if nccl_ub:
+        recipe.ddp.nccl_ub = True
+        recipe.ddp.fsdp_manual_registration = True
 
     recipe.model.init_model_with_meta_device = True
     recipe.model.gradient_accumulation_fusion = True
@@ -131,6 +145,7 @@ def _set_recompute_overrides(
         recipe.model.recompute_num_layers = recompute_num_layers
     if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
+        recipe.model.recompute_granularity = "selective"
 
     return recipe
 
@@ -157,7 +172,7 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
 
-    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp)
+    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp, nccl_ub=settings.nccl_ub)
     _set_cuda_graph_overrides(
         cfg,
         cuda_graph_impl=settings.cuda_graph_impl,
@@ -175,9 +190,29 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     return cfg
 
 
+def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> ConfigContainer:
+    """Set Hydra-style CLI overrides."""
+    if not cli_overrides:
+        return recipe
+
+    # OmegaConf can't serialize problematic callable objects (functions/methods/partials, etc.),
+    # so those fields are "excluded_fields" in the temporary OmegaConf conversion and then restored after overrides
+    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
+    logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
+    merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
+    logger.debug("Hydra-style command-line overrides applied successfully.")
+    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
+    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
+    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+    # Apply overrides while preserving "excluded_fields"
+    apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
+
+    return recipe
+
+
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
-    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
         cuda_graph_impl=args.cuda_graph_impl,
@@ -200,8 +235,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
         recipe.model.moe_router_force_load_balancing = True
     if args.wandb_key is not None:
-        recipe.logger.wandb_project = args.wandb_prj_name
-        recipe.logger.wandb_exp_name = args.wandb_exp_name
+        recipe.logger.wandb_project = args.wandb_project_name
+        recipe.logger.wandb_exp_name = args.wandb_experiment_name
+        recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
@@ -212,7 +248,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size is not None:
+    if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
         recipe.model.expert_model_parallel_size = args.expert_model_parallel_size
@@ -239,7 +275,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
+        if args.domain == "llm":
+            # Override the dataset configuration for LLM models.
+            # For vlm models, use the default dataset configuration in model recipe,
+            # becuase preprocess of dataset is different for each vlm model.
+            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -251,17 +291,42 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=False,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=True,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
+        if recipe.model.cuda_graph_impl != "none":
+            recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+        recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+
+    # Reconfigure the DeepSeek-V3 pipeline model parallel layout
+    # if the user has provided a custom PP and VP sizes
+    model_recipe_name = args.model_recipe_name
+    pp_size = args.pipeline_model_parallel_size
+    vp_size = args.virtual_pipeline_model_parallel_size
+    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+
+    if args.pytorch_profiler:
+        recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
+
     return recipe
 
 
@@ -274,9 +339,12 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
+    config_variant: str = "v1",
 ) -> ConfigContainer:
     """Set the post overrides."""
-    workload_base_config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task)
+    workload_base_config = get_workload_base_config(
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+    )
 
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
@@ -288,7 +356,8 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
+    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    if dp > 1 and pp > 1 and vp > 1 and compute_dtype != "fp8_mx":
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True

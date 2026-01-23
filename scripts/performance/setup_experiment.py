@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,25 +15,27 @@
 # limitations under the License.
 
 import glob
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import nemo_run as run
 from nemo_run.config import get_nemorun_home
 
 
 try:
-    from argument_parser import parse_additional_slurm_params, parse_cli_args
+    from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import slurm_executor
+    from utils.executors import dgxc_executor, slurm_executor
+    from utils.utils import select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_additional_slurm_params, parse_cli_args
+    from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import slurm_executor
-
-import nemo_run as run
-
+    from .utils.executors import dgxc_executor, slurm_executor
+    from .utils.utils import select_config_variant_interactive
 
 try:
     import wandb
@@ -41,9 +45,11 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from .resiliency_plugins import FaultTolerancePlugin
 
 import logging
 
@@ -100,6 +106,7 @@ def is_flaky_failure(log_file_path: str) -> bool:
         or "free(): corrupted unsorted chunks" in log
         or "Segfault encountered" in log
         or "Fatal glibc error" in log
+        or "EOFError: No data left in file" in log
     )
 
 
@@ -124,12 +131,6 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
             config[key] = value
 
     return config if config else None
-
-
-def log_assets_dirname_to_disk(assets_dir: str):
-    """Log experiment dirname to disk."""
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "NEMORUN_ASSETS_DIR.txt"), "w") as f:
-        f.write(assets_dir)
 
 
 def ensure_logs_where_written(log_file_paths: List[str]):
@@ -178,17 +179,21 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     enable_nsys: bool,
+    pytorch_profiler: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    ep_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
     wandb_entity_name: str,
     profiling_start_step: int,
     profiling_stop_step: int,
+    record_memory_history: bool,
     profiling_gpu_metrics: bool,
+    profiling_ranks: Optional[List[int]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -197,7 +202,9 @@ def main(
     time_limit: str,
     container_image: str,
     custom_mounts: List[str],
+    custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -206,12 +213,26 @@ def main(
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
     max_retries: int,
+    dgxc_base_url: str,
+    dgxc_cluster: str,
+    dgxc_kube_apiserver_url: str,
+    dgxc_app_id: str,
+    dgxc_app_secret: str,
+    dgxc_project_name: str,
+    dgxc_pvc_claim_name: str,
+    dgxc_pvc_mount_path: str,
+    config_variant: str = "v1",
 ):
     """Sets up the experiment and runs it."""
-    if model_family_name in ["qwen3"] and model_recipe_name in [
-        "qwen3_30b_a3b_pretrain_config",
-        "qwen3_235b_a22b_pretrain_config",
-    ]:
+    if (
+        model_family_name in ["qwen3"]
+        and model_recipe_name
+        in [
+            "qwen3_30b_a3b",
+            "qwen3_235b_a22b",
+        ]
+        and task == "pretrain"
+    ):
         assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
 
     if wandb_key is not None:
@@ -221,11 +242,19 @@ def main(
 
     if use_recipes:
         script_name = ENTRYPOINT_RECIPE
-        exp_name = f"{model_family_name}_{model_recipe_name}_{task}"
+        exp_name = (
+            wandb_experiment_name
+            if wandb_experiment_name is not None
+            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
+        )
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
-        exp_name = f"{model_family_name}_{model_recipe_name}_{task}_{compute_dtype}"
+        exp_name = (
+            wandb_experiment_name
+            if wandb_experiment_name is not None
+            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
+        )
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -243,23 +272,45 @@ def main(
         ]
     )
 
-    executor = slurm_executor(
-        gpu=gpu,
-        account=account,
-        partition=partition,
-        log_dir=log_dir,
-        nodes=-(num_gpus // -gpus_per_node),
-        num_gpus_per_node=gpus_per_node,
-        time_limit=time_limit,
-        container_image=container_image,
-        custom_mounts=custom_mounts,
-        custom_env_vars={},
-        custom_srun_args=custom_srun_args,
-        hf_token=hf_token,
-        nemo_home=nemo_home,
-        additional_slurm_params=additional_slurm_params,
-        wandb_key=wandb_key,
-    )
+    if nccl_ub:
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
+
+    if not dgxc_cluster:
+        executor = slurm_executor(
+            gpu=gpu,
+            account=account,
+            partition=partition,
+            log_dir=log_dir,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            time_limit=time_limit,
+            container_image=container_image,
+            custom_mounts=custom_mounts,
+            custom_env_vars=custom_env_vars,
+            custom_srun_args=custom_srun_args,
+            gres=args.gres,
+            hf_token=hf_token,
+            nemo_home=nemo_home,
+            additional_slurm_params=additional_slurm_params,
+            wandb_key=wandb_key,
+        )
+    else:
+        executor = dgxc_executor(
+            dgxc_base_url=dgxc_base_url,
+            dgxc_cluster=dgxc_cluster,
+            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
+            dgxc_app_id=dgxc_app_id,
+            dgxc_app_secret=dgxc_app_secret,
+            dgxc_project_name=dgxc_project_name,
+            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
+            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
+            custom_env_vars=custom_env_vars,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            wandb_key=wandb_key,
+            hf_token=hf_token,
+        )
 
     plugins = []
 
@@ -271,11 +322,13 @@ def main(
                 tp_size=tp_size,
                 pp_size=pp_size,
                 cp_size=cp_size,
+                ep_size=ep_size,
                 model_family_name=model_family_name,
                 model_recipe_name=model_recipe_name,
                 gpu=gpu,
                 compute_dtype=compute_dtype,
-                task=task,
+                train_task=task,
+                config_variant=config_variant,
             )
         )
 
@@ -285,6 +338,28 @@ def main(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
+                profile_ranks=profiling_ranks,
+            )
+        )
+    if pytorch_profiler:
+        plugins.append(
+            PyTorchProfilerPlugin(
+                profile_step_start=profiling_start_step,
+                profile_step_end=profiling_stop_step,
+                profile_ranks=profiling_ranks,
+                record_memory_history=record_memory_history,
+            )
+        )
+
+    if use_recipes and dgxc_cluster is not None:
+        plugins.append(
+            FaultTolerancePlugin(
+                enable_ft_package=True,
+                calc_ft_timeouts=True,
+                num_in_job_restarts=10,
+                num_job_retries_on_failure=10,
+                initial_rank_heartbeat_timeout=1800,
+                rank_heartbeat_timeout=300,
             )
         )
 
@@ -301,20 +376,24 @@ def main(
     is_testing_passed = False  # Whether the testing passed convergence and performance validation.
     error_msg = None
     n_attempts = 0
-    exp_name = exp_name[:37]  # Some k8s clusters have a limit on the length of the experiment name.
+    exp_name = (
+        exp_name[:37] if dgxc_cluster is not None else exp_name
+    )  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
     while n_attempts <= max_retries:
         while is_finished_experiment is False:
-            wandb_run_id = (
-                (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
-            )
-            executor.env_vars.update(
-                {
-                    "WANDB_RUN_ID": wandb_run_id,
-                    "WANDB_RESUME": "allow",
-                    "WANDB_API_KEY": os.environ.get("WANDB_API_KEY"),
-                }
-            )
+            if HAVE_WANDB:
+                wandb_run_id = (
+                    (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
+                )
+                executor.env_vars.update(
+                    {
+                        "WANDB_RUN_ID": wandb_run_id,
+                        "WANDB_RESUME": "allow",
+                    }
+                )
+            if wandb_key is not None:
+                executor.env_vars["WANDB_API_KEY"] = wandb_key
 
             run.run(
                 nemorun_script,
@@ -324,6 +403,9 @@ def main(
                 detach=detach,
                 name=exp_name,
             )
+            if dryrun:
+                logger.info("dryrun requested: exiting")
+                return
 
             job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
 
@@ -335,10 +417,7 @@ def main(
                 is_testing_passed = True
                 break
 
-            assets_dir = os.path.join(job_dir, exp_name)
-            log_assets_dirname_to_disk(assets_dir)
-
-            log_file_paths = glob.glob(f"{job_dir}/log*.out")
+            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
@@ -359,34 +438,42 @@ def main(
             if not is_finished_experiment:
                 break
 
-        if is_finished_experiment is True:
+        if is_finished_experiment is True and detach is False:
             log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
+                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log-*_0.out"))
             )
 
             if not is_long_convergence_run:
                 log_paths = [log_paths[-1]]
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
-            wandb_run = wandb.init(
-                project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
-            )
+            wandb_run = None
+            if HAVE_WANDB and wandb_key:
+                wandb_run = wandb.init(
+                    project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
+                )
 
-            is_testing_passed, error_msg = calc_convergence_and_performance(
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                assets_dir=assets_dir,
-                log_paths=log_paths,
-                loss_metric="lm loss",
-                timing_metric="elapsed time per iteration (ms)",
-                golden_values_path=golden_values_path,
-                convergence_config=convergence_params,
-                performance_config=performance_params,
-                wandb_run=wandb_run,
-            )
+            logger.info("Waiting 10 seconds for I/O to settle")
+            time.sleep(10)
 
-            wandb_run.finish()
-            wandb.teardown(exit_code=int(not is_testing_passed))
+            if wandb_run:
+                is_testing_passed, error_msg = calc_convergence_and_performance(
+                    model_family_name=model_family_name,
+                    model_recipe_name=model_recipe_name,
+                    assets_dir=os.path.join(job_dir, exp_name),
+                    log_paths=log_paths,
+                    loss_metric="lm loss",
+                    timing_metric="elapsed time per iteration (ms)",
+                    golden_values_path=golden_values_path,
+                    convergence_config=convergence_params,
+                    performance_config=performance_params,
+                    wandb_run=wandb_run,
+                )
+
+                wandb_run.finish()
+                wandb.teardown(exit_code=int(not is_testing_passed))
+            else:
+                is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
@@ -402,22 +489,33 @@ def main(
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
-
-    logger.info("Megatron-Bridge CI test job completed successfully!")
+    elif is_finished_experiment and not detach:
+        logger.info("Megatron-Bridge CI test job completed successfully!")
 
 
 if __name__ == "__main__":
     parser = parse_cli_args()
-    args, _ = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args()
 
-    # Parse additional SLURM parameters if provided
-    additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
-
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
+    assert not (args.enable_nsys and args.pytorch_profiler), (
+        "Both NSys and PyTorch profiler cannot be enabled at the same time"
     )
+
+    # probably better to use parser.parse_args() and make unknowns an error,
+    # but for now we'll just issue a warning.
+    if unknown_args:
+        logger.warning(f"Ignoring unrecognized arguments: {' '.join(unknown_args)}")
+
+    # Handle --list_config_variants: show available variants and interactively select
+    config_variant = args.config_variant
+    if args.list_config_variants:
+        config_variant = select_config_variant_interactive(
+            model_family_name=args.model_family_name,
+            model_recipe_name=args.model_recipe_name,
+            gpu=args.gpu,
+            compute_dtype=args.compute_dtype,
+            task=args.task,
+        )
 
     main(
         use_recipes=args.use_recipes,
@@ -431,17 +529,21 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
+        pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        ep_size=args.expert_model_parallel_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
         wandb_entity_name=args.wandb_entity_name,
         profiling_start_step=args.profiling_start_step,
         profiling_stop_step=args.profiling_stop_step,
+        record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
+        profiling_ranks=args.profiling_ranks,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
@@ -450,11 +552,13 @@ if __name__ == "__main__":
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
+        custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
-        additional_slurm_params=additional_slurm_params,
+        additional_slurm_params=args.additional_slurm_params,
         golden_values_path=args.golden_values_path,
         convergence_params={
             "correlation_threshold": args.correlation_threshold,
@@ -471,4 +575,13 @@ if __name__ == "__main__":
             "skip_first_percent_time": args.skip_first_percent_time,
         },
         max_retries=args.max_retries,
+        dgxc_base_url=args.dgxc_base_url,
+        dgxc_cluster=args.dgxc_cluster,
+        dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
+        dgxc_app_id=args.dgxc_app_id,
+        dgxc_app_secret=args.dgxc_app_secret,
+        dgxc_project_name=args.dgxc_project_name,
+        dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
+        dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        config_variant=config_variant,
     )

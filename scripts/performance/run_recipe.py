@@ -67,6 +67,9 @@ def set_user_overrides(config, args):
     # Dataset configuration
     logging.info(f"Configuring dataset: type={args.data}")
 
+    cp_size = getattr(config.model, "context_parallel_size", 1) or 1
+    pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
+
     # Create dataset configuration based on type
     if args.data == "mock":
         config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
@@ -82,13 +85,19 @@ def set_user_overrides(config, args):
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
         config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or 8192,
+            packed=False,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
         config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or 8192,
+            packed=True,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
@@ -127,7 +136,7 @@ def set_user_overrides(config, args):
         config.model.expert_tensor_model_parallel_size = args.expert_tensor_parallel_size
 
     # Logging configuration
-    config.logger.log_timers_to_tensorboard = False
+    config.logger.log_timers_to_tensorboard = True
     if args.save_config_filepath:
         config.logger.save_config_filepath = args.save_config_filepath
 
@@ -137,7 +146,7 @@ def set_user_overrides(config, args):
     if args.wandb_entity_name:
         config.logger.wandb_entity = args.wandb_entity_name
     if args.wandb_experiment_name:
-        config.logger.wandb_experiment_name = args.wandb_experiment_name
+        config.logger.wandb_exp_name = args.wandb_experiment_name
     if args.wandb_save_dir:
         config.logger.wandb_save_dir = args.wandb_save_dir
 
@@ -172,15 +181,10 @@ def main():
     parser = parse_cli_args()
     args, _ = parser.parse_known_args()
 
-    args.model_recipe_name = (
-        f"{args.model_recipe_name}_pretrain_config"
-        if args.task == "pretrain"
-        else f"{args.model_recipe_name}_finetune_config"
-    )
-
     recipe = get_library_recipe(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
+        train_task=args.task,
         wandb_experiment_name=args.wandb_experiment_name,
     )
 

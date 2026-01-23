@@ -44,9 +44,10 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer
+from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_torch_version, is_torch_min_version, unwrap_model
+from megatron.core.utils import unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -526,6 +527,16 @@ def save_checkpoint(
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
     maybe_save_dataloader_state(train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None))
+
+    # Save LayerWiseDistributedOptimizer
+    if isinstance(
+        optimizer, LayerWiseDistributedOptimizer
+    ):  # replacement of getattr(args, "optimizer", "adam").startswith("dist_")
+        dp_rank = mpu.get_data_parallel_rank()
+        optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
+        ensure_directory_exists(optim_checkpoint_name)
+        if not optimizer.is_stub_optimizer:
+            optimizer.save_state_dict_to_file(optim_checkpoint_name)
 
     async_save_request = None
     if ckpt_cfg.async_save:
@@ -1583,7 +1594,14 @@ def _load_checkpoint_from_path(
     # Load optimizer and scheduler
     if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
         try:
-            if (
+            if isinstance(optimizer, LayerWiseDistributedOptimizer) and cfg.checkpoint.ckpt_format == "torch":
+                # LayerWiseDistributedOptimizer load optimizer state from file on different ranks
+                dp_rank = mpu.get_data_parallel_rank()
+                optim_checkpoint_name = os.path.join(
+                    os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt"
+                )
+                optimizer.load_state_dict_from_file(optim_checkpoint_name)
+            elif (
                 not skip_load_to_model_and_opt
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
@@ -2182,30 +2200,14 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     if use_distributed_optimizer and cfg.ckpt_format == "fsdp_dtensor":
         metadata["distrib_optim_sharding_type"] = "fsdp_dtensor"
 
-    # Force pre-mcore 0.14 behavior for PyTorch versions below 2.6a0
-    force_pre_mcore_014 = not is_torch_min_version("2.6a0")
-    if force_pre_mcore_014 and not cfg.dist_ckpt_save_pre_mcore_014:
-        logger.warning(
-            f"PyTorch version {get_torch_version()} below 2.6 detected. Forcing dist_ckpt_save_pre_mcore_014 behavior."
-        )
-
-    if cfg.dist_ckpt_save_pre_mcore_014 or force_pre_mcore_014:
-        metadata["singleton_local_shards"] = False
-        if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
-            if cfg.fully_parallel_save:
-                metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
-            else:
-                metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
-    else:
-        metadata["singleton_local_shards"] = True
-        if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
-            if cfg.dist_ckpt_optim_fully_reshardable:
-                metadata["distrib_optim_sharding_type"] = "fully_reshardable"
-                metadata["distrib_optim_fully_reshardable_mem_efficient"] = (
-                    cfg.distrib_optim_fully_reshardable_mem_efficient
-                )
-            else:
-                metadata["distrib_optim_sharding_type"] = "dp_reshardable"
+    if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
+        if cfg.dist_ckpt_optim_fully_reshardable:
+            metadata["distrib_optim_sharding_type"] = "fully_reshardable"
+            metadata["distrib_optim_fully_reshardable_mem_efficient"] = (
+                cfg.distrib_optim_fully_reshardable_mem_efficient
+            )
+        else:
+            metadata["distrib_optim_sharding_type"] = "dp_reshardable"
 
     metadata["singleton_local_shards"] = False
     metadata["chained_optim_avoid_prefix"] = True

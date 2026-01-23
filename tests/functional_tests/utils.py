@@ -169,8 +169,17 @@ def verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, peft_checkpoint_dir,
         )
 
 
-def compare_provider_configs(converted_provider, predefined_provider, model_id):
-    """Compare ALL configuration attributes between converted and predefined providers."""
+def compare_provider_configs(converted_provider, predefined_provider, model_id, skip_fields=None):
+    """Compare ALL configuration attributes between converted and predefined providers.
+
+    Args:
+        converted_provider: The provider converted from HuggingFace
+        predefined_provider: The predefined provider class
+        model_id: Model identifier for error messages
+        skip_fields: Optional set of field names to skip comparison for this specific model
+    """
+    if skip_fields is None:
+        skip_fields = set()
 
     # Get all attributes from both providers
     converted_attrs = vars(converted_provider)
@@ -196,6 +205,11 @@ def compare_provider_configs(converted_provider, predefined_provider, model_id):
     for attr_name in sorted(converted_keys):
         # Skip excluded attributes
         if "init_method" in attr_name or attr_name in {"generation_config", "vocab_size", "hf_model_id"}:
+            excluded_attrs.add(attr_name)
+            continue
+
+        # Skip model-specific fields
+        if attr_name in skip_fields:
             excluded_attrs.add(attr_name)
             continue
 

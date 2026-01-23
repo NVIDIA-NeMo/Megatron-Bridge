@@ -203,7 +203,7 @@ class RerunStateMachineConfig:
     error_injection_type: Literal["correct_result", "transient_error", "persistent_error"] = "transient_error"
     """Type of error to inject. """
 
-    rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "disabled"
+    rerun_mode: Literal["disabled", "validate_results", "report_determinism_stats"] = "disabled"
     """Use re-run engine to validate results (default) or to emit stats
     on variability of computations due to non-deterministic algorithms."""
 
@@ -746,11 +746,6 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
-    dist_ckpt_save_pre_mcore_014: bool = False
-    """Revert checkpointing simplifications introduced in Megatron-Core v0.14.
-    This option affects only checkpoint saving format and will be removed soon
-    (checkpoint load format is determined based on checkpoint metadata)."""
-
     dist_ckpt_optim_fully_reshardable: bool = False
     """Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability."""
 
@@ -1287,6 +1282,7 @@ class ConfigContainer(Container):
 
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
+        _validate_mixed_precision_consistency(self)
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1538,3 +1534,45 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
             )
         config.ddp.use_distributed_optimizer = True
         config.optimizer.use_distributed_optimizer = True
+
+
+def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
+    """Validate that mixed precision settings are consistent between model and optimizer configs.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        AssertionError: If precision settings are inconsistent in a way that would
+            indicate ambiguous behavior.
+    """
+    model_cfg = config.model
+    optimizer_cfg = config.optimizer
+
+    # Mutually exclusive: cannot have both bf16 and fp16 enabled
+    assert not (model_cfg.bf16 and model_cfg.fp16), (
+        "Model config cannot have both bf16=True and fp16=True. Please set only one precision mode."
+    )
+    assert not (optimizer_cfg.bf16 and optimizer_cfg.fp16), (
+        "Optimizer config cannot have both bf16=True and fp16=True. Please set only one precision mode."
+    )
+
+    # Validate across model and optimizer configs
+    if optimizer_cfg.use_precision_aware_optimizer:
+        # For bf16 training: optimizer.bf16 must match model.bf16
+        if model_cfg.bf16:
+            assert optimizer_cfg.bf16, (
+                "optimizer.bf16=True must be set when model.bf16=True and use_precision_aware_optimizer=True."
+            )
+        # For fp16 training: optimizer.fp16 must match model.fp16
+        if model_cfg.fp16:
+            assert optimizer_cfg.fp16, (
+                "optimizer.fp16=True must be set when model.fp16=True and use_precision_aware_optimizer=True."
+            )
+        # For fp32 training (neither bf16 nor fp16 on model)
+        if not model_cfg.bf16 and not model_cfg.fp16:
+            assert not optimizer_cfg.bf16 and not optimizer_cfg.fp16, (
+                "optimizer.bf16 and optimizer.fp16 must both be False when "
+                "model is using fp32 precision (model.bf16=False, model.fp16=False) and "
+                "use_precision_aware_optimizer=True."
+            )

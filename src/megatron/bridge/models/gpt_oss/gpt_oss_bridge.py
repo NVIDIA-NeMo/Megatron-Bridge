@@ -29,7 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
@@ -53,8 +53,10 @@ class GPTOSSBridge(MegatronModelBridge):
         # and we need to merge the weights of multiple experts during export.
         self.hf_weights_cache = {}
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM | GptOssConfig) -> GPTOSSProvider:
-        if isinstance(hf_pretrained, PreTrainedCausalLM):
+    def provider_bridge(
+        self, hf_pretrained: PreTrainedCausalLM | GptOssConfig | _ConfigOnlyPretrainedShim
+    ) -> GPTOSSProvider:
+        if isinstance(hf_pretrained, (PreTrainedCausalLM, _ConfigOnlyPretrainedShim)):
             hf_config = hf_pretrained.config
         else:
             hf_config = hf_pretrained
@@ -107,7 +109,10 @@ class GPTOSSBridge(MegatronModelBridge):
         return hf_weights
 
     def maybe_modify_converted_hf_weight(
-        self, task: WeightConversionTask, converted_weights_dict: Dict[str, torch.Tensor]
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         num_experts = self.hf_config.num_local_experts
         ep_size = parallel_state.get_expert_model_parallel_world_size()

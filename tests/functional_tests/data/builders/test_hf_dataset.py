@@ -13,8 +13,11 @@
 # limitations under the License.
 
 import os
+from importlib import reload
 from pathlib import PosixPath
 
+import datasets
+import huggingface_hub
 import pytest
 from datasets import load_dataset
 
@@ -43,6 +46,22 @@ def get_tokenizer(ensure_test_data):
     )
 
     return tokenizer
+
+
+@pytest.fixture(scope="module", autouse=True)
+def disable_hf_cache():
+    """Disable HF cache for the dataset tests."""
+    hf_home = os.environ["HF_HOME"]
+    hub_offline = os.environ["HF_HUB_OFFLINE"]
+    del os.environ["HF_HOME"]
+    del os.environ["HF_HUB_OFFLINE"]
+    reload(huggingface_hub.constants)
+    reload(datasets.config)
+    yield
+    os.environ["HF_HOME"] = hf_home
+    os.environ["HF_HUB_OFFLINE"] = hub_offline
+    reload(huggingface_hub.constants)
+    reload(datasets.config)
 
 
 class TestDataHFDataset:

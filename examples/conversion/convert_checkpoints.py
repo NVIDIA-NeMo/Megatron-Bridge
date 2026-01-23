@@ -27,18 +27,18 @@ Features:
 
 Usage examples:
   # Import a HuggingFace model to Megatron format
-  python examples/conversion/convert_checkpoints.py import \
+  uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b
 
   # Export a Megatron checkpoint to HuggingFace format
-  python examples/conversion/convert_checkpoints.py export \
+  uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b \
     --hf-path ./exports/llama3_2_1b_hf
 
   # Import with custom settings
-  python examples/conversion/convert_checkpoints.py import \
+  uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --torch-dtype bfloat16 \
@@ -51,7 +51,7 @@ Usage examples:
     --low-memory-save
 
   # Export without progress bar (useful for scripting)
-  python examples/conversion/convert_checkpoints.py export \
+  uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --hf-path ./exports/custom_model_hf \

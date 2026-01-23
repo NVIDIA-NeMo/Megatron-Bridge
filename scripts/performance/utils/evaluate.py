@@ -19,7 +19,6 @@ import re
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from unittest.mock import Mock
 
 
 try:
@@ -52,7 +51,13 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     Returns:
         Dictionary with format: {step: value}
     """
-    metrics = {"elapsed time per iteration (ms)": {}, "lm loss": {}, "GPU utilization": {}, "step time": {}}
+    metrics = {
+        "elapsed time per iteration (ms)": {},
+        "lm loss": {},
+        "GPU utilization": {},
+        "step time": {},
+        "grad norm": {},
+    }
 
     content = ""
     for log_path in log_paths:
@@ -66,6 +71,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "lm loss": r"lm loss:\s+([\d.E+\-]+)",
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
         "step time": r"Step Time :\s+([\d.]+)s",
+        "grad norm": r"grad norm:\s+([\d.]+|nan|inf)",
     }
 
     pending_step_time = None
@@ -75,6 +81,9 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         # Check for step time and GPU utilization
         if match := re.search(patterns["step time"], line):
             pending_step_time = float(match.group(1))
+
+        if match := re.search(patterns["grad norm"], line):
+            pending_grad_norm = float(match.group(1))
 
         if match := re.search(patterns["GPU utilization"], line):
             pending_gpu_util = float(match.group(1))
@@ -90,6 +99,10 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
             if pending_step_time is not None:
                 metrics["step time"][completed_step] = pending_step_time
                 pending_step_time = None
+
+            if pending_grad_norm is not None:
+                metrics["grad norm"][completed_step] = pending_grad_norm
+                pending_grad_norm = None
 
             if pending_gpu_util is not None:
                 metrics["GPU utilization"][completed_step] = pending_gpu_util
@@ -381,7 +394,7 @@ def write_golden_values_to_disk(current_values: Dict[str, Any], golden_values_pa
 
     wandb_run.log_artifact(artifact)
 
-    logger.info(f"Golden values were saved for {golden_values_path}: {current_values}")
+    logger.info(f"Golden values were saved for {golden_values_path}.")
 
 
 def calc_convergence_and_performance(
@@ -417,17 +430,14 @@ def calc_convergence_and_performance(
     """
 
     if not HAVE_WANDB:
-        raise ImportError("wandb is required for this calculting perf and convergence metrics")
+        raise ImportError("wandb is required for calculating perf and convergence metrics")
 
     if not HAVE_NUMPY:
-        raise ImportError("numpy is required for this calculting perf and convergence metrics")
-
-    # @TODO: Remove this once we have a proper wandb run object.
-    if wandb_run is None:
-        wandb_run = Mock()
+        raise ImportError("numpy is required for calculating perf and convergence metrics")
 
     current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
     current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
+    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm")
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
@@ -473,11 +483,19 @@ def calc_convergence_and_performance(
     logger.info(f"Comparing {len(steps)} training steps for convergence")
     steps = sorted(golden_train_loss.keys(), key=int)
 
+    # check for grad norm
+    has_nan_grad_norm = any(str(current_grad_norm[str(s)]) == "nan" for s in steps)
+    has_inf_grad_norm = any(str(current_grad_norm[str(s)]) == "inf" for s in steps)
+    if has_nan_grad_norm or has_inf_grad_norm:
+        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
+        error_msg += f"Grad norm values: {current_grad_norm}\n"
+        return len(error_msg) == 0, error_msg
+
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
     current_train_loss_values = np.array([current_train_loss[s] for s in steps])
-    logger.info(f"Current loss values: {current_train_loss_values}")
-    logger.info(f"Golden loss values: {golden_train_loss_values}")
+    logger.info(f"Current loss values (last 15): {current_train_loss_values[-15:]}")
+    logger.info(f"Golden loss values (last 15): {golden_train_loss_values[-15:]}")
     convergence_result = validate_convergence(
         current_values=current_train_loss_values,
         golden_values=golden_train_loss_values,
@@ -495,8 +513,8 @@ def calc_convergence_and_performance(
     # check for performance
     golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
     current_iter_time_values = np.array([current_iter_time[s] for s in steps])
-    logger.info(f"Current timing values: {current_iter_time_values}")
-    logger.info(f"Golden timing values: {golden_iter_time_values}")
+    logger.info(f"Current timing values (last 15): {current_iter_time_values[-15:]}")
+    logger.info(f"Golden timing values (last 15): {golden_iter_time_values[-15:]}")
     performance_result = validate_performance(
         current_values=current_iter_time_values,
         golden_values=golden_iter_time_values,
@@ -518,6 +536,7 @@ def calc_convergence_and_performance(
                 "compare/current_iter_time": current_iter_time_values[i],
                 "compare/golden_lm_loss": golden_train_loss_values[i],
                 "compare/golden_iter_time": golden_iter_time_values[i],
+                "compare/current_grad_norm": current_grad_norm[str(i)],
             }
         )
 

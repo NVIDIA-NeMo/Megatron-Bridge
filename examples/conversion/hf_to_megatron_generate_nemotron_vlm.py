@@ -15,19 +15,19 @@
 """
 Examples with Nemotron Nano V2 VL:
   # Single image using Megatron checkpoint:
-  python examples/conversion/hf_to_megatron_generate_nemotron_vlm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_nemotron_vlm.py \
     --image_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
     --prompt="Describe this image." \
     --max_new_tokens 300
 
   # Multiple images:
-  python examples/conversion/hf_to_megatron_generate_nemotron_vlm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_nemotron_vlm.py \
     --image_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/example1a.jpeg,https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/example1b.jpeg" \
     --prompt="Describe the two images in detail." \
     --max_new_tokens 300
 
   # Video description:
-  python examples/conversion/hf_to_megatron_generate_nemotron_vlm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_nemotron_vlm.py \
     --video_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/demo.mp4" \
     --prompt="Describe what you see." \
     --max_new_tokens 300
@@ -150,7 +150,8 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, syst
             image_paths = image_path.split(",")
             content = []
             for i, path in enumerate(image_paths):
-                content.append({"type": "text", "text": f"{'\n' if i > 0 else ''}Image-{i + 1}: "})
+                prefix = "\n" if i > 0 else ""
+                content.append({"type": "text", "text": f"{prefix}Image-{i + 1}: "})
                 content.append({"type": "image", "image": path})
             content.append({"type": "text", "text": "\n" + prompt})
         else:

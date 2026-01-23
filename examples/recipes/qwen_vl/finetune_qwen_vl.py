@@ -31,10 +31,15 @@ Examples:
                 --hf-model Qwen/Qwen3-VL-8B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen3vl8b
 
-        For Qwen3-VL (MoE):
+        For Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
                 --hf-model Qwen/Qwen3-VL-30B-A3B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen3vl30b_moe
+
+        For Qwen3-VL 235B (MoE):
+            $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+                --hf-model Qwen/Qwen3-VL-235B-A22B-Instruct \\
+                --megatron-path ./logs/checkpoints/qwen3vl235b_moe
 
     Finetune using the imported checkpoint:
         Qwen2.5-VL 3B:
@@ -45,17 +50,22 @@ Examples:
         Qwen2.5-VL 7B:
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen25_vl_7b_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen25vl7b
+                --pretrained-checkpoint ./logs/checkpoints/qwen25_vl_7b
 
         Qwen3-VL 8B (dense):
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_8b_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl8b
+                --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_8b
 
         Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_3b_active_30b_moe_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe
+                --recipe qwen3_vl_30b_a3b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_30b_a3b
+
+        Qwen3-VL 235B (MoE):
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen3_vl_235b_a22b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_235b_a22b
 
     Using a custom YAML config file:
         $  uv run python -m torch.distributed.run --nproc_per_node=8 finetune_qwen_vl.py \\
@@ -72,7 +82,8 @@ Available Recipes:
 
     Qwen3-VL:
         - qwen3_vl_8b_finetune_config: Dense 8B model
-        - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model with expert parallelism
+        - qwen3_vl_30b_a3b_finetune_config: MoE 30B model with expert parallelism
+        - qwen3_vl_235b_a22b_finetune_config: MoE 235B model with expert parallelism
 """
 
 import argparse
@@ -83,7 +94,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.qwen_vl import qwen3vl as qwen3_vl_recipes
+from megatron.bridge.recipes.qwen_vl import qwen3_vl as qwen3_vl_recipes
 from megatron.bridge.recipes.qwen_vl import qwen25_vl as qwen25_vl_recipes
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -100,6 +111,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
+DEFAULT_CONFIG_FILENAME: str = "qwen3_vl_pretrain_override_example.yaml"
+DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
@@ -111,7 +124,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--config-file",
         type=str,
-        default=None,
+        default=str(DEFAULT_CONFIG_FILE_PATH),
         help=(
             "Path to the YAML OmegaConf override file. "
             "If not specified, automatically selects based on recipe:\n"
@@ -135,10 +148,10 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--dataset-type",
         type=str,
-        choices=["mock", "preloaded", "hf"],
+        choices=["mock", "preloaded", "hf", "energon"],
         default=None,
         help=(
-            "Dataset type to use: 'mock', 'preloaded', or 'hf'. "
+            "Dataset type to use: 'mock', 'preloaded', 'hf', or 'energon'. "
             "If not set, auto-detects based on --data-path/--use-preloaded."
         ),
     )
@@ -153,7 +166,8 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
             "  - qwen25_vl_7b_finetune_config: 7B model\n"
             "Qwen3-VL recipes:\n"
             "  - qwen3_vl_8b_finetune_config: Dense 8B model\n"
-            "  - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model"
+            "  - qwen3_vl_30b_a3b_finetune_config: MoE 30B model\n"
+            "  - qwen3_vl_235b_a22b_finetune_config: MoE 235B model"
         ),
     )
     parser.add_argument(
@@ -232,7 +246,17 @@ def main() -> None:
         merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
 
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
+
+    # check micro_batch_size and global_batch_size value consistency
+    if dataset_type == "energon":
+        assert cfg.train.micro_batch_size == cfg.dataset.micro_batch_size, (
+            "value of cfg.dataset.micro_batch_size should be the same as cfg.train.micro_batch_size"
+        )
+        assert cfg.train.global_batch_size == cfg.dataset.global_batch_size, (
+            "value of cfg.dataset.global_batch_size should be the same as cfg.train.global_batch_size"
+        )
 
     if get_rank_safe() == 0:
         logger.info("--- Final Merged Configuration ---")
