@@ -35,7 +35,6 @@ from typing import (
 )
 
 import torch
-from torch.distributed._tensor import DTensor
 from megatron.core import parallel_state
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.transformer.module import MegatronModule
@@ -45,6 +44,7 @@ from megatron.core.utils import (
     unwrap_model,
 )
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from torch.distributed._tensor import DTensor
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -783,7 +783,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
             # 2) Delegate conversion & distribution to the bridge
             if use_megatron_fsdp:
-                converted_weights = task.mapping.hf_to_megatron_fsdp(hf_weights, task.megatron_module, task.param_weight)
+                converted_weights = task.mapping.hf_to_megatron_fsdp(
+                    hf_weights, task.megatron_module, task.param_weight
+                )
             else:
                 converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
 
@@ -970,9 +972,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if use_megatron_fsdp:
-                converted_weights_dict = task.mapping.megatron_fsdp_to_hf(task.param_weight, task.megatron_module) 
+                converted_weights_dict = task.mapping.megatron_fsdp_to_hf(task.param_weight, task.megatron_module)
             else:
-                converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module) 
+                converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,

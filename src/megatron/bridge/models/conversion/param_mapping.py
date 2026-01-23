@@ -20,8 +20,8 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 import torch
 import torch.distributed
 import torch.nn as nn
-from torch.distributed._tensor import DTensor, distribute_tensor
 from megatron.core import mpu
+from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
 from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -29,7 +29,7 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
-from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
+from torch.distributed._tensor import DTensor
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
 
@@ -299,7 +299,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     ) -> Dict[str, torch.Tensor]:
         """Convert weights FROM Megatron FSDP format.
         Args:
-            dtensor_weights (Optional[torch.Tensor]): Weight tensor from current rank. 
+            dtensor_weights (Optional[torch.Tensor]): Weight tensor from current rank.
             megatron_module (Optional[nn.Module]): Module for config access
 
         Returns:
