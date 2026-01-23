@@ -129,7 +129,6 @@ def main(args):
     while job_deployment_status != "Running" and job_status != "RUNNING":
         status = job.status(display=False)
         job_deployment_status = status["jobDeploymentStatus"]
-        print(status)
         time.sleep(1)
         if job_deployment_status == "Failed":
             raise RuntimeError("Job failed")
@@ -137,7 +136,7 @@ def main(args):
     job.logs(follow=True, timeout=10 * 60 * 60)
     job.stop()
 
-    with open(os.path.join(args.output_dir, "results.yml"), "r") as f:
+    with open(os.path.join(args.output_dir, "results", "results.yml"), "r") as f:
         results = yaml.safe_load(f)
 
     logger.info("Results: %s", results)
