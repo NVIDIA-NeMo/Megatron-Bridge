@@ -106,33 +106,33 @@ def main(args):
 
     executor.job_details = CustomJobDetailsRay()
 
-    # job = RayJob(
-    #     name="demo-slurm-ray-deploy",
-    #     executor=executor,
-    # )
-    # job.start(
-    #     command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & sleep 120; bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
-    #     # command="sleep infinity",
-    #     workdir=None,
-    #     pre_ray_start_commands=[
-    #         "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
-    #         "cp -a /nemo-workspace/Megatron-Bridge/. /opt/Megatron-Bridge/ || true",
-    #     ],
-    # )
+    job = RayJob(
+        name="demo-slurm-ray-deploy",
+        executor=executor,
+    )
+    job.start(
+        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & sleep 120; bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
+        # command="sleep infinity",
+        workdir=None,
+        pre_ray_start_commands=[
+            "cp -a /nemo-workspace/Export-Deploy/. /opt/Export-Deploy/ || true",
+            "cp -a /nemo-workspace/Megatron-Bridge/. /opt/Megatron-Bridge/ || true",
+        ],
+    )
 
-    # register_pipeline_terminator(job=job)
+    register_pipeline_terminator(job=job)
 
-    # job_deployment_status = "Initializing"
-    # job_status = "UNKNOWN"
-    # while job_deployment_status != "Running" and job_status != "RUNNING":
-    #     status = job.status(display=False)
-    #     job_deployment_status = status["jobDeploymentStatus"]
-    #     time.sleep(1)
-    #     if job_deployment_status == "Failed":
-    #         raise RuntimeError("Job failed")
+    job_deployment_status = "Initializing"
+    job_status = "UNKNOWN"
+    while job_deployment_status != "Running" and job_status != "RUNNING":
+        status = job.status(display=False)
+        job_deployment_status = status["jobDeploymentStatus"]
+        time.sleep(1)
+        if job_deployment_status == "Failed":
+            raise RuntimeError("Job failed")
 
-    # job.logs(follow=True, timeout=10 * 60 * 60)
-    # job.stop()
+    job.logs(follow=True, timeout=10 * 60 * 60)
+    job.stop()
 
     with open(os.path.join(args.output_dir, "results", "results.yml"), "r") as f:
         results = yaml.safe_load(f)
