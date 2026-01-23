@@ -21,8 +21,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, dynamic_module_utils
 
 
 # Overrides for 8B size
@@ -76,7 +75,7 @@ class TestNemotronHConversion:
 
         # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
+        model_class = dynamic_module_utils.get_class_from_dynamic_module(
             class_reference=model_class_ref,
             pretrained_model_name_or_path="nvidia/Nemotron-H-8B-Base-8K",
             cache_dir=None,
@@ -313,7 +312,7 @@ class TestNemotron3NanoConversion:
 
         # # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
+        model_class = dynamic_module_utils.get_class_from_dynamic_module(
             class_reference=model_class_ref,
             pretrained_model_name_or_path=repo_id,
             cache_dir=None,
@@ -356,12 +355,21 @@ class TestNemotron3NanoConversion:
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, nemotron_3_nano_toy_model_path):
+    @pytest.fixture
+    def temp_hf_modules(self, tmp_path, monkeypatch):
+        """Change transformers.dynamic_module_utils.HF_MODULES_CACHE to a temp path"""
+        temp_hf_modules_cache = tmp_path / "hf_modules_cache"
+        temp_hf_modules_cache.mkdir(exist_ok=True)
+        monkeypatch.setattr(dynamic_module_utils, "HF_MODULES_CACHE", temp_hf_modules_cache)
+        yield temp_hf_modules_cache
+
+    def test_toy_model_creation(self, nemotron_3_nano_toy_model_path, temp_hf_modules):
         """
         Test that the Nemotron-3-Nano toy model is created correctly and can be loaded.
 
         Args:
             nemotron_3_nano_toy_model_path: Path to the toy Nemotron-3-Nano model (from fixture)
+            temp_hf_modules: Temporary HF modules cache path (from fixture)
         """
         # Verify the model directory exists
         model_path = Path(nemotron_3_nano_toy_model_path)
@@ -433,7 +441,9 @@ class TestNemotron3NanoConversion:
             (1, 2, "PP"),
         ],
     )
-    def test_nemotron_3_nano_conversion_parallelism(self, nemotron_3_nano_toy_model_path, tmp_path, tp, pp, test_name):
+    def test_nemotron_3_nano_conversion_parallelism(
+        self, nemotron_3_nano_toy_model_path, tmp_path, tp, pp, test_name, temp_hf_modules
+    ):
         """
         Test Nemotron-3-Nano MoE model conversion with different parallelism configurations.
 
@@ -443,6 +453,7 @@ class TestNemotron3NanoConversion:
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
             test_name: Name of the test for identification
+            temp_hf_modules: Temporary HF modules cache path (from fixture)
         """
 
         # Create temporary output directory for conversion results
@@ -476,7 +487,11 @@ class TestNemotron3NanoConversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent,
+                env={**os.environ, "HF_MODULES_CACHE": str(temp_hf_modules)},
             )
 
             # Check that the conversion completed successfully
