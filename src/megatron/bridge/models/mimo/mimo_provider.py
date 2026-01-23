@@ -16,7 +16,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.training.mimo_config import MimoParallelismConfig
-from megatron.bridge.training.mimo_builder import (
+from megatron.bridge.models.mimo.mimo_builder import (
     build_hypercomm_grids,
     build_colocated_comm_config,
     _default_topology,
@@ -103,11 +103,11 @@ class MimoModelProvider:
     freeze_modality_encoders: Dict[str, bool] = field(default_factory=dict)
     freeze_modality_projections: Dict[str, bool] = field(default_factory=dict)
     
-    def _extract_pg_collections_from_grids(
+    def _get_pg_collections_from_grids(
         self,
         grids: Dict[str, "HyperCommGrid"],
     ) -> Dict[str, Optional[ProcessGroupCollection]]:
-        """Extract ProcessGroupCollections from HyperCommGrids.
+        """Get ProcessGroupCollections from HyperCommGrids.
         
         Returns None for modules this rank doesn't participate in.
         """
@@ -205,7 +205,7 @@ class MimoModelProvider:
         # Step 1: Build HyperCommGrids (if config provided)
         if self.mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.mimo_parallelism_config)
-            pg_collections = self._extract_pg_collections_from_grids(grids)
+            pg_collections = self._get_pg_collections_from_grids(grids)
             topology = _default_topology(self.mimo_parallelism_config)
         else:
             # No parallelism - use global process groups (like llava_vlm.py example)

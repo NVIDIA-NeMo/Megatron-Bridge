@@ -29,6 +29,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -1198,7 +1199,7 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaModelProvider
+    model: GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider
     mimo: Optional[MimoParallelismConfig] = None
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
@@ -1217,22 +1218,6 @@ class ConfigContainer(Container):
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
-
-    @property
-    def is_mimo(self) -> bool:
-        return self.mimo is not None
-
-    @property
-    def is_colocated_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "colocated"
-
-    @property
-    def is_homogeneous_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "homogeneous"
-
-    @property
-    def is_heterogeneous_mimo(self) -> bool:
-        return self.mimo is not None and self.mimo.deployment_mode == "heterogeneous"
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""

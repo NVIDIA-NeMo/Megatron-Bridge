@@ -9,13 +9,13 @@ def build_hypercomm_grids(
     mimo_parallelism_config: MimoParallelismConfig,
 ) -> Dict[str, "HyperCommGrid"]:
     """Create HyperCommGrid objects per module from MIMO parallelism config.
-    
+
     Creates grids on ALL ranks (required for consistent collective calls),
     but only ranks in each grid's range will participate in its operations.
-    
+
     Args:
         mimo_parallelism_config: MimoParallelismConfig specifying parallelism per module.
-        
+
     Returns:
         Dict mapping module names to their HyperCommGrids.
     """
@@ -41,9 +41,9 @@ def build_hypercomm_grids(
             _ = grid.create_pg([dim])
         # Create dp_cp composite group for gradient reduction
         _ = grid.create_pg(["dp", "cp"])
-        
+
         grids[module_name] = grid
-    
+
     return grids
 
 
