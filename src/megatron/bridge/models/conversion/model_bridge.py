@@ -36,6 +36,7 @@ from typing import (
 import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
+from megatron.core.activations import fast_gelu
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -289,6 +290,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         "gelu": F.gelu,
         "relu": F.relu,
         "tanh": torch.tanh,
+        "gelu_pytorch_tanh": fast_gelu,
     }
 
     @classmethod

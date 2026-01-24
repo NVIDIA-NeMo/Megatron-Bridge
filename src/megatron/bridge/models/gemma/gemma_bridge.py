@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.enums import AttnBackend
 from transformers import GemmaForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -24,59 +25,34 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
-@MegatronModelBridge.register_bridge(source=GemmaForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(
+    source=GemmaForCausalLM,
+    target=GPTModel,
+    provider=GemmaModelProvider,
+    model_type="gemma",
+)
 class GemmaBridge(MegatronModelBridge):
     """
     Megatron Bridge for Gemma Causal LM.
 
-    This bridge handles the conversion between HuggingFace GemmaForCausalLM
-    and Megatron-Core GPTModel formats, including weight mappings and
-    configuration translation.
-
-    As a user you would not use this bridge directly, but through `AutoBridge`.
-
-    Example:
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-2b")
-        >>> provider = bridge.to_megatron_provider()
+    Uses GemmaModelProvider which applies embedding scaling (sqrt(hidden_size))
+    automatically in its provide() method.
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GemmaModelProvider:
-        """Convert HuggingFace config to GemmaModelProvider.
-
-        Args:
-            hf_pretrained: HuggingFace pretrained model wrapper
-
-        Returns:
-            GemmaModelProvider: Configured provider for Megatron model
-        """
-        hf_config = hf_pretrained.config
-
-        provider = GemmaModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", True),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            kv_channels=hf_config.head_dim,
-        )
-
-        return provider
+    MEGATRON_DEFAULTS = {
+        "normalization": "RMSNorm",
+        "activation_func": fast_gelu,
+        "gated_linear_unit": True,
+        "position_embedding_type": "rope",
+        "add_bias_linear": False,
+        "attention_dropout": 0.0,
+        "hidden_dropout": 0.0,
+        "share_embeddings_and_output_weights": True,
+        "layernorm_zero_centered_gamma": True,
+        "attention_backend": AttnBackend.flash,
+    }
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.
