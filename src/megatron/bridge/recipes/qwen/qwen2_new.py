@@ -56,6 +56,7 @@ def qwen2_500m_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -141,6 +142,7 @@ def qwen2_1p5b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -226,6 +228,7 @@ def qwen2_7b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -311,6 +314,7 @@ def qwen2_72b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -401,6 +405,7 @@ def qwen25_500m_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -481,6 +486,7 @@ def qwen25_1p5b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -561,6 +567,7 @@ def qwen25_7b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -641,6 +648,7 @@ def qwen25_14b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -726,6 +734,7 @@ def qwen25_32b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -806,6 +815,7 @@ def qwen25_72b_pretrain_config() -> ConfigContainer:
     # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
