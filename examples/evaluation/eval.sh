@@ -58,7 +58,6 @@ eval_params = ConfigParams(
     request_timeout=request_timeout,
     temperature=temperature,
     top_p=top_p,
-    top_k=top_k,
 )
 eval_cfg = EvaluationConfig(
     type=eval_task,
