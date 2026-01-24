@@ -226,6 +226,7 @@ def setup(
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
+        optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")

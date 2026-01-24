@@ -214,7 +214,7 @@ class TestQwen3NextBridge:
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
         # Check MTP configuration
-        assert result.mtp_num_layers == 0
+        assert not result.mtp_num_layers
 
     def test_provider_bridge_dtype_handling(self, qwen3_next_80b_a3b_config_dict):
         """Test dtype handling in provider_bridge."""
