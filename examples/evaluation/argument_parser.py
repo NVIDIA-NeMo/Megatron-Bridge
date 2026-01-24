@@ -168,7 +168,7 @@ def parse_cli_args():
     logging_args.add_argument(
         "--wandb_entity_name",
         type=str,
-        help="wandb project name",
+        help="wandb entity name",
         required=False,
     )
     logging_args.add_argument(
