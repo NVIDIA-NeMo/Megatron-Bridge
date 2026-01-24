@@ -24,7 +24,12 @@ import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+from megatron.core.optimizer import (
+    ParamGroupOverride,
+    ParamKey,
+)
 from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -256,6 +261,81 @@ class DatasetBuildContext:
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+
+
+@dataclass(frozen=True)
+class OptimizerConfigOverrideProviderContext:
+    """Context for providing config overrides."""
+
+    scheduler_config: "SchedulerConfig"
+    optimizer_config: OptimizerConfig
+    model: Union[MegatronModule, list[MegatronModule]]
+
+
+@dataclass
+class OptimizerConfigOverrideProvider:
+    """Abstract base class for providing config overrides."""
+
+    def build_config_overrides(
+        self, context: OptimizerConfigOverrideProviderContext
+    ) -> dict[ParamKey, ParamGroupOverride] | None:
+        """Build config overrides for weight decay based on scheduler configuration.
+
+        This function creates parameter-specific overrides for weight decay behavior.
+        By default, weight decay is skipped for bias parameters and 1D parameters.
+        For Qwen3-Next models, weight decay is applied to q_layernorm and k_layernorm.
+
+        Args:
+            context: OptimizerConfigOverrideProviderContext which packages the scheduler
+                configuration, optimizer configuration, and model.
+
+        Returns:
+            Dictionary of ParamKey to ParamGroupOverride for the optimizer
+        """
+        model = context.model
+        scheduler_config = context.scheduler_config
+        optimizer_config = context.optimizer_config
+
+        config_overrides: dict[ParamKey, ParamGroupOverride] = {}
+
+        # Collect param names that should skip weight decay
+        # NOTE: this can be simplified once https://github.com/NVIDIA/Megatron-LM/pull/2753
+        #  is merged into dev. Then we can re-use megatron's apply_wd_to_qk_layernorm option
+        #  and call megatron.core.optimizer.get_standard_config_overrides(optimizer_config)
+        #  directly for standard settings, replacing the custom logic below for qwen3-next.
+        no_wd_names: list[str] = []
+        is_qwen3_next = scheduler_config.no_weight_decay_cond_type == "qwen3_next"
+
+        model_list = model if isinstance(model, list) else [model]
+        for model_chunk in model_list:
+            for name, param in model_chunk.named_parameters():
+                # Skip weight decay for bias parameters
+                if name.endswith(".bias"):
+                    no_wd_names.append(name)
+                    continue
+
+                # Skip weight decay for 1D parameters
+                if len(param.shape) == 1:
+                    if is_qwen3_next:
+                        # Qwen3-Next: apply weight decay to qk layernorm (don't add to skip list)
+                        if "q_layernorm" in name or "k_layernorm" in name:
+                            continue
+                    no_wd_names.append(name)
+
+        # Create a single ParamKey with all names that should skip weight decay
+        if no_wd_names:
+            no_wd_key = ParamKey(name=tuple(no_wd_names))
+            config_overrides[no_wd_key] = ParamGroupOverride(wd_mult=0.0)
+
+        # Now handle decoupled LR:
+        if optimizer_config.decoupled_lr is not None:
+            decoupled_lr_config: ParamGroupOverride = {"max_lr": optimizer_config.decoupled_lr}
+            decoupled_param_key = ParamKey(attr="is_embedding_or_output_parameter")
+            if optimizer_config.decoupled_min_lr is not None:
+                decoupled_lr_config["min_lr"] = optimizer_config.decoupled_min_lr
+            config_overrides[decoupled_param_key] = decoupled_lr_config
+
+        return config_overrides if config_overrides else None
 
 
 @dataclass
@@ -1163,6 +1243,9 @@ class ConfigContainer(Container):
     train: TrainingConfig
     model: GPTModelProvider | T5ModelProvider | MambaModelProvider
     optimizer: OptimizerConfig
+    optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
+        default_factory=OptimizerConfigOverrideProvider
+    )
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
     dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
