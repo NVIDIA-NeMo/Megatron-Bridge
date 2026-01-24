@@ -8,12 +8,12 @@ NUM_REPLICAS=$2
 NUM_GPUS=$3
 python \
   /opt/Export-Deploy/scripts/deploy/nlp/deploy_ray_inframework.py \
-  --megatron_checkpoint $MEGATRON_CHECKPOINT \
+  --megatron_checkpoint "$MEGATRON_CHECKPOINT" \
   --model_id megatron_model \
   --host 0.0.0.0 \
   --port 8000 \
-  --num_gpus $NUM_GPUS \
-  --num_replicas $NUM_REPLICAS \
+  --num_gpus "$NUM_GPUS" \
+  --num_replicas "$NUM_REPLICAS" \
   --tensor_model_parallel_size 1 \
   --pipeline_model_parallel_size 1 \
   --context_parallel_size 1 
