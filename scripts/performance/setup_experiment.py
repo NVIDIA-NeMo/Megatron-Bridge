@@ -337,16 +337,9 @@ def main(
                 profile_step_start=profiling_start_step,
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
-                profile_ranks=list(range(num_gpus)),
-                nsys_trace=["cuda"],
-                nsys_extra_args=[
-                    "--force-overwrite=true",
-                    "--capture-range=cudaProfilerApi",
-                    "--capture-range-end=stop",
-                    "--cuda-graph-trace=node",
-                    "--cuda-event-trace=false",
-                    "--nvtx-domain-include=NCCL",
-                ],
+                profile_ranks=profiling_ranks,
+                nsys_trace=args.nsys_trace,
+                nsys_extra_args=args.nsys_extra_args,
             )
         )
     if pytorch_profiler:
