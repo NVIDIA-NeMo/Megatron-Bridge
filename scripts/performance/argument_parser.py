@@ -676,8 +676,6 @@ def parse_cli_args():
         default=0.70,
         help="Percentage of iterations to skip for timing comparison (default: 0.75 = 75%%)",
     )
-
-    # Convergence loss validation parameters
     testing_args.add_argument(
         "--correlation_threshold", type=float, default=0.95, help="Correlation threshold for loss curve validation"
     )
