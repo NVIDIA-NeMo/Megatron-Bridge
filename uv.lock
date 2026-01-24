@@ -30,7 +30,7 @@ overrides = [
     { name = "nvidia-modelopt", extras = ["torch"], git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0a4f0a8b933121f7af080261a0a5a7717f2c5d49" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/ko3n1g/TransformerEngine.git?rev=dc18566bba734e2b546725fe1457402e1f23590a" },
+    { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/NVIDIA/TransformerEngine.git?rev=ce2f9fa4632a688d45efc55586be18cd0931ea50" },
     { name = "triton", marker = "sys_platform == 'never'" },
 ]
 
@@ -2395,7 +2395,7 @@ requires-dist = [
     { name = "tensorboard", specifier = ">=2.19.0" },
     { name = "timm" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/ko3n1g/TransformerEngine.git?rev=dc18566bba734e2b546725fe1457402e1f23590a" },
+    { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/NVIDIA/TransformerEngine.git?rev=ce2f9fa4632a688d45efc55586be18cd0931ea50" },
     { name = "transformers", specifier = "<5.0.0" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.19.10" },
@@ -6053,8 +6053,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.10.0.dev0+dc18566b"
-source = { git = "https://github.com/ko3n1g/TransformerEngine.git?rev=dc18566bba734e2b546725fe1457402e1f23590a#dc18566bba734e2b546725fe1457402e1f23590a" }
+version = "2.10.0.dev0+ce2f9fa4"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=ce2f9fa4632a688d45efc55586be18cd0931ea50#ce2f9fa4632a688d45efc55586be18cd0931ea50" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
