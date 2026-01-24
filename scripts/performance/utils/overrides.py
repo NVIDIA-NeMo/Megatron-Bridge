@@ -162,6 +162,43 @@ def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: boo
     return recipe
 
 
+def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+    """Set checkpoint save/load configuration."""
+    # When save_interval is provided, enable checkpointing
+    if args.save_interval is not None:
+        recipe.checkpoint.save_interval = args.save_interval
+        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
+        
+        # Set save directory (use provided or default)
+        if args.save_dir is not None:
+            recipe.checkpoint.save = args.save_dir
+            logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        else:
+            recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
+            logger.info("Checkpoint save directory defaulting to: /nemo_run/code/nemo_experiments/default/checkpoints")
+    
+    # If only save_dir is provided without save_interval, still enable checkpointing
+    elif args.save_dir is not None:
+        recipe.checkpoint.save = args.save_dir
+        logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        # Default save_interval to train_iters
+        recipe.checkpoint.save_interval = recipe.train.train_iters
+        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
+    
+    if args.load_dir is not None:
+        recipe.checkpoint.load = args.load_dir
+        logger.info(f"Checkpoint load directory set to: {args.load_dir}")
+    
+    if args.most_recent_k is not None:
+        recipe.checkpoint.most_recent_k = args.most_recent_k
+        logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
+    
+    if args.save_config_filepath is not None:
+        recipe.logger.save_config_filepath = args.save_config_filepath
+    
+    return recipe
+
+
 def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig) -> ConfigContainer:
     """Set workload base configs."""
     cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
@@ -264,38 +301,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
     # Handle checkpoint configuration
-    # Note: max_steps is already set above, which sets train_iters
-    
-    # When save_interval is provided, enable checkpointing
-    if args.save_interval is not None:
-        recipe.checkpoint.save_interval = args.save_interval
-        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
-        
-        # Set save directory (use provided or default)
-        if args.save_dir is not None:
-            recipe.checkpoint.save = args.save_dir
-            logger.info(f"Checkpoint save directory set to: {args.save_dir}")
-        else:
-            recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
-            logger.info("Checkpoint save directory defaulting to: /nemo_run/code/nemo_experiments/default/checkpoints")
-    
-    # If only save_dir is provided without save_interval, still enable checkpointing
-    elif args.save_dir is not None:
-        recipe.checkpoint.save = args.save_dir
-        logger.info(f"Checkpoint save directory set to: {args.save_dir}")
-        # Default save_interval to train_iters
-        recipe.checkpoint.save_interval = recipe.train.train_iters
-        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
-    
-    if args.load_dir is not None:
-        recipe.checkpoint.load = args.load_dir
-        logger.info(f"Checkpoint load directory set to: {args.load_dir}")
-    
-    if args.most_recent_k is not None:
-        recipe.checkpoint.most_recent_k = args.most_recent_k
-        logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
-    if args.save_config_filepath is not None:
-        recipe.logger.save_config_filepath = args.save_config_filepath
+    _set_checkpoint_overrides(recipe, args)
 
     if args.tokenizer_type == "NullTokenizer":
         recipe.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
