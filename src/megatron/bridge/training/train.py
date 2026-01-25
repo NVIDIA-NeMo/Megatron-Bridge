@@ -18,6 +18,7 @@ import sys
 import time
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 import torch
@@ -306,17 +307,35 @@ def train(
                 enable_forward_pre_hook(model)
                 cuda_graph_helper.cuda_graph_set_manual_hooks()
 
-        # Run training step.
+        # Run training step (with optional determinism checking).
         fault_tolerance.on_training_step_start(global_state)
-        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            wrapped_forward_step_func,
-            train_data_iterator,
-            model,
-            optimizer,
-            scheduler,
-            global_state,
-            forward_backward_func,
-        )
+        
+        # Check if we should run active cross-run determinism checking at this step
+        should_run_determinism = _should_run_active_determinism_check(config, global_state.train_state.step)
+        
+        if should_run_determinism:
+            loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = (
+                _train_step_with_determinism_check(
+                    wrapped_forward_step_func,
+                    train_data_iterator,
+                    model,
+                    optimizer,
+                    scheduler,
+                    global_state,
+                    forward_backward_func,
+                )
+            )
+        else:
+            loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
+                wrapped_forward_step_func,
+                train_data_iterator,
+                model,
+                optimizer,
+                scheduler,
+                global_state,
+                forward_backward_func,
+            )
+        
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -579,6 +598,7 @@ def train_step(
     optim_config = cfg.optimizer
 
     rerun_state_machine = get_rerun_state_machine()
+    
     while rerun_state_machine.should_run_forward_backward(data_iterator):
         # Set grad to zero.
         for model_chunk in model:
@@ -1229,3 +1249,315 @@ def _handle_mxfp8_param_buffer_copy(
         for optim_instance in optimizer.chained_optimizers:
             if isinstance(optim_instance, DistributedOptimizer):
                 optim_instance._copy_main_params_to_param_buffer()
+
+
+def _should_run_active_determinism_check(cfg: ConfigContainer, current_step: int) -> bool:
+    """Check if we should run active determinism checking at this step."""
+    model_config = cfg.model
+    
+    if not model_config.determinism_debug_enabled:
+        return False
+    
+    if model_config.determinism_mode != "cross_run":
+        return False
+    
+    # Check interval (default: every step)
+    check_interval = getattr(model_config, 'determinism_check_interval', 1)
+    if current_step % check_interval != 0 or current_step == 0:
+        return False
+    
+    return True
+
+
+def _train_step_with_determinism_check(
+    forward_step_func: ForwardStepCallable,
+    data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    model: list[MegatronModule],
+    optimizer: MegatronOptimizer,
+    scheduler: OptimizerParamScheduler,
+    global_state: GlobalState,
+    forward_backward_func: Callable,
+) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
+    """
+    Train step wrapper that runs cross-run determinism checking.
+    
+    This function:
+    1. Fetches and caches a batch
+    2. Runs forward+backward multiple times with the same batch
+    3. Only calls optimizer.step() on the final run
+    4. Gathers and reports results
+    
+    Returns: Same as train_step()
+    """
+    cfg = global_state.cfg
+    model_config = get_model_config(model[0])
+    num_repeats = getattr(model_config, 'determinism_num_repeats', 2)
+    
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    
+    if rank == 0:
+        print(f"\n{'='*70}")
+        print(f"[ACTIVE DETERMINISM CHECK] Step {global_state.train_state.step}")
+        print(f"Running same batch {num_repeats} times...")
+        print(f"{'='*70}")
+    
+    # Get plugin (lazy initialization if not already created)
+    plugin = model_config.get_determinism_plugin() if hasattr(model_config, 'get_determinism_plugin') else None
+    if plugin is None:
+        if rank == 0:
+            print(f"ERROR: Determinism plugin not initialized!")
+            print(f"  model_config type: {type(model_config)}")
+            print(f"  model_config id: {id(model_config)}")
+            print(f"  hasattr(get_determinism_plugin): {hasattr(model_config, 'get_determinism_plugin')}")
+            print(f"  determinism_debug_enabled: {getattr(model_config, 'determinism_debug_enabled', 'NOT FOUND')}")
+        # Fall back to normal train_step
+        return train_step(forward_step_func, data_iterator, model, optimizer, scheduler, global_state, forward_backward_func)
+    
+    # Register hooks on model if not already registered (lazy initialization case)
+    # This is needed because the plugin is created after model wrapping
+    if not hasattr(plugin, '_hooks_registered'):
+        determinism_mode = getattr(model_config, 'determinism_mode', 'cross_run')
+        for model_chunk in model:
+            # Unwrap DDP/FSDP wrapper to get the actual model
+            actual_model = model_chunk.module if hasattr(model_chunk, 'module') else model_chunk
+            plugin.register_hooks(actual_model, mode=determinism_mode)
+        plugin._hooks_registered = True
+    
+    # Cache the batch BEFORE any runs
+    # Store the batch data, not an iterator
+    cached_batch = None
+    if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+        if data_iterator is not None:
+            # Handle both list and single iterator types
+            if isinstance(data_iterator, list):
+                # For virtual pipeline parallelism, data_iterator is a list of RerunDataIterator
+                cached_batch = [next(di) if di is not None else None for di in data_iterator]
+            else:
+                # For regular pipeline, data_iterator is a single RerunDataIterator
+                cached_batch = next(data_iterator)
+    
+    # Run multiple times with same batch
+    loss_dict_final = {}
+    for run_idx in range(num_repeats):
+        if rank == 0:
+            print(f"  Run {run_idx + 1}/{num_repeats}...")
+        
+        # Signal new run to plugin
+        plugin.start_new_run()
+        
+        # Create an INFINITE iterator that repeats the cached batch
+        # Much simpler - just keep yielding the same batch forever
+        if cached_batch is not None:
+            if isinstance(cached_batch, list):
+                # For virtual pipeline parallelism, create a list of infinite iterators
+                def make_infinite_iterator_list():
+                    """Create a list of infinite iterators for virtual pipeline."""
+                    iterators = []
+                    for batch in cached_batch:
+                        def make_iter(b=batch):
+                            while True:
+                                yield b
+                        iterators.append(make_iter())
+                    return iterators
+                run_data_iterator = make_infinite_iterator_list()
+            else:
+                # For regular pipeline, create a single infinite iterator
+                def make_infinite_iterator():
+                    """Create an infinite iterator that repeats the cached batch."""
+                    while True:
+                        yield cached_batch
+                run_data_iterator = make_infinite_iterator()
+        else:
+            run_data_iterator = data_iterator
+        
+        # Run the actual training step but intercept optimizer.step()
+        is_final_run = (run_idx == num_repeats - 1)
+        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = (
+            _single_determinism_run(
+                forward_step_func=forward_step_func,
+                data_iterator=run_data_iterator,
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                global_state=global_state,
+                forward_backward_func=forward_backward_func,
+                skip_optimizer_step=(not is_final_run),
+            )
+        )
+        
+        if is_final_run:
+            loss_dict_final = loss_dict
+    
+    # Gather and analyze results
+    if rank == 0:
+        print("\n  Gathering results from all ranks...")
+    
+    try:
+        all_results = plugin.gather_all_results()
+        
+        if rank == 0:
+            from megatron.bridge.training.utils.determinism import analyze_results
+            analysis = analyze_results(all_results)
+            print("\n" + "="*70)
+            print("DETERMINISM ANALYSIS")
+            print("="*70)
+            print(analysis)
+            print("="*70 + "\n")
+            
+            # Save to file
+            output_dir = Path(plugin.config.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            with open(output_dir / f"analysis_step_{global_state.train_state.step}.txt", "w") as f:
+                f.write(analysis)
+        
+        plugin.reset_for_next_step()
+        
+    except Exception as e:
+        if rank == 0:
+            print(f"ERROR: Determinism analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Return results from final run
+    return loss_dict_final, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
+
+
+def _single_determinism_run(
+    forward_step_func: ForwardStepCallable,
+    data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    model: list[MegatronModule],
+    optimizer: MegatronOptimizer,
+    scheduler: OptimizerParamScheduler,
+    global_state: GlobalState,
+    forward_backward_func: Callable,
+    skip_optimizer_step: bool,
+) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
+    """
+    Single forward+backward run, optionally skipping optimizer.step().
+    
+    This is a modified version of train_step() that can skip the optimizer step.
+    """
+    cfg: ConfigContainer = global_state.cfg
+    timers = global_state.timers
+    model_config = get_model_config(model[0])
+    train_config = cfg.train
+    optim_config = cfg.optimizer
+
+    rerun_state_machine = get_rerun_state_machine()
+    
+    while rerun_state_machine.should_run_forward_backward(data_iterator):
+        # Set grad to zero.
+        for model_chunk in model:
+            model_chunk.zero_grad_buffer()
+        optimizer.zero_grad()
+
+        _handle_mxfp8_param_buffer_copy(
+            optimizer=optimizer,
+            reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
+            overlap_param_gather=cfg.ddp.overlap_param_gather,
+        )
+
+        # Handle finetuning vs pretraining data consumption
+        seq_length = model_config.seq_length
+        forward_backward_data_iterator = data_iterator
+
+        if cfg.dataset.dataloader_type == "batch":
+            from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
+
+            forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+                data_iterator=data_iterator,
+                num_microbatches=get_num_microbatches(),
+                default_seq_length=model_config.seq_length,
+                seq_key="tokens",
+            )
+
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
+            )
+
+        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+            model,
+            seq_length=model_config.seq_length,
+            micro_batch_size=train_config.micro_batch_size,
+            decoder_seq_length=model_config.seq_length,
+        )
+
+        losses_reduced = forward_backward_func(
+            forward_step_func=forward_step_func,
+            data_iterator=forward_backward_data_iterator,
+            model=model,
+            num_microbatches=get_num_microbatches(),
+            seq_length=seq_length,
+            micro_batch_size=train_config.micro_batch_size,
+            decoder_seq_length=seq_length,
+            forward_only=False,
+            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+        )
+        
+    should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
+    if should_exit:
+        return {}, True, should_checkpoint, should_exit, exit_code, None, None
+
+    # Empty unused memory.
+    if train_config.empty_unused_memory_level >= 1:
+        torch.cuda.empty_cache()
+
+    # Update parameters (skip if requested).
+    if skip_optimizer_step:
+        # Keep weights unchanged for next run
+        update_successful = True
+        grad_norm = None
+        num_zeros_in_grad = None
+        skipped_iter = 0
+    else:
+        timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
+        update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+        timers("optimizer").stop()
+
+        update_successful = logical_and_across_model_parallel_group(update_successful)
+        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm)
+        if optim_config.log_num_zeros_in_grad:
+            num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad)
+
+        # Update learning rate.
+        if update_successful:
+            increment = get_num_microbatches() * train_config.micro_batch_size * cfg.data_parallel_size
+            scheduler.step(increment=increment)
+            skipped_iter = 0
+        else:
+            skipped_iter = 1
+
+    # Empty unused memory.
+    if train_config.empty_unused_memory_level >= 2:
+        torch.cuda.empty_cache()
+
+    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
+        # Average loss across microbatches.
+        loss_reduced = {}
+
+        for key in losses_reduced[0].keys():
+            val = [x[key].view(-1) for x in losses_reduced]
+            if val[0].numel() == 2:
+                val = torch.vstack(val).sum(dim=0)
+                torch.distributed.all_reduce(
+                    val, group=parallel_state.get_data_parallel_group(with_context_parallel=True)
+                )
+                loss_reduced[key] = val[0] / val[1]
+            elif val[0].numel() == 1:
+                val = torch.cat(val).mean()
+                loss_reduced[key] = val
+            else:
+                raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+        return (
+            loss_reduced,
+            skipped_iter,
+            False,  # should_checkpoint
+            False,  # should_exit
+            0,      # exit_code
+            grad_norm,
+            num_zeros_in_grad,
+        )
+    return {}, skipped_iter, False, False, 0, grad_norm, num_zeros_in_grad
+
