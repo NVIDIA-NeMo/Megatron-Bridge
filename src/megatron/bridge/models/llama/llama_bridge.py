@@ -27,7 +27,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama.llama_provider import apply_rope_scaling
 
 
 if TYPE_CHECKING:
@@ -37,12 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Rope Scaling Helper
-# =============================================================================
-
-
-@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel, model_type="llama")
 class LlamaBridge(MegatronModelBridge):
     """
     Megatron Bridge for Llama Causal LM.
@@ -73,18 +67,11 @@ class LlamaBridge(MegatronModelBridge):
         "rotary_percent": 1.0,
     }
 
-    # Llama-specific defaults for HF config
-    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
-    HF_DEFAULTS = {
-        "architectures": ["LlamaForCausalLM"],
-        "model_type": "llama",
-    }
-
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace Llama config to Megatron GPTModelProvider.
 
-        Uses base class implementation for common conversion, then adds
-        RoPE scaling config for Llama 3.1/3.2 models.
+        Uses base class implementation for common conversion, then enables
+        RoPE scaling for Llama 3.1/3.2 models via MCore's built-in support.
 
         Args:
             hf_pretrained: HuggingFace PreTrainedCausalLM containing the Llama config
@@ -95,42 +82,14 @@ class LlamaBridge(MegatronModelBridge):
         # Use base class for common conversion
         provider = super().provider_bridge(hf_pretrained)
 
-        # Store RoPE scaling config on provider for Llama 3.1/3.2 models
+        # Enable RoPE scaling for Llama 3.1/3.2 models via Megatron Core's built-in support
         hf_config = hf_pretrained.config
-        rope_scaling = getattr(hf_config, "rope_scaling", None)
-        if rope_scaling is not None and rope_scaling.get("rope_type") == "llama3":
-            provider._rope_scaling = {
-                "factor": rope_scaling.get("factor", 8.0),
-                "low_freq_factor": rope_scaling.get("low_freq_factor", 1.0),
-                "high_freq_factor": rope_scaling.get("high_freq_factor", 4.0),
-                "original_max_position_embeddings": rope_scaling.get("original_max_position_embeddings", 8192),
-            }
+        hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if hf_rope_scaling is not None and hf_rope_scaling.get("rope_type") == "llama3":
+            provider.rope_scaling = True
+            provider.rope_scaling_factor = hf_rope_scaling.get("factor", 8.0)
 
         return provider
-
-    @staticmethod
-    def apply_rope_scaling_to_model(model: GPTModel, provider: GPTModelProvider) -> None:
-        """Apply RoPE scaling to a model if the provider has rope_scaling config.
-
-        This should be called after model creation for Llama 3.1/3.2 models that
-        require RoPE scaling for extended context lengths.
-
-        Args:
-            model: The GPTModel instance to apply RoPE scaling to
-            provider: The GPTModelProvider that may contain _rope_scaling config
-        """
-        rope_scaling = getattr(provider, "_rope_scaling", None)
-        if rope_scaling is None:
-            return
-
-        if hasattr(model, "rotary_pos_emb") and model.rotary_pos_emb is not None:
-            model.rotary_pos_emb.inv_freq = apply_rope_scaling(
-                model.rotary_pos_emb.inv_freq,
-                factor=rope_scaling["factor"],
-                low_freq_factor=rope_scaling["low_freq_factor"],
-                high_freq_factor=rope_scaling["high_freq_factor"],
-                old_context_len=rope_scaling["original_max_position_embeddings"],
-            )
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
@@ -147,12 +106,15 @@ class LlamaBridge(MegatronModelBridge):
         # Use base class for common conversion (provider_to_hf_config + HF_DEFAULTS)
         hf_config = super(LlamaBridge, cls).megatron_to_hf_config(provider)
 
-        # Handle RoPE scaling for Llama 3.1 models
-        rope_scaling = getattr(provider, "_rope_scaling", None)
-        if rope_scaling is not None:
+        # Handle RoPE scaling for Llama 3.1/3.2 models
+        if provider.rope_scaling:
             hf_config["rope_scaling"] = {
                 "rope_type": "llama3",
-                **rope_scaling,
+                "factor": provider.rope_scaling_factor,
+                # Use Megatron Core defaults for these values
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
             }
 
         return hf_config

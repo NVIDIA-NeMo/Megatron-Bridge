@@ -31,6 +31,7 @@ class KimiK2Bridge(MegatronModelBridge):
     """Megatron Bridge for Kimi K2."""
 
     MEGATRON_DEFAULTS = {
+        # Architecture
         "normalization": "RMSNorm",
         "gated_linear_unit": True,
         "position_embedding_type": "rope",
@@ -38,6 +39,7 @@ class KimiK2Bridge(MegatronModelBridge):
         "share_embeddings_and_output_weights": False,
         "qk_layernorm": True,
         "multi_latent_attention": True,
+        # MoE settings
         "moe_grouped_gemm": True,
         "moe_router_pre_softmax": True,
         "moe_token_dispatcher_type": "alltoall",
@@ -45,11 +47,24 @@ class KimiK2Bridge(MegatronModelBridge):
         "moe_shared_expert_overlap": True,
         "moe_router_enable_expert_bias": True,
         "moe_router_dtype": "fp32",
+        "moe_permute_fusion": True,
+        # Optimizations
         "apply_rope_fusion": False,
         "bias_activation_fusion": True,
         "bias_dropout_fusion": True,
         "cross_entropy_fusion_impl": "te",
+        "cross_entropy_loss_fusion": True,
+        "masked_softmax_fusion": True,
+        "persist_layer_norm": True,
+        "async_tensor_model_parallel_allreduce": True,
+        "gradient_accumulation_fusion": True,
+        # Dropout/precision
+        "hidden_dropout": 0.0,
+        "attention_softmax_in_fp32": False,
+        # Vocab
         "make_vocab_size_divisible_by": 1280,
+        # Default seq_length
+        "seq_length": 4096,
     }
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:

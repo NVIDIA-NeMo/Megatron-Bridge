@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import GenerationConfig, GptOssConfig, GptOssForCausalLM
+from transformers import GptOssForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -28,57 +28,71 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
-@MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel)
+try:
+    from megatron.core.fusions.fused_bias_geglu import quick_gelu
+except ImportError:
+    # Fallback if fused_bias_geglu is not available
+    quick_gelu = torch.nn.functional.gelu
+
+
+@MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel, model_type="gpt_oss")
 class GPTOSSBridge(MegatronModelBridge):
-    """
-    Megatron Hub Bridge for GPT-OSS models.
+    """Megatron Bridge for GPT-OSS MoE models with YARN position embeddings."""
 
-    As a user you would not use this bridge directly, but through `AutoBridge`.
-
-    Example:
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
-        >>> provider = bridge.to_megatron_provider()
-    """
+    MEGATRON_DEFAULTS = {
+        # Architecture
+        "normalization": "RMSNorm",
+        "gated_linear_unit": True,
+        "add_bias_linear": True,
+        "add_qkv_bias": False,
+        "share_embeddings_and_output_weights": False,
+        "position_embedding_type": "yarn",
+        # MoE settings
+        "moe_router_pre_softmax": False,
+        "moe_grouped_gemm": True,
+        "moe_token_dispatcher_type": "alltoall",
+        "moe_permute_fusion": True,
+        "moe_router_load_balancing_type": "none",
+        # Optimizations
+        "bias_activation_fusion": True,
+        "bias_dropout_fusion": False,
+        # Dropout/precision
+        "hidden_dropout": 0.0,
+        "bf16": True,
+        "params_dtype": torch.bfloat16,
+        # GPT-OSS specific activation
+        "activation_func": quick_gelu,
+        "activation_func_clamp_value": 7.0,
+        "glu_linear_offset": 1.0,
+        # Attention settings
+        "softmax_type": "learnable",
+        "window_size": (128, 0),
+        "window_attn_skip_freq": 2,
+    }
 
     def __init__(self):
         super().__init__()
-        # gpt-oss HF weights has one weight for all the experts, but megatron has one for each expert
-        # We need to cache the weights during import to load and dequantize the expert weights only once.
-        # and we need to merge the weights of multiple experts during export.
+        # Cache for dequantized expert weights during import and merged weights during export
         self.hf_weights_cache = {}
 
-    def provider_bridge(
-        self, hf_pretrained: PreTrainedCausalLM | GptOssConfig | _ConfigOnlyPretrainedShim
-    ) -> GPTOSSProvider:
-        if isinstance(hf_pretrained, (PreTrainedCausalLM, _ConfigOnlyPretrainedShim)):
-            hf_config = hf_pretrained.config
-        else:
-            hf_config = hf_pretrained
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
 
-        # Extract generation config
-        generation_config = getattr(hf_pretrained, "generation_config", None)
-        if generation_config is None:
-            try:
-                generation_config = GenerationConfig.from_pretrained(str(hf_pretrained.name_or_path))
-            except Exception:
-                generation_config = None
+        # GPT-OSS uses intermediate_size for MoE FFN hidden size
+        provider.moe_ffn_hidden_size = hf_pretrained.config.intermediate_size
 
-        provider = GPTOSSProvider(
-            num_layers=hf_config.num_hidden_layers,
-            num_moe_experts=hf_config.num_local_experts,
-            # for unit tests only:
-            hidden_size=hf_config.hidden_size,
-            moe_ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            vocab_size=hf_config.vocab_size,
-        )
+        provider.yarn_rotary_scaling_factor = 32.0
+        provider.yarn_original_max_position_embeddings = 4096
+        provider.yarn_beta_fast = 32.0
+        provider.yarn_beta_slow = 1.0
+        provider.yarn_correction_range_round_to_int = False
+
         return provider
 
     def maybe_modify_loaded_hf_weight(

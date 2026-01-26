@@ -129,19 +129,19 @@ class TestLlamaBridgeConfigConverter:
         bridge = LlamaBridge()
         result = bridge.provider_bridge(mock_pretrained_llama_2)
 
-        # For Llama 2 (no RoPE scaling), should return base GPTModelProvider without _rope_scaling
+        # For Llama 2 (no RoPE scaling), should return base GPTModelProvider with rope_scaling=False
         assert isinstance(result, GPTModelProvider)
-        assert not hasattr(result, "_rope_scaling")
+        assert result.rope_scaling is False
 
     def test_provider_bridge_stores_rope_scaling_for_llama31(self, mock_pretrained_llama):
-        """Test that provider_bridge stores _rope_scaling on provider for Llama 3.1/3.2."""
+        """Test that provider_bridge enables rope_scaling for Llama 3.1/3.2."""
         bridge = LlamaBridge()
         result = bridge.provider_bridge(mock_pretrained_llama)
 
-        # For Llama 3.1/3.2 with RoPE scaling, provider should have _rope_scaling attribute
+        # For Llama 3.1/3.2 with RoPE scaling, provider should have rope_scaling=True
         assert isinstance(result, GPTModelProvider)
-        assert hasattr(result, "_rope_scaling")
-        assert result._rope_scaling is not None
+        assert result.rope_scaling is True
+        assert result.rope_scaling_factor == 32.0
 
     def test_provider_bridge_architecture_mapping(self, mock_pretrained_llama, llama_config):
         """Test that architecture parameters are correctly mapped from HF config."""
@@ -221,11 +221,9 @@ class TestLlamaBridgeConfigConverter:
         result = bridge.provider_bridge(mock_pretrained_llama)
 
         assert isinstance(result, GPTModelProvider)
-        assert hasattr(result, "_rope_scaling")
-        assert result._rope_scaling["factor"] == 32.0
-        assert result._rope_scaling["low_freq_factor"] == 1.0
-        assert result._rope_scaling["high_freq_factor"] == 4.0
-        assert result._rope_scaling["original_max_position_embeddings"] == 8192
+        # RoPE scaling is now handled via Megatron Core's built-in support
+        assert result.rope_scaling is True
+        assert result.rope_scaling_factor == 32.0
 
     def test_provider_bridge_embedding_sharing(self, llama_config):
         """Test embedding sharing configuration."""
@@ -555,14 +553,10 @@ class TestLlamaBridgeMegatronToHFConfig:
             vocab_size=128256,
             share_embeddings_and_output_weights=True,
             bf16=True,
+            # RoPE scaling is now handled via Megatron Core's built-in support
+            rope_scaling=True,
+            rope_scaling_factor=32.0,
         )
-        # Add rope_scaling attribute as done by hf_to_megatron_config
-        provider._rope_scaling = {
-            "factor": 32.0,
-            "low_freq_factor": 1.0,
-            "high_freq_factor": 4.0,
-            "original_max_position_embeddings": 8192,
-        }
 
         hf_config = LlamaBridge.megatron_to_hf_config(provider)
 
@@ -571,69 +565,10 @@ class TestLlamaBridgeMegatronToHFConfig:
         assert "rope_scaling" in hf_config
         assert hf_config["rope_scaling"]["rope_type"] == "llama3"
         assert hf_config["rope_scaling"]["factor"] == 32.0
+        # These use Megatron Core defaults
         assert hf_config["rope_scaling"]["low_freq_factor"] == 1.0
         assert hf_config["rope_scaling"]["high_freq_factor"] == 4.0
         assert hf_config["rope_scaling"]["original_max_position_embeddings"] == 8192
-
-
-class TestLlamaBridgeApplyRopeScaling:
-    """Test cases for LlamaBridge.apply_rope_scaling_to_model method."""
-
-    def test_apply_rope_scaling_to_model_with_rope_scaling(self):
-        """Test that apply_rope_scaling_to_model applies scaling when _rope_scaling is set."""
-        # Create a mock model with rotary_pos_emb
-        mock_model = Mock()
-        mock_model.rotary_pos_emb = Mock()
-        mock_model.rotary_pos_emb.inv_freq = torch.ones(64)
-
-        # Create provider with rope_scaling
-        provider = GPTModelProvider(num_layers=16, hidden_size=2048)
-        provider._rope_scaling = {
-            "factor": 8.0,
-            "low_freq_factor": 1.0,
-            "high_freq_factor": 4.0,
-            "original_max_position_embeddings": 8192,
-        }
-
-        # Apply rope scaling
-        LlamaBridge.apply_rope_scaling_to_model(mock_model, provider)
-
-        # Verify inv_freq was modified
-        assert mock_model.rotary_pos_emb.inv_freq is not None
-
-    def test_apply_rope_scaling_to_model_without_rope_scaling(self):
-        """Test that apply_rope_scaling_to_model does nothing when _rope_scaling is not set."""
-        # Create a mock model with rotary_pos_emb
-        mock_model = Mock()
-        original_inv_freq = torch.ones(64)
-        mock_model.rotary_pos_emb = Mock()
-        mock_model.rotary_pos_emb.inv_freq = original_inv_freq
-
-        # Create provider without rope_scaling
-        provider = GPTModelProvider(num_layers=16, hidden_size=2048)
-
-        # Apply rope scaling (should do nothing)
-        LlamaBridge.apply_rope_scaling_to_model(mock_model, provider)
-
-        # Verify inv_freq was not modified
-        assert mock_model.rotary_pos_emb.inv_freq is original_inv_freq
-
-    def test_apply_rope_scaling_to_model_without_rotary_pos_emb(self):
-        """Test that apply_rope_scaling_to_model handles models without rotary_pos_emb."""
-        # Create a mock model without rotary_pos_emb
-        mock_model = Mock(spec=[])  # No rotary_pos_emb attribute
-
-        # Create provider with rope_scaling
-        provider = GPTModelProvider(num_layers=16, hidden_size=2048)
-        provider._rope_scaling = {
-            "factor": 8.0,
-            "low_freq_factor": 1.0,
-            "high_freq_factor": 4.0,
-            "original_max_position_embeddings": 8192,
-        }
-
-        # Apply rope scaling (should not raise)
-        LlamaBridge.apply_rope_scaling_to_model(mock_model, provider)
 
 
 class TestLlamaBridgeMappingRegistry:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen2ForCausalLM
 
@@ -24,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 
 
-@MegatronModelBridge.register_bridge(source=Qwen2ForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen2ForCausalLM, target=GPTModel, model_type="qwen2")
 class Qwen2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen2 Causal LM.
@@ -49,15 +50,9 @@ class Qwen2Bridge(MegatronModelBridge):
         "gated_linear_unit": True,
         "position_embedding_type": "rope",
         "add_bias_linear": False,
-        "add_qkv_bias": True,  # Qwen2 has bias in QKV projections
+        "add_qkv_bias": True,
         "hidden_dropout": 0.0,
-    }
-
-    # Qwen2-specific defaults for HF config
-    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
-    HF_DEFAULTS = {
-        "architectures": ["Qwen2ForCausalLM"],
-        "model_type": "qwen2",
+        "autocast_dtype": torch.bfloat16,
     }
 
     # No provider_bridge override needed - base class handles everything!

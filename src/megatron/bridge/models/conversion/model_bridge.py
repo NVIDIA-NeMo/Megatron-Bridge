@@ -242,6 +242,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped
     CONFIG_MAPPING = [
+        # Core architecture
         ("num_hidden_layers", "num_layers"),
         ("hidden_size", "hidden_size"),
         ("intermediate_size", "ffn_hidden_size"),
@@ -250,38 +251,42 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("head_dim", "kv_channels"),
         ("vocab_size", "vocab_size"),
         ("max_position_embeddings", "seq_length"),
-        ("rope_theta", "rotary_base"),
         ("rms_norm_eps", "layernorm_epsilon"),
         ("initializer_range", "init_method_std"),
+        # Attention and dropout
         ("attention_dropout", "attention_dropout"),
         ("hidden_dropout", "hidden_dropout"),
         ("tie_word_embeddings", "share_embeddings_and_output_weights"),
         ("attention_bias", "add_qkv_bias"),
         ("mlp_bias", "add_bias_linear"),
-        # Scoring function for MoE routers (DeepSeek V3 uses "sigmoid")
-        ("scoring_func", "moe_router_score_function"),
-        # MoE-related mappings (used by Qwen3 MoE, Mixtral, DeepSeek, etc.)
-        ("num_experts", "num_moe_experts"),
-        ("num_experts_per_tok", "moe_router_topk"),
-        ("moe_intermediate_size", "moe_ffn_hidden_size"),
-        ("aux_loss_alpha", "moe_aux_loss_coeff"),
-        # DeepSeek/Kimi MoE uses different field names
-        ("n_routed_experts", "num_moe_experts"),
-        ("n_group", "moe_router_num_groups"),
-        ("topk_group", "moe_router_group_topk"),
-        ("routed_scaling_factor", "moe_router_topk_scaling_factor"),
-        # MLA (Multi-Latent Attention) fields (DeepSeek, Kimi)
-        ("q_lora_rank", "q_lora_rank"),
-        ("kv_lora_rank", "kv_lora_rank"),
-        ("qk_nope_head_dim", "qk_head_dim"),
-        ("qk_rope_head_dim", "qk_pos_emb_head_dim"),
-        ("v_head_dim", "v_head_dim"),
-        # RoPE scaling fields (nested dict access via dot notation)
+        ("use_qk_norm", "qk_layernorm"),
+        # RoPE (Rotary Position Embedding)
+        ("rope_theta", "rotary_base"),
+        ("partial_rotary_factor", "rotary_percent"),
         ("rope_scaling.factor", "rotary_scaling_factor"),
         ("rope_scaling.mscale", "mscale"),
         ("rope_scaling.mscale_all_dim", "mscale_all_dim"),
         ("rope_scaling.beta_fast", "beta_fast"),
         ("rope_scaling.beta_slow", "beta_slow"),
+        # MoE (Mixture of Experts)
+        ("num_experts", "num_moe_experts"),
+        ("num_local_experts", "num_moe_experts"),
+        ("num_experts_per_tok", "moe_router_topk"),
+        ("moe_intermediate_size", "moe_ffn_hidden_size"),
+        ("aux_loss_alpha", "moe_aux_loss_coeff"),
+        ("scoring_func", "moe_router_score_function"),
+        ("n_routed_experts", "num_moe_experts"),
+        ("n_group", "moe_router_num_groups"),
+        ("topk_group", "moe_router_group_topk"),
+        ("routed_scaling_factor", "moe_router_topk_scaling_factor"),
+        # MLA (Multi-Latent Attention)
+        ("q_lora_rank", "q_lora_rank"),
+        ("kv_lora_rank", "kv_lora_rank"),
+        ("qk_nope_head_dim", "qk_head_dim"),
+        ("qk_rope_head_dim", "qk_pos_emb_head_dim"),
+        ("v_head_dim", "v_head_dim"),
+        # MTP (Multi-Token Prediction) - GLM
+        ("num_nextn_predict_layers", "mtp_num_layers"),
     ]
 
     # Common bidirectional activation function mapping: hf_name <-> megatron_func

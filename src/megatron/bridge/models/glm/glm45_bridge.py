@@ -25,63 +25,61 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.glm.glm45_provider import GLMMoEModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 logger = logging.getLogger(__name__)
 
 
-@MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel, model_type="glm4_moe")
 class GLM45Bridge(MegatronModelBridge):
-    """
-    Megatron Bridge for GLM 4.5 Models.
+    """Megatron Bridge for GLM 4.5 MoE models with Multi-Token Prediction (MTP)."""
 
-    This bridge handles the conversion between HuggingFace Glm4MoeForCausalLM
-    (used for GLM 4.5 models) and Megatron-Core GPTModel formats.
+    MEGATRON_DEFAULTS = {
+        # Architecture
+        "normalization": "RMSNorm",
+        "gated_linear_unit": True,
+        "position_embedding_type": "rope",
+        "add_bias_linear": False,
+        "share_embeddings_and_output_weights": False,
+        # MoE settings
+        "moe_shared_expert_overlap": True,
+        "moe_token_dispatcher_type": "alltoall",
+        "moe_router_load_balancing_type": "seq_aux_loss",
+        "moe_router_pre_softmax": False,
+        "moe_grouped_gemm": True,
+        "moe_router_score_function": "sigmoid",
+        "moe_permute_fusion": True,
+        "moe_router_enable_expert_bias": True,
+        "moe_router_dtype": "fp32",
+        "moe_router_bias_update_rate": 0,
+        "moe_aux_loss_coeff": 0.001,
+        # Optimizations
+        "persist_layer_norm": True,
+        "bias_activation_fusion": True,
+        "bias_dropout_fusion": True,
+        # Dropout/precision
+        "hidden_dropout": 0.0,
+        "autocast_dtype": torch.bfloat16,
+        # MTP settings
+        "mtp_loss_scaling_factor": 0.3,
+    }
 
-    Example:
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5")
-        >>> provider = bridge.to_megatron_provider()
-    """
-
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GLMMoEModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
+        # GLM uses moe_intermediate_size for shared expert size
+        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
+
+        # Compute moe_layer_freq from first_k_dense_replace
+        provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
-        return GLMMoEModelProvider(
-            add_qkv_bias=hf_config.attention_bias,
-            kv_channels=hf_config.head_dim,
-            hidden_size=hf_config.hidden_size,
-            rotary_base=hf_config.rope_theta,
-            rotary_percent=hf_config.partial_rotary_factor,
-            init_method_std=hf_config.initializer_range,
-            ffn_hidden_size=hf_config.intermediate_size,
-            seq_length=hf_config.max_position_embeddings,
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,
-            # norm topk prob
-            num_attention_heads=hf_config.num_attention_heads,
-            # n group, topk group
-            num_moe_experts=hf_config.n_routed_experts,
-            # n shared expert
-            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size,
-            moe_router_topk_scaling_factor=hf_config.routed_scaling_factor,
-            moe_router_topk=hf_config.num_experts_per_tok,
-            moe_layer_freq=moe_layer_freq,
-            num_layers=hf_config.num_hidden_layers,
-            num_query_groups=hf_config.num_key_value_heads,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            mtp_num_layers=hf_config.num_nextn_predict_layers,
-            qk_layernorm=hf_config.use_qk_norm,
-            vocab_size=hf_config.vocab_size,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-        )
+
+        return provider
 
     def build_conversion_tasks(self, hf_pretrained, megatron_model):
         """Override to store config before mapping_registry is called."""

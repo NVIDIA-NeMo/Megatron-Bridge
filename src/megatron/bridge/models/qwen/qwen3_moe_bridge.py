@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3MoeForCausalLM
 
@@ -24,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel, model_type="qwen3_moe")
 class Qwen3MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3 MoE Causal LM.
@@ -58,6 +59,7 @@ class Qwen3MoEBridge(MegatronModelBridge):
         "add_qkv_bias": False,  # Qwen3 MoE does NOT have QKV bias
         "hidden_dropout": 0.0,
         "qk_layernorm": True,  # Qwen3 MoE uses QK layernorm
+        "autocast_dtype": torch.bfloat16,
         # MoE-specific settings
         "moe_grouped_gemm": True,
         "moe_router_load_balancing_type": "aux_loss",
@@ -66,16 +68,6 @@ class Qwen3MoEBridge(MegatronModelBridge):
         "moe_token_dispatcher_type": "alltoall",
         "moe_permute_fusion": True,
     }
-
-    # Qwen3 MoE-specific defaults for HF config
-    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
-    HF_DEFAULTS = {
-        "architectures": ["Qwen3MoeForCausalLM"],
-        "model_type": "qwen3_moe",
-    }
-
-    # No provider_bridge override needed - base class handles everything!
-    # No megatron_to_hf_config override needed - base class handles everything!
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

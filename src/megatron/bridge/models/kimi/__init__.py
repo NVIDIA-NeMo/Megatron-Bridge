@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge
 from megatron.bridge.models.kimi.kimi_provider import KimiK2Provider
 
 
 __all__ = [
+    "KimiK2Bridge",
     "KimiK2Provider",
 ]
