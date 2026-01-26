@@ -318,7 +318,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+        if args.domain == "llm":
+            # Override the dataset configuration for LLM models.
+            # For vlm models, use the default dataset configuration in model recipe,
+            # becuase preprocess of dataset is different for each vlm model.
+            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -330,14 +334,24 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=False
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=False,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=True
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=True,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
         if recipe.model.cuda_graph_impl != "none":
             recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
@@ -385,7 +399,8 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
+    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    if dp > 1 and pp > 1 and vp > 1 and compute_dtype != "fp8_mx":
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True

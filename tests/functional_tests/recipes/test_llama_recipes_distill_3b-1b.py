@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 import pytest
 
-from megatron.bridge.models.gpt_provider import convert_to_distillation_provider
+from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import (
     llama32_1b_pretrain_config,
     llama32_3b_pretrain_config,

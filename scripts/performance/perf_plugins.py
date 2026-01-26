@@ -260,7 +260,7 @@ class PerfEnvPlugin(Plugin):
     ):
         """Set model-specific environment variables"""
         if (
-            model_family_name in ["llama31"]
+            model_family_name in ["llama"]
             and model_recipe_name in ["llama31_405b"]
             and train_task == "pretrain"
             and gpu in ["gb200"]
@@ -269,16 +269,16 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         del_cudnn_ln = True
         if gpu in ["h100"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_family_name == "llama31" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
@@ -307,10 +307,17 @@ class PerfEnvPlugin(Plugin):
         ep_size: int,
     ):
         if moe_flex_dispatcher_backend == "hybridep":
-            assert ep_size <= 72, "ep_size must be less than or equal to 72"
-            executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
-            executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
-            executor.env_vars["USE_MNNVL"] = "1"
+            if gpu in ["h100", "b200", "b300"]:
+                # Hopper/B200/B300 use NVL8 topology
+                executor.env_vars["NVLINK_DOMAIN_SIZE"] = "8"
+                executor.env_vars["USE_MNNVL"] = "0"
+                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = "8" if ep_size > 8 else str(ep_size)
+            else:
+                # GB200/GB300 use NVL72 topology
+                assert ep_size <= 72, "ep_size must be less than or equal to 72"
+                executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
+                executor.env_vars["USE_MNNVL"] = "1"
+                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
 
     def _set_nccl_pp_comm_chunksize(
         self,

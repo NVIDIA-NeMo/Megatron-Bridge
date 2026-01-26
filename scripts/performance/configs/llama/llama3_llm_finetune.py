@@ -66,10 +66,6 @@ def llama3_8b_sft_config_gb200(precision: str = "bf16", config_variant: str = "v
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
@@ -130,12 +126,6 @@ def llama3_70b_sft_config_gb300(precision: str = "bf16", config_variant: str = "
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
-            cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
@@ -165,11 +155,6 @@ def llama3_70b_sft_config_gb200(precision: str = "bf16", config_variant: str = "
         defer_embedding_wgrad_compute=True,
         wgrad_deferral_limit=22,
     )
-
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -231,12 +216,6 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
-            cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
@@ -260,12 +239,6 @@ def llama3_70b_lora_config_gb200(precision: str = "bf16", config_variant: str = 
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
-            cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 

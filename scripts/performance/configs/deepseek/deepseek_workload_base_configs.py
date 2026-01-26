@@ -82,6 +82,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
+    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1
@@ -96,7 +97,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1 = replace(
     expert_model_parallel_size=16,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
-    moe_flex_dispatcher_backend="deepep",
+    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1
@@ -107,14 +108,14 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=1024,
-    tensor_model_parallel_size=2,
+    tensor_model_parallel_size=4,  # TODO: TP=2 is OOM. Resolve it and revert it to recover perf
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
     global_batch_size=8192,
     recompute_modules=["mla_up_proj", "mlp"],
-    moe_flex_dispatcher_backend="deepep",
-    moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
@@ -171,6 +172,40 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2
 
 
+# =============================================================================
+# DeepSeek V3 Pretrain - Large Scale Proxy
+# =============================================================================
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1,
+    global_batch_size=256,
+)
+
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V1,
+    global_batch_size=1024,
+)
+
+
 __all__ = [
     # V1 (original GBS settings)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1",
@@ -206,4 +241,10 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2",
+    # Large Scale Proxy
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE",
 ]

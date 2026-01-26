@@ -271,6 +271,40 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
 
 
 # =============================================================================
+# Qwen3 235B A22B presets - Large Scale Proxy
+# =============================================================================
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V2,
+    global_batch_size=512,
+)
+
+
+# =============================================================================
 # Qwen3 30B A3B presets - V1 (only version)
 # =============================================================================
 
@@ -518,4 +552,10 @@ __all__ = [
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_BF16_V1",
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1",
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1",
+    # Large Scale Proxy
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_LARGE_SCALE",
 ]

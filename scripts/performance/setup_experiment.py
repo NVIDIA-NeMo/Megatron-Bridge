@@ -106,6 +106,7 @@ def is_flaky_failure(log_file_path: str) -> bool:
         or "free(): corrupted unsorted chunks" in log
         or "Segfault encountered" in log
         or "Fatal glibc error" in log
+        or "EOFError: No data left in file" in log
     )
 
 

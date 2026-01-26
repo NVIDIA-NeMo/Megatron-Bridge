@@ -438,7 +438,7 @@ from megatron.bridge.training.config import RerunStateMachineConfig
 
 # Configure re-run state machine in your config
 config.rerun_state_machine = RerunStateMachineConfig(
-    rerun_mode="validate_results",  # or "report_stats" or "disabled"
+    rerun_mode="validate_results",  # or "report_determinism_stats" or "disabled"
     check_for_nan_in_loss=True,
     check_for_spiky_loss=False,
     error_injection_rate=0,  # For testing only
@@ -450,7 +450,7 @@ config.rerun_state_machine = RerunStateMachineConfig(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `rerun_mode` | `str` | `"disabled"` | Operating mode: `"disabled"`, `"validate_results"`, or `"report_stats"` |
+| `rerun_mode` | `str` | `"disabled"` | Operating mode: `"disabled"`, `"validate_results"`, or `"report_determinism_stats"` |
 | `check_for_nan_in_loss` | `bool` | `True` | Check for NaN values in loss |
 | `check_for_spiky_loss` | `bool` | `False` | Check for unexpectedly large loss values |
 | `error_injection_rate` | `int` | `0` | Rate for injecting test errors (testing only) |
@@ -463,7 +463,7 @@ config.rerun_state_machine = RerunStateMachineConfig(
 - **Behavior**: Training proceeds normally without any result checking.
 - **Use Case**: When re-run overhead is not acceptable or validation is not needed.
 
-#### 2. Report Stats Mode (`report_stats`)  
+#### 2. Report Stats Mode (`report_determinism_stats`)  
 - **Purpose**: Collect statistics on computational determinism.
 - **Behavior**: Re-runs every step once to measure variability.
 - **Output**: Reports on computational non-determinism without stopping training.

@@ -21,6 +21,7 @@ from utils.utils import get_perf_optimized_recipe
 
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,13 @@ def main():
         config_variant=args.config_variant,
     )
 
-    pretrain(config=recipe, forward_step_func=forward_step)
+    # Select forward step function based on the model family name.
+    if args.domain == "vlm":
+        forward_step_func = vlm_forward_step
+    else:
+        forward_step_func = forward_step
+
+    pretrain(config=recipe, forward_step_func=forward_step_func)
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()

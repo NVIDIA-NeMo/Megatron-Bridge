@@ -67,6 +67,9 @@ def set_user_overrides(config, args):
     # Dataset configuration
     logging.info(f"Configuring dataset: type={args.data}")
 
+    cp_size = getattr(config.model, "context_parallel_size", 1) or 1
+    pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
+
     # Create dataset configuration based on type
     if args.data == "mock":
         config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
@@ -82,13 +85,19 @@ def set_user_overrides(config, args):
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
         config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or 8192,
+            packed=False,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
         config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or 8192,
+            packed=True,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")

@@ -94,7 +94,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.qwen_vl import qwen3vl as qwen3_vl_recipes
+from megatron.bridge.recipes.qwen_vl import qwen3_vl as qwen3_vl_recipes
 from megatron.bridge.recipes.qwen_vl import qwen25_vl as qwen25_vl_recipes
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
