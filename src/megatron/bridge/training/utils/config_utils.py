@@ -50,10 +50,10 @@ def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, A
     Returns:
         The config dictionary with backward compatibility fixes applied.
     """
-    return sanitize_dataclass_config(config_dict)
+    return _sanitize_dataclass_config(config_dict)
 
 
-def sanitize_dataclass_config(config: dict[str, Any], _visited: set | None = None) -> dict[str, Any]:
+def _sanitize_dataclass_config(config: dict[str, Any], _visited: set | None = None) -> dict[str, Any]:
     """Remove init=False fields from a dataclass config dict for backward compatibility.
 
     This function automatically detects fields with init=False by inspecting the
@@ -99,9 +99,9 @@ def sanitize_dataclass_config(config: dict[str, Any], _visited: set | None = Non
 
         # Recursively sanitize nested dicts (which may be nested dataclass configs)
         if isinstance(value, dict):
-            value = sanitize_dataclass_config(value, _visited)
+            value = _sanitize_dataclass_config(value, _visited)
         elif isinstance(value, list):
-            value = [sanitize_dataclass_config(item, _visited) if isinstance(item, dict) else item for item in value]
+            value = [_sanitize_dataclass_config(item, _visited) if isinstance(item, dict) else item for item in value]
 
         sanitized[key] = value
 
@@ -179,7 +179,7 @@ class _ConfigContainerBase:
 
         # Apply backward compatibility: remove init=False fields that may have been
         # serialized by older versions (these are computed in __post_init__)
-        config_dict = sanitize_dataclass_config(config_dict)
+        config_dict = _sanitize_dataclass_config(config_dict)
 
         # Check for extra keys in strict mode
         expected_fields = {f.name for f in dataclass_fields(cls) if not f.name.startswith("_")}

@@ -986,9 +986,6 @@ class TestConfigContainer_CallablesAndPartials:
         assert copied_config.name == "deepcopy_test"
 
 
-# ===== BACKWARD COMPATIBILITY TESTS =====
-
-
 @dataclass
 class DataclassWithInitFalse:
     """Dataclass with init=False field for testing backward compatibility."""
@@ -1058,8 +1055,8 @@ class TestBackwardCompatibility:
         assert result is None
 
     def test_sanitize_dataclass_config_removes_init_false_fields(self):
-        """Test sanitize_dataclass_config removes init=False fields."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config removes init=False fields."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
         config = {
             "_target_": "tests.unit_tests.training.utils.test_config_utils.DataclassWithInitFalse",
@@ -1068,7 +1065,7 @@ class TestBackwardCompatibility:
             "computed_field": "should_be_removed",
         }
 
-        result = sanitize_dataclass_config(config)
+        result = _sanitize_dataclass_config(config)
 
         assert "name" in result
         assert "value" in result
@@ -1076,8 +1073,8 @@ class TestBackwardCompatibility:
         assert "computed_field" not in result
 
     def test_sanitize_dataclass_config_preserves_normal_fields(self):
-        """Test sanitize_dataclass_config preserves fields without init=False."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config preserves fields without init=False."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
         config = {
             "_target_": "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass",
@@ -1085,15 +1082,15 @@ class TestBackwardCompatibility:
             "value": 999,
         }
 
-        result = sanitize_dataclass_config(config)
+        result = _sanitize_dataclass_config(config)
 
         assert result["name"] == "preserved"
         assert result["value"] == 999
         assert result["_target_"] == config["_target_"]
 
     def test_sanitize_dataclass_config_handles_nested_configs(self):
-        """Test sanitize_dataclass_config recursively processes nested configs."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config recursively processes nested configs."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
         config = {
             "_target_": "tests.unit_tests.training.utils.test_config_utils.NestedDataclassWithInitFalse",
@@ -1107,7 +1104,7 @@ class TestBackwardCompatibility:
             "cached_result": ["should", "be", "removed"],
         }
 
-        result = sanitize_dataclass_config(config)
+        result = _sanitize_dataclass_config(config)
 
         # Top-level init=False field removed
         assert "cached_result" not in result
@@ -1118,8 +1115,8 @@ class TestBackwardCompatibility:
         assert result["metadata"] == {"key": "value"}
 
     def test_sanitize_dataclass_config_handles_lists_of_configs(self):
-        """Test sanitize_dataclass_config processes lists containing configs."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config processes lists containing configs."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
         config = {
             "_target_": "some.module.ListContainer",
@@ -1137,7 +1134,7 @@ class TestBackwardCompatibility:
             ],
         }
 
-        result = sanitize_dataclass_config(config)
+        result = _sanitize_dataclass_config(config)
 
         assert "computed_field" not in result["items"][0]
         assert "computed_field" not in result["items"][1]
@@ -1145,25 +1142,25 @@ class TestBackwardCompatibility:
         assert result["items"][1]["name"] == "item2"
 
     def test_sanitize_dataclass_config_no_target(self):
-        """Test sanitize_dataclass_config handles dicts without _target_."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config handles dicts without _target_."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
         config = {"key": "value", "number": 42}
-        result = sanitize_dataclass_config(config)
+        result = _sanitize_dataclass_config(config)
 
         assert result == config
 
     def test_sanitize_dataclass_config_non_dict_input(self):
-        """Test sanitize_dataclass_config handles non-dict input."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config handles non-dict input."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
-        assert sanitize_dataclass_config("string") == "string"
-        assert sanitize_dataclass_config(42) == 42
-        assert sanitize_dataclass_config(None) is None
+        assert _sanitize_dataclass_config("string") == "string"
+        assert _sanitize_dataclass_config(42) == 42
+        assert _sanitize_dataclass_config(None) is None
 
     def test_sanitize_dataclass_config_unresolvable_target(self):
-        """Test sanitize_dataclass_config handles unresolvable _target_."""
-        from megatron.bridge.training.utils.config_utils import sanitize_dataclass_config
+        """Test _sanitize_dataclass_config handles unresolvable _target_."""
+        from megatron.bridge.training.utils.config_utils import _sanitize_dataclass_config
 
         config = {
             "_target_": "nonexistent.module.Class",
@@ -1171,7 +1168,7 @@ class TestBackwardCompatibility:
             "field2": "value2",
         }
 
-        result = sanitize_dataclass_config(config)
+        result = _sanitize_dataclass_config(config)
 
         # All fields preserved when target can't be resolved
         assert result == config
