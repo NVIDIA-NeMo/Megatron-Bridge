@@ -375,10 +375,10 @@ def main(
             exp_name += f"_pp{parallelism['pp']}"
             exp_name += f"_cp{parallelism['cp']}"
             exp_name += f"_ep{parallelism['ep']}"
-            if parallelism["etp"] is not None:
-                exp_name += f"_etp{parallelism['etp']}"
-            # Always show vp (use 0 or 'none' if None)
-            vp_value = parallelism["vp"] if parallelism["vp"] is not None else 0
+            # Always show etp and vp (use "None" if they are None)
+            etp_value = parallelism["etp"] if parallelism["etp"] is not None else "None"
+            vp_value = parallelism["vp"] if parallelism["vp"] is not None else "None"
+            exp_name += f"_etp{etp_value}"
             exp_name += f"_vp{vp_value}"
             exp_name += f"_mbs{parallelism['mbs']}"
             exp_name += f"_gbs{parallelism['gbs']}"
@@ -394,10 +394,10 @@ def main(
             exp_name += f"_pp{parallelism['pp']}"
             exp_name += f"_cp{parallelism['cp']}"
             exp_name += f"_ep{parallelism['ep']}"
-            if parallelism["etp"] is not None:
-                exp_name += f"_etp{parallelism['etp']}"
-            # Always show vp (use 0 or 'none' if None)
-            vp_value = parallelism["vp"] if parallelism["vp"] is not None else 0
+            # Always show etp and vp (use "None" if they are None)
+            etp_value = parallelism["etp"] if parallelism["etp"] is not None else "None"
+            vp_value = parallelism["vp"] if parallelism["vp"] is not None else "None"
+            exp_name += f"_etp{etp_value}"
             exp_name += f"_vp{vp_value}"
             exp_name += f"_mbs{parallelism['mbs']}"
             exp_name += f"_gbs{parallelism['gbs']}"
