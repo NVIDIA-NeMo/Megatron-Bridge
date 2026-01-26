@@ -22,6 +22,8 @@ from PIL.Image import Image
 
 
 class VLMEngine(MCoreEngine):
+    """VLM inference engine extending MCoreEngine with image support."""
+
     # pylint: disable=C0115,C0116
     def generate(
         self,

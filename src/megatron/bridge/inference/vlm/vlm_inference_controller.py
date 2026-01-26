@@ -23,6 +23,8 @@ from megatron.core.inference.text_generation_controllers.simple_text_generation_
 
 
 class TokenizerWrapper:
+    """Wrapper around tokenizer to provide a unified interface for inference."""
+
     # pylint: disable=C0115,C0116
     def __init__(self, tokenizer):
         self.eod = tokenizer.eos_token_id
@@ -39,6 +41,8 @@ class TokenizerWrapper:
 
 
 class VLMTextGenerationController(SimpleTextGenerationController):
+    """Text generation controller for VLM models with image processing support."""
+
     # pylint: disable=C0115,C0116
     def __init__(self, inference_wrapped_model, tokenizer, image_processor):
         super().__init__(inference_wrapped_model, TokenizerWrapper(tokenizer))

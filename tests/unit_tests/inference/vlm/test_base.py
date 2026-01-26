@@ -29,7 +29,7 @@ class TestSetupInferenceWrapper:
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
         mock_model.config.hidden_size = 1024
         
-        wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
+        _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
         
         mock_wrapper_cls.assert_called_once()
         # Check InferenceWrapperConfig was created with correct hidden_size
@@ -45,7 +45,7 @@ class TestSetupInferenceWrapper:
         mock_model.config.language_transformer_config = MagicMock()
         mock_model.config.language_transformer_config.hidden_size = 2048
         
-        wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
+        _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
         
         mock_wrapper_cls.assert_called_once()
         # Check InferenceWrapperConfig was created with correct hidden_size
