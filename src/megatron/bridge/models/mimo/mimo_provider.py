@@ -103,6 +103,36 @@ class MimoModelProvider:
     freeze_modality_encoders: Dict[str, bool] = field(default_factory=dict)
     freeze_modality_projections: Dict[str, bool] = field(default_factory=dict)
     
+    @property
+    def tensor_model_parallel_size(self) -> int:
+        """Return LLM's tensor parallel size for compatibility with standard code paths."""
+        if self.mimo_parallelism_config is None:
+            return 1
+        llm_parallelism = self.mimo_parallelism_config.get_parallelism(
+            self.mimo_parallelism_config.llm_module_name
+        )
+        return llm_parallelism.tensor_parallel
+
+    @property
+    def pipeline_model_parallel_size(self) -> int:
+        """Return LLM's pipeline parallel size for compatibility with standard code paths."""
+        if self.mimo_parallelism_config is None:
+            return 1
+        llm_parallelism = self.mimo_parallelism_config.get_parallelism(
+            self.mimo_parallelism_config.llm_module_name
+        )
+        return llm_parallelism.pipeline_parallel
+
+    @property
+    def context_parallel_size(self) -> int:
+        """Return LLM's context parallel size for compatibility with standard code paths."""
+        if self.mimo_parallelism_config is None:
+            return 1
+        llm_parallelism = self.mimo_parallelism_config.get_parallelism(
+            self.mimo_parallelism_config.llm_module_name
+        )
+        return llm_parallelism.context_parallel
+
     def _get_pg_collections_from_grids(
         self,
         grids: Dict[str, "HyperCommGrid"],
@@ -301,3 +331,9 @@ class MimoModelProvider:
                     if hasattr(submodule, 'input_projections'):
                         for param in submodule.input_projections.parameters():
                             param.requires_grad = False
+
+    def finalize(self) -> None:
+        """Finalize MIMO parallelism configuration."""
+        if self.mimo_parallelism_config is not None:
+            world_size = dist.get_world_size() if dist.is_initialized() else None
+            self.mimo_parallelism_config.finalize(world_size)

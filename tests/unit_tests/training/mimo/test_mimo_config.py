@@ -1,8 +1,5 @@
-from types import SimpleNamespace
-
 import pytest
 
-from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
@@ -62,23 +59,3 @@ def test_mimo_heterogeneous_rank_offset_overlap():
         mimo_parallelism_config.finalize(world_size=None)
 
 
-def _make_cfg(mimo_parallelism_config: MimoParallelismConfig) -> ConfigContainer:
-    model = SimpleNamespace(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        context_parallel_size=1,
-        expert_model_parallel_size=1,
-    )
-    train = SimpleNamespace(global_batch_size=8)
-    placeholder = SimpleNamespace()
-    return ConfigContainer(
-        train=train,
-        model=model,
-        optimizer=placeholder,
-        scheduler=placeholder,
-        dataset=placeholder,
-        logger=placeholder,
-        tokenizer=placeholder,
-        checkpoint=placeholder,
-        mimo=mimo_parallelism_config,
-    )

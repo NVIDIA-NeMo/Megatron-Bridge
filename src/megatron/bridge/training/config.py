@@ -36,7 +36,6 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -1200,7 +1199,6 @@ class ConfigContainer(Container):
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
     model: GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider
-    mimo: Optional[MimoParallelismConfig] = None
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
@@ -1221,9 +1219,6 @@ class ConfigContainer(Container):
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
-        if self.mimo is not None:
-            self.mimo.finalize(world_size if world_size and world_size > 1 else None)
-            return self.mimo.get_parallelism(self.mimo.llm_module_name).data_parallel
         model_cfg = self.model
         total_model_size = (
             model_cfg.tensor_model_parallel_size
@@ -1248,45 +1243,6 @@ class ConfigContainer(Container):
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
-
-    def _validate_mimo(self) -> None:
-        """Validate MIMO-specific configuration invariants."""
-        if self.mimo is None:
-            return
-        world_size = get_world_size_safe()
-        self.mimo.finalize(world_size if world_size and world_size > 1 else None)
-
-        llm_parallelism = self.mimo.get_parallelism(self.mimo.llm_module_name)
-        parallelism_checks = {
-            "tensor_model_parallel_size": llm_parallelism.tensor_parallel,
-            "pipeline_model_parallel_size": llm_parallelism.pipeline_parallel,
-            "context_parallel_size": llm_parallelism.context_parallel,
-            "expert_model_parallel_size": llm_parallelism.expert_parallel,
-        }
-        for attr_name, expected in parallelism_checks.items():
-            actual = getattr(self.model, attr_name, None)
-            if actual is None:
-                continue
-            if actual != expected:
-                raise ValueError(
-                    f"MIMO LLM parallelism mismatch for {attr_name}: "
-                    f"model={actual}, mimo={expected}."
-                )
-
-        if self.train.global_batch_size is None:
-            raise ValueError("train.global_batch_size must be set when MIMO is enabled.")
-
-        for module_name, parallelism in self.mimo.module_parallelisms.items():
-            if parallelism.data_parallel is None:
-                raise ValueError(
-                    f"data_parallel must be set for module '{module_name}' before validation."
-                )
-            if self.train.global_batch_size % parallelism.data_parallel != 0:
-                raise ValueError(
-                    f"Invalid MIMO batch config for module '{module_name}': "
-                    f"global_batch_size ({self.train.global_batch_size}) must be divisible by "
-                    f"data_parallel ({parallelism.data_parallel})."
-                )
 
     def _validate_and_apply_deterministic_mode(self) -> None:
         """Apply and validate deterministic mode requirements.
@@ -1362,7 +1318,6 @@ class ConfigContainer(Container):
         self._validate_and_apply_deterministic_mode()
 
         # Run validations
-        self._validate_mimo()
         _validate_and_sync_distributed_optimizer_settings(self)
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
