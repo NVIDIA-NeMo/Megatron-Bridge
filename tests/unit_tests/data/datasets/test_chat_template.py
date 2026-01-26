@@ -1011,6 +1011,7 @@ def _create_minimal_packed_dataset(tokenizer_eos_id: int = 0):
     dataset.pad_to_max_length = False
     dataset.max_seq_length = 32
     dataset.pad_seq_length_to_mult = 1
+    dataset._pad_seq_to_mult = 2  # Used in collate_fn for cu_seqlens_unpadded check (must be > 1 to compute)
     dataset.ceil_to_power_2 = False
     dataset.tokenizer = SimpleNamespace(eos_id=tokenizer_eos_id)
     dataset.answer_only_loss = False
