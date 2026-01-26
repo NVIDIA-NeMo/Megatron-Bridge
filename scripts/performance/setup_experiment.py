@@ -179,12 +179,14 @@ def get_final_parallelism_settings(
     ep_size: Optional[int],
     etp_size: Optional[int],
     vp_size: Optional[int],
+    mbs: Optional[int],
+    gbs: Optional[int],
     config_variant: str = "v1",
 ) -> Dict[str, int]:
     """Get the final parallelism settings after applying workload base config and CLI overrides.
     
     Returns:
-        Dictionary with keys: tp, pp, cp, ep, etp, vp
+        Dictionary with keys: tp, pp, cp, ep, etp, vp, mbs, gbs
     """
     from utils.utils import get_workload_base_config, get_library_recipe
     
@@ -201,6 +203,8 @@ def get_final_parallelism_settings(
         final_ep = workload_config.expert_model_parallel_size
         final_etp = workload_config.expert_tensor_parallel_size
         final_vp = workload_config.virtual_pipeline_model_parallel_size
+        final_mbs = workload_config.micro_batch_size
+        final_gbs = workload_config.global_batch_size
     else:
         # For recipes, try to load the recipe to get default parallelism settings
         try:
@@ -219,6 +223,8 @@ def get_final_parallelism_settings(
             final_ep = getattr(recipe.model, 'expert_model_parallel_size', 1)
             final_etp = getattr(recipe.model, 'expert_tensor_parallel_size', None)
             final_vp = getattr(recipe.model, 'virtual_pipeline_model_parallel_size', None)
+            final_mbs = getattr(recipe.train, 'micro_batch_size', 1)
+            final_gbs = getattr(recipe.train, 'global_batch_size', 1)
         except Exception as e:
             # If we can't load the recipe (e.g., on head node without Megatron-Bridge),
             # fall back to defaults
@@ -229,6 +235,8 @@ def get_final_parallelism_settings(
             final_ep = 1
             final_etp = None
             final_vp = None
+            final_mbs = 1
+            final_gbs = 1
     
     # Override with CLI args if provided
     if tp_size is not None:
@@ -243,6 +251,10 @@ def get_final_parallelism_settings(
         final_etp = etp_size
     if vp_size is not None and vp_size != -1:
         final_vp = vp_size
+    if mbs is not None:
+        final_mbs = mbs
+    if gbs is not None:
+        final_gbs = gbs
     
     return {
         "tp": final_tp,
@@ -251,6 +263,8 @@ def get_final_parallelism_settings(
         "ep": final_ep,
         "etp": final_etp,
         "vp": final_vp,
+        "mbs": final_mbs,
+        "gbs": final_gbs,
     }
 
 
@@ -274,6 +288,8 @@ def main(
     ep_size: Optional[int],
     etp_size: Optional[int],
     vp_size: Optional[int],
+    mbs: Optional[int],
+    gbs: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -343,6 +359,8 @@ def main(
         ep_size=ep_size,
         etp_size=etp_size,
         vp_size=vp_size,
+        mbs=mbs,
+        gbs=gbs,
         config_variant=config_variant,
     )
 
@@ -359,8 +377,11 @@ def main(
             exp_name += f"_ep{parallelism['ep']}"
             if parallelism["etp"] is not None:
                 exp_name += f"_etp{parallelism['etp']}"
-            if parallelism["vp"] is not None:
-                exp_name += f"_vp{parallelism['vp']}"
+            # Always show vp (use 0 or 'none' if None)
+            vp_value = parallelism["vp"] if parallelism["vp"] is not None else 0
+            exp_name += f"_vp{vp_value}"
+            exp_name += f"_mbs{parallelism['mbs']}"
+            exp_name += f"_gbs{parallelism['gbs']}"
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
@@ -375,8 +396,11 @@ def main(
             exp_name += f"_ep{parallelism['ep']}"
             if parallelism["etp"] is not None:
                 exp_name += f"_etp{parallelism['etp']}"
-            if parallelism["vp"] is not None:
-                exp_name += f"_vp{parallelism['vp']}"
+            # Always show vp (use 0 or 'none' if None)
+            vp_value = parallelism["vp"] if parallelism["vp"] is not None else 0
+            exp_name += f"_vp{vp_value}"
+            exp_name += f"_mbs{parallelism['mbs']}"
+            exp_name += f"_gbs{parallelism['gbs']}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -661,6 +685,8 @@ if __name__ == "__main__":
         ep_size=args.expert_model_parallel_size,
         etp_size=args.expert_tensor_parallel_size,
         vp_size=args.virtual_pipeline_model_parallel_size,
+        mbs=args.micro_batch_size,
+        gbs=args.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
