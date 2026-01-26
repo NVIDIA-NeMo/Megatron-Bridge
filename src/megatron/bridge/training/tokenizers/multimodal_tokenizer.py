@@ -205,14 +205,16 @@ class MultimodalTokenizer(MegatronTokenizer):
         # Apply possible image tag.
         conversation = self._apply_image_tag(conversation)
 
-        tokens = self._tokenizer.apply_chat_template(
+        # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
+        chat_output = self._tokenizer.apply_chat_template(
             conversation,
             tokenize=True,
             add_generation_prompt=add_generation_prompt,
             return_assistant_token_mask=False,
             return_tensors="np",
             chat_template=self._prompt_config.custom_chat_template,
-        )[0]
+        )
+        tokens = chat_output["input_ids"][0] if isinstance(chat_output, dict) else chat_output[0]
 
         if not return_target:
             return tokens
@@ -225,9 +227,11 @@ class MultimodalTokenizer(MegatronTokenizer):
             if len(turn["content"]) == 0:
                 raise ValueError(f"empty turn in conversation: {conversation}. Skipping.")
 
-            turn_tokens = self._tokenizer.apply_chat_template(
+            # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
+            turn_output = self._tokenizer.apply_chat_template(
                 [turn], tokenize=True, chat_template=self._prompt_config.custom_chat_template
             )
+            turn_tokens = turn_output["input_ids"] if isinstance(turn_output, dict) else turn_output
 
             # There should be only one BOS at the very beginning.
             # After the first turn, skip BOS token.

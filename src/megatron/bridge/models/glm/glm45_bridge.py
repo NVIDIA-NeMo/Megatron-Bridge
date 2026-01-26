@@ -56,7 +56,7 @@ class GLM45Bridge(MegatronModelBridge):
             add_qkv_bias=hf_config.attention_bias,
             kv_channels=hf_config.head_dim,
             hidden_size=hf_config.hidden_size,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(hf_config),
             rotary_percent=hf_config.partial_rotary_factor,
             init_method_std=hf_config.initializer_range,
             ffn_hidden_size=hf_config.intermediate_size,

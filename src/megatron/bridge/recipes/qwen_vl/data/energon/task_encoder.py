@@ -385,7 +385,9 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         conversation = converted_conversation
 
         # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
-        input_ids = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")[0]
+        # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
+        chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
+        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, dict) else chat_output[0]
         pad_token_id = self.hf_tokenizer.pad_token_id
         target = [pad_token_id for _ in range(len(input_ids))]
         search_start_index = 0

@@ -63,7 +63,7 @@ class OlMoEBridge(MegatronModelBridge):
             num_layers=hf_config.num_hidden_layers,
             num_query_groups=hf_config.num_key_value_heads,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(hf_config),
             moe_aux_loss_coeff=hf_config.router_aux_loss_coef,
             vocab_size=hf_config.vocab_size,
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),

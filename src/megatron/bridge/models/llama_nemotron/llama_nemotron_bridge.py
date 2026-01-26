@@ -96,7 +96,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             num_query_groups=num_query_groups,
             seq_length=hf_config.max_position_embeddings,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(hf_config),
             kv_channels=getattr(hf_config, "head_dim", None),
             gated_linear_unit=True,  # Llama uses SwiGLU
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),

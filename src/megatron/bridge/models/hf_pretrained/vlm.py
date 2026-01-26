@@ -111,7 +111,14 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         ...     "Qwen/Qwen-VL-Chat",
         ...     trust_remote_code=True,
         ...     device_map="auto",
-        ...     load_in_4bit=True
+        ... )
+        >>> # For quantization (transformers >= 5.0), use BitsAndBytesConfig:
+        >>> from transformers import BitsAndBytesConfig
+        >>> quantization_config = BitsAndBytesConfig(load_in_4bit=True)
+        >>> vlm = PreTrainedVLM.from_pretrained(
+        ...     "Qwen/Qwen-VL-Chat",
+        ...     trust_remote_code=True,
+        ...     quantization_config=quantization_config,
         ... )
         >>>
         >>> # Custom generation config
