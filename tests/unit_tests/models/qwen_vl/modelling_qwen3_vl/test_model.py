@@ -95,6 +95,10 @@ class TestQwen3VLModel:
             pp_size: Pipeline model parallel size
             cp_size: Context parallel size
         """
+        # Clean up any existing parallel state before initializing
+        if parallel_state.model_parallel_is_initialized():
+            parallel_state.destroy_model_parallel()
+
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=tp_size,
             pipeline_model_parallel_size=pp_size,
