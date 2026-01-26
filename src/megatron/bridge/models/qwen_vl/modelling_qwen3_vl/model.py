@@ -99,8 +99,13 @@ class Qwen3VLModel(MegatronModule):
                 # use megatron vision model
                 from .vision_model import Qwen3VLVisionModel
                 from copy import deepcopy
-                from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
-                megatron_vision_transformer_config = get_vision_model_config(deepcopy(language_transformer_config), vision_transformer_config)
+                from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
+                    get_vision_model_config,
+                )
+
+                megatron_vision_transformer_config = get_vision_model_config(
+                    deepcopy(language_transformer_config), vision_transformer_config
+                )
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
                 megatron_vision_transformer_config.first_pipeline_num_layers = None
 
@@ -125,7 +130,6 @@ class Qwen3VLModel(MegatronModule):
                 if torch.cuda.is_available():
                     self.vision_model = self.vision_model.to("cuda")
                 print(f"rank {torch.distributed.get_rank()} use hf vision model")
-
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -365,6 +369,9 @@ class Qwen3VLModel(MegatronModule):
             if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0)
             if packed_seq_params is not None:
+                assert attention_mask is not None, (
+                    "attention_mask is required for compute position and split by cp and sp"
+                )
                 input_ids_thd, _ = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True)
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,

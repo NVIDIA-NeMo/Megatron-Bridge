@@ -117,7 +117,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     sequence_parallel: bool = False
 
     qk_layernorm: bool = True
-    
+
     bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
 
     use_hf_vision_model: bool = False
@@ -278,7 +278,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     async_tensor_model_parallel_allreduce: bool = True  # Async tensor parallel
     distribute_saved_activations: bool = False  # Don't distribute saved activations
     cp_comm_type: str = "p2p"  # Point-to-point communication for context parallel
-    
+
     use_hf_vision_model: bool = False
 
     def finalize(self) -> None:

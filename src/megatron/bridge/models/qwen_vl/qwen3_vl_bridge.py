@@ -27,7 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
-    ConcatenatedQKVMapping
+    ConcatenatedQKVMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
@@ -152,23 +152,19 @@ class Qwen3VLBridge(MegatronModelBridge):
             # QK layernorm weights (Qwen3 specific)
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
-
             # vision module attn
             "vision_model.decoder.layers.*.self_attention.linear_proj.weight": "model.visual.blocks.*.attn.proj.weight",
             "vision_model.decoder.layers.*.self_attention.linear_proj.bias": "model.visual.blocks.*.attn.proj.bias",
-
             # vision module mlp
             "vision_model.decoder.layers.*.mlp.linear_fc1.weight": "model.visual.blocks.*.mlp.linear_fc1.weight",
             "vision_model.decoder.layers.*.mlp.linear_fc1.bias": "model.visual.blocks.*.mlp.linear_fc1.bias",
             "vision_model.decoder.layers.*.mlp.linear_fc2.weight": "model.visual.blocks.*.mlp.linear_fc2.weight",
             "vision_model.decoder.layers.*.mlp.linear_fc2.bias": "model.visual.blocks.*.mlp.linear_fc2.bias",
-
             # vision module norm
             "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.visual.blocks.*.norm1.weight",
             "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_bias": "model.visual.blocks.*.norm1.bias",
             "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.visual.blocks.*.norm2.weight",
             "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_bias": "model.visual.blocks.*.norm2.bias",
-
             # # vision module deepstack merger
             "vision_model.decoder.deepstack_merger_list.*.patch_norm.weight": "model.visual.deepstack_merger_list.*.norm.weight",
             "vision_model.decoder.deepstack_merger_list.*.patch_norm.bias": "model.visual.deepstack_merger_list.*.norm.bias",
@@ -176,14 +172,12 @@ class Qwen3VLBridge(MegatronModelBridge):
             "vision_model.decoder.deepstack_merger_list.*.linear_fc1.bias": "model.visual.deepstack_merger_list.*.linear_fc1.bias",
             "vision_model.decoder.deepstack_merger_list.*.linear_fc2.weight": "model.visual.deepstack_merger_list.*.linear_fc2.weight",
             "vision_model.decoder.deepstack_merger_list.*.linear_fc2.bias": "model.visual.deepstack_merger_list.*.linear_fc2.bias",
-
             # vision module merger
             "vision_model.merger.patch_norm.**": "model.visual.merger.norm.**",
             "vision_model.merger.linear_fc1.weight": "model.visual.merger.linear_fc1.weight",
             "vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
             "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
             "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
-
             # These patch_embed are conv, we need to use ReplicatedMapping
             # "vision_model.patch_embed.proj.**": "model.visual.patch_embed.proj.**",
             # "vision_model.pos_embed.weight": "model.visual.pos_embed.weight",

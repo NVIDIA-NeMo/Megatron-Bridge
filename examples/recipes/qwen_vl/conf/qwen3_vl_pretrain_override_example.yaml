@@ -20,12 +20,13 @@ model:
   tensor_model_parallel_size: 1
   pipeline_model_parallel_size: 1
   context_parallel_size: 1
+  cross_entropy_loss_fusion: false
 
 train:
-  train_iters: 20
+  train_iters: 1000
   global_batch_size: 16
   micro_batch_size: 2
-  eval_iters: 5
+  eval_iters: 100
 
 optimizer:
   lr: 0.00025
@@ -44,6 +45,8 @@ dist:
 
 logger:
   log_interval: 1
+  log_throughput: true
+  log_params_norm: true
 
 dataset:
   sequence_length: 4096
@@ -57,7 +60,7 @@ ddp:
 profiling:
   memory_snapshot_path: snapshot.pickle
   nvtx_ranges: false
-  profile_ranks: 0
+  profile_ranks: [0]
   profile_step_end: 12
   profile_step_start: 10
   record_memory_history: false

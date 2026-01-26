@@ -489,7 +489,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
             return custom_forward
 
         deepstack_visual_embeds_tuple = tuple(deepstack_visual_embeds) if deepstack_visual_embeds else ()
-        
+
         def checkpoint_handler(forward_func):
             """Determines whether to use the `te_checkpoint` or `tensor_parallel.checkpoint`"""
             if self.config.fp8:
