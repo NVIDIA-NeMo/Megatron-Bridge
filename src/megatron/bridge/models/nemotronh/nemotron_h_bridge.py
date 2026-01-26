@@ -128,7 +128,6 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
         }
 
         mapping_list = []
