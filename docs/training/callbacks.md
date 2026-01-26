@@ -107,19 +107,15 @@ The {py:class}`bridge.training.callbacks.CallbackContext` provides access to fra
 The `user_state` dictionary persists across all callback invocations during a training run. Use it to share data between callbacks or accumulate metrics:
 
 ```python
-class AccumulatingCallback(Callback):
+class StepCounterCallback(Callback):
     def on_train_start(self, context):
-        context.user_state['total_tokens'] = 0
-        context.user_state['losses'] = []
+        context.user_state['callback_step_count'] = 0
 
     def on_train_step_end(self, context):
-        # Accumulate across steps
-        context.user_state['total_tokens'] += context.state.cfg.train.micro_batch_size
-        if context.loss_dict:
-            context.user_state['losses'].append(context.loss_dict.get('lm loss'))
+        context.user_state['callback_step_count'] += 1
 
     def on_train_end(self, context):
-        print(f"Processed {context.user_state['total_tokens']} tokens")
+        print(f"Callback saw {context.user_state['callback_step_count']} steps")
 ```
 
 ## Distributed Training
@@ -127,12 +123,11 @@ class AccumulatingCallback(Callback):
 Callbacks fire on **all ranks** without framework-level synchronization. If your callback should only run on specific ranks, add rank guards:
 
 ```python
-from megatron.core import parallel_state
+import torch.distributed as dist
 
 class RankZeroCallback(Callback):
     def on_train_step_end(self, context):
-        # Only log from rank 0
-        if parallel_state.get_data_parallel_rank() == 0:
+        if dist.get_rank() == 0:
             print(f"Step {context.state.train_state.step} complete")
 ```
 
