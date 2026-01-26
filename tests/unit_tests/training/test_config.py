@@ -311,10 +311,9 @@ def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collect
 
 
 class TestMockGPTDatasetConfig:
-    """Tests desired behavior for MockGPTDatasetConfig."""
+    """Tests desired behavior for GPTFIMDatasetConfig."""
 
     def test_initialization(self):
-        """Test that blend and blend_per_split fields are always None in MockGPTDatasetConfig."""
         config = GPTFIMDatasetConfig(
             random_seed=1234,
             seq_length=512,
