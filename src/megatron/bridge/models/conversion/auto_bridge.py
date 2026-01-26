@@ -556,7 +556,7 @@ class AutoBridge(Generic[MegatronModelT]):
         model: list[MegatronModule],
         path: str | Path,
         hf_tokenizer_path: Optional[str | Path] = None,
-        low_memory_save: bool = True,
+        low_memory_save: bool = False,
         hf_tokenizer_kwargs: Optional[dict] = None,
     ) -> None:
         """
@@ -573,17 +573,17 @@ class AutoBridge(Generic[MegatronModelT]):
             path: Directory path where the checkpoint will be saved
             hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
                 If provided, the tokenizer metadata will be included in the checkpoint.
-            low_memory_save: If True (default), uses a memory-optimized save flow that reduces
+            low_memory_save: If True, uses a memory-optimized save flow that reduces
                 peak memory by ~50% for models with merged weights (e.g., gate+up
                 projections). The model is deleted after state dict generation and
-                cannot be used afterward. Set to False if you need to use the model
-                after saving.
+                cannot be used afterward. Default is False, preserving the model
+                for further use.
             hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
                 Common options include trust_remote_code=True for models with custom tokenizers,
                 or use_fast=True for models that require the fast tokenizer.
 
         Example:
-            >>> # Save model checkpoint after conversion (uses low-memory save by default)
+            >>> # Save model checkpoint after conversion
             >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
 
             >>> # Save model checkpoint with tokenizer metadata
@@ -593,18 +593,18 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
             ... )
 
-            >>> # Standard save to preserve model for further use
+            >>> # Low-memory save (destroys model after save)
             >>> bridge.save_megatron_model(
             ...     megatron_model,
             ...     "./megatron_checkpoint",
-            ...     low_memory_save=False
+            ...     low_memory_save=True
             ... )
 
         Note:
             - This method is collective and must be called by all ranks
             - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
             - The checkpoint format follows Megatron's standard structure for compatibility
-            - By default (low_memory_save=True), the model is deleted and cannot be used afterward
+            - When low_memory_save=True, the model is deleted and cannot be used afterward
         """
         try:
             from megatron.bridge.training.model_load_save import save_megatron_model
