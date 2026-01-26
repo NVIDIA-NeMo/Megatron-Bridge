@@ -351,19 +351,15 @@ def main(
         if wandb_experiment_name is not None:
             exp_name = wandb_experiment_name
         else:
-            # Build experiment name with parallelism settings
+            # Build experiment name with parallelism settings (always include them)
             exp_name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
-            if parallelism["tp"] > 1:
-                exp_name += f"_tp{parallelism['tp']}"
-            if parallelism["pp"] > 1:
-                exp_name += f"_pp{parallelism['pp']}"
-            if parallelism["cp"] > 1:
-                exp_name += f"_cp{parallelism['cp']}"
-            if parallelism["ep"] > 1:
-                exp_name += f"_ep{parallelism['ep']}"
-            if parallelism["etp"] is not None and parallelism["etp"] > 1:
+            exp_name += f"_tp{parallelism['tp']}"
+            exp_name += f"_pp{parallelism['pp']}"
+            exp_name += f"_cp{parallelism['cp']}"
+            exp_name += f"_ep{parallelism['ep']}"
+            if parallelism["etp"] is not None:
                 exp_name += f"_etp{parallelism['etp']}"
-            if parallelism["vp"] is not None and parallelism["vp"] > 1:
+            if parallelism["vp"] is not None:
                 exp_name += f"_vp{parallelism['vp']}"
 
     else:
@@ -371,19 +367,15 @@ def main(
         if wandb_experiment_name is not None:
             exp_name = wandb_experiment_name
         else:
-            # Build experiment name with parallelism settings
+            # Build experiment name with parallelism settings (always include them)
             exp_name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
-            if parallelism["tp"] > 1:
-                exp_name += f"_tp{parallelism['tp']}"
-            if parallelism["pp"] > 1:
-                exp_name += f"_pp{parallelism['pp']}"
-            if parallelism["cp"] > 1:
-                exp_name += f"_cp{parallelism['cp']}"
-            if parallelism["ep"] > 1:
-                exp_name += f"_ep{parallelism['ep']}"
-            if parallelism["etp"] is not None and parallelism["etp"] > 1:
+            exp_name += f"_tp{parallelism['tp']}"
+            exp_name += f"_pp{parallelism['pp']}"
+            exp_name += f"_cp{parallelism['cp']}"
+            exp_name += f"_ep{parallelism['ep']}"
+            if parallelism["etp"] is not None:
                 exp_name += f"_etp{parallelism['etp']}"
-            if parallelism["vp"] is not None and parallelism["vp"] > 1:
+            if parallelism["vp"] is not None:
                 exp_name += f"_vp{parallelism['vp']}"
 
     if pretrained_checkpoint is not None:
