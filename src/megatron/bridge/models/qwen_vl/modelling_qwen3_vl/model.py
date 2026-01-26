@@ -103,9 +103,7 @@ class Qwen3VLModel(MegatronModule):
                     get_vision_model_config,
                 )
 
-                megatron_vision_transformer_config = get_vision_model_config(
-                    deepcopy(language_transformer_config), vision_transformer_config
-                )
+                megatron_vision_transformer_config = get_vision_model_config(vision_transformer_config)
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
                 megatron_vision_transformer_config.first_pipeline_num_layers = None
 

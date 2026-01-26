@@ -41,7 +41,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerS
 from megatron.core.models.vision.vit_layer_specs import (
     get_vit_layer_with_transformer_engine_spec,
 )
-from copy import deepcopy
 
 
 @dataclass
@@ -293,8 +292,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         """
         language_transformer_config = self
 
-        # Create vision transformer config - placeholder for future use
-        # vision_transformer_config = deepcopy(self)
+        # handle vision config inside model initialization
         hf_vision_config = self.vision_config
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,

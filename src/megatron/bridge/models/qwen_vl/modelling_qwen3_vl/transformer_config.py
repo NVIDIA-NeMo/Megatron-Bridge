@@ -54,17 +54,20 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     hf_text_config: Optional[Qwen3VLTextConfig] = None
 
 
-def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
+def get_vision_model_config(hf_config):
+    # init config from scratch to avoid deepcopy of parallel_state
+    config = Qwen3VLTransformerConfig(
+        num_layers=hf_config.depth,
+        hidden_size=hf_config.hidden_size,
+        num_attention_heads=hf_config.num_heads,
+        ffn_hidden_size=hf_config.intermediate_size,
+        add_bias_linear=True,
+        add_qkv_bias=True,
+    )
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
     config.moe_ffn_hidden_size = None
 
-    config.num_layers = hf_config.depth
-    config.ffn_hidden_size = hf_config.intermediate_size
-    config.num_attention_heads = hf_config.num_heads  # num_heads
-    config.add_bias_linear = True  # all nn.Linear has bias (MLP, attn)
-    config.add_qkv_bias = True  # qkv_proj in attn has bias
-    config.hidden_size = hf_config.hidden_size  # hidden_size
     config.hidden_dropout = 0.0
     config.attention_dropout = 0.0
     config.layernorm_epsilon = 1e-6
