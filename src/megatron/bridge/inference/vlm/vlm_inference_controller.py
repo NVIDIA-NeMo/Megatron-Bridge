@@ -53,13 +53,13 @@ class VLMTextGenerationController(SimpleTextGenerationController):
         if image is None:
             image_dict = dict(
                 pixel_values=torch.zeros(
-                    1, 4, 3, self.image_processor.size['height'], self.image_processor.size['width']
+                    1, 4, 3, self.image_processor.size["height"], self.image_processor.size["width"]
                 ),
                 aspect_ratio_ids=torch.tensor([0], dtype=torch.long),
                 num_tiles=[0],
             )
         else:
-            image_dict = self.image_processor.preprocess(image, return_tensors='pt')
+            image_dict = self.image_processor.preprocess(image, return_tensors="pt")
             image_dict = {
                 k: v[0] for k, v in image_dict.items() if k in ["pixel_values", "aspect_ratio_ids", "num_tiles"]
             }
@@ -118,12 +118,12 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
             return_tensors="pt",
         )
 
-        tokens = inputs['input_ids'][0]
+        tokens = inputs["input_ids"][0]
 
-        if 'pixel_values' in inputs:
+        if "pixel_values" in inputs:
             image_dict = {
-                'pixel_values': inputs['pixel_values'],
-                'image_grid_thw': inputs['image_grid_thw'],
+                "pixel_values": inputs["pixel_values"],
+                "image_grid_thw": inputs["image_grid_thw"],
             }
         else:
             image_dict = None

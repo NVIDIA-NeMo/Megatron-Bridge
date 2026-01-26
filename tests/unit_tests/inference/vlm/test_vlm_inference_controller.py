@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
-from unittest.mock import MagicMock, patch
 from megatron.bridge.inference.vlm.vlm_inference_controller import (
+    QwenVLTextGenerationController,
     TokenizerWrapper,
     VLMTextGenerationController,
-    QwenVLTextGenerationController
 )
 
 
@@ -54,7 +55,7 @@ class TestVLMTextGenerationController:
     @pytest.fixture
     def controller(self, mock_tokenizer, mock_image_processor):
         """Create a VLMTextGenerationController with mocked parent initialization."""
-        with patch.object(VLMTextGenerationController, '__init__', lambda self, *args, **kwargs: None):
+        with patch.object(VLMTextGenerationController, "__init__", lambda self, *args, **kwargs: None):
             controller = VLMTextGenerationController.__new__(VLMTextGenerationController)
             controller.tokenizer = TokenizerWrapper(mock_tokenizer)
             controller.image_processor = mock_image_processor
@@ -74,20 +75,17 @@ class TestVLMTextGenerationController:
         tokens, image_dict = controller.tokenize_prompt("test", image)
 
         assert tokens == [1, 2, 3]
-        mock_image_processor.preprocess.assert_called_with(image, return_tensors='pt')
+        mock_image_processor.preprocess.assert_called_with(image, return_tensors="pt")
         assert "pixel_values" in image_dict
 
     def test_prep_inference_input(self, controller):
         prompts_tokens = torch.tensor([[1, 2, 3]])
-        active_requests = {
-            1: MagicMock(encoder_prompt="image_data")
-        }
-        
+        active_requests = {1: MagicMock(encoder_prompt="image_data")}
+
         controller.prep_inference_input(prompts_tokens, active_requests)
-        
+
         controller.inference_wrapped_model.prep_inference_input.assert_called_with(
-            prompts_tokens=prompts_tokens,
-            image_dict=["image_data"]
+            prompts_tokens=prompts_tokens, image_dict=["image_data"]
         )
 
 
@@ -99,17 +97,17 @@ class TestQwenVLTextGenerationController:
         """Create a QwenVLTextGenerationController with mocked parent initialization."""
         mock_processor = MagicMock()
         mock_processor.return_value = {
-            'input_ids': torch.tensor([[1, 2, 3]]),
-            'pixel_values': 'pixel_values',
-            'image_grid_thw': 'image_grid_thw'
+            "input_ids": torch.tensor([[1, 2, 3]]),
+            "pixel_values": "pixel_values",
+            "image_grid_thw": "image_grid_thw",
         }
-        
-        with patch.object(QwenVLTextGenerationController, '__init__', lambda self, *args, **kwargs: None):
+
+        with patch.object(QwenVLTextGenerationController, "__init__", lambda self, *args, **kwargs: None):
             controller = QwenVLTextGenerationController.__new__(QwenVLTextGenerationController)
             controller.image_processor = mock_image_processor
             controller.processor = mock_processor
             controller.inference_wrapped_model = MagicMock()
-            
+
             # Set up the QwenVLTokenizer which is a nested class
             class QwenVLTokenizer(TokenizerWrapper):
                 def detokenize(self, tokens):
@@ -121,7 +119,7 @@ class TestQwenVLTextGenerationController:
                         else:
                             new_tokens.append(token)
                     return self._tokenizer.decode(new_tokens, skip_special_tokens=False)
-            
+
             controller.tokenizer = QwenVLTokenizer(mock_tokenizer)
             return controller
 
@@ -129,22 +127,22 @@ class TestQwenVLTextGenerationController:
         tokens, image_dict = controller.tokenize_prompt("test", "image")
 
         assert tokens == [1, 2, 3]
-        assert image_dict['pixel_values'] == 'pixel_values'
-        assert image_dict['image_grid_thw'] == 'image_grid_thw'
+        assert image_dict["pixel_values"] == "pixel_values"
+        assert image_dict["image_grid_thw"] == "image_grid_thw"
 
     def test_tokenize_prompt_no_pixel_values(self, mock_tokenizer, mock_image_processor):
         """Test tokenize_prompt when processor returns no pixel_values."""
         mock_processor = MagicMock()
         mock_processor.return_value = {
-            'input_ids': torch.tensor([[1, 2, 3]]),
+            "input_ids": torch.tensor([[1, 2, 3]]),
         }
-        
-        with patch.object(QwenVLTextGenerationController, '__init__', lambda self, *args, **kwargs: None):
+
+        with patch.object(QwenVLTextGenerationController, "__init__", lambda self, *args, **kwargs: None):
             controller = QwenVLTextGenerationController.__new__(QwenVLTextGenerationController)
             controller.image_processor = mock_image_processor
             controller.processor = mock_processor
             controller.tokenizer = TokenizerWrapper(mock_tokenizer)
-            
+
             tokens, image_dict = controller.tokenize_prompt("test", None)
 
             assert tokens == [1, 2, 3]
