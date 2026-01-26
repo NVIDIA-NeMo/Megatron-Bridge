@@ -30,22 +30,15 @@ Example:
 import argparse
 from typing import Optional
 
-import requests
 import torch
-import torch.distributed as dist
-from megatron.core import parallel_state
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from PIL import Image
+from megatron.core.inference.common_inference_params import CommonInferenceParams
 from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
-
 from megatron.bridge.inference.vlm.base import generate, setup_inference_wrapper
-
-from megatron.core.inference.common_inference_params import CommonInferenceParams
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.utils.common_utils import print_rank_0
 
 def process_image_inputs(processor, image_path: Optional[str], prompt: str):
     """Process image inputs for vision-language model.
@@ -175,9 +168,7 @@ def main(args) -> None:
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    text, image_inputs, video_inputs = process_image_inputs(
-        processor, args.image_path, prompt
-    )
+    text, image_inputs, video_inputs = process_image_inputs(processor, args.image_path, prompt)
 
     # Setup inference wrapper
     inference_wrapped_model = setup_inference_wrapper(

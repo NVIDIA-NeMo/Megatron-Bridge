@@ -22,9 +22,8 @@ from megatron.core.inference.model_inference_wrappers.abstract_model_inference_w
 )
 from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import InferenceWrapperConfig
 from PIL.Image import Image
-from transformers import AutoProcessor
 
-from megatron.bridge.models.qwen_vl import Qwen25VLModelProvider, Qwen3VLModelProvider
+from megatron.bridge.models.qwen_vl import Qwen3VLModelProvider, Qwen25VLModelProvider
 
 from .qwenvl_inference_wrapper import QwenVLInferenceWrapper
 from .vlm_engine import VLMEngine
