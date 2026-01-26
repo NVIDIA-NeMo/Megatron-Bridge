@@ -552,6 +552,13 @@ def parse_cli_args():
         required=False,
     )
     performance_args.add_argument(
+        "--use_sharp",
+        help="Enable IB-SHARP for FSDP communication. Disabled by default.",
+        type=bool_arg,
+        required=False,
+        default=False,
+    )
+    performance_args.add_argument(
         "--cuda_graph_impl",
         help=f"Cuda graph implementation. Options- {', '.join(VALID_CUDA_GRAPH_IMPLS)}.",
         type=is_cuda_graph_impl_valid,

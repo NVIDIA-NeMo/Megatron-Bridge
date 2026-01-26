@@ -205,6 +205,7 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     nccl_ub: bool,
+    use_sharp: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
@@ -273,7 +274,12 @@ def main(
     )
 
     if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
+
+    if use_sharp:
+        custom_env_vars.update({"NCCL_SHARP_GROUP_SIZE_THRESH": "1"})
+
+    slurm_network = "sharp" if use_sharp else None
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -293,6 +299,7 @@ def main(
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
+            network=slurm_network,
         )
     else:
         executor = dgxc_executor(
@@ -555,6 +562,7 @@ if __name__ == "__main__":
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         nccl_ub=args.nccl_ub,
+        use_sharp=args.use_sharp,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
