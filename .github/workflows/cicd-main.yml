@@ -283,7 +283,6 @@ jobs:
             ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
-          target: mbridge_final
 
       - name: Verify MCore commit in Docker image
         if: ${{ github.event.inputs.mcore_commit != '' }}
