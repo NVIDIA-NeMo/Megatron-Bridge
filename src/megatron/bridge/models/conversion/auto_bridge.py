@@ -459,6 +459,12 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
+        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            raise ValueError(
+                "save_hf_pretrained requires a pretrained HuggingFace model. "
+                "AutoBridge.from_hf_config() creates a config-only bridge; "
+                "use AutoBridge.from_hf_pretrained(...) instead."
+            )
         if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
             if dist.get_rank() == 0:
@@ -727,6 +733,8 @@ class AutoBridge(Generic[MegatronModelT]):
         This is a convenience method that loads a Megatron checkpoint and
         exports it to HuggingFace format. This is useful for sharing trained
         models or deploying them with HuggingFace inference tools.
+        Requires a bridge created with `from_hf_pretrained` so the tokenizer
+        and other HuggingFace artifacts can be saved alongside the weights.
 
         Args:
             megatron_path: Directory path where the Megatron checkpoint is stored
@@ -740,7 +748,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Basic export
-            >>> bridge = AutoBridge.from_hf_config(config)
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             >>> bridge.export_ckpt(
             ...     "./megatron_checkpoints/my_model",
             ...     "./hf_exports/my_model"
@@ -757,6 +765,12 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> from transformers import AutoModelForCausalLM
             >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
         """
+        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            raise ValueError(
+                "export_ckpt requires a pretrained HuggingFace model. "
+                "AutoBridge.from_hf_config() creates a config-only bridge; "
+                "use AutoBridge.from_hf_pretrained(...) instead."
+            )
         try:
             from megatron.bridge.training.model_load_save import temporary_distributed_context
         except ImportError:

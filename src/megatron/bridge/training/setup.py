@@ -226,6 +226,7 @@ def setup(
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
+        optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -281,6 +282,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=pg_collection.dp,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
