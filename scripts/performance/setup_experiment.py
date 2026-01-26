@@ -183,89 +183,51 @@ def get_final_parallelism_settings(
     gbs: Optional[int],
     config_variant: str = "v1",
 ) -> Dict[str, int]:
-    """Get the final parallelism settings after applying workload base config and CLI overrides.
-    
-    Returns:
-        Dictionary with keys: tp, pp, cp, ep, etp, vp, mbs, gbs
-    """
+    """Get the final parallelism settings after applying workload base config and CLI overrides."""
     from utils.utils import get_workload_base_config, get_library_recipe
     
-    # Get base config values
+    # Default values
+    defaults = {"tp": 1, "pp": 1, "cp": 1, "ep": 1, "etp": None, "vp": None, "mbs": 1, "gbs": 1}
+    
+    # Try to load base config or recipe
     if not use_recipes:
-        workload_config = get_workload_base_config(
-            model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-        )
-        
-        # Start with workload base config values
-        final_tp = workload_config.tensor_model_parallel_size
-        final_pp = workload_config.pipeline_model_parallel_size
-        final_cp = workload_config.context_parallel_size
-        final_ep = workload_config.expert_model_parallel_size
-        final_etp = workload_config.expert_tensor_parallel_size
-        final_vp = workload_config.virtual_pipeline_model_parallel_size
-        final_mbs = workload_config.micro_batch_size
-        final_gbs = workload_config.global_batch_size
-    else:
-        # For recipes, try to load the recipe to get default parallelism settings
         try:
-            # Use a temporary experiment name since we're just inspecting defaults
-            recipe = get_library_recipe(
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                train_task=task,
-                wandb_experiment_name="temp_for_inspection"
-            )
-            
-            # Extract parallelism settings from the recipe
-            final_tp = getattr(recipe.model, 'tensor_model_parallel_size', 1)
-            final_pp = getattr(recipe.model, 'pipeline_model_parallel_size', 1)
-            final_cp = getattr(recipe.model, 'context_parallel_size', 1)
-            final_ep = getattr(recipe.model, 'expert_model_parallel_size', 1)
-            final_etp = getattr(recipe.model, 'expert_tensor_parallel_size', None)
-            final_vp = getattr(recipe.model, 'virtual_pipeline_model_parallel_size', None)
-            final_mbs = getattr(recipe.train, 'micro_batch_size', 1)
-            final_gbs = getattr(recipe.train, 'global_batch_size', 1)
+            config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant)
+            defaults.update({
+                "tp": config.tensor_model_parallel_size,
+                "pp": config.pipeline_model_parallel_size,
+                "cp": config.context_parallel_size,
+                "ep": config.expert_model_parallel_size,
+                "etp": config.expert_tensor_parallel_size,
+                "vp": config.virtual_pipeline_model_parallel_size,
+                "mbs": config.micro_batch_size,
+                "gbs": config.global_batch_size,
+            })
         except Exception as e:
-            # If we can't load the recipe (e.g., on head node without Megatron-Bridge),
-            # fall back to defaults
-            logger.warning(f"Could not load recipe to inspect parallelism defaults: {e}")
-            final_tp = 1
-            final_pp = 1
-            final_cp = 1
-            final_ep = 1
-            final_etp = None
-            final_vp = None
-            final_mbs = 1
-            final_gbs = 1
+            logger.warning(f"Could not load workload config: {e}")
+    else:
+        try:
+            recipe = get_library_recipe(model_family_name, model_recipe_name, task, "temp_for_inspection")
+            defaults.update({
+                "tp": getattr(recipe.model, 'tensor_model_parallel_size', 1),
+                "pp": getattr(recipe.model, 'pipeline_model_parallel_size', 1),
+                "cp": getattr(recipe.model, 'context_parallel_size', 1),
+                "ep": getattr(recipe.model, 'expert_model_parallel_size', 1),
+                "etp": getattr(recipe.model, 'expert_tensor_parallel_size', None),
+                "vp": getattr(recipe.model, 'virtual_pipeline_model_parallel_size', None),
+                "mbs": getattr(recipe.train, 'micro_batch_size', 1),
+                "gbs": getattr(recipe.train, 'global_batch_size', 1),
+            })
+        except Exception as e:
+            logger.warning(f"Could not load recipe: {e}")
     
-    # Override with CLI args if provided
-    if tp_size is not None:
-        final_tp = tp_size
-    if pp_size is not None:
-        final_pp = pp_size
-    if cp_size is not None:
-        final_cp = cp_size
-    if ep_size is not None:
-        final_ep = ep_size
-    if etp_size is not None:
-        final_etp = etp_size
-    if vp_size is not None and vp_size != -1:
-        final_vp = vp_size
-    if mbs is not None:
-        final_mbs = mbs
-    if gbs is not None:
-        final_gbs = gbs
-    
-    return {
-        "tp": final_tp,
-        "pp": final_pp,
-        "cp": final_cp,
-        "ep": final_ep,
-        "etp": final_etp,
-        "vp": final_vp,
-        "mbs": final_mbs,
-        "gbs": final_gbs,
+    # Apply CLI overrides
+    overrides = {
+        "tp": tp_size, "pp": pp_size, "cp": cp_size, "ep": ep_size,
+        "etp": etp_size, "vp": vp_size if vp_size != -1 else None, "mbs": mbs, "gbs": gbs
     }
+    
+    return {k: overrides[k] if overrides[k] is not None else defaults[k] for k in defaults}
 
 
 def main(
@@ -347,60 +309,28 @@ def main(
 
     # Get final parallelism settings after applying all overrides
     parallelism = get_final_parallelism_settings(
-        use_recipes=use_recipes,
-        model_family_name=model_family_name,
-        model_recipe_name=model_recipe_name,
-        task=task,
-        gpu=gpu,
-        compute_dtype=compute_dtype,
-        tp_size=tp_size,
-        pp_size=pp_size,
-        cp_size=cp_size,
-        ep_size=ep_size,
-        etp_size=etp_size,
-        vp_size=vp_size,
-        mbs=mbs,
-        gbs=gbs,
-        config_variant=config_variant,
+        use_recipes, model_family_name, model_recipe_name, task, gpu, compute_dtype,
+        tp_size, pp_size, cp_size, ep_size, etp_size, vp_size, mbs, gbs, config_variant
     )
 
-    if use_recipes:
-        script_name = ENTRYPOINT_RECIPE
-        if wandb_experiment_name is not None:
-            exp_name = wandb_experiment_name
-        else:
-            # Build experiment name with parallelism settings (always include them)
-            exp_name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
-            exp_name += f"_tp{parallelism['tp']}"
-            exp_name += f"_pp{parallelism['pp']}"
-            exp_name += f"_cp{parallelism['cp']}"
-            exp_name += f"_ep{parallelism['ep']}"
-            # Always show etp and vp (use "None" if they are None)
-            etp_value = parallelism["etp"] if parallelism["etp"] is not None else "None"
-            vp_value = parallelism["vp"] if parallelism["vp"] is not None else "None"
-            exp_name += f"_etp{etp_value}"
-            exp_name += f"_vp{vp_value}"
-            exp_name += f"_mbs{parallelism['mbs']}"
-            exp_name += f"_gbs{parallelism['gbs']}"
-
+    # Build experiment name
+    if wandb_experiment_name is not None:
+        exp_name = wandb_experiment_name
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
-        if wandb_experiment_name is not None:
-            exp_name = wandb_experiment_name
-        else:
-            # Build experiment name with parallelism settings (always include them)
-            exp_name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
-            exp_name += f"_tp{parallelism['tp']}"
-            exp_name += f"_pp{parallelism['pp']}"
-            exp_name += f"_cp{parallelism['cp']}"
-            exp_name += f"_ep{parallelism['ep']}"
-            # Always show etp and vp (use "None" if they are None)
-            etp_value = parallelism["etp"] if parallelism["etp"] is not None else "None"
-            vp_value = parallelism["vp"] if parallelism["vp"] is not None else "None"
-            exp_name += f"_etp{etp_value}"
-            exp_name += f"_vp{vp_value}"
-            exp_name += f"_mbs{parallelism['mbs']}"
-            exp_name += f"_gbs{parallelism['gbs']}"
+        # Base name with optional compute_dtype
+        base = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
+        exp_name = f"{base}_{compute_dtype}" if not use_recipes else base
+        
+        # Add all parallelism settings
+        for key in ["tp", "pp", "cp", "ep"]:
+            exp_name += f"_{key}{parallelism[key]}"
+        
+        # Add optional settings (show "None" if not set)
+        exp_name += f"_etp{parallelism['etp'] or 'None'}"
+        exp_name += f"_vp{parallelism['vp'] or 'None'}"
+        exp_name += f"_mbs{parallelism['mbs']}_gbs{parallelism['gbs']}"
+
+    script_name = ENTRYPOINT_RECIPE if use_recipes else ENTRYPOINT_PEFORMANCE
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
