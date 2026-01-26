@@ -34,6 +34,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
 from megatron.bridge.training.utils.packed_seq_utils import preprocess_packed_seqs
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 class Qwen3VLModel(MegatronModule):
@@ -98,7 +99,6 @@ class Qwen3VLModel(MegatronModule):
             if not language_transformer_config.use_hf_vision_model:
                 # use megatron vision model
                 from .vision_model import Qwen3VLVisionModel
-                from copy import deepcopy
                 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
                     get_vision_model_config,
                 )
@@ -154,6 +154,8 @@ class Qwen3VLModel(MegatronModule):
             )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
+
+        self.pg_collection = get_pg_collection(self)
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
@@ -289,7 +291,7 @@ class Qwen3VLModel(MegatronModule):
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
 
-        cp_size = mpu.get_context_parallel_world_size()
+        cp_size = self.pg_collection.cp.size()
         if self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
@@ -424,17 +426,17 @@ class Qwen3VLModel(MegatronModule):
                 visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
                     visual_pos_masks,
                     deepstack_visual_embeds,
-                    tp_size=mpu.get_tensor_model_parallel_world_size(),
-                    tp_rank=mpu.get_tensor_model_parallel_rank(),
+                    tp_size=self.pg_collection.tp.size(),
+                    tp_rank=self.pg_collection.tp.rank(),
                     cp_size=cp_size,
-                    cp_rank=mpu.get_context_parallel_rank(),
+                    cp_rank=self.pg_collection.cp.rank(),
                 )
             elif self.config.sequence_parallel:  # THD and SP
                 visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
                     visual_pos_masks,
                     deepstack_visual_embeds,
-                    tp_size=mpu.get_tensor_model_parallel_world_size(),
-                    tp_rank=mpu.get_tensor_model_parallel_rank(),
+                    tp_size=self.pg_collection.tp.size(),
+                    tp_rank=self.pg_collection.tp.rank(),
                     cp_size=1,
                     cp_rank=0,
                 )
