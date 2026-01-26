@@ -29,6 +29,7 @@ from megatron.bridge.training.config import (
     DistributedInitConfig,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
+    GPTFIMDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
@@ -307,6 +308,46 @@ def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collect
     )
     container.ddp = ddp_cfg
     return container, og_ws, cfg_mod
+
+
+class TestMockGPTDatasetConfig:
+    """Tests desired behavior for MockGPTDatasetConfig."""
+
+    def test_initialization(self):
+        """Test that blend and blend_per_split fields are always None in MockGPTDatasetConfig."""
+        config = GPTFIMDatasetConfig(
+            random_seed=1234,
+            seq_length=512,
+            fim_rate=0.1,
+            fim_no_prefix="test",
+            fim_extra_tokens={"middle": "<middle>"},
+            fim_split_sample="test sample",
+            reset_position_ids=False,
+            reset_attention_mask=False,
+            eod_mask_loss=False,
+        )
+        config.finalize()
+
+        # Should be an instance of both GPTDatasetConfig and GPTFIMDatasetConfig
+        from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
+        from megatron.training.datasets.fim_dataset import GPTFIMDatasetConfig as MCoreGPTFIMDatasetConfig
+
+        assert isinstance(config, GPTFIMDatasetConfig)
+        assert isinstance(config, GPTDatasetConfig)
+        assert isinstance(config, MCoreGPTFIMDatasetConfig)
+        assert isinstance(config, BlendedMegatronDatasetConfig)
+
+        # Should have all the expected fields from parent class
+        assert hasattr(config, "random_seed")
+        assert hasattr(config, "seq_length")
+        assert hasattr(config, "path_to_cache")
+
+        # Verify have all the expected fields were set proeprly
+        assert config.fim_data
+        assert config.fim_rate == 0.1
+        assert config.fim_no_prefix == "test"
+        assert config.fim_split_sample == "test sample"
+        assert config.fim_extra_tokens["middle"] == "<middle>"
 
 
 class TestMockGPTDatasetConfig:
