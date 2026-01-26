@@ -43,18 +43,21 @@ class Qwen3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    # Qwen3-specific defaults for Megatron provider
-    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
-    MEGATRON_DEFAULTS = {
-        "normalization": "RMSNorm",
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "add_bias_linear": False,
-        "add_qkv_bias": False,  # Qwen3 does NOT have QKV bias (unlike Qwen2)
-        "hidden_dropout": 0.0,
-        "qk_layernorm": True,  # Qwen3 uses QK layernorm
-        "autocast_dtype": torch.bfloat16,
-    }
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Qwen3 config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
+
+        # Qwen3-specific Megatron defaults
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False  # Qwen3 does NOT have QKV bias (unlike Qwen2)
+        provider.hidden_dropout = 0.0
+        provider.qk_layernorm = True  # Qwen3 uses QK layernorm
+        provider.autocast_dtype = torch.bfloat16
+
+        return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

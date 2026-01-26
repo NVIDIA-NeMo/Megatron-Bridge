@@ -49,29 +49,11 @@ class LlamaBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    # Llama inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class
-    # No additional model-specific mappings needed for Llama
-
-    # Llama-specific defaults for Megatron provider
-    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
-    MEGATRON_DEFAULTS = {
-        "normalization": "RMSNorm",
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "hidden_dropout": 0.0,
-        "bias_activation_fusion": True,
-        "masked_softmax_fusion": True,
-        "persist_layer_norm": True,
-        "bias_dropout_fusion": True,
-        "apply_rope_fusion": True,
-        "rotary_percent": 1.0,
-    }
-
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace Llama config to Megatron GPTModelProvider.
 
-        Uses base class implementation for common conversion, then enables
-        RoPE scaling for Llama 3.1/3.2 models via MCore's built-in support.
+        Uses base class implementation for common conversion, then sets
+        Llama-specific config and enables RoPE scaling for Llama 3.1/3.2 models.
 
         Args:
             hf_pretrained: HuggingFace PreTrainedCausalLM containing the Llama config
@@ -79,8 +61,19 @@ class LlamaBridge(MegatronModelBridge):
         Returns:
             GPTModelProvider configured for Llama architecture
         """
-        # Use base class for common conversion
         provider = super().provider_bridge(hf_pretrained)
+
+        # Llama-specific Megatron defaults
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.hidden_dropout = 0.0
+        provider.bias_activation_fusion = True
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.bias_dropout_fusion = True
+        provider.apply_rope_fusion = True
+        provider.rotary_percent = 1.0
 
         # Enable RoPE scaling for Llama 3.1/3.2 models via Megatron Core's built-in support
         hf_config = hf_pretrained.config
@@ -103,7 +96,6 @@ class LlamaBridge(MegatronModelBridge):
         Returns:
             Dictionary of HuggingFace LlamaConfig parameters
         """
-        # Use base class for common conversion (provider_to_hf_config + HF_DEFAULTS)
         hf_config = super(LlamaBridge, cls).megatron_to_hf_config(provider)
 
         # Handle RoPE scaling for Llama 3.1/3.2 models

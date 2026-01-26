@@ -48,26 +48,29 @@ class Qwen3MoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    # Qwen3 MoE-specific defaults for Megatron provider
-    # Note: Fields in CONFIG_MAPPING are dynamically converted, not set here
-    MEGATRON_DEFAULTS = {
-        # Common transformer settings
-        "normalization": "RMSNorm",
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "add_bias_linear": False,
-        "add_qkv_bias": False,  # Qwen3 MoE does NOT have QKV bias
-        "hidden_dropout": 0.0,
-        "qk_layernorm": True,  # Qwen3 MoE uses QK layernorm
-        "autocast_dtype": torch.bfloat16,
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Qwen3 MoE config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
+
+        # Qwen3 MoE-specific Megatron defaults - Common transformer settings
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False  # Qwen3 MoE does NOT have QKV bias
+        provider.hidden_dropout = 0.0
+        provider.qk_layernorm = True  # Qwen3 MoE uses QK layernorm
+        provider.autocast_dtype = torch.bfloat16
+
         # MoE-specific settings
-        "moe_grouped_gemm": True,
-        "moe_router_load_balancing_type": "aux_loss",
-        "moe_aux_loss_coeff": 1e-3,
-        "moe_router_pre_softmax": False,
-        "moe_token_dispatcher_type": "alltoall",
-        "moe_permute_fusion": True,
-    }
+        provider.moe_grouped_gemm = True
+        provider.moe_router_load_balancing_type = "aux_loss"
+        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_router_pre_softmax = False
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
+
+        return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

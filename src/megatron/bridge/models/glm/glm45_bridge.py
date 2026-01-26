@@ -36,40 +36,42 @@ logger = logging.getLogger(__name__)
 class GLM45Bridge(MegatronModelBridge):
     """Megatron Bridge for GLM 4.5 MoE models with Multi-Token Prediction (MTP)."""
 
-    MEGATRON_DEFAULTS = {
-        # Architecture
-        "normalization": "RMSNorm",
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "add_bias_linear": False,
-        "share_embeddings_and_output_weights": False,
-        # MoE settings
-        "moe_shared_expert_overlap": True,
-        "moe_token_dispatcher_type": "alltoall",
-        "moe_router_load_balancing_type": "seq_aux_loss",
-        "moe_router_pre_softmax": False,
-        "moe_grouped_gemm": True,
-        "moe_router_score_function": "sigmoid",
-        "moe_permute_fusion": True,
-        "moe_router_enable_expert_bias": True,
-        "moe_router_dtype": "fp32",
-        "moe_router_bias_update_rate": 0,
-        "moe_aux_loss_coeff": 0.001,
-        # Optimizations
-        "persist_layer_norm": True,
-        "bias_activation_fusion": True,
-        "bias_dropout_fusion": True,
-        # Dropout/precision
-        "hidden_dropout": 0.0,
-        "autocast_dtype": torch.bfloat16,
-        # MTP settings
-        "mtp_loss_scaling_factor": 0.3,
-    }
-
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+
+        # GLM 4.5 MoE-specific Megatron defaults - Architecture
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+
+        # MoE settings
+        provider.moe_shared_expert_overlap = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_router_pre_softmax = False
+        provider.moe_grouped_gemm = True
+        provider.moe_router_score_function = "sigmoid"
+        provider.moe_permute_fusion = True
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_router_bias_update_rate = 0
+        provider.moe_aux_loss_coeff = 0.001
+
+        # Optimizations
+        provider.persist_layer_norm = True
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = True
+
+        # Dropout/precision
+        provider.hidden_dropout = 0.0
+        provider.autocast_dtype = torch.bfloat16
+
+        # MTP settings
+        provider.mtp_loss_scaling_factor = 0.3
 
         # GLM uses moe_intermediate_size for shared expert size
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size

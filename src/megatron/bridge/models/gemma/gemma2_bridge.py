@@ -43,23 +43,22 @@ class Gemma2Bridge(MegatronModelBridge):
     Megatron Bridge for Gemma2 Causal LM.
     """
 
-    MEGATRON_DEFAULTS = {
-        "normalization": "RMSNorm",
-        "activation_func": fast_gelu,
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "add_bias_linear": False,
-        "attention_dropout": 0.0,
-        "hidden_dropout": 0.0,
-        "share_embeddings_and_output_weights": True,
-        "layernorm_zero_centered_gamma": True,
-        "gradient_accumulation_fusion": False,
-    }
-
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma2ModelProvider:
         """Convert HuggingFace config to Gemma2ModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+
+        # Gemma2-specific Megatron defaults
+        provider.normalization = "RMSNorm"
+        provider.activation_func = fast_gelu
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.attention_dropout = 0.0
+        provider.hidden_dropout = 0.0
+        provider.share_embeddings_and_output_weights = True
+        provider.layernorm_zero_centered_gamma = True
+        provider.gradient_accumulation_fusion = False
 
         # Gemma2-specific features not in CONFIG_MAPPING
         provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar

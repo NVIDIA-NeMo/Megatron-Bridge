@@ -401,14 +401,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         return hf_config
 
-    # Model-specific defaults for Megatron provider
-    # Subclasses should override this with their model-specific settings
-    MEGATRON_DEFAULTS: dict = {}
-
-    # Model-specific defaults for HF config (used in megatron_to_hf_config)
-    # Only needed for fields beyond architectures/model_type (which come from decorator)
-    HF_DEFAULTS: dict = {}
-
     # Set by @register_bridge decorator
     SOURCE_NAME: Optional[str] = None
     MODEL_TYPE: Optional[str] = None
@@ -419,10 +411,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         Default implementation that:
         1. Converts HF config to provider kwargs using CONFIG_MAPPING
         2. Adds generation_config
-        3. Applies model-specific MEGATRON_DEFAULTS
-        4. Creates and returns a GPTModelProvider
+        3. Creates and returns a GPTModelProvider
 
-        Subclasses can override this for special handling (e.g., RoPE scaling).
+        Subclasses should override this to add model-specific configuration
+        by calling super().provider_bridge() then setting properties directly
+        on the returned provider (e.g., provider.normalization = "RMSNorm").
 
         Args:
             hf_pretrained (HFPreTrained): HuggingFace model or configuration
@@ -441,9 +434,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Add generation config
         provider_kwargs["generation_config"] = hf_pretrained.generation_config
 
-        # Apply model-specific defaults
-        provider_kwargs.update(self.MEGATRON_DEFAULTS)
-
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
         return provider_class(**provider_kwargs)
@@ -455,9 +445,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         Default implementation that:
         1. Converts provider to HF config using CONFIG_MAPPING (via provider_to_hf_config)
         2. Adds architectures and model_type from decorator
-        3. Applies model-specific HF_DEFAULTS
 
-        Subclasses can override this for special handling (e.g., RoPE scaling).
+        Subclasses should override this to add model-specific configuration
+        by calling super().megatron_to_hf_config() then setting values directly
+        on the returned dict (e.g., hf_config["rope_scaling"] = {...}).
 
         Args:
             provider: Megatron model provider instance
@@ -473,9 +464,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             hf_config["architectures"] = [cls.SOURCE_NAME]
         if cls.MODEL_TYPE is not None:
             hf_config["model_type"] = cls.MODEL_TYPE
-
-        # Apply model-specific HF defaults
-        hf_config.update(cls.HF_DEFAULTS)
 
         return hf_config
 

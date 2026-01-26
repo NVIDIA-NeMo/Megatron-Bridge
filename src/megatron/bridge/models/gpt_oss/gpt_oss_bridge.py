@@ -44,37 +44,6 @@ except ImportError:
 class GPTOSSBridge(MegatronModelBridge):
     """Megatron Bridge for GPT-OSS MoE models with YARN position embeddings."""
 
-    MEGATRON_DEFAULTS = {
-        # Architecture
-        "normalization": "RMSNorm",
-        "gated_linear_unit": True,
-        "add_bias_linear": True,
-        "add_qkv_bias": False,
-        "share_embeddings_and_output_weights": False,
-        "position_embedding_type": "yarn",
-        # MoE settings
-        "moe_router_pre_softmax": False,
-        "moe_grouped_gemm": True,
-        "moe_token_dispatcher_type": "alltoall",
-        "moe_permute_fusion": True,
-        "moe_router_load_balancing_type": "none",
-        # Optimizations
-        "bias_activation_fusion": True,
-        "bias_dropout_fusion": False,
-        # Dropout/precision
-        "hidden_dropout": 0.0,
-        "bf16": True,
-        "params_dtype": torch.bfloat16,
-        # GPT-OSS specific activation
-        "activation_func": quick_gelu,
-        "activation_func_clamp_value": 7.0,
-        "glu_linear_offset": 1.0,
-        # Attention settings
-        "softmax_type": "learnable",
-        "window_size": (128, 0),
-        "window_attn_skip_freq": 2,
-    }
-
     def __init__(self):
         super().__init__()
         # Cache for dequantized expert weights during import and merged weights during export
@@ -84,9 +53,44 @@ class GPTOSSBridge(MegatronModelBridge):
         """Convert HuggingFace config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
+        # GPT-OSS-specific Megatron defaults - Architecture
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_bias_linear = True
+        provider.add_qkv_bias = False
+        provider.share_embeddings_and_output_weights = False
+        provider.position_embedding_type = "yarn"
+
+        # MoE settings
+        provider.moe_router_pre_softmax = False
+        provider.moe_grouped_gemm = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
+        provider.moe_router_load_balancing_type = "none"
+
+        # Optimizations
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = False
+
+        # Dropout/precision
+        provider.hidden_dropout = 0.0
+        provider.bf16 = True
+        provider.params_dtype = torch.bfloat16
+
+        # GPT-OSS specific activation
+        provider.activation_func = quick_gelu
+        provider.activation_func_clamp_value = 7.0
+        provider.glu_linear_offset = 1.0
+
+        # Attention settings
+        provider.softmax_type = "learnable"
+        provider.window_size = (128, 0)
+        provider.window_attn_skip_freq = 2
+
         # GPT-OSS uses intermediate_size for MoE FFN hidden size
         provider.moe_ffn_hidden_size = hf_pretrained.config.intermediate_size
 
+        # YARN position embedding settings
         provider.yarn_rotary_scaling_factor = 32.0
         provider.yarn_original_max_position_embeddings = 4096
         provider.yarn_beta_fast = 32.0

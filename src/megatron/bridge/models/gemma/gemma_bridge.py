@@ -41,18 +41,23 @@ class GemmaBridge(MegatronModelBridge):
     automatically in its provide() method.
     """
 
-    MEGATRON_DEFAULTS = {
-        "normalization": "RMSNorm",
-        "activation_func": fast_gelu,
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "add_bias_linear": False,
-        "attention_dropout": 0.0,
-        "hidden_dropout": 0.0,
-        "share_embeddings_and_output_weights": True,
-        "layernorm_zero_centered_gamma": True,
-        "attention_backend": AttnBackend.flash,
-    }
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Gemma config to GemmaModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
+
+        # Gemma-specific Megatron defaults
+        provider.normalization = "RMSNorm"
+        provider.activation_func = fast_gelu
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.attention_dropout = 0.0
+        provider.hidden_dropout = 0.0
+        provider.share_embeddings_and_output_weights = True
+        provider.layernorm_zero_centered_gamma = True
+        provider.attention_backend = AttnBackend.flash
+
+        return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.

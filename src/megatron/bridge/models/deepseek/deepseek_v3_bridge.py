@@ -34,48 +34,52 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 class DeepSeekV3Bridge(MegatronModelBridge):
     """Megatron Bridge for DeepSeek-V3."""
 
-    MEGATRON_DEFAULTS = {
-        # Architecture
-        "normalization": "RMSNorm",
-        "gated_linear_unit": True,
-        "position_embedding_type": "rope",
-        "add_bias_linear": False,
-        "share_embeddings_and_output_weights": False,
-        "qk_layernorm": True,
-        "multi_latent_attention": True,
-        # MoE settings
-        "moe_grouped_gemm": True,
-        "moe_router_pre_softmax": True,
-        "moe_token_dispatcher_type": "alltoall",
-        "moe_router_load_balancing_type": "seq_aux_loss",
-        "moe_shared_expert_overlap": True,
-        "moe_router_enable_expert_bias": True,
-        "moe_router_dtype": "fp32",
-        "moe_permute_fusion": True,
-        "moe_aux_loss_coeff": 0.0001,
-        # Optimizations
-        "apply_rope_fusion": False,
-        "bias_activation_fusion": True,
-        "bias_dropout_fusion": True,
-        "cross_entropy_fusion_impl": "te",
-        "cross_entropy_loss_fusion": True,
-        "masked_softmax_fusion": True,
-        "persist_layer_norm": True,
-        "async_tensor_model_parallel_allreduce": True,
-        "gradient_accumulation_fusion": True,
-        # Dropout/precision
-        "hidden_dropout": 0.0,
-        "attention_softmax_in_fp32": False,
-        # Vocab
-        "make_vocab_size_divisible_by": 1280,
-        # Default seq_length (overridden from HF config if needed)
-        "seq_length": 4096,
-    }
-
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
+        # DeepSeek-V3-specific Megatron defaults - Architecture
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.multi_latent_attention = True
+
+        # MoE settings
+        provider.moe_grouped_gemm = True
+        provider.moe_router_pre_softmax = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_shared_expert_overlap = True
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_permute_fusion = True
+        provider.moe_aux_loss_coeff = 0.0001
+
+        # Optimizations
+        provider.apply_rope_fusion = False
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = True
+        provider.cross_entropy_fusion_impl = "te"
+        provider.cross_entropy_loss_fusion = True
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.async_tensor_model_parallel_allreduce = True
+        provider.gradient_accumulation_fusion = True
+
+        # Dropout/precision
+        provider.hidden_dropout = 0.0
+        provider.attention_softmax_in_fp32 = False
+
+        # Vocab
+        provider.make_vocab_size_divisible_by = 1280
+
+        # Default seq_length (may be overridden from HF config)
+        provider.seq_length = 4096
+
+        # DeepSeek-V3-specific MoE layer frequency and shared expert size
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
