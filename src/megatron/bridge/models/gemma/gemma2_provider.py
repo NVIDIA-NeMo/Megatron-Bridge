@@ -24,6 +24,12 @@ from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.fusions.fused_softmax import FusedScaleMaskSoftmax
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.tensor_parallel import ColumnParallelLinear
 from megatron.core.transformer import (
     MegatronModule,
@@ -87,7 +93,7 @@ class Gemma2DotProductAttention(MegatronModule):
         projection_size = self.config.kv_channels * self.config.num_attention_heads
 
         # Per attention head and per partition values.
-        world_size = parallel_state.get_tensor_model_parallel_world_size()
+        world_size = self.config.tensor_model_parallel_size
         self.hidden_size_per_partition = divide(projection_size, world_size)
         self.hidden_size_per_attention_head = divide(projection_size, config.num_attention_heads)
         self.num_attention_heads_per_partition = divide(self.config.num_attention_heads, world_size)
@@ -377,11 +383,15 @@ class Gemma2ModelProvider(GPTModelProvider):
         model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
         # Apply Embedding Scaling for Gemma2: sqrt(hidden_size)
-        if parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage):
+        if is_vp_first_stage(
+            vp_stage=vp_stage, vp_size=self.virtual_pipeline_model_parallel_size
+        ) and is_pp_first_stage(self._pg_collection.pp):
             extend_instance(model.embedding, EmbeddingScalingMixin)
 
         # Prevents final logits from growing excessively by scaling them to a fixed range
-        if parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage):
+        if is_vp_last_stage(vp_stage=vp_stage, vp_size=self.virtual_pipeline_model_parallel_size) and is_pp_last_stage(
+            self._pg_collection.pp
+        ):
             extend_instance(model.output_layer, Gemma2OutputLayer)
 
         return model

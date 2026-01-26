@@ -110,6 +110,7 @@ def _safe_overrides_for(name: str) -> dict:
 class _FakeModelCfg:
     def __init__(self):
         self.cross_entropy_fusion_impl = "te"
+        self.context_parallel_size = 1
 
     def finalize(self):
         return None

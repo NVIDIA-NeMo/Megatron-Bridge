@@ -99,19 +99,19 @@ class TestMambaModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
+        # Provide a minimal pg_collection attribute expected by provider
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
         # Mock dependencies
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    result = provider.provide()
+                result = provider.provide(pre_process=True, post_process=True)
 
-                    assert result == mock_instance
-                    mock_model.assert_called_once()
+                assert result == mock_instance
+                mock_model.assert_called_once()
 
     def test_provide_method_with_vocab_padding(self):
         """Test provide method calculates padded vocab size when padding is enabled."""
@@ -125,23 +125,21 @@ class TestMambaModelProvider:
             should_pad_vocab=True,  # Enable padding
         )
 
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state") as mock_ps:
-            with patch(
-                "megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=50176
-            ) as mock_calc_vocab:
-                with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with patch(
+            "megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=50176
+        ) as mock_calc_vocab:
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    _ = provider.provide()
+                _ = provider.provide(pre_process=True, post_process=True)
 
-                    # Verify calculate_padded_vocab_size was called with correct parameters
-                    mock_calc_vocab.assert_called_once_with(50000, 128, 8)
-                    # Verify model was created with padded vocab size
-                    call_kwargs = mock_model.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 50176
+                # Verify calculate_padded_vocab_size was called with correct parameters
+                mock_calc_vocab.assert_called_once_with(50000, 128, 8)
+                # Verify model was created with padded vocab size
+                call_kwargs = mock_model.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 50176
 
     def test_provide_method_no_vocab_padding(self):
         """Test provide method uses original vocab size when padding is disabled."""
@@ -155,23 +153,23 @@ class TestMambaModelProvider:
             should_pad_vocab=False,  # Disable padding
         )
 
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size") as mock_calc_vocab:
-                with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size") as mock_calc_vocab:
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    _ = provider.provide()
+                _ = provider.provide(pre_process=True, post_process=True)
 
-                    # Verify calculate_padded_vocab_size was NOT called
-                    mock_calc_vocab.assert_not_called()
-                    # Verify model was created with original vocab size
-                    call_kwargs = mock_model.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 50000
+                # Verify calculate_padded_vocab_size was NOT called
+                mock_calc_vocab.assert_not_called()
+                # Verify model was created with original vocab size
+                call_kwargs = mock_model.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 50000
 
-    def test_provide_method_pipeline_stages(self):
+    @patch("megatron.bridge.models.mamba.mamba_provider.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.mamba.mamba_provider.is_pp_last_stage", return_value=True)
+    def test_provide_method_pipeline_stages(self, *_):
         """Test provide method respects pipeline stage arguments."""
         provider = MambaModelProvider(
             num_layers=2,
@@ -182,21 +180,18 @@ class TestMambaModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
-                    # Test default behavior - uses parallel_state
-                    mock_ps.is_pipeline_first_stage.return_value = False
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_mamba.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
+                mock_instance = Mock()
+                mock_mamba.return_value = mock_instance
 
-                    provider.provide()
+                provider.provide(pre_process=False, post_process=True)
 
-                    # Check the model was called with pipeline stages from parallel_state
-                    call_kwargs = mock_mamba.call_args.kwargs
-                    assert call_kwargs["pre_process"] is False
-                    assert call_kwargs["post_process"] is True
+                # Check the model was called with provided pipeline stages
+                call_kwargs = mock_mamba.call_args.kwargs
+                assert call_kwargs["pre_process"] is False
+                assert call_kwargs["post_process"] is True
 
     def test_provide_method_with_preset_vocab_size(self):
         """Test provide method with preset vocab_size calculates padding correctly."""
@@ -210,21 +205,19 @@ class TestMambaModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state") as mock_ps:
-            with patch(
-                "megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=2048
-            ) as mock_calc:
-                with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_mamba.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with patch(
+            "megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=2048
+        ) as mock_calc:
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
+                mock_instance = Mock()
+                mock_mamba.return_value = mock_instance
 
-                    provider.provide()
+                provider.provide(pre_process=True, post_process=True)
 
-                    mock_calc.assert_called_once_with(2000, 128, 1)
-                    call_kwargs = mock_mamba.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 2048
+                mock_calc.assert_called_once_with(2000, 128, 1)
+                call_kwargs = mock_mamba.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 2048
 
     def test_provide_method_virtual_pipeline_error(self):
         """Test provide method raises error for virtual pipeline."""
@@ -236,14 +229,13 @@ class TestMambaModelProvider:
         )
         provider.virtual_pipeline_model_parallel_size = 2  # Set virtual pipeline
 
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state"):
-            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel"):
-                # Should raise AssertionError for virtual pipeline
-                try:
-                    provider.provide(vp_stage=0)
-                    assert False, "Expected AssertionError for virtual pipeline"
-                except AssertionError as e:
-                    assert "Virtual pipeline model parallelism is temporarily unsupported" in str(e)
+        with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel"):
+            # Should raise AssertionError for virtual pipeline
+            try:
+                provider.provide(vp_stage=0)
+                assert False, "Expected AssertionError for virtual pipeline"
+            except AssertionError as e:
+                assert "Virtual pipeline model parallelism is temporarily unsupported" in str(e)
 
     def test_mamba_stack_spec_callable(self):
         """Test that mamba_stack_spec can be a callable."""
@@ -263,19 +255,19 @@ class TestMambaModelProvider:
             mamba_stack_spec=custom_stack_spec,
         )
 
-        with patch("megatron.bridge.models.mamba.mamba_provider.parallel_state"):
-            with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
-                    mock_instance = Mock()
-                    mock_mamba.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with patch("megatron.bridge.models.mamba.mamba_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.mamba.mamba_provider.MCoreMambaModel") as mock_mamba:
+                mock_instance = Mock()
+                mock_mamba.return_value = mock_instance
 
-                    provider.provide()
+                provider.provide(pre_process=True, post_process=True)
 
-                    # The custom_stack_spec should have been called
-                    assert provider.mamba_stack_spec == custom_stack_spec
-                    spec_call_kwarg = mock_mamba.call_args.kwargs["mamba_stack_spec"]
-                    assert isinstance(spec_call_kwarg, Mock)
-                    assert spec_call_kwarg.info == "custom spec"
+                # The custom_stack_spec should have been called
+                assert provider.mamba_stack_spec == custom_stack_spec
+                spec_call_kwarg = mock_mamba.call_args.kwargs["mamba_stack_spec"]
+                assert isinstance(spec_call_kwarg, Mock)
+                assert spec_call_kwarg.info == "custom spec"
 
     def test_minimal_configuration(self):
         """Test that minimal configuration works."""

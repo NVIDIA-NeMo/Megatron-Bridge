@@ -27,7 +27,7 @@ def create_mock_dataset_config(seq_length):
         # Dataloader config parameters
         data_sharding=True,
         dataloader_type="single",
-        num_workers=1,
+        num_workers=8,
     )
 
 
@@ -58,7 +58,7 @@ def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None)
     )
 
 
-def create_squad_dataset_config(dataset_root, seq_length, packed=False):
+def create_squad_dataset_config(dataset_root, seq_length, packed=False, pad_seq_to_mult=1):
     """Create SQuAD dataset configuration for Megatron-Bridge using HF dataset."""
     from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
     from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -67,7 +67,7 @@ def create_squad_dataset_config(dataset_root, seq_length, packed=False):
     # Create packed sequence specs if needed
     packed_sequence_specs = None
     if packed:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return HFDatasetConfig(
         dataset_name="squad",  # Hugging Face dataset name

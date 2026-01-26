@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal, Optional, Union
 
 from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -91,6 +93,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
+    _pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""
@@ -106,8 +109,6 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
             assert (self.num_layers // p_size) % vp_size == 0, (
                 "Make sure the number of model chunks is the same across all pipeline stages."
             )
-
-        from megatron.core import parallel_state
 
         encoder_config = copy.deepcopy(self)
         encoder_config.num_layers = self.encoder_num_layers
@@ -140,8 +141,9 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
             position_embedding_type=self.position_embedding_type,
             rotary_percent=self.rotary_percent,
             seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=parallel_state.is_pipeline_first_stage(),
-            post_process=parallel_state.is_pipeline_last_stage(),
+            pre_process=pre_process or is_pp_first_stage(self._pg_collection.pp),
+            post_process=post_process or is_pp_last_stage(self._pg_collection.pp),
+            pg_collection=self._pg_collection,
         )
 
         return model

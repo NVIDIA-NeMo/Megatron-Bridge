@@ -86,7 +86,7 @@ class TestDataFineTuningDataset:
         dataset, path = get_dataset(ensure_test_data)
         default_pack_path = dataset.default_pack_path
 
-        assert PosixPath(default_pack_path) == PosixPath(f"{path}/packed/null")
+        assert PosixPath(default_pack_path) == PosixPath(f"{path}/packed/null_pad_seq_to_mult1")
 
     def test_train_path_packed(self, ensure_test_data):
         npy_path = f"{ensure_test_data}/datasets/finetune/test.npy"
@@ -100,7 +100,7 @@ class TestDataFineTuningDataset:
         train_path_packed = dataset.train_path_packed
 
         assert PosixPath(train_path_packed) == PosixPath(
-            f"{ensure_test_data}/datasets/finetune/packed/null/training_1.npy"
+            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/training_1.npy"
         )
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
@@ -120,7 +120,7 @@ class TestDataFineTuningDataset:
         validation_path_packed = dataset.validation_path_packed
 
         assert PosixPath(validation_path_packed) == PosixPath(
-            f"{ensure_test_data}/datasets/finetune/packed/null/validation_1.npy"
+            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/validation_1.npy"
         )
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
@@ -151,7 +151,9 @@ class TestDataFineTuningDataset:
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
 
-        assert train_path_packed == msc.Path(f"{ensure_test_data}/datasets/finetune/packed/null/training_1.npy")
+        assert train_path_packed == msc.Path(
+            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/training_1.npy"
+        )
 
         # Validation
         dataset, _ = get_dataset(ensure_test_data, packed_val_data_path=npy_path)
@@ -162,7 +164,9 @@ class TestDataFineTuningDataset:
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert validation_path_packed == msc.Path(f"{ensure_test_data}/datasets/finetune/packed/null/validation_1.npy")
+        assert validation_path_packed == msc.Path(
+            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/validation_1.npy"
+        )
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
 
