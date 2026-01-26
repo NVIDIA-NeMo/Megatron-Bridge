@@ -36,7 +36,7 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.training.mimo_config import MimoParallelismConfig
+from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -1248,14 +1248,6 @@ class ConfigContainer(Container):
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
-
-    def get_module_data_parallel_size(self, module_name: str) -> int:
-        """Return data parallel size for a specific MIMO module."""
-        if self.mimo is None:
-            raise ValueError("MIMO configuration is not set.")
-        world_size = get_world_size_safe()
-        self.mimo.finalize(world_size if world_size and world_size > 1 else None)
-        return self.mimo.get_parallelism(module_name).data_parallel
 
     def _validate_mimo(self) -> None:
         """Validate MIMO-specific configuration invariants."""

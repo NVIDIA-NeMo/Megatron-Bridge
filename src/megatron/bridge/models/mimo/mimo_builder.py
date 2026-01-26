@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from megatron.bridge.training.mimo_config import MimoParallelismConfig
+from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 
 
 def build_hypercomm_grids(

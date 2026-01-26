@@ -15,7 +15,7 @@ from megatron.core.models.mimo.config.base_configs import MimoModelConfig, Coloc
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 
-from megatron.bridge.training.mimo_config import MimoParallelismConfig
+from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 from megatron.bridge.models.mimo.mimo_builder import (
     build_hypercomm_grids,
     build_colocated_comm_config,
