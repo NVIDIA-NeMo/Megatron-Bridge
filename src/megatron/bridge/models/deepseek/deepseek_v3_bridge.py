@@ -69,23 +69,19 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.async_tensor_model_parallel_allreduce = True
         provider.gradient_accumulation_fusion = True
 
-        # Dropout/precision
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False
 
-        # Vocab
         provider.make_vocab_size_divisible_by = 1280
-
-        # Default seq_length (may be overridden from HF config)
         provider.seq_length = 4096
 
-        # DeepSeek-V3-specific MoE layer frequency and shared expert size
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
 
         # TODO: mtp
+        provider.mtp_num_layers = None
 
         return provider
 

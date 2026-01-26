@@ -289,6 +289,17 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("num_nextn_predict_layers", "mtp_num_layers"),
     ]
 
+    # YARN rope scaling field mapping: (hf_rope_scaling_key, megatron_yarn_param)
+    # These are only applied when rope_scaling.rope_type == "yarn"
+    YARN_ROPE_SCALING_MAPPING = [
+        ("factor", "yarn_rotary_scaling_factor"),
+        ("original_max_position_embeddings", "yarn_original_max_position_embeddings"),
+        ("beta_fast", "yarn_beta_fast"),
+        ("beta_slow", "yarn_beta_slow"),
+        ("mscale", "yarn_mscale"),
+        ("mscale_all_dim", "yarn_mscale_all_dim"),
+    ]
+
     # Common bidirectional activation function mapping: hf_name <-> megatron_func
     ACTIVATION_MAPPING = {
         "silu": F.silu,
@@ -343,6 +354,21 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             if value is not None:
                 provider_kwargs[megatron_name] = value
 
+        # Handle YARN rope scaling: when rope_type == "yarn", collect yarn_* params
+        # These will be applied via setattr in provider_bridge (not passed as kwargs)
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if rope_scaling is not None and isinstance(rope_scaling, dict):
+            if rope_scaling.get("rope_type") == "yarn":
+                yarn_params = {}
+                for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
+                    value = rope_scaling.get(hf_key)
+                    if value is not None:
+                        yarn_params[megatron_key] = value
+                if "truncate" in rope_scaling:
+                    yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                if yarn_params:
+                    provider_kwargs["_yarn_params"] = yarn_params
+
         # Handle vocab_size_divisible_by
         vocab_size = provider_kwargs.get("vocab_size")
         if vocab_size is not None:
@@ -385,6 +411,22 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     hf_config[parts[0]][parts[1]] = value
                 else:
                     hf_config[hf_name] = value
+
+        # Handle YARN rope scaling: check if provider has yarn_* params and build rope_scaling dict
+        yarn_rotary_scaling_factor = getattr(provider, "yarn_rotary_scaling_factor", None)
+        if yarn_rotary_scaling_factor is not None:
+            if "rope_scaling" not in hf_config:
+                hf_config["rope_scaling"] = {}
+            hf_config["rope_scaling"]["rope_type"] = "yarn"
+
+            for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
+                value = getattr(provider, megatron_key, None)
+                if value is not None:
+                    hf_config["rope_scaling"][hf_key] = value
+
+            yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)
+            if yarn_correction_range_round_to_int is not None:
+                hf_config["rope_scaling"]["truncate"] = yarn_correction_range_round_to_int
 
         # Convert activation function back to HF format
         activation_func = getattr(provider, "activation_func", None)
@@ -431,12 +473,21 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Build base provider kwargs using CONFIG_MAPPING
         provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
 
+        yarn_params = provider_kwargs.pop("_yarn_params", None)
+
         # Add generation config
         provider_kwargs["generation_config"] = hf_pretrained.generation_config
 
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
-        return provider_class(**provider_kwargs)
+        provider = provider_class(**provider_kwargs)
+
+        # Apply YARN params via setattr (not all providers accept these in __init__)
+        if yarn_params:
+            for key, value in yarn_params.items():
+                setattr(provider, key, value)
+
+        return provider
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
