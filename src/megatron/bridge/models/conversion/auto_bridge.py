@@ -992,7 +992,7 @@ class AutoBridge(Generic[MegatronModelT]):
             return self.hf_pretrained
         return self._config_only_pretrained
 
-    @cached_property
+    @property
     def _causal_lm_architecture(self):
         """Resolve the model's CausalLM architecture for dispatch.
 
