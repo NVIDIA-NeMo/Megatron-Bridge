@@ -43,7 +43,7 @@ HF_GPT_OSS_TOY_MODEL_OVERRIDES = {
     "num_experts_per_tok": 2,  # Top-k routing
     "max_position_embeddings": 2048,
     "rope_theta": 150000,
-    "layer_types": ["dense", "moe"],  # Must match num_hidden_layers (2)
+    "layer_types": ["full_attention", "sliding_attention"],  # Must match num_hidden_layers (2)
 }
 
 
@@ -154,10 +154,11 @@ class TestGPTOSSFinetuneRecipes:
                     "hidden_size": 256,  # Match toy model
                     "ffn_hidden_size": 512,  # Match toy model intermediate_size
                     "num_attention_heads": 8,  # Match toy model
-                    "kv_channels": 32,  # hidden_size / num_attention_heads
+                    "kv_channels": 64,
                     "num_query_groups": 2,  # Match toy model num_key_value_heads
                     "num_moe_experts": 4,  # Match toy model
                     "moe_router_topk": 2,  # Match toy model num_experts_per_tok
+                    "moe_ffn_hidden_size": 512,  # Match toy model
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
@@ -172,10 +173,11 @@ class TestGPTOSSFinetuneRecipes:
                     "hidden_size": 256,  # Match toy model
                     "ffn_hidden_size": 512,  # Match toy model intermediate_size
                     "num_attention_heads": 8,  # Match toy model
-                    "kv_channels": 32,  # hidden_size / num_attention_heads
+                    "kv_channels": 64,
                     "num_query_groups": 2,  # Match toy model num_key_value_heads
                     "num_moe_experts": 4,  # Match toy model
                     "moe_router_topk": 2,  # Match toy model num_experts_per_tok
+                    "moe_ffn_hidden_size": 512,  # Match toy model
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
