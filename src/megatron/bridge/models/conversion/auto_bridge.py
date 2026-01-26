@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import dataclasses
-from functools import cached_property, partial
+from functools import partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
