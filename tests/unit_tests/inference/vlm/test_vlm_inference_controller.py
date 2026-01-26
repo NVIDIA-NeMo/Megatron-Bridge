@@ -31,26 +31,26 @@ class TestTokenizerWrapper:
 
     def test_tokenize(self, mock_tokenizer):
         wrapper = TokenizerWrapper(mock_tokenizer)
-        
+
         wrapper.tokenize("test")
-        
+
         mock_tokenizer.encode.assert_called_with("test", add_special_tokens=False)
 
     def test_detokenize(self, mock_tokenizer):
         wrapper = TokenizerWrapper(mock_tokenizer)
-        
+
         wrapper.detokenize([1, 2, 3])
-        
+
         mock_tokenizer.decode.assert_called_with([1, 2, 3], skip_special_tokens=False)
 
 
 class TestVLMTextGenerationController:
     """Tests for VLMTextGenerationController.
-    
+
     Since the controller inherits from SimpleTextGenerationController which has
     complex initialization, we mock parent __init__ for most tests.
     """
-    
+
     @pytest.fixture
     def controller(self, mock_tokenizer, mock_image_processor):
         """Create a VLMTextGenerationController with mocked parent initialization."""
@@ -63,16 +63,16 @@ class TestVLMTextGenerationController:
 
     def test_tokenize_prompt_no_image(self, controller, mock_tokenizer, mock_image_processor):
         tokens, image_dict = controller.tokenize_prompt("test", None)
-        
+
         assert tokens == [1, 2, 3]
         assert "pixel_values" in image_dict
         assert image_dict["pixel_values"].shape == (1, 4, 3, 224, 224)
 
     def test_tokenize_prompt_with_image(self, controller, mock_tokenizer, mock_image_processor):
         image = MagicMock()
-        
+
         tokens, image_dict = controller.tokenize_prompt("test", image)
-        
+
         assert tokens == [1, 2, 3]
         mock_image_processor.preprocess.assert_called_with(image, return_tensors='pt')
         assert "pixel_values" in image_dict
@@ -93,7 +93,7 @@ class TestVLMTextGenerationController:
 
 class TestQwenVLTextGenerationController:
     """Tests for QwenVLTextGenerationController."""
-    
+
     @pytest.fixture
     def controller(self, mock_tokenizer, mock_image_processor):
         """Create a QwenVLTextGenerationController with mocked parent initialization."""
@@ -127,7 +127,7 @@ class TestQwenVLTextGenerationController:
 
     def test_tokenize_prompt(self, controller):
         tokens, image_dict = controller.tokenize_prompt("test", "image")
-        
+
         assert tokens == [1, 2, 3]
         assert image_dict['pixel_values'] == 'pixel_values'
         assert image_dict['image_grid_thw'] == 'image_grid_thw'
@@ -146,7 +146,7 @@ class TestQwenVLTextGenerationController:
             controller.tokenizer = TokenizerWrapper(mock_tokenizer)
             
             tokens, image_dict = controller.tokenize_prompt("test", None)
-            
+
             assert tokens == [1, 2, 3]
             assert image_dict is None
 
@@ -154,7 +154,7 @@ class TestQwenVLTextGenerationController:
         # Test special token replacement
         tokens = [151652, 1]
         controller.tokenizer.detokenize(tokens)
-        
+
         # 151652 should be followed by 151655
         mock_tokenizer.decode.assert_called()
         call_args = mock_tokenizer.decode.call_args[0][0]

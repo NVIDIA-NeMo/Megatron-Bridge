@@ -49,8 +49,12 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
 
         return {
             "input_ids": prompts_tokens,
-            "pixel_values": image_dict[0]['pixel_values'].cuda(non_blocking=True) if image_dict[0] is not None else None,
-            "image_grid_thw": image_dict[0]['image_grid_thw'].cuda(non_blocking=True) if image_dict[0] is not None else None,
+            "pixel_values": image_dict[0]["pixel_values"].cuda(non_blocking=True)
+            if image_dict[0] is not None
+            else None,
+            "image_grid_thw": image_dict[0]["image_grid_thw"].cuda(non_blocking=True)
+            if image_dict[0] is not None
+            else None,
         }
 
     def get_batch_for_context_window(
@@ -64,8 +68,8 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
 
         return {
             "input_ids": tokens2use,
-            "pixel_values": inference_input['pixel_values'],
-            "image_grid_thw": inference_input['image_grid_thw'],
+            "pixel_values": inference_input["pixel_values"],
+            "image_grid_thw": inference_input["image_grid_thw"],
         }
 
     def forward_pass_without_pipeline_parallel(self, inference_input: Dict[str, Any]) -> torch.Tensor:
@@ -81,7 +85,6 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         Returns:
             torch.Tensor: The output logits of shape [batch_size, seq_len, padded_vocab_size]
         """
-        
         # TODO: add kv cache support
         logits = self.model(attention_mask=None, **inference_input)
 

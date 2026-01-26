@@ -40,6 +40,7 @@ from megatron.bridge.inference.vlm.base import generate, setup_inference_wrapper
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import print_rank_0
 
+
 def process_image_inputs(processor, image_path: Optional[str], prompt: str):
     """Process image inputs for vision-language model.
 
