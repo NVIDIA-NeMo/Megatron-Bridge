@@ -72,7 +72,6 @@ class SarvamMoEModelProvider(GPTModelProvider):
     moe_grouped_gemm: bool = True
     moe_permute_fusion: bool = True
     moe_router_topk_scaling_factor: float = 2.5
-    moe_z_loss_coeff: float = 3.5e-5
     moe_shared_expert_overlap: bool = False
     moe_router_dtype: Optional[str] = "fp32"
     moe_router_score_function: str = "sigmoid"
@@ -145,7 +144,6 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     moe_grouped_gemm: bool = True
     moe_permute_fusion: bool = True
     moe_router_topk_scaling_factor: float = 2.5
-    moe_z_loss_coeff: float = 3.5e-5
     moe_shared_expert_overlap: bool = False
     moe_router_dtype: Optional[str] = "fp32"
     moe_router_score_function: str = "sigmoid"
@@ -162,12 +160,19 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     )
 
     multi_latent_attention: bool = True
+    rope_type: str = "yarn"
+    rotary_scaling_factor: float = 40
+    original_max_position_embeddings: int = 4096
+    beta_fast: float = 32.0
+    beta_slow: float = 1.0
+    mscale: float = 1.0
+    mscale_all_dim: float = 1.0
 
     # Configured through hf config
 
     kv_channels: Optional[int] = 64
     seq_length: int = 131072
-    rotary_base: float = 8_000_000.0
+    rotary_base: float = 10_000.0
     vocab_size: int = 262144
     num_moe_experts: int = 128
     moe_router_topk: int = 8
@@ -188,6 +193,4 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     qk_head_dim: int = 128
     qk_pos_emb_head_dim: int = 64
     v_head_dim: int = 128
-    rotary_scaling_factor: float = 40
-    mscale: float = 1.0
-    mscale_all_dim: float = 1.0
+    

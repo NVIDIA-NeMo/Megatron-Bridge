@@ -53,15 +53,6 @@ class SarvamMLABridge(MegatronModelBridge):
         config["qk_pos_emb_head_dim"] = hf_config.qk_rope_head_dim
         config["v_head_dim"] = hf_config.v_head_dim
 
-        if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling is not None:
-            config["rotary_scaling_factor"] = hf_config.rope_scaling["factor"]
-            config["mscale"] = hf_config.rope_scaling["mscale"]
-            config["mscale_all_dim"] = hf_config.rope_scaling["mscale_all_dim"]
-        else:
-            config["rotary_scaling_factor"] = 1.0
-            config["mscale"] = 1.0
-            config["mscale_all_dim"] = 1.0
-
         return SarvamMLAModelProvider(**config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
