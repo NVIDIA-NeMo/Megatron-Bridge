@@ -8,7 +8,7 @@ import torch
 
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.bridge.models.mimo import MimoModelProvider, MimoModelProviderResult
-from megatron.bridge.training.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
+from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
 class TestMimoModelProvider:

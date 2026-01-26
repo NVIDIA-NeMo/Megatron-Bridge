@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
+from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
 def test_module_parallelism_finalize_computes_dp():
