@@ -22,7 +22,7 @@ This directory contains comprehensive documentation for training and customizing
 → Explore [Performance Guide](../performance-guide.md) and [Performance Summary](../performance-summary.md)
 
 **🔧 Customize training**
-→ See [PEFT](peft.md), [Distillation](distillation.md), and [Entry Points](entry-points.md)
+→ See [PEFT](peft.md), [Distillation](distillation.md), [Entry Points](entry-points.md), and [Callbacks](callbacks.md)
 
 ## Core Training Documentation
 
@@ -61,6 +61,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[Packed Sequences](packed-sequences.md)** | Sequence packing for efficiency | Optimizing data loading |
 | **[Distillation](distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
 | **[Checkpointing](checkpointing.md)** | Checkpoint saving, loading, and resuming | Managing training state |
+| **[Callbacks](callbacks.md)** | Inject custom logic into training loop | Custom logging, metrics, third-party integrations |
 
 ## Training Workflow
 
@@ -113,6 +114,7 @@ A typical training workflow involves:
 1. [PEFT](peft.md) - Parameter-efficient fine-tuning
 2. [Distillation](distillation.md) - Knowledge distillation
 3. [Entry Points](entry-points.md) - Custom training workflows
+4. [Callbacks](callbacks.md) - Inject custom logic (third-party integrations)
 
 ---
 

@@ -50,6 +50,7 @@ from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -94,6 +95,7 @@ def train(
     pg_collection: ProcessGroupCollection,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
+    callback_manager: CallbackManager | None = None,
 ) -> None:
     """Main training loop.
 
@@ -111,6 +113,7 @@ def train(
         checkpointing_context: Context dictionary for checkpointing.
         process_non_loss_data_func: Optional function to process non-loss data during evaluation.
         non_loss_data_func: Optional function to compute non-loss data during evaluation.
+        callback_manager: Optional CallbackManager for custom callback execution.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
@@ -262,6 +265,20 @@ def train(
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
 
+    # Create persistent user_state for callbacks to share across all callback invocations
+    callback_user_state: dict = {}
+    if should_fire(callback_manager, "on_train_start"):
+        callback_manager.fire(
+            "on_train_start",
+            CallbackContext(
+                state=global_state,
+                model=model,
+                user_state=callback_user_state,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            ),
+        )
+
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
@@ -330,6 +347,19 @@ def train(
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
+
+        if should_fire(callback_manager, "on_train_step_start"):
+            callback_manager.fire(
+                "on_train_step_start",
+                CallbackContext(
+                    state=global_state,
+                    model=model,
+                    user_state=callback_user_state,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                ),
+            )
+
         (
             loss_dict,
             skipped_iter,
@@ -351,6 +381,21 @@ def train(
         )
 
         fault_tolerance.on_training_step_end(global_state)
+
+        if should_fire(callback_manager, "on_train_step_end"):
+            callback_manager.fire(
+                "on_train_step_end",
+                CallbackContext(
+                    state=global_state,
+                    model=model,
+                    user_state=callback_user_state,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    loss_dict=loss_dict,
+                    grad_norm=grad_norm,
+                    skipped_iter=bool(skipped_iter),
+                ),
+            )
 
         # Advance NVIDIA DLFw Inspect step if enabled
         tensor_inspect_step_if_enabled(config.tensor_inspect)
@@ -480,6 +525,8 @@ def train(
                 write_to_tensorboard=True,
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
+                callback_manager=callback_manager,
+                callback_user_state=callback_user_state,
             )
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
@@ -576,6 +623,18 @@ def train(
 
     # Close NVIDIA DLFw Inspect at clean finish
     tensor_inspect_end_if_enabled(config.tensor_inspect)
+
+    if should_fire(callback_manager, "on_train_end"):
+        callback_manager.fire(
+            "on_train_end",
+            CallbackContext(
+                state=global_state,
+                model=model,
+                user_state=callback_user_state,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            ),
+        )
 
 
 def train_step(

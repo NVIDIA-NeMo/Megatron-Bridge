@@ -29,6 +29,7 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
@@ -46,6 +47,8 @@ def evaluate(
     config: ConfigContainer,
     verbose: bool = False,
     non_loss_data_func: Optional[Callable] = None,
+    callback_manager: CallbackManager | None = None,
+    callback_user_state: dict | None = None,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -58,6 +61,8 @@ def evaluate(
         config (ConfigContainer): Configuration container (potentially redundant).
         verbose (bool, optional): Whether to print evaluation progress. Defaults to False.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
+        callback_user_state (Optional[dict]): Optional persistent user state for callbacks.
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -65,6 +70,8 @@ def evaluate(
             - collected_non_loss_data: Data collected by non_loss_data_func.
             - timelimit_hit: Boolean indicating if the time limit was reached.
     """
+    # Use provided user_state or create a new one
+    user_state = callback_user_state if callback_user_state is not None else {}
     # Prepare forward_step_func (check signature and inject state if needed)
     # This is done once to prevent creating new partial objects every eval iteration
     wrapped_forward_step = prepare_forward_step_func(forward_step_func, state)
@@ -139,6 +146,17 @@ def evaluate(
             config.timers = None
             fault_tolerance.on_eval_step_start(state)
             p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
+            if should_fire(callback_manager, "on_eval_step_start"):
+                callback_manager.fire(
+                    "on_eval_step_start",
+                    CallbackContext(
+                        state=state,
+                        model=model,
+                        user_state=user_state,
+                    ),
+                )
+
             loss_dicts = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
@@ -151,6 +169,17 @@ def evaluate(
                 pg_collection=pg_collection,
             )
             fault_tolerance.on_eval_step_end(state)
+
+            if should_fire(callback_manager, "on_eval_step_end"):
+                callback_manager.fire(
+                    "on_eval_step_end",
+                    CallbackContext(
+                        state=state,
+                        model=model,
+                        user_state=user_state,
+                    ),
+                )
+
             config.timers = state.timers
 
             # Empty unused memory
@@ -251,6 +280,8 @@ def evaluate_and_print_results(
     write_to_tensorboard: bool = True,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
+    callback_manager: CallbackManager | None = None,
+    callback_user_state: dict | None = None,
 ) -> None:
     """Helper function to evaluate and dump results on screen.
 
@@ -265,7 +296,12 @@ def evaluate_and_print_results(
         write_to_tensorboard (bool, optional): Whether to write results to TensorBoard. Defaults to True.
         process_non_loss_data_func (Optional[Callable], optional): Function to process non-loss data. Defaults to None.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
+        callback_user_state (Optional[dict]): Optional persistent user state for callbacks.
     """
+    # Use provided user_state or create a new one
+    user_state = callback_user_state if callback_user_state is not None else {}
+
     if write_to_tensorboard:
         writer = state.tensorboard_logger
     else:
@@ -273,8 +309,27 @@ def evaluate_and_print_results(
 
     wandb_writer = state.wandb_logger
 
+    if should_fire(callback_manager, "on_eval_start"):
+        callback_manager.fire(
+            "on_eval_start",
+            CallbackContext(
+                state=state,
+                model=model,
+                user_state=user_state,
+            ),
+        )
+
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
-        state, forward_step_func, data_iterator, model, process_non_loss_data_func, config, verbose, non_loss_data_func
+        state,
+        forward_step_func,
+        data_iterator,
+        model,
+        process_non_loss_data_func,
+        config,
+        verbose,
+        non_loss_data_func,
+        callback_manager=callback_manager,
+        callback_user_state=user_state,
     )
 
     # Timelimit hit during evaluation
@@ -310,3 +365,14 @@ def evaluate_and_print_results(
     print_rank_last("-" * length)
     print_rank_last(string)
     print_rank_last("-" * length)
+
+    if should_fire(callback_manager, "on_eval_end"):
+        callback_manager.fire(
+            "on_eval_end",
+            CallbackContext(
+                state=state,
+                model=model,
+                user_state=user_state,
+                total_loss_dict=total_loss_dict,
+            ),
+        )
