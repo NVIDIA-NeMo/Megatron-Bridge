@@ -39,7 +39,7 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 class Nemotron3NanoCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Nemotron Next 3B v2 recipe helper functions."""
+    """Typed options accepted by Nemotron 3 Nano recipe helper functions."""
 
     # Core identifiers
     model_provider: Nemotron3NanoProvider
@@ -183,8 +183,6 @@ def _nemotron_3_nano_common(
         lr_warmup_iters: Number of warmup iterations for the learning rate.
         lr_decay_iters: Number of iterations for learning rate decay.
         use_null_tokenizer: Whether to use NullTokenizer instead of HuggingFaceTokenizer.
-        tokenizer_model: Path or name of the tokenizer model.
-        vocab_size: Size of the vocabulary.
         precision_config: Precision configuration for the model.
         comm_overlap_config: Communication overlap configuration for the model.
         enable_deepep: Whether to enable DeepEP for MoE.

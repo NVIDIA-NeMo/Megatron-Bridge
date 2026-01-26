@@ -50,7 +50,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         help="Path to the YAML OmegaConf override file.",
     )
     parser.add_argument("--per-split-data-args-path", type=str, help="Path to the per split data args file.")
-    parser.add_argument("--tokenizer-model", type=str, help="Path to the tokenizer model file.")
 
     # Parse known args for the script, remaining will be treated as overrides
     args, cli_dotlist_overrides = parser.parse_known_args()
@@ -65,7 +64,6 @@ def main() -> None:
 
     cfg: ConfigContainer = pretrain_config(
         per_split_data_args_path=args.per_split_data_args_path,
-        tokenizer_model=args.tokenizer_model,
     )
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
