@@ -190,11 +190,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     When enabled, hooks are registered to compare LOCAL tensors across repeated runs.
     NO cross-rank communication in hooks (PP-safe). Gather results at step end only."""
     
-    determinism_mode: str = "cross_run"
-    """Mode for determinism checking: 'cross_run' or 'recompute'.
-    - cross_run: Compare local tensors across repeated forward+backward passes (new, recommended)
-    - recompute: Compare forward vs recompute outputs (original)"""
-    
     determinism_check_layers: Optional[list[str]] = None
     """List of layer name patterns (regex) to check. If None, checks all layers.
     Examples: ['decoder.layers.0', 'decoder.layers.1']"""
@@ -209,9 +204,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     determinism_check_param_grad: bool = True
     """Enable parameter gradient tracking for cross-run comparison."""
     
-    determinism_tolerance: float = 1e-6
-    """Tolerance for tensor comparison."""
-    
     determinism_check_interval: int = 1
     """Check determinism every N steps (default: 1 = every step).
     Set higher for less overhead (e.g., 10, 100)."""
@@ -219,17 +211,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     determinism_num_repeats: int = 2
     """Number of times to repeat same batch for cross-run checking."""
     
-    determinism_output_dir: str = "./determinism_logs"
-    """Directory for saving mismatch tensors."""
-    
-    determinism_save_tensors: bool = False
-    """Save full tensors when mismatch is detected."""
-    
     determinism_verbose: bool = False
     """Print detailed logs for each layer check."""
-
-    determinism_max_stored: int = 500
-    """Max stored activations (memory limit). Oldest evicted if exceeded."""
 
     def __post_init__(self):
         """Initialize the model provider and setup determinism debugging if enabled.
@@ -262,11 +245,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 layers_to_skip=self.determinism_layers_to_skip,
                 check_backward=self.determinism_check_backward,
                 check_param_grad=self.determinism_check_param_grad,
-                tolerance=self.determinism_tolerance,
-                output_dir=self.determinism_output_dir,
-                save_tensors_on_mismatch=self.determinism_save_tensors,
                 verbose=self.determinism_verbose,
-                max_stored=self.determinism_max_stored,
             )
             
             # Create plugin
@@ -278,12 +257,12 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
             # Register pre-wrap hook so plugin can register hooks before DDP wrapping
             def register_determinism_hooks(models):
                 for model in models:
-                    self._determinism_plugin.register_hooks(model, mode=self.determinism_mode)
+                    self._determinism_plugin.register_hooks(model)
                 return models
             
             self.register_pre_wrap_hook(register_determinism_hooks)
             
-            logger.info(f"Determinism debug plugin enabled (mode={self.determinism_mode})")
+            logger.info("Determinism debug plugin enabled")
             
         except ImportError as e:
             logger.warning(f"Could not import determinism plugin: {e}")
@@ -306,14 +285,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         """Print determinism check summary and gather results.
         
         Call this at the end of training to see results.
-        For cross_run mode, this should be called after gather_all_results().
+        Should be called after gather_all_results().
         """
         plugin = self.get_determinism_plugin()
         if plugin is not None:
-            if self.determinism_mode == "cross_run":
-                plugin.print_cross_run_summary()
-            else:
-                plugin.print_summary()
+            plugin.print_summary()
         else:
             logger.info("Determinism debug plugin not enabled or not available.")
 

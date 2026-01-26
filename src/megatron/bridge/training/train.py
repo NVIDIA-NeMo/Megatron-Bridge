@@ -1258,9 +1258,6 @@ def _should_run_active_determinism_check(cfg: ConfigContainer, current_step: int
     if not model_config.determinism_debug_enabled:
         return False
     
-    if model_config.determinism_mode != "cross_run":
-        return False
-    
     # Check interval (default: every step)
     check_interval = getattr(model_config, 'determinism_check_interval', 1)
     if current_step % check_interval != 0 or current_step == 0:
@@ -1316,11 +1313,10 @@ def _train_step_with_determinism_check(
     # Register hooks on model if not already registered (lazy initialization case)
     # This is needed because the plugin is created after model wrapping
     if not hasattr(plugin, '_hooks_registered'):
-        determinism_mode = getattr(model_config, 'determinism_mode', 'cross_run')
         for model_chunk in model:
             # Unwrap DDP/FSDP wrapper to get the actual model
             actual_model = model_chunk.module if hasattr(model_chunk, 'module') else model_chunk
-            plugin.register_hooks(actual_model, mode=determinism_mode)
+            plugin.register_hooks(actual_model)
         plugin._hooks_registered = True
     
     # Cache the batch BEFORE any runs

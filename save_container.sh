@@ -16,7 +16,8 @@ MOUNTS="\
 
 ORIGINAL_CONTAINER_NAME="nvcr.io#nvidia/nemo:25.11"
 # With this weekend's build, [9.18.0.45], cudnn has deterministic f16 MLA support.
-NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.45.sqsh"
+# NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.45.sqsh"
+NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.76-new.sqsh"
 
 
 srun -N1 \
