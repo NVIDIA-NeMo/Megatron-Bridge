@@ -736,7 +736,11 @@ class AutoBridge(Generic[MegatronModelT]):
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
         bridge.save_megatron_model(
-            megatron_model, megatron_path, hf_tokenizer_path=hf_model_id, hf_tokenizer_kwargs=hf_tokenizer_kwargs
+            megatron_model,
+            megatron_path,
+            hf_tokenizer_path=hf_model_id,
+            hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+            low_memory_save=True,
         )
 
     def export_ckpt(
