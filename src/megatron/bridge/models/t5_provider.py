@@ -87,9 +87,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     distribute_saved_activations: bool = False
     enable_autocast: bool = False
 
-    transformer_layer_spec: ModuleSpec | Callable[["T5ModelProvider"], ModuleSpec] = (
-        transformer_engine_layer_spec
-    )
+    transformer_layer_spec: ModuleSpec | Callable[["T5ModelProvider"], ModuleSpec] = transformer_engine_layer_spec
 
     vocab_size: int | None = None
     should_pad_vocab: bool = False

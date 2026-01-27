@@ -72,7 +72,7 @@ class WorkloadBaseConfig:
     peft: Optional[str] = None
 
     # Pipeline parallelism layout
-    pp_layout: Optional[str] = None
+    pp_layout: str | None = None
 
     # TransformerEngine per-module precision overrides
     te_precision_config_file: Optional[str] = None
