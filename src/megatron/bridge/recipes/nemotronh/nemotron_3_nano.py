@@ -218,6 +218,7 @@ def _nemotron_3_nano_common(
         gradient_accumulation_fusion=True,
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
+        seq_length=seq_length,
     )
 
     if enable_deepep:
@@ -481,6 +482,7 @@ def _nemotron_3_nano_finetune_common(
         gradient_accumulation_fusion=True,
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
+        seq_length=seq_length,
     )
 
     if enable_deepep:
