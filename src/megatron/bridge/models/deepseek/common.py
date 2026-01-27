@@ -74,7 +74,7 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
     configs["layernorm_epsilon"] = hf_config.rms_norm_eps
 
     # MTP module
-    configs["mtp_num_layers"] = getattr(hf_config, "num_nextn_predict_layers", 0)
+    configs["mtp_num_layers"] = getattr(hf_config, "num_nextn_predict_layers", None)
 
     return configs
 
