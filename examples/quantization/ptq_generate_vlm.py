@@ -80,27 +80,11 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
     """
     model_str = str(model)
 
-    # DEBUG: Print full model structure to diagnose CI vs local differences
-    if is_rank_0:
-        console.print(f"\n{'=' * 80}")
-        console.print("[yellow]DEBUG: Full model structure:[/yellow]")
-        console.print(f"{'=' * 80}")
-        console.print(model_str)
-        console.print(f"{'=' * 80}\n")
-
     # TE spec quantized layers (VLM models always use TE spec)
     te_spec_layers = [
         "QuantTERowParallelLinear",
         "QuantTELayerNormColumnParallelLinear",
     ]
-
-    # DEBUG: Check each layer individually
-    if is_rank_0:
-        console.print("[yellow]DEBUG: Checking for quantized layers:[/yellow]")
-        for layer in te_spec_layers:
-            found = layer in model_str
-            status = "[green]FOUND[/green]" if found else "[red]NOT FOUND[/red]"
-            console.print(f"  {layer}: {status}")
 
     # Check if model has TE spec quantized layers
     has_te_spec = all(layer in model_str for layer in te_spec_layers)
@@ -264,21 +248,22 @@ if __name__ == "__main__":
         default=DEFAULT_IMAGE_PATH,
         help="Path to the image file for VLM generation.",
     )
-    parser.add_argument("--trust-remote-code", action="store_true", default=True, help="if trust_remote_code")
+    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
-    main(
-        args.hf_model_id,
-        args.tp,
-        args.pp,
-        args.ep,
-        args.etp,
-        args.megatron_load_path,
-        args.prompts,
-        args.osl,
-        args.image_path,
-        args.trust_remote_code,
-    )
-
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
+    try:
+        main(
+            args.hf_model_id,
+            args.tp,
+            args.pp,
+            args.ep,
+            args.etp,
+            args.megatron_load_path,
+            args.prompts,
+            args.osl,
+            args.image_path,
+            args.trust_remote_code,
+        )
+    finally:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()

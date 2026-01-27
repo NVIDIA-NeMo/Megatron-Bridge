@@ -20,6 +20,7 @@ scripts (LLM and VLM) to avoid code duplication.
 """
 
 import argparse
+import copy
 
 import modelopt.torch.quantization as mtq
 from rich.console import Console
@@ -40,7 +41,9 @@ QUANT_CFG_CHOICES = {
 }
 
 
-def get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant=False, weight_only=False):
+def get_modelopt_torch_quantization_config(
+    export_quant_cfg: str, export_kv_cache_quant: bool = False, weight_only: bool = False
+) -> dict:
     """Return a quantization config based on the specified configuration.
 
     Args:
@@ -54,7 +57,8 @@ def get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_qua
     Raises:
         KeyError: If export_quant_cfg is not a valid configuration name.
     """
-    mtq_config = QUANT_CFG_CHOICES[export_quant_cfg]
+    # Use deepcopy to avoid mutating the original config in QUANT_CFG_CHOICES
+    mtq_config = copy.deepcopy(QUANT_CFG_CHOICES[export_quant_cfg])
 
     fp8_config = {"enable": True, "num_bits": (4, 3), "axis": None}
     fp4_config = {
