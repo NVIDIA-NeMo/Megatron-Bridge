@@ -310,7 +310,7 @@ def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collect
     return container, og_ws, cfg_mod
 
 
-class TestMockGPTDatasetConfig:
+class TestGPTFIMDatasetConfig:
     """Tests desired behavior for GPTFIMDatasetConfig."""
 
     def test_initialization(self):
@@ -327,12 +327,11 @@ class TestMockGPTDatasetConfig:
         )
         config.finalize()
 
-        # Should be an instance of both GPTDatasetConfig and GPTFIMDatasetConfig
+        # Should be an instance GPTFIMDatasetConfig
         from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
         from megatron.training.datasets.fim_dataset import GPTFIMDatasetConfig as MCoreGPTFIMDatasetConfig
 
         assert isinstance(config, GPTFIMDatasetConfig)
-        assert isinstance(config, GPTDatasetConfig)
         assert isinstance(config, MCoreGPTFIMDatasetConfig)
         assert isinstance(config, BlendedMegatronDatasetConfig)
 
