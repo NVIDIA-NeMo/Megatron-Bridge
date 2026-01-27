@@ -69,16 +69,32 @@ pretrain(config, forward_step_func, callbacks=manager)
 
 ## Available Events
 
+### Training Events
+
 | Event | When Fired | Available Context Fields |
 |-------|------------|-------------------------|
 | `on_train_start` | After `model.train()`, before training loop | `state`, `model`, `user_state`, `optimizer`, `scheduler` |
 | `on_train_step_start` | Before each training step | `state`, `model`, `user_state`, `optimizer`, `scheduler` |
 | `on_train_step_end` | After each training step | `state`, `model`, `user_state`, `optimizer`, `scheduler`, `loss_dict`, `grad_norm`, `skipped_iter` |
 | `on_train_end` | After training loop completes | `state`, `model`, `user_state`, `optimizer`, `scheduler` |
-| `on_eval_start` | After `model.eval()`, before evaluation loop | `state`, `model`, `user_state` |
-| `on_eval_step_start` | Before each evaluation step | `state`, `model`, `user_state` |
-| `on_eval_step_end` | After each evaluation step | `state`, `model`, `user_state` |
-| `on_eval_end` | After evaluation completes | `state`, `model`, `user_state`, `total_loss_dict` |
+
+### Validation Events
+
+| Event | When Fired | Available Context Fields |
+|-------|------------|-------------------------|
+| `on_eval_start` | After `model.eval()`, before validation loop | `state`, `model`, `user_state` |
+| `on_eval_step_start` | Before each validation step | `state`, `model`, `user_state` |
+| `on_eval_step_end` | After each validation step | `state`, `model`, `user_state` |
+| `on_eval_end` | After validation completes | `state`, `model`, `user_state`, `total_loss_dict` |
+
+### Test Events
+
+| Event | When Fired | Available Context Fields |
+|-------|------------|-------------------------|
+| `on_test_start` | After `model.eval()`, before test loop | `state`, `model`, `user_state` |
+| `on_test_step_start` | Before each test step | `state`, `model`, `user_state` |
+| `on_test_step_end` | After each test step | `state`, `model`, `user_state` |
+| `on_test_end` | After test completes | `state`, `model`, `user_state`, `total_loss_dict` |
 
 ## CallbackContext
 
@@ -100,11 +116,11 @@ The {py:class}`bridge.training.callbacks.CallbackContext` provides access to fra
 - **`loss_dict`** (`on_train_step_end`): Dictionary of reduced losses from the training step
 - **`grad_norm`** (`on_train_step_end`): Gradient norm (if computed)
 - **`skipped_iter`** (`on_train_step_end`): Whether the iteration was skipped
-- **`total_loss_dict`** (`on_eval_end`): Aggregated evaluation losses
+- **`total_loss_dict`** (`on_eval_end`, `on_test_end`): Aggregated evaluation/test losses
 
 ## User State
 
-The `user_state` dictionary persists across all callback invocations during a training run. Use it to share data between callbacks or accumulate metrics:
+The `CallbackManager` owns a `user_state` dictionary that persists across all callback invocations during a training run. Use it to share data between callbacks or accumulate metrics:
 
 ```python
 class StepCounterCallback(Callback):

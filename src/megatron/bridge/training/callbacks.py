@@ -68,6 +68,10 @@ VALID_EVENTS: frozenset[str] = frozenset(
         "on_eval_step_start",
         "on_eval_step_end",
         "on_eval_end",
+        "on_test_start",
+        "on_test_step_start",
+        "on_test_step_end",
+        "on_test_end",
     }
 )
 
@@ -94,7 +98,7 @@ class CallbackContext:
         All events: state, model, user_state
         Training events: optimizer, scheduler
         on_train_step_end: loss_dict, grad_norm, skipped_iter
-        on_eval_end: total_loss_dict
+        on_eval_end, on_test_end: total_loss_dict
     """
 
     # Always available
@@ -167,6 +171,22 @@ class Callback:
         """Called after evaluation completes, before model.train()."""
         pass
 
+    def on_test_start(self, context: CallbackContext) -> None:
+        """Called after model.eval(), before test loop begins."""
+        pass
+
+    def on_test_step_start(self, context: CallbackContext) -> None:
+        """Called at the start of each test step."""
+        pass
+
+    def on_test_step_end(self, context: CallbackContext) -> None:
+        """Called after each test step completes."""
+        pass
+
+    def on_test_end(self, context: CallbackContext) -> None:
+        """Called after test completes, before model.train()."""
+        pass
+
 
 class CallbackManager:
     """Manages registration and execution of training callbacks.
@@ -186,6 +206,9 @@ class CallbackManager:
 
     Both patterns can be mixed. Callbacks fire in registration order.
 
+    The manager also owns a `user_state` dictionary that persists across all
+    callback invocations, allowing callbacks to share state.
+
     Example:
         ```python
         manager = CallbackManager()
@@ -196,9 +219,15 @@ class CallbackManager:
     """
 
     def __init__(self) -> None:
-        """Initialize the callback manager with empty callback lists."""
+        """Initialize the callback manager with empty callback lists and user state."""
         self._callbacks: dict[str, list[Callable[[CallbackContext], None]]] = {event: [] for event in VALID_EVENTS}
         self._active_events: set[str] = set()
+        self._user_state: dict = {}
+
+    @property
+    def user_state(self) -> dict:
+        """Mutable dictionary for storing user data across callback invocations."""
+        return self._user_state
 
     def add(self, callback: Callback | list[Callback]) -> None:
         """Register one or more Callback instances.
@@ -238,6 +267,10 @@ class CallbackManager:
                 - "on_eval_step_start"
                 - "on_eval_step_end"
                 - "on_eval_end"
+                - "on_test_start"
+                - "on_test_step_start"
+                - "on_test_step_end"
+                - "on_test_end"
             fn: Callback function with signature (CallbackContext) -> None.
 
         Raises:

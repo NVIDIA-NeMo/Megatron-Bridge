@@ -197,6 +197,7 @@ def _pretrain(
             verbose=True,
             write_to_tensorboard=not config.train.skip_train,
             callback_manager=callback_manager,
+            is_test=True,
         )
 
     _finish_train(state)

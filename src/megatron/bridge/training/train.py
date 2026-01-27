@@ -265,15 +265,13 @@ def train(
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
 
-    # Create persistent user_state for callbacks to share across all callback invocations
-    callback_user_state: dict = {}
     if should_fire(callback_manager, "on_train_start"):
         callback_manager.fire(
             "on_train_start",
             CallbackContext(
                 state=global_state,
                 model=model,
-                user_state=callback_user_state,
+                user_state=callback_manager.user_state,
                 optimizer=optimizer,
                 scheduler=scheduler,
             ),
@@ -354,7 +352,7 @@ def train(
                 CallbackContext(
                     state=global_state,
                     model=model,
-                    user_state=callback_user_state,
+                    user_state=callback_manager.user_state,
                     optimizer=optimizer,
                     scheduler=scheduler,
                 ),
@@ -388,7 +386,7 @@ def train(
                 CallbackContext(
                     state=global_state,
                     model=model,
-                    user_state=callback_user_state,
+                    user_state=callback_manager.user_state,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     loss_dict=loss_dict,
@@ -526,7 +524,6 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
                 callback_manager=callback_manager,
-                callback_user_state=callback_user_state,
             )
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
@@ -630,7 +627,7 @@ def train(
             CallbackContext(
                 state=global_state,
                 model=model,
-                user_state=callback_user_state,
+                user_state=callback_manager.user_state,
                 optimizer=optimizer,
                 scheduler=scheduler,
             ),
