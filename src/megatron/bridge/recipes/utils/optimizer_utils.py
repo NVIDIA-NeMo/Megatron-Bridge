@@ -93,6 +93,10 @@ def distributed_fused_adam_with_cosine_annealing(
     max_lr: float = 1e-4,
     min_lr: Optional[float] = None,
     clip_grad: float = 1.0,
+    start_weight_decay: float = 0.033,
+    end_weight_decay: float = 0.033,
+    weight_decay_incr_style: str = "constant",
+    lr_decay_style: str = "cosine",
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler.
@@ -109,6 +113,10 @@ def distributed_fused_adam_with_cosine_annealing(
         max_lr: Maximum learning rate
         min_lr: Minimum learning rate (defaults to 0.1 * max_lr)
         clip_grad: Gradient clipping value
+        start_weight_decay: Initial weight decay value for scheduler
+        end_weight_decay: Final weight decay value for scheduler
+        weight_decay_incr_style: Weight decay increment style ("constant", "linear", etc.)
+        lr_decay_style: Learning rate decay style ("cosine", "linear", etc.)
 
     Returns:
         Tuple of (OptimizerConfig, SchedulerConfig)
@@ -129,10 +137,10 @@ def distributed_fused_adam_with_cosine_annealing(
     )
 
     scheduler = SchedulerConfig(
-        start_weight_decay=0.033,
-        end_weight_decay=0.033,
-        weight_decay_incr_style="constant",
-        lr_decay_style="cosine",
+        start_weight_decay=start_weight_decay,
+        end_weight_decay=end_weight_decay,
+        weight_decay_incr_style=weight_decay_incr_style,
+        lr_decay_style=lr_decay_style,
         lr_warmup_iters=lr_warmup_iters,
         lr_warmup_init=0.0,
         lr_decay_iters=lr_decay_iters,
