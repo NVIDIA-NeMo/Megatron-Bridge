@@ -48,7 +48,11 @@ class Gemma2Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # Gemma2-specific Megatron defaults
+        provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
+        provider.attn_logit_softcapping = hf_config.attn_logit_softcapping
+        provider.final_logit_softcapping = hf_config.final_logit_softcapping
+        provider.window_size = (hf_config.sliding_window, 0)
+
         provider.normalization = "RMSNorm"
         provider.activation_func = fast_gelu
         provider.gated_linear_unit = True
@@ -59,12 +63,6 @@ class Gemma2Bridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = True
         provider.layernorm_zero_centered_gamma = True
         provider.gradient_accumulation_fusion = False
-
-        # Gemma2-specific features not in CONFIG_MAPPING
-        provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
-        provider.attn_logit_softcapping = hf_config.attn_logit_softcapping
-        provider.final_logit_softcapping = hf_config.final_logit_softcapping
-        provider.window_size = (hf_config.sliding_window, 0)
 
         return provider
 

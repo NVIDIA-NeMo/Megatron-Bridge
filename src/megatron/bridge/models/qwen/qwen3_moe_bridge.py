@@ -34,14 +34,6 @@ class Qwen3MoEBridge(MegatronModelBridge):
     and Megatron-Core GPTModel formats. Qwen3 MoE models use mixture of experts
     architecture with QK layernorm.
 
-    Qwen3 MoE inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class.
-    The base class CONFIG_MAPPING includes MoE-related field mappings:
-    - num_experts → num_moe_experts
-    - num_experts_per_tok → moe_router_topk
-    - moe_intermediate_size → moe_ffn_hidden_size
-
-    Model-specific settings are defined in MEGATRON_DEFAULTS.
-
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
@@ -52,7 +44,6 @@ class Qwen3MoEBridge(MegatronModelBridge):
         """Convert HuggingFace Qwen3 MoE config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
-        # Qwen3 MoE-specific Megatron defaults - Common transformer settings
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
@@ -62,7 +53,6 @@ class Qwen3MoEBridge(MegatronModelBridge):
         provider.qk_layernorm = True  # Qwen3 MoE uses QK layernorm
         provider.autocast_dtype = torch.bfloat16
 
-        # MoE-specific settings
         provider.moe_grouped_gemm = True
         provider.moe_router_load_balancing_type = "aux_loss"
         provider.moe_aux_loss_coeff = 1e-3

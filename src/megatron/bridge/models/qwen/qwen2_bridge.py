@@ -47,7 +47,6 @@ class Qwen2Bridge(MegatronModelBridge):
         """Convert HuggingFace Qwen2 config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
-        # Qwen2-specific Megatron defaults
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"

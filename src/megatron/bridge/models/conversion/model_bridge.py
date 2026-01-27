@@ -324,8 +324,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         for hf_name, megatron_func in cls.ACTIVATION_MAPPING.items():
             if activation_func is megatron_func:
                 return hf_name
-        # Default to silu if not found
-        return "silu"
+        raise ValueError(
+            f"Unsupported activation function: {activation_func}. Supported: {list(cls.ACTIVATION_MAPPING.values())}"
+        )
 
     def hf_config_to_provider_kwargs(self, hf_config) -> dict:
         """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
@@ -386,66 +387,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         return provider_kwargs
 
-    @classmethod
-    def provider_to_hf_config(cls, provider) -> dict:
-        """Convert Megatron provider to HF config dict using CONFIG_MAPPING.
-
-        Args:
-            provider: Megatron model provider instance
-
-        Returns:
-            dict: HuggingFace config dict
-        """
-        hf_config = {}
-
-        # Map config fields using CONFIG_MAPPING (reverse direction)
-        # Supports dot notation for nested dict building (e.g., "rope_scaling.factor")
-        for hf_name, megatron_name in cls.CONFIG_MAPPING:
-            value = getattr(provider, megatron_name, None)
-            if value is not None:
-                if "." in hf_name:
-                    # Nested dict: "parent.child" -> hf_config["parent"]["child"] = value
-                    parts = hf_name.split(".", 1)
-                    if parts[0] not in hf_config:
-                        hf_config[parts[0]] = {}
-                    hf_config[parts[0]][parts[1]] = value
-                else:
-                    hf_config[hf_name] = value
-
-        # Handle YARN rope scaling: check if provider has yarn_* params and build rope_scaling dict
-        yarn_rotary_scaling_factor = getattr(provider, "yarn_rotary_scaling_factor", None)
-        if yarn_rotary_scaling_factor is not None:
-            if "rope_scaling" not in hf_config:
-                hf_config["rope_scaling"] = {}
-            hf_config["rope_scaling"]["rope_type"] = "yarn"
-
-            for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
-                value = getattr(provider, megatron_key, None)
-                if value is not None:
-                    hf_config["rope_scaling"][hf_key] = value
-
-            yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)
-            if yarn_correction_range_round_to_int is not None:
-                hf_config["rope_scaling"]["truncate"] = yarn_correction_range_round_to_int
-
-        # Convert activation function back to HF format
-        activation_func = getattr(provider, "activation_func", None)
-        if activation_func is not None:
-            hf_config["hidden_act"] = cls.megatron_to_hf_activation(activation_func)
-
-        # Determine torch_dtype
-        if getattr(provider, "bf16", False):
-            hf_config["torch_dtype"] = "bfloat16"
-        elif getattr(provider, "fp16", False):
-            hf_config["torch_dtype"] = "float16"
-        else:
-            hf_config["torch_dtype"] = "float32"
-
-        return hf_config
-
     # Set by @register_bridge decorator
-    SOURCE_NAME: Optional[str] = None
-    MODEL_TYPE: Optional[str] = None
+    SOURCE_NAME: str | None = None
+    MODEL_TYPE: str | None = None
 
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.
@@ -494,8 +438,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """Convert Megatron provider config to HuggingFace config dict.
 
         Default implementation that:
-        1. Converts provider to HF config using CONFIG_MAPPING (via provider_to_hf_config)
-        2. Adds architectures and model_type from decorator
+        1. Converts provider to HF config using CONFIG_MAPPING
+        2. Handles YARN rope scaling parameters
+        3. Converts activation function and dtype
+        4. Adds architectures and model_type from decorator
 
         Subclasses should override this to add model-specific configuration
         by calling super().megatron_to_hf_config() then setting values directly
@@ -507,8 +453,50 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         Returns:
             dict: HuggingFace config dictionary
         """
-        # Build base HF config using CONFIG_MAPPING
-        hf_config = cls.provider_to_hf_config(provider)
+        hf_config = {}
+
+        # Map config fields using CONFIG_MAPPING (reverse direction)
+        # Supports dot notation for nested dict building (e.g., "rope_scaling.factor")
+        for hf_name, megatron_name in cls.CONFIG_MAPPING:
+            value = getattr(provider, megatron_name, None)
+            if value is not None:
+                if "." in hf_name:
+                    # Nested dict: "parent.child" -> hf_config["parent"]["child"] = value
+                    parts = hf_name.split(".", 1)
+                    if parts[0] not in hf_config:
+                        hf_config[parts[0]] = {}
+                    hf_config[parts[0]][parts[1]] = value
+                else:
+                    hf_config[hf_name] = value
+
+        # Handle YARN rope scaling: check if provider has yarn_* params and build rope_scaling dict
+        yarn_rotary_scaling_factor = getattr(provider, "yarn_rotary_scaling_factor", None)
+        if yarn_rotary_scaling_factor is not None:
+            if "rope_scaling" not in hf_config:
+                hf_config["rope_scaling"] = {}
+            hf_config["rope_scaling"]["rope_type"] = "yarn"
+
+            for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
+                value = getattr(provider, megatron_key, None)
+                if value is not None:
+                    hf_config["rope_scaling"][hf_key] = value
+
+            yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)
+            if yarn_correction_range_round_to_int is not None:
+                hf_config["rope_scaling"]["truncate"] = yarn_correction_range_round_to_int
+
+        # Convert activation function back to HF format
+        activation_func = getattr(provider, "activation_func", None)
+        if activation_func is not None:
+            hf_config["hidden_act"] = cls.megatron_to_hf_activation(activation_func)
+
+        # Determine torch_dtype
+        if getattr(provider, "bf16", False):
+            hf_config["torch_dtype"] = "bfloat16"
+        elif getattr(provider, "fp16", False):
+            hf_config["torch_dtype"] = "float16"
+        else:
+            hf_config["torch_dtype"] = "float32"
 
         # Add architectures and model_type from decorator
         if cls.SOURCE_NAME is not None:
@@ -1262,8 +1250,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         *,
         source: Type[PreTrainedModel] | str,
         target: Type[MegatronModel],
-        provider: Optional[Type[ModelProviderTarget]] = None,
-        model_type: Optional[str] = None,
+        provider: Type[ModelProviderTarget] | None = None,
+        model_type: str | None = None,
     ) -> Callable[[_BridgeImplClass], _BridgeImplClass]:
         """Class decorator for registering bridge implementations.
 
@@ -1431,8 +1419,8 @@ def create_bridge_decorator(
     *,
     source: Type["PreTrainedModel"] | str,
     target: Type["MegatronModule"],
-    provider: Optional[Type["ModelProviderMixin"]] = None,
-    model_type: Optional[str] = None,
+    provider: Type["ModelProviderMixin"] | None = None,
+    model_type: str | None = None,
 ) -> Callable[[Type["MegatronModelBridge"]], Type["MegatronModelBridge"]]:
     """Create a decorator for registering bridge implementations.
 

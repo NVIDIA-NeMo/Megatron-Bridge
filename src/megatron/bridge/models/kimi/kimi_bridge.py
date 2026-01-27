@@ -34,7 +34,6 @@ class KimiK2Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # Kimi K2-specific Megatron defaults - Architecture
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
@@ -43,7 +42,6 @@ class KimiK2Bridge(MegatronModelBridge):
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
 
-        # MoE settings
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
         provider.moe_token_dispatcher_type = "alltoall"
@@ -53,7 +51,6 @@ class KimiK2Bridge(MegatronModelBridge):
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
 
-        # Optimizations
         provider.apply_rope_fusion = False
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
@@ -64,17 +61,12 @@ class KimiK2Bridge(MegatronModelBridge):
         provider.async_tensor_model_parallel_allreduce = True
         provider.gradient_accumulation_fusion = True
 
-        # Dropout/precision
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False
 
-        # Vocab
         provider.make_vocab_size_divisible_by = 1280
-
-        # Default seq_length
         provider.seq_length = 4096
 
-        # Kimi K2-specific MoE layer frequency and shared expert size
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )

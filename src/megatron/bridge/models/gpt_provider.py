@@ -141,16 +141,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     rotary_percent: float = 1.0
     rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
-
-    # RoPE scaling for Llama 3.x style context extension
-    rope_scaling: bool = False
-    rope_scaling_factor: float = 8.0
-
-    # RoPE scaling parameters (for YARN, etc.)
-    mscale: Optional[float] = None
-    mscale_all_dim: Optional[float] = None
-    beta_fast: Optional[float] = None
-    beta_slow: Optional[float] = None
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
     deallocate_pipeline_outputs: bool = True

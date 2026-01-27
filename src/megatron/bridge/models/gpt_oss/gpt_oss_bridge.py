@@ -42,18 +42,28 @@ except ImportError:
 
 @MegatronModelBridge.register_bridge(source=GptOssForCausalLM, target=GPTModel, model_type="gpt_oss")
 class GPTOSSBridge(MegatronModelBridge):
-    """Megatron Bridge for GPT-OSS MoE models with YARN position embeddings."""
+    """
+    Megatron Hub Bridge for GPT-OSS models.
+
+    As a user you would not use this bridge directly, but through `AutoBridge`.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
+        >>> provider = bridge.to_megatron_provider()
+    """
 
     def __init__(self):
         super().__init__()
-        # Cache for dequantized expert weights during import and merged weights during export
+        # gpt-oss HF weights has one weight for all the experts, but megatron has one for each expert
+        # We need to cache the weights during import to load and dequantize the expert weights only once.
+        # and we need to merge the weights of multiple experts during export.
         self.hf_weights_cache = {}
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
-        # GPT-OSS-specific Megatron defaults - Architecture
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = True
@@ -61,18 +71,15 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = False
         provider.position_embedding_type = "yarn"
 
-        # MoE settings
         provider.moe_router_pre_softmax = False
         provider.moe_grouped_gemm = True
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
         provider.moe_router_load_balancing_type = "none"
 
-        # Optimizations
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = False
 
-        # Dropout/precision
         provider.hidden_dropout = 0.0
         provider.bf16 = True
         provider.params_dtype = torch.bfloat16
@@ -82,7 +89,6 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.activation_func_clamp_value = 7.0
         provider.glu_linear_offset = 1.0
 
-        # Attention settings
         provider.softmax_type = "learnable"
         provider.window_size = (128, 0)
         provider.window_attn_skip_freq = 2

@@ -34,9 +34,6 @@ class Qwen3Bridge(MegatronModelBridge):
     and Megatron-Core GPTModel formats. Qwen3 differs from Qwen2 by using
     QK layernorm and no QKV bias.
 
-    Qwen3 inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class.
-    Model-specific settings are defined in MEGATRON_DEFAULTS.
-
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B")
@@ -47,7 +44,6 @@ class Qwen3Bridge(MegatronModelBridge):
         """Convert HuggingFace Qwen3 config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
 
-        # Qwen3-specific Megatron defaults
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"

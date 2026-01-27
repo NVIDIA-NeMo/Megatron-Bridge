@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from typing import TYPE_CHECKING
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import LlamaForCausalLM
@@ -27,10 +26,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-
-
-if TYPE_CHECKING:
-    pass
 
 
 logger = logging.getLogger(__name__)

@@ -34,21 +34,29 @@ logger = logging.getLogger(__name__)
 
 @MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel, model_type="glm4_moe")
 class GLM45Bridge(MegatronModelBridge):
-    """Megatron Bridge for GLM 4.5 MoE models with Multi-Token Prediction (MTP)."""
+    """
+    Megatron Bridge for GLM 4.5 Models.
+
+    This bridge handles the conversion between HuggingFace Glm4MoeForCausalLM
+    (used for GLM 4.5 models) and Megatron-Core GPTModel formats.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5")
+        >>> provider = bridge.to_megatron_provider()
+    """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # GLM 4.5 MoE-specific Megatron defaults - Architecture
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
 
-        # MoE settings
         provider.moe_shared_expert_overlap = True
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "seq_aux_loss"
@@ -61,22 +69,14 @@ class GLM45Bridge(MegatronModelBridge):
         provider.moe_router_bias_update_rate = 0
         provider.moe_aux_loss_coeff = 0.001
 
-        # Optimizations
         provider.persist_layer_norm = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
-
-        # Dropout/precision
         provider.hidden_dropout = 0.0
         provider.autocast_dtype = torch.bfloat16
-
-        # MTP settings
         provider.mtp_loss_scaling_factor = 0.3
-
-        # GLM uses moe_intermediate_size for shared expert size
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
 
-        # Compute moe_layer_freq from first_k_dense_replace
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )

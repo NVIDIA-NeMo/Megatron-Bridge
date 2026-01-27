@@ -45,15 +45,17 @@ class DeepSeekModelProvider(MLAModelProvider):
 
 @dataclass
 class DeepSeekV2ModelProvider(MLAModelProvider):
-    """Deprecated: Use MLAModelProvider with appropriate MEGATRON_DEFAULTS."""
+    """
+    DeepSeek-V2 Model: https://github.com/deepseek-ai/DeepSeek-V2
+    """
 
     num_layers: int = 60
     hidden_size: int = 5120
     ffn_hidden_size: int = 12288
     num_moe_experts: int = 160
     moe_ffn_hidden_size: int = 1536
-    moe_shared_expert_intermediate_size: int = 3072
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 59)
+    moe_shared_expert_intermediate_size: int = 3072  # 1536 * 2 shared experts
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 59)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 3
@@ -70,7 +72,10 @@ class DeepSeekV2ModelProvider(MLAModelProvider):
 
 @dataclass
 class DeepSeekV2LiteModelProvider(MLAModelProvider):
-    """Deprecated: Use MLAModelProvider with appropriate MEGATRON_DEFAULTS."""
+    """
+    DeepSeek-V2-Lite Model: https://github.com/deepseek-ai/DeepSeek-V2
+    HuggingFace: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
+    """
 
     num_layers: int = 27
     hidden_size: int = 2048
@@ -80,8 +85,8 @@ class DeepSeekV2LiteModelProvider(MLAModelProvider):
     q_lora_rank: int = None
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
-    moe_shared_expert_intermediate_size: int = 2816
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 26)
+    moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared experts
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1
@@ -95,15 +100,19 @@ class DeepSeekV2LiteModelProvider(MLAModelProvider):
 
 @dataclass
 class DeepSeekV3ModelProvider(MLAModelProvider):
-    """Deprecated: Use MLAModelProvider with appropriate MEGATRON_DEFAULTS."""
+    """
+    DeepSeek-V3 Model: https://github.com/deepseek-ai/DeepSeek-V3
+    """
 
     num_layers: int = 61
     hidden_size: int = 7168
     ffn_hidden_size: int = 18432
     num_moe_experts: int = 256
     moe_ffn_hidden_size: int = 2048
-    moe_shared_expert_intermediate_size: int = 2048
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 3 + [1] * 58)
+    moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
+    moe_layer_freq: Union[int, List[int]] = field(
+        default_factory=lambda: [0] * 3 + [1] * 58
+    )  # first three layers are dense
     moe_router_topk: int = 8
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 4
@@ -124,7 +133,11 @@ class DeepSeekV3ModelProvider(MLAModelProvider):
 
 @dataclass
 class MoonlightModelProvider16B(MLAModelProvider):
-    """Deprecated: Use MLAModelProvider with appropriate MEGATRON_DEFAULTS."""
+    """
+    Moonlight-16B-A3B Model: https://github.com/moonshotai/Moonlight-16B-A3B
+
+    Moonlight is based on DeepSeek-V3.
+    """
 
     max_position_embeddings: int = 4096
     num_layers: int = 27
@@ -134,8 +147,8 @@ class MoonlightModelProvider16B(MLAModelProvider):
     kv_channels: int = 16
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
-    moe_shared_expert_intermediate_size: int = 2816
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 26)
+    moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared expert
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1

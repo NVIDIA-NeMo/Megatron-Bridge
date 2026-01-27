@@ -38,7 +38,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        # DeepSeek-V3-specific Megatron defaults - Architecture
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
@@ -47,7 +46,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
 
-        # MoE settings
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
         provider.moe_token_dispatcher_type = "alltoall"
@@ -58,7 +56,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_permute_fusion = True
         provider.moe_aux_loss_coeff = 0.0001
 
-        # Optimizations
         provider.apply_rope_fusion = False
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True

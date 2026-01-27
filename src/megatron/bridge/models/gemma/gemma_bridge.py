@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
+from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 
 @MegatronModelBridge.register_bridge(
@@ -37,15 +38,29 @@ class GemmaBridge(MegatronModelBridge):
     """
     Megatron Bridge for Gemma Causal LM.
 
-    Uses GemmaModelProvider which applies embedding scaling (sqrt(hidden_size))
-    automatically in its provide() method.
+    This bridge handles the conversion between HuggingFace GemmaForCausalLM
+    and Megatron-Core GPTModel formats, including weight mappings and
+    configuration translation.
+
+    As a user you would not use this bridge directly, but through `AutoBridge`.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-2b")
+        >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Gemma config to GemmaModelProvider."""
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GemmaModelProvider:
+        """Convert HuggingFace config to GemmaModelProvider.
+
+        Args:
+            hf_pretrained: HuggingFace pretrained model wrapper
+
+        Returns:
+            GemmaModelProvider: Configured provider for Megatron model
+        """
         provider = super().provider_bridge(hf_pretrained)
 
-        # Gemma-specific Megatron defaults
         provider.normalization = "RMSNorm"
         provider.activation_func = fast_gelu
         provider.gated_linear_unit = True
