@@ -539,6 +539,7 @@ def calc_convergence_and_performance(
     current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm")
     current_alloc = get_metrics_from_logfiles(log_paths, alloc_metric)
     current_max_alloc = get_metrics_from_logfiles(log_paths, max_alloc_metric)
+    current_gpu_util = get_metrics_from_logfiles(log_paths, "GPU utilization")
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
@@ -555,7 +556,11 @@ def calc_convergence_and_performance(
                 }
                 for step in current_train_loss.keys()
             },
-            **{alloc_metric: current_alloc, max_alloc_metric: current_max_alloc},
+            **{
+                alloc_metric: current_alloc,
+                max_alloc_metric: current_max_alloc,
+                "GPU utilization": current_gpu_util,
+            },
         ),
         golden_values_path=next_golden_values_path,
         wandb_run=wandb_run,
