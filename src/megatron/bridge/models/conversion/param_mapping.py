@@ -290,9 +290,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         ...
 
-    def broadcast_from_pp_rank(
-        self, tensor: torch.Tensor | None, cache_key: str | None = None
-    ) -> torch.Tensor | None:
+    def broadcast_from_pp_rank(self, tensor: torch.Tensor | None, cache_key: str | None = None) -> torch.Tensor | None:
         """Broadcast a tensor from the pipeline-parallel rank that owns it.
 
         Broadcasts to **all** PP ranks. This mirrors the behaviour of

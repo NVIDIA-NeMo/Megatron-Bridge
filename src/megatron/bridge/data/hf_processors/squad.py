@@ -20,9 +20,7 @@ from megatron.bridge.data.builders.hf_dataset import ProcessExampleOutput
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
-def process_squad_example(
-    example: dict[str, Any], tokenizer: MegatronTokenizer | None = None
-) -> ProcessExampleOutput:
+def process_squad_example(example: dict[str, Any], tokenizer: MegatronTokenizer | None = None) -> ProcessExampleOutput:
     """Process a single Squad example into the required format.
 
     This function transforms a raw Squad dataset example into the standard format
