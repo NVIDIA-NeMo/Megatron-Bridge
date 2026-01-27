@@ -50,8 +50,8 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         pixel_values = None
         image_grid_thw = None
         if image_dict and image_dict[0] is not None:
-            pixel_values = image_dict[0]['pixel_values'].cuda(non_blocking=True)
-            image_grid_thw = image_dict[0]['image_grid_thw'].cuda(non_blocking=True)
+            pixel_values = image_dict[0]["pixel_values"].cuda(non_blocking=True)
+            image_grid_thw = image_dict[0]["image_grid_thw"].cuda(non_blocking=True)
 
         return {
             "input_ids": prompts_tokens,
