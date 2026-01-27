@@ -12,14 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+from typing import Optional, Union
 
-from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
+from megatron.core.optimizer import (
+    MegatronOptimizer,
+    OptimizerConfig,
+    get_megatron_optimizer,
+)
 from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.training.config import SchedulerConfig
+from megatron.bridge.training.config import (
+    OptimizerConfigOverrideProvider,
+    OptimizerConfigOverrideProviderContext,
+    SchedulerConfig,
+)
 
 
 def setup_optimizer(
@@ -27,6 +35,7 @@ def setup_optimizer(
     scheduler_config: SchedulerConfig,
     model: Union[MegatronModule, list[MegatronModule]],
     use_gloo_process_groups: bool = False,
+    optimizer_config_override_provider: Optional[OptimizerConfigOverrideProvider] = None,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -39,16 +48,26 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
+    if optimizer_config_override_provider is None:
+        optimizer_config_override_provider = OptimizerConfigOverrideProvider()
+
+    # Build config overrides for weight decay based on scheduler config and model params
+    config_overrides = optimizer_config_override_provider.build_config_overrides(
+        OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
+    )
+
     if "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
         optimizer = get_megatron_optimizer(
-            optimizer_config,
-            model,
+            config=optimizer_config,
+            model_chunks=model,
+            config_overrides=config_overrides,
             use_gloo_process_groups=use_gloo_process_groups,
         )
     else:
         optimizer = get_megatron_muon_optimizer(
-            optimizer_config,
-            model,
+            config=optimizer_config,
+            model_chunks=model,
+            config_overrides=config_overrides,
             use_gloo_process_groups=use_gloo_process_groups,
             layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
         )

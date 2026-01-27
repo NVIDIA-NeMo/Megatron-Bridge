@@ -92,16 +92,29 @@ def get_workload_base_config(
     # Try versioned config name first (e.g., LLAMA3_70B_PRETRAIN_CONFIG_GB300_BF16_V1)
     versioned_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_{config_variant}".upper()
 
-    # Fallback to non-versioned config name for backward compatibility
-    # (e.g., DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16)
-    base_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}".upper()
-
     # Try versioned name first
     workload_base_config = getattr(module, versioned_config_name, None)
     if workload_base_config is not None:
         logger.info(f"Loaded config: {versioned_config_name}")
         logger.info(f"{workload_base_config}")
         return workload_base_config
+
+    # If default v2 is unavailable, fall back to v1 when present
+    if config_variant.lower() == "v2":
+        fallback_versioned_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}_v1".upper()
+        workload_base_config = getattr(module, fallback_versioned_config_name, None)
+        if workload_base_config is not None:
+            logger.warning(
+                "Config variant '%s' not found; falling back to '%s'.",
+                versioned_config_name,
+                fallback_versioned_config_name,
+            )
+            logger.info(f"{workload_base_config}")
+            return workload_base_config
+
+    # Fallback to non-versioned config name for backward compatibility
+    # (e.g., DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16)
+    base_config_name = f"{model_recipe_name}_{task}_config_{gpu}_{compute_dtype}".upper()
 
     # Fall back to non-versioned name (backward compatibility)
     workload_base_config = getattr(module, base_config_name, None)
@@ -184,7 +197,7 @@ def get_perf_optimized_recipe(
     if train_task == "pretrain":
         return recipe_builder(precision=compute_dtype, mock=mock, config_variant=config_variant)
     else:
-        return recipe_builder(precision=compute_dtype)
+        return recipe_builder(precision=compute_dtype, config_variant=config_variant)
 
 
 def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):

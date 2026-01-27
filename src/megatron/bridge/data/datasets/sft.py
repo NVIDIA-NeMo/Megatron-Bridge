@@ -98,6 +98,7 @@ def create_sft_dataset(
     get_attention_mask_from_fusion: bool = True,
     pack_metadata_file_path: Path = None,
     pad_cu_seqlens: bool = False,
+    pad_seq_to_mult: int = 1,
     chat: bool = False,
     use_hf_tokenizer_chat_template: bool = False,
     tool_schemas: str | dict | None = None,
@@ -175,6 +176,7 @@ def create_sft_dataset(
         return GPTSFTPackedDataset(
             pack_metadata_file_path=pack_metadata_file_path,
             pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
             **gpt_sft_dataset_kwargs,
             **kwargs,
         )
@@ -225,7 +227,6 @@ class GPTSFTDataset(Dataset):
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
         get_attention_mask_from_fusion: bool = True,
-        sanity_check_dist_workers: bool = True,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -274,7 +275,6 @@ class GPTSFTDataset(Dataset):
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
         get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
             of adding it to the batch dict.
-        sanity_check_dist_workers (bool): if true, will run sanity check across workers when making mapping.
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
@@ -303,7 +303,6 @@ class GPTSFTDataset(Dataset):
         self.output_original_text = output_original_text
         self.ceil_to_power_2 = ceil_to_power_2
         self.get_attention_mask_from_fusion = get_attention_mask_from_fusion
-        self.sanity_check_dist_workers = sanity_check_dist_workers
 
         if special_tokens is None:
             self.special_tokens = {
@@ -385,7 +384,6 @@ class GPTSFTDataset(Dataset):
                 binary_head=False,
                 index_mapping_dir=self.index_mapping_dir,
                 samples_mapping=osm,
-                sanity_check_dist_workers=self.sanity_check_dist_workers,
             )
         else:
             self.samples_mapping = None
@@ -745,6 +743,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         tokenizer: MegatronTokenizer,
         return_cu_seqlen: bool = True,
         pad_cu_seqlens: bool = False,
+        pad_seq_to_mult: int = 1,
         pack_metadata_file_path: str | None = None,
         **kwargs,
     ):
@@ -754,11 +753,14 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         return_cu_seqlen: Whether to return `cu_seqlen` to pass to the model. Having `cu_seqlen` in the model input
                 enables THD attention kernel, which is the correct format for training with packed sequence to prevent
                 cross-sequence attention. This flag should be True unless you have a specific use case.
+        pad_seq_to_mult: The multiple used for padding sequences during packing. When > 1, cu_seqlens_unpadded
+                will be computed to support THD CP. When == 1 (no padding), cu_seqlens_unpadded is not computed.
         """
         np.random.seed(kwargs.get("seed", 1234))
         super().__init__(file_path, tokenizer, **kwargs)
         assert self.virtual_tokens == 0, "P-Tuning with packed sequence is not supported."
         self.return_cu_seqlen = return_cu_seqlen
+        self._pad_seq_to_mult = pad_seq_to_mult
 
         self.pad_cu_seqlens = pad_cu_seqlens
         if self.pad_cu_seqlens:
@@ -892,11 +894,13 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
         position_ids: list[list[int]] = []
         cu_seqlens: list[list[int]] = []
-        cu_seqlens_unpadded: list[list[int]] = []
+        # Only compute cu_seqlens_unpadded when pad_seq_to_mult > 1 (actual padding for CP)
+        cu_seqlens_unpadded: list[list[int]] | None = [] if self._pad_seq_to_mult > 1 else None
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
-            cu_seqlens_unpadded.append([0])
+            if cu_seqlens_unpadded is not None:
+                cu_seqlens_unpadded.append([0])
             seqlens = np.array(item["seq_boundaries"][1:]) - np.array(item["seq_boundaries"][:-1])
             for length in seqlens:
                 # length minus 1 because input_ids is truncated by 1 for labels
@@ -911,22 +915,20 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             if cu_seqlens[-1][-1] != max_length:
                 cu_seqlens[-1].append(max_length)
 
-            for i in range(len(item["seq_boundaries"]) - 1):
-                current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
+            if cu_seqlens_unpadded is not None:
+                for i in range(len(item["seq_boundaries"]) - 1):
+                    current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                # since the data could be prepadded with tokenizer's eos_id,
-                # we can find out the index of all the eos_id
-                eos_idx = np.where(np.array(current_seq) == self.tokenizer.eos_id)
+                    # Stop unpadded lengths at the last non-eos token so padding eos are excluded.
+                    current_seq_arr = np.array(current_seq)
+                    non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
+                    seqlen_unpadded = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
+                    cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
 
-                # The second eos_id index marks the length of the original unpadded sequence if the sequence is
-                # prepadded for cp_size > 1. Otherwise, there is no extra padding.
-                seqlen_unpadded = eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1 else len(current_seq)
-                cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
-
-            # if extra paddings are added in the packed sequence, they can't be counted as
-            # actual tokens for training
-            if len(cu_seqlens[-1]) > len(cu_seqlens_unpadded[-1]):
-                cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1])
+                # if extra paddings are added in the packed sequence, they can't be counted as
+                # actual tokens for training
+                if len(cu_seqlens[-1]) > len(cu_seqlens_unpadded[-1]):
+                    cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1])
 
             if self.pad_cu_seqlens:
                 # pad cu_seqlens to a constant shape with zero length sequences
@@ -944,10 +946,15 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         loss_mask = self._collate_item(loss_mask, max_length=max_length, pad_id=0)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
 
+        tokens = torch.LongTensor(input_ids)
+        loss_mask = torch.LongTensor(loss_mask)
+        # drop any padding/eos tokens from contributing to the loss
+        loss_mask[tokens == self.tokenizer.eos_id] = 0
+
         processed_batch = {
-            "tokens": torch.LongTensor(input_ids),
+            "tokens": tokens,
             "labels": torch.LongTensor(labels),
-            "loss_mask": torch.LongTensor(loss_mask),
+            "loss_mask": loss_mask,
             "position_ids": torch.LongTensor(position_ids),
             "token_count": token_count,
         }
@@ -956,16 +963,11 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             cu_seqlens = self._collate_item(
                 cu_seqlens, max_length=max(len(length) for length in cu_seqlens) + 1, pad_id=-1
             )
-            cu_seqlens_unpadded = self._collate_item(
-                cu_seqlens_unpadded, max_length=max(len(length) for length in cu_seqlens_unpadded) + 1, pad_id=-1
-            )
             # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
             cu_seqlens = torch.IntTensor(cu_seqlens)
             cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
             seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
             max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
-            cu_seqlens_unpadded = torch.IntTensor(cu_seqlens_unpadded)
-            cu_seqlens_unpadded_argmin = torch.argmin(cu_seqlens_unpadded, dim=1, keepdim=True)
 
             if self.pad_cu_seqlens:
                 # If padding, use the global max seqlen, so that 'pad_cu_seqlens' is the same
@@ -981,18 +983,25 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             else:
                 seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
                 max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
-            processed_batch.update(
-                {
-                    "attention_mask": torch.LongTensor(
-                        [1] * len(input_ids)
-                    ),  # no attention mask is needed for packed seq
-                    "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
-                    "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
-                    "max_seqlen": max_seqlen,  # only required for perf
-                    "cu_seqlens_unpadded": torch.IntTensor(cu_seqlens_unpadded),
-                    "cu_seqlens_unpadded_argmin": cu_seqlens_unpadded_argmin,
-                }
-            )
+
+            cu_seqlens_batch = {
+                "attention_mask": torch.LongTensor([1] * len(input_ids)),  # no attention mask is needed for packed seq
+                "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
+                "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
+                "max_seqlen": max_seqlen,  # only required for perf
+            }
+
+            # Only include cu_seqlens_unpadded when pad_seq_to_mult > 1 (actual CP padding)
+            if cu_seqlens_unpadded is not None:
+                cu_seqlens_unpadded = self._collate_item(
+                    cu_seqlens_unpadded, max_length=max(len(length) for length in cu_seqlens_unpadded) + 1, pad_id=-1
+                )
+                cu_seqlens_unpadded = torch.IntTensor(cu_seqlens_unpadded)
+                cu_seqlens_unpadded_argmin = torch.argmin(cu_seqlens_unpadded, dim=1, keepdim=True)
+                cu_seqlens_batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded
+                cu_seqlens_batch["cu_seqlens_unpadded_argmin"] = cu_seqlens_unpadded_argmin
+
+            processed_batch.update(cu_seqlens_batch)
         else:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
             processed_batch.update(

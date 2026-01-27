@@ -224,7 +224,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
             [s, b, h], and optionally the updated context tensor if cross-attention is used.
         """
         if self.pre_process and deepstack_visual_embeds is not None:
-            assert len(deepstack_visual_embeds) < len(self.layers), (
+            assert len(deepstack_visual_embeds) <= len(self.layers), (
                 "the deepstack_visual_embeds should on the first pp-stage"
             )
 
@@ -314,6 +314,9 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                                     visual_pos_masks,
                                     deepstack_visual_embeds[l_no],
                                 )
+                            hidden_states = make_viewless_tensor(
+                                inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True
+                            )
 
                     if (
                         torch.is_grad_enabled()
