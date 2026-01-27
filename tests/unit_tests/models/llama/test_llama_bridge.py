@@ -263,12 +263,12 @@ class TestLlamaBridgeConfigConverter:
         assert result_config.hidden_size == result_provider.hidden_size
         assert result_config.normalization == result_provider.normalization
 
-    def test_hf_to_megatron_config_symmetric_name(self, mock_pretrained_llama):
-        """Test that hf_to_megatron_config works (symmetric with megatron_to_hf_config)."""
+    def test_provider_bridge_is_the_hf_to_megatron_method(self, mock_pretrained_llama):
+        """Test that provider_bridge is the HF -> Megatron conversion method."""
         bridge = LlamaBridge()
 
-        # hf_to_megatron_config should work the same as provider_bridge
-        result = bridge.hf_to_megatron_config(mock_pretrained_llama)
+        # provider_bridge is the HF -> Megatron conversion (symmetric with megatron_to_hf_config)
+        result = bridge.provider_bridge(mock_pretrained_llama)
 
         assert isinstance(result, GPTModelProvider)
         assert result.normalization == "RMSNorm"
@@ -322,36 +322,63 @@ class TestLlamaBridgeConfigConverter:
         with pytest.raises(ValueError, match="Unsupported activation function"):
             LlamaBridge.hf_to_megatron_activation("unknown_activation")
 
-    def test_megatron_defaults_class_attribute(self):
-        """Test that MEGATRON_DEFAULTS is properly defined for Llama."""
-        assert hasattr(LlamaBridge, "MEGATRON_DEFAULTS")
-        defaults = LlamaBridge.MEGATRON_DEFAULTS
+    def test_llama_defaults_applied_via_provider_bridge(self, mock_pretrained_llama_2):
+        """Test that Llama-specific defaults are applied via provider_bridge (not class attributes)."""
+        # Per refactoring guide: MEGATRON_DEFAULTS removed, now use direct property assignment
+        bridge = LlamaBridge()
+        provider = bridge.provider_bridge(mock_pretrained_llama_2)
 
-        assert defaults["normalization"] == "RMSNorm"
-        assert defaults["gated_linear_unit"] is True
-        assert defaults["position_embedding_type"] == "rope"
-        # Note: add_bias_linear is now dynamically mapped from mlp_bias in CONFIG_MAPPING
+        # These values are set directly in provider_bridge, not via class attributes
+        assert provider.normalization == "RMSNorm"
+        assert provider.gated_linear_unit is True
+        assert provider.position_embedding_type == "rope"
 
-    def test_hf_defaults_class_attribute(self):
-        """Test that HF_DEFAULTS is properly defined for Llama."""
-        assert hasattr(LlamaBridge, "HF_DEFAULTS")
-        defaults = LlamaBridge.HF_DEFAULTS
-
-        assert defaults["architectures"] == ["LlamaForCausalLM"]
-        assert defaults["model_type"] == "llama"
+    def test_source_name_and_model_type_class_attributes(self):
+        """Test that SOURCE_NAME and MODEL_TYPE are set via @register_bridge decorator."""
+        # Per refactoring guide: HF_DEFAULTS removed, now use SOURCE_NAME and MODEL_TYPE
+        assert LlamaBridge.SOURCE_NAME == "LlamaForCausalLM"
+        assert LlamaBridge.MODEL_TYPE == "llama"
 
 
 class TestBaseClassHelperMethods:
     """Test cases for base class helper methods used by LlamaBridge."""
 
-    def test_provider_bridge_uses_base_class_implementation(self, mock_pretrained_llama_2):
-        """Test that LlamaBridge.provider_bridge uses base class MEGATRON_DEFAULTS pattern."""
+    @pytest.fixture
+    def mock_pretrained_llama_2(self):
+        """Create a mock PreTrainedCausalLM with Llama 2 config."""
+        llama_2_7b_config_dict = {
+            "architectures": ["LlamaForCausalLM"],
+            "hidden_size": 4096,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 32,
+            "intermediate_size": 11008,
+            "vocab_size": 32000,
+            "max_position_embeddings": 4096,
+            "rope_theta": 10000.0,
+            "rms_norm_eps": 1e-05,
+            "tie_word_embeddings": False,
+            "model_type": "llama",
+            "initializer_range": 0.02,
+        }
+        config = LlamaConfig(**llama_2_7b_config_dict)
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        mock_pretrained.generation_config = None
+        mock_pretrained.model = Mock(spec=LlamaForCausalLM)
+        mock_pretrained.model.dtype = torch.float32
+        return mock_pretrained
+
+    def test_provider_bridge_uses_base_class_and_direct_assignment(self, mock_pretrained_llama_2):
+        """Test that LlamaBridge.provider_bridge uses base class + direct property assignment."""
         bridge = LlamaBridge()
         provider = bridge.provider_bridge(mock_pretrained_llama_2)
 
-        # Verify MEGATRON_DEFAULTS are applied (via base class)
-        for key, value in LlamaBridge.MEGATRON_DEFAULTS.items():
-            assert getattr(provider, key) == value, f"Expected {key}={value}"
+        # Verify Llama-specific values are applied via direct assignment in provider_bridge
+        assert provider.normalization == "RMSNorm"
+        assert provider.gated_linear_unit is True
+        assert provider.position_embedding_type == "rope"
+        assert provider.hidden_dropout == 0.0
 
         # Verify generation_config is set (via base class)
         assert provider.generation_config == mock_pretrained_llama_2.generation_config
@@ -359,12 +386,14 @@ class TestBaseClassHelperMethods:
     def testhf_config_to_provider_kwargs_from_base_class(self):
         """Test that hf_config_to_provider_kwargs is inherited from MegatronModelBridge."""
         assert hasattr(LlamaBridge, "hf_config_to_provider_kwargs")
-        assert LlamaBridge.hf_config_to_provider_kwargs is MegatronModelBridge.hf_config_to_provider_kwargs
+        # It's an instance method, check it exists on the class
+        assert hasattr(MegatronModelBridge, "hf_config_to_provider_kwargs")
 
-    def testprovider_to_hf_config_from_base_class(self):
-        """Test that provider_to_hf_config is inherited from MegatronModelBridge."""
-        assert hasattr(LlamaBridge, "provider_to_hf_config")
-        assert LlamaBridge.provider_to_hf_config is MegatronModelBridge.provider_to_hf_config
+    def test_megatron_to_hf_config_from_base_class(self):
+        """Test that megatron_to_hf_config is inherited from MegatronModelBridge."""
+        # megatron_to_hf_config is the Megatron -> HF conversion method
+        assert hasattr(LlamaBridge, "megatron_to_hf_config")
+        assert hasattr(MegatronModelBridge, "megatron_to_hf_config")
 
     def testhf_config_to_provider_kwargs_returns_correct_mappings(self):
         """Test that hf_config_to_provider_kwargs correctly maps HF config to provider kwargs."""
@@ -400,8 +429,8 @@ class TestBaseClassHelperMethods:
         assert kwargs["rotary_base"] == 500000.0
         assert kwargs["activation_func"] == F.silu
 
-    def testprovider_to_hf_config_returns_correct_mappings(self):
-        """Test that provider_to_hf_config correctly maps provider to HF config."""
+    def test_megatron_to_hf_config_returns_correct_mappings(self):
+        """Test that megatron_to_hf_config correctly maps provider to HF config."""
         provider = GPTModelProvider(
             num_layers=32,
             hidden_size=4096,
@@ -417,7 +446,8 @@ class TestBaseClassHelperMethods:
             bf16=True,
         )
 
-        hf_config = LlamaBridge.provider_to_hf_config(provider)
+        # Use megatron_to_hf_config (the Megatron -> HF conversion method)
+        hf_config = LlamaBridge.megatron_to_hf_config(provider)
 
         assert hf_config["num_hidden_layers"] == 32
         assert hf_config["hidden_size"] == 4096
@@ -465,8 +495,8 @@ class TestLlamaBridgeBidirectionalConversion:
 
         bridge = LlamaBridge()
 
-        # HF -> Megatron
-        provider = bridge.hf_to_megatron_config(mock_pretrained)
+        # HF -> Megatron (using provider_bridge, the correct method name)
+        provider = bridge.provider_bridge(mock_pretrained)
 
         # Megatron -> HF
         result_hf_config = bridge.megatron_to_hf_config(provider)
