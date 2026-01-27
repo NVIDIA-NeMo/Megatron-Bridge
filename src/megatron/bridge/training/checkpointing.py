@@ -41,6 +41,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
 )
+from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer
@@ -448,6 +449,7 @@ def save_checkpoint(
     non_persistent_ckpt: bool = False,
     train_data_iterator: Optional[Any] = None,
     preprocess_common_state_dict_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
+    prebuilt_state_dict: Optional[dict[str, Any]] = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -468,6 +470,9 @@ def save_checkpoint(
         train_data_iterator: The training data iterator (for saving state if supported).
         preprocess_common_state_dict_fn: Optional function to preprocess the common state dict
                                          before consistency checks in distributed checkpointing.
+        prebuilt_state_dict: Optional pre-built state dict. When provided, skips state dict
+                            generation and uses this directly. Used for low-memory save mode
+                            where factories are expanded and model deleted before save.
     """
 
     train_state = state.train_state
@@ -565,18 +570,24 @@ def save_checkpoint(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
         )
 
-    state_dict = generate_state_dict(
-        ckpt_cfg,
-        model,
-        optimizer,
-        opt_param_scheduler,
-        rng_state,
-        iteration=train_state.step,
-        optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
-        model_sd_kwargs=dict(metadata=sharded_sd_metadata),
-        rerun_state=rerun_state,
-        pg_collection=pg_collection,
-    )
+    if prebuilt_state_dict is not None:
+        # Use pre-built state dict (low-memory save mode)
+        # Factories should already be expanded and model can be deleted by caller
+        state_dict = prebuilt_state_dict
+        print_rank_0("Using pre-built state dict (low-memory save mode)")
+    else:
+        state_dict = generate_state_dict(
+            ckpt_cfg,
+            model,
+            optimizer,
+            opt_param_scheduler,
+            rng_state,
+            iteration=train_state.step,
+            optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
+            model_sd_kwargs=dict(metadata=sharded_sd_metadata),
+            rerun_state=rerun_state,
+            pg_collection=pg_collection,
+        )
 
     # Apply PEFT filtering to save adapter-only checkpoints
     if cfg.peft is not None:
@@ -588,6 +599,11 @@ def save_checkpoint(
             ensure_directory_exists(checkpoint_name, check_parent=False)
 
         if ckpt_cfg.ckpt_format == "fsdp_dtensor":
+            if not model:
+                raise ValueError(
+                    "FSDP DTensor format requires a model, but model list is empty. "
+                    "This can happen with low_memory_save=True. Use ckpt_format='torch_dist' instead."
+                )
             state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
             # FSDP DTensor checkpoint save path using PyTorch Distributed Checkpointing
@@ -635,21 +651,20 @@ def save_checkpoint(
                 async_sharded_save=ckpt_cfg.async_save,
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
-                content_metadata=sharded_sd_metadata,
+                content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
             )
-            # [ModelOpt]: save sharded modelopt_state
-            # cfg.dist can be None during checkpoint conversion (save_megatron_model)
-            if not (cfg.dist and cfg.dist.use_decentralized_pg):
-                save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
+            # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode)
+            if model:
+                # cfg.dist can be None during checkpoint conversion (save_megatron_model)
+                if not (cfg.dist and cfg.dist.use_decentralized_pg):
+                    save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
     else:
-        # [ModelOpt]: Inject modelopt_state into state_dict
+        # [ModelOpt]: Inject modelopt_state into state_dict (skip if model is empty)
         if ckpt_type == CheckpointType.LOCAL:
             print_rank_0("WARNING: Local checkpointing does not support nvidia_modelopt.")
-        else:  # GLOBAL checkpoint type
+        elif model:  # GLOBAL checkpoint type, only if model is available
             save_modelopt_state(model, state_dict)
 
-        end_ckpt = time()
-        logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
         if ckpt_type == CheckpointType.LOCAL:
             try:
                 from megatron.core.dist_checkpointing.tensor_aware_state_dict import MCoreTensorAwareStateDict
