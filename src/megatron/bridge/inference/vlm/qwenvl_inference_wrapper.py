@@ -39,7 +39,7 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
     def prep_inference_input(
         self,
         prompts_tokens: torch.Tensor,
-        image_dict: Optional[List[Dict]] = None,
+        image_dict: List[Dict] | None = None,
     ):
         # pylint: disable=C0115,C0116
         batch_size = prompts_tokens.size(0)
