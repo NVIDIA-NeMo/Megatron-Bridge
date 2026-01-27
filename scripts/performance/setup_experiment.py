@@ -30,12 +30,12 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
-    from utils.utils import select_config_variant_interactive
+    from utils.utils import select_config_variant_interactive, get_exp_name_config
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
-    from .utils.utils import select_config_variant_interactive
+    from .utils.utils import select_config_variant_interactive, get_exp_name_config
 
 try:
     import wandb
@@ -250,10 +250,17 @@ def main(
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
+        exp_config = get_exp_name_config(
+            model_family_name,
+            model_recipe_name,
+            gpu,
+            compute_dtype,
+            task,
+            config_variant)
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
-            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
+            else f"pretrain_{args.model_name}_{args.model_size}_{compute_dtype}_{exp_config}""
         )
 
     if pretrained_checkpoint is not None:
