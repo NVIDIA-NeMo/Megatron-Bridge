@@ -71,6 +71,7 @@ class KimiK2Bridge(MegatronModelBridge):
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
+        provider.moe_aux_loss_coeff = 1e-3
 
         return provider
 

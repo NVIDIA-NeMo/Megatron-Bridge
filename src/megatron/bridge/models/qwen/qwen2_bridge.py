@@ -35,7 +35,7 @@ class Qwen2Bridge(MegatronModelBridge):
     configuration translation.
 
     Qwen2 inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class.
-    Model-specific settings are defined in MEGATRON_DEFAULTS.
+    Model-specific settings are applied in provider_bridge.
 
     Example:
         >>> from megatron.bridge import AutoBridge

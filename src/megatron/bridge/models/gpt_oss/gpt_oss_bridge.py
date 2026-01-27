@@ -81,6 +81,7 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.bias_dropout_fusion = False
 
         provider.hidden_dropout = 0.0
+        provider.fp16 = False
         provider.bf16 = True
         provider.params_dtype = torch.bfloat16
 

@@ -215,7 +215,7 @@ class TestLlamaBridgeConfigConverter:
         assert result.fp16 is True
         assert result.bf16 is False
 
-    def test_provider_bridge_rope_scaling_params(self, mock_pretrained_llama, llama_config):
+    def test_provider_bridge_rope_scaling_params(self, mock_pretrained_llama):
         """Test that RoPE scaling parameters are correctly captured."""
         bridge = LlamaBridge()
         result = bridge.provider_bridge(mock_pretrained_llama)

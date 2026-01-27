@@ -54,9 +54,11 @@ class Gemma3ModelBridge(MegatronModelBridge):
         hf_vl_config = AutoConfig.from_pretrained(hf_pretrained._model_name_or_path)
 
         # Override dtype from VL config (has precision info)
-        provider.fp16 = self.dtype_from_hf(hf_vl_config, default=torch.float32) == torch.float16
-        provider.bf16 = self.dtype_from_hf(hf_vl_config, default=torch.float32) == torch.bfloat16
-        provider.params_dtype = self.dtype_from_hf(hf_vl_config, default=torch.float32)
+        params_dtype = self.dtype_from_hf(hf_vl_config, default=torch.float32)
+        provider.fp16 = params_dtype == torch.float16
+        provider.bf16 = params_dtype == torch.bfloat16
+        provider.params_dtype = params_dtype
+        provider.autocast_dtype = params_dtype
 
         # Gemma3-specific features not in CONFIG_MAPPING
         provider.window_size = hf_config.sliding_window
