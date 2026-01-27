@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+
 from megatron.bridge.inference.vlm.vlm_inference_controller import (
     QwenVLTextGenerationController,
     TokenizerWrapper,
