@@ -547,13 +547,16 @@ def calc_convergence_and_performance(
 
     # Always write actuals into experiment directory
     write_golden_values_to_disk(
-        current_values={
-            str(step): {
-                loss_metric: current_train_loss[str(step)],
-                timing_metric: current_iter_time[str(step)],
-            }
-            for step in current_train_loss.keys()
-        }.update({alloc_metric: current_alloc, max_alloc_metric: current_max_alloc}),
+        current_values=dict(
+            **{
+                str(step): {
+                    loss_metric: current_train_loss[str(step)],
+                    timing_metric: current_iter_time[str(step)],
+                }
+                for step in current_train_loss.keys()
+            },
+            **{alloc_metric: current_alloc, max_alloc_metric: current_max_alloc},
+        ),
         golden_values_path=next_golden_values_path,
         wandb_run=wandb_run,
     )
@@ -578,6 +581,8 @@ def calc_convergence_and_performance(
     steps = []
     golden_train_loss = {}
     golden_iter_time = {}
+    golden_alloc = None
+    golden_max_alloc = None
     for key, value in expected_golden_values.items():
         if key == alloc_metric:
             golden_alloc = value
