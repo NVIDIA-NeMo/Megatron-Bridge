@@ -47,7 +47,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
-    recipe.logger.save_config_filepath = "/nemo_run/configs/ConfigContainer.yaml"
 
     recipe.ddp.check_for_nan_in_grad = False
     recipe.ddp.check_for_large_grads = False
@@ -239,6 +238,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_exp_name = args.wandb_experiment_name
         recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
+
+    recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
     if args.tensor_model_parallel_size is not None:
