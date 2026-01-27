@@ -39,7 +39,7 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
     def prep_inference_input(
         self,
         prompts_tokens: torch.Tensor,
-        image_dict: List[Dict] = None,
+        image_dict: Optional[List[Dict]] = None,
     ):
         # pylint: disable=C0115,C0116
         batch_size = prompts_tokens.size(0)
@@ -47,14 +47,16 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
 
         self.inference_params = InferenceParams(batch_size, seq_length)
 
+        pixel_values = None
+        image_grid_thw = None
+        if image_dict and image_dict[0] is not None:
+            pixel_values = image_dict[0]['pixel_values'].cuda(non_blocking=True)
+            image_grid_thw = image_dict[0]['image_grid_thw'].cuda(non_blocking=True)
+
         return {
             "input_ids": prompts_tokens,
-            "pixel_values": image_dict[0]["pixel_values"].cuda(non_blocking=True)
-            if image_dict[0] is not None
-            else None,
-            "image_grid_thw": image_dict[0]["image_grid_thw"].cuda(non_blocking=True)
-            if image_dict[0] is not None
-            else None,
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
         }
 
     def get_batch_for_context_window(

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Union
+from typing import List, Optional, Union
 
 import torch
 from megatron.core.inference.common_inference_params import CommonInferenceParams
@@ -28,14 +28,17 @@ class VLMEngine(MCoreEngine):
     def generate(
         self,
         prompts: List[str],
-        images: List[Union[Image, List[Image]]] = None,
-        common_inference_params: CommonInferenceParams = None,
-    ) -> dict:
+        images: Optional[List[Union[Image, List[Image]]]] = None,
+        common_inference_params: Optional[CommonInferenceParams] = None,
+    ) -> List[InferenceRequest]:
         # pylint: disable=C0115,C0116
         request_ids: List[str] = []
 
         if self.random_seed:
             torch.random.manual_seed(self.random_seed)
+
+        if images is not None and len(images) != len(prompts):
+            raise ValueError(f"Number of images ({len(images)}) must match number of prompts ({len(prompts)})")
 
         for i in range(len(prompts)):
             prompt = prompts[i]
