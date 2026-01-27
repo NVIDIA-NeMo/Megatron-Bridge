@@ -87,7 +87,6 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         Returns:
             torch.Tensor: The output logits of shape [batch_size, seq_len, padded_vocab_size]
         """
-        # TODO: add kv cache support
         logits = self.model(attention_mask=None, **inference_input)
 
         return logits

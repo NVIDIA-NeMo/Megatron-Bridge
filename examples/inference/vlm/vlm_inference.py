@@ -14,17 +14,8 @@
 
 """
 Example:
-  # Vision-Language generation with image from URL:
-  uv run python examples/inference/vlm/vlm_inference.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
-
-  # Vision-Language generation with local image:
-  uv run python examples/inference/vlm/vlm_inference.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
-
-  # Text-only generation (no image):
-  uv run python examples/inference/vlm/vlm_inference.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
-
-  # Load from Megatron checkpoint:
-  uv run python examples/inference/vlm/vlm_inference.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
+  # Load from Megatron checkpoint, with image from URL:
+  uv run python examples/inference/vlm/vlm_inference.py --megatron_model_path="/path/to/megatron/checkpoint" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
 """
 
 import argparse
@@ -33,11 +24,8 @@ from typing import Optional
 import torch
 from megatron.core.inference.common_inference_params import CommonInferenceParams
 from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor, AutoTokenizer
 
-from megatron.bridge import AutoBridge
-from megatron.bridge.inference.vlm.base import generate, setup_inference_wrapper
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.inference.vlm.base import generate, setup_model_and_tokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -91,93 +79,18 @@ def main(args) -> None:
         args: Parsed command line arguments containing model paths, prompt,
               image path, parallelism settings, and generation parameters
     """
-    # pylint: disable=C0115,C0116
-    tp = args.tp
-    ep = args.ep
-    etp = args.etp
 
-    # Choose loading method based on arguments
-    if args.megatron_model_path:
-        # Load from Megatron checkpoint
-        print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
-
-        # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
-        # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
-
-        # Initialize model parallel before loading
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.parallel_output = False
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        # Load the Megatron model directly
-        model = bridge.load_megatron_model(
-            args.megatron_model_path,
-            mp_overrides={
-                "tensor_model_parallel_size": tp,
-                "expert_model_parallel_size": ep,
-                "expert_tensor_parallel_size": etp,
-                "pipeline_dtype": torch.bfloat16,
-            },
-            wrap_with_ddp=False,
-        )
-
-    else:
-        # Load from HuggingFace and convert to Megatron
-        print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.parallel_output = False
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        model = model_provider.provide_distributed_model(wrap_with_ddp=False)
-
-    model = [m.cuda() for m in model]
-    for m in model:
-        m.eval()
-
-    # Set grad_scale_func to None on the model's config for inference
-    for m in model:
-        if hasattr(m, "config"):
-            m.config.grad_scale_func = None
-
-    # Initialize tokenizer and processor
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.hf_model_path,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=args.hf_model_path,
-        ),
+    # Setup model and processor
+    inference_wrapped_model, processor = setup_model_and_tokenizer(
+        megatron_model_path=args.megatron_model_path,
+        tp=args.tp,
+        pp=args.pp,
+        inference_batch_times_seqlen_threshold=1000,
     )
-    processor = AutoProcessor.from_pretrained(
-        args.hf_model_path,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=args.hf_model_path,
-        ),
-    )
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
     text, image_inputs, video_inputs = process_image_inputs(processor, args.image_path, prompt)
-
-    # Setup inference wrapper
-    inference_wrapped_model = setup_inference_wrapper(
-        model[0],
-        tokenizer,
-        params_dtype=torch.bfloat16,
-        inference_batch_times_seqlen_threshold=1000,
-    )
 
     # Setup inference parameters
     inference_params = CommonInferenceParams(
@@ -190,7 +103,7 @@ def main(args) -> None:
     # Generate text
     results = generate(
         wrapped_model=inference_wrapped_model,
-        tokenizer=tokenizer,
+        tokenizer=processor.tokenizer,
         image_processor=processor.image_processor,
         prompts=[text],
         images=[image_inputs] if image_inputs is not None else None,
@@ -209,12 +122,7 @@ def main(args) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vision-Language Generation from HuggingFace VL Models")
-    parser.add_argument(
-        "--hf_model_path",
-        type=str,
-        required=True,
-        help="Path to the HuggingFace VL model.",
-    )
+    parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
     parser.add_argument(
         "--prompt",
         type=str,
@@ -246,16 +154,13 @@ if __name__ == "__main__":
         help="Maximum number of new tokens to generate.",
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
-    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
-    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
-    parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument(
         "--image_path",
         type=str,
         default=None,
         help="Path or URL to the image for vision-language generation (optional).",
     )
-    parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
     args = parser.parse_args()
 
     main(args)
