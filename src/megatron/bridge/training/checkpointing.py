@@ -41,6 +41,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
 )
+from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer
@@ -634,7 +635,7 @@ def save_checkpoint(
                 async_sharded_save=ckpt_cfg.async_save,
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
-                content_metadata=sharded_sd_metadata,
+                content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
             )
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode)
             if model:
