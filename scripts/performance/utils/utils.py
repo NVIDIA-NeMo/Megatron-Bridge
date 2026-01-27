@@ -130,7 +130,9 @@ def get_workload_base_config(
         f"Available variants: {available_variants}"
     )
 
+
 def get_exp_name_config(
+    args,
     model_family_name: str,
     model_recipe_name: str,
     gpu: str,
@@ -140,29 +142,22 @@ def get_exp_name_config(
 ) -> Dict[str, int]:
     """Get the experiment name from the base config and user overrides."""
     base_config = get_workload_base_config(
-        model_family_name,
-        model_recipe_name,
-        gpu,
-        compute_dtype,
-        task,
-        config_variant)
-    num_gpus = args.num_gpus if args.num_gpus is not None else base_config['gpus']
-    tp_size = args.tensor_model_parallel_size if args.tensor_model_parallel_size is not None else base_config['tp']
-    pp_size = args.pipeline_model_parallel_size if args.pipeline_model_parallel_size is not None else base_config['pp']
-    cp_size = args.context_parallel_size if args.context_parallel_size is not None else base_config['cp']
-    vp_size = args.virtual_pipeline_model_parallel_size if args.virtual_pipeline_model_parallel_size is not None else base_config['vp']
-    ep_size = args.expert_model_parallel_size if args.expert_model_parallel_size is not None else base_config['ep']
-    mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config['mbs']
-    gbs_size = args.global_batch_size if args.global_batch_size is not None else base_config['gbs']
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+    )
+    num_gpus = args.num_gpus if args.num_gpus is not None else base_config["gpus"]
+    tp_size = args.tensor_model_parallel_size if args.tensor_model_parallel_size is not None else base_config["tp"]
+    pp_size = args.pipeline_model_parallel_size if args.pipeline_model_parallel_size is not None else base_config["pp"]
+    cp_size = args.context_parallel_size if args.context_parallel_size is not None else base_config["cp"]
+    vp_size = (
+        args.virtual_pipeline_model_parallel_size
+        if args.virtual_pipeline_model_parallel_size is not None
+        else base_config["vp"]
+    )
+    ep_size = args.expert_model_parallel_size if args.expert_model_parallel_size is not None else base_config["ep"]
+    mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config["mbs"]
+    gbs_size = args.global_batch_size if args.global_batch_size is not None else base_config["gbs"]
     exp_config = (
-        f"gpus{num_gpus}_"
-        f"tp{tp_size}_"
-        f"pp{pp_size}_"
-        f"cp{cp_size}_"
-        f"vp{vp_size}_"
-        f"ep{ep_size}_"
-        f"mbs{mbs_size}_"
-        f"gbs{gbs_size}"
+        f"gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}_vp{vp_size}_ep{ep_size}_mbs{mbs_size}_gbs{gbs_size}"
     )
     return exp_config
 
