@@ -93,7 +93,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         if match := re.search(patterns["alloc"], line):
             metrics["alloc"] = float(match.group(1))
 
-        if match != re.search(patterns["max_alloc"], line):
+        if match := re.search(patterns["max_alloc"], line):
             metrics["max_alloc"] = float(match.group(1))
 
         # Check for iteration line
@@ -650,6 +650,7 @@ def calc_convergence_and_performance(
         current_max_alloc=current_max_alloc,
         logger=logger,
         wandb_run=wandb_run,
+        memory_config=memory_config,
     )
     if not memory_result["passed"]:
         error_msg += f"Memory check failed. {memory_result['summary']}\n"
