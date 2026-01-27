@@ -22,16 +22,16 @@ from megatron.core.inference.model_inference_wrappers.abstract_model_inference_w
 )
 from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import InferenceWrapperConfig
 from PIL.Image import Image
+from transformers import AutoProcessor
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.qwen_vl import Qwen3VLModelProvider, Qwen25VLModelProvider
+from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
+from megatron.bridge.utils.common_utils import print_rank_0
 
 from .qwenvl_inference_wrapper import QwenVLInferenceWrapper
 from .vlm_engine import VLMEngine
 from .vlm_inference_controller import QwenVLTextGenerationController, VLMTextGenerationController
-from megatron.bridge.utils.common_utils import print_rank_0
-from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge import AutoBridge
-from transformers import AutoProcessor, AutoTokenizer
 
 
 def setup_model_and_tokenizer(
