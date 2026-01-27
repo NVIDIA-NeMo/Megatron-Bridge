@@ -22,8 +22,13 @@ class MimoDataset(Dataset):
         processors: Dict mapping modality name to HF processor, e.g.,
             {"vision": AutoProcessor.from_pretrained("openai/clip-vit-large-patch14")}.
         tokenizer: Tokenizer for text processing.
-        seq_length: Maximum sequence length for text tokens.
+        seq_length: Total sequence length for the model (encoder placeholders + text tokens).
+            Must be greater than sum(encoder_seq_lengths.values()) to leave room for text.
+            Text is truncated to fit: max_text_tokens = seq_length - total_encoder_tokens.
         special_token_ids: Per-encoder placeholder token IDs, e.g., {"vision": 32000}.
+        encoder_seq_lengths: Per-encoder output sequence lengths, e.g., {"vision": 577}.
+            Determines how many placeholder tokens to insert for each modality.
+            For CLIP ViT-L/14 with 224x224 images, this would be 577 (576 patches + 1 CLS).
         modality_columns: Dict mapping modality name to column name in dataset,
             e.g., {"vision": "image", "audio": "audio_path"}.
         text_column: Column name for text/conversation data. Default: "text".
@@ -34,17 +39,34 @@ class MimoDataset(Dataset):
     Example:
         >>> from datasets import load_dataset
         >>> from transformers import AutoProcessor, AutoTokenizer
-        >>> 
+        >>>
+        >>> # Using HuggingFace Dataset
         >>> hf_ds = load_dataset("liuhaotian/LLaVA-Instruct-150K", split="train")
         >>> processor = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14")
         >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
-        >>> 
+        >>>
         >>> dataset = MimoDataset(
         ...     examples=hf_ds,
         ...     processors={"vision": processor},
         ...     tokenizer=tokenizer,
         ...     seq_length=2048,
         ...     special_token_ids={"vision": 32000},
+        ...     encoder_seq_lengths={"vision": 577},  # CLIP ViT-L/14 output tokens
+        ...     modality_columns={"vision": "image"},
+        ... )
+        >>>
+        >>> # Or using a simple list of dicts for testing/prototyping
+        >>> examples = [
+        ...     {"text": "Describe this image.", "image": "img1.jpg"},
+        ...     {"text": "What do you see?", "image": "img2.jpg"},
+        ... ]
+        >>> dataset = MimoDataset(
+        ...     examples=examples,
+        ...     processors={"vision": processor},
+        ...     tokenizer=tokenizer,
+        ...     seq_length=2048,
+        ...     special_token_ids={"vision": 32000},
+        ...     encoder_seq_lengths={"vision": 577},
         ...     modality_columns={"vision": "image"},
         ... )
     """
@@ -56,16 +78,27 @@ class MimoDataset(Dataset):
         tokenizer: Any,
         seq_length: int,
         special_token_ids: Dict[str, int],
+        encoder_seq_lengths: Dict[str, int],
         modality_columns: Dict[str, str],
         text_column: str = "text",
         max_samples: Optional[int] = None,
         preprocess_fn: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> None:
+        # Validate encoder tokens fit within seq_length
+        total_encoder_tokens = sum(encoder_seq_lengths.values())
+        if total_encoder_tokens >= seq_length:
+            raise ValueError(
+                f"Total encoder tokens ({total_encoder_tokens}) must be less than "
+                f"seq_length ({seq_length}) to leave room for text tokens. "
+                f"encoder_seq_lengths: {encoder_seq_lengths}"
+            )
+        
         self.examples = examples
         self.processors = processors
         self.tokenizer = tokenizer
         self.seq_length = seq_length
         self.special_token_ids = special_token_ids
+        self.encoder_seq_lengths = encoder_seq_lengths
         self.modality_columns = modality_columns
         self.text_column = text_column
         self.preprocess_fn = preprocess_fn
@@ -141,9 +174,10 @@ class MimoDataset(Dataset):
     ) -> torch.Tensor:
         """Tokenize text and insert placeholder tokens for each modality.
         
-        For each modality present, inserts the special placeholder token at the
-        beginning of the sequence. The number of placeholder tokens can be
-        determined by the modality's sequence length (e.g., number of image patches).
+        For each modality present, inserts N placeholder tokens at the beginning
+        of the sequence, where N = encoder_seq_lengths[modality_name]. This matches
+        the number of embeddings the encoder will produce, enabling 1:1 replacement
+        during the model forward pass.
         
         Args:
             text: Raw text to tokenize.
@@ -166,9 +200,9 @@ class MimoDataset(Dataset):
         prefix_tokens = []
         for modality_name in modality_inputs.keys():
             if modality_name in self.special_token_ids:
-                # For now, insert a single placeholder token per modality
-                # Real implementations may need to insert multiple based on seq_length
-                prefix_tokens.append(self.special_token_ids[modality_name])
+                token_id = self.special_token_ids[modality_name]
+                num_tokens = self.encoder_seq_lengths.get(modality_name, 1)
+                prefix_tokens.extend([token_id] * num_tokens)
         
         if prefix_tokens:
             prefix = torch.tensor(prefix_tokens, dtype=input_ids.dtype)

@@ -50,11 +50,14 @@ class MockMimoProvider(MimoDatasetProvider):
     Follows the same pattern as vlm_datasets/MockVLMConversationProvider.
     
     Args:
-        seq_length: Total sequence length (text + encoder tokens).
+        seq_length: Total sequence length for the model (encoder placeholders + text tokens).
+            Must be greater than sum(encoder_seq_lengths.values()) to leave room for text.
         processor_paths: Per-modality HF processor paths, e.g.,
             {"vision": "openai/clip-vit-large-patch14"}.
         tokenizer_path: HuggingFace tokenizer identifier.
         special_token_ids: Per-encoder placeholder token IDs, e.g., {"vision": 32000}.
+        encoder_seq_lengths: Per-encoder output sequence lengths, e.g., {"vision": 577}.
+            Determines how many placeholder tokens to insert for each modality.
         modality_configs: Per-modality generation config, e.g.,
             {"vision": {"type": "image", "width": 224, "height": 224}}.
         text_prompt: Default text prompt for synthetic examples.
@@ -66,6 +69,7 @@ class MockMimoProvider(MimoDatasetProvider):
         ...     processor_paths={"vision": "openai/clip-vit-large-patch14"},
         ...     tokenizer_path="meta-llama/Llama-2-7b-hf",
         ...     special_token_ids={"vision": 32000},
+        ...     encoder_seq_lengths={"vision": 577},  # CLIP ViT-L/14 output tokens
         ...     modality_configs={"vision": {"type": "image", "width": 224, "height": 224}},
         ... )
         >>> context = DatasetBuildContext(train_samples=1000, valid_samples=100, test_samples=100)
@@ -76,6 +80,7 @@ class MockMimoProvider(MimoDatasetProvider):
     processor_paths: Dict[str, str] = field(default_factory=dict)
     tokenizer_path: str = ""
     special_token_ids: Dict[str, int] = field(default_factory=dict)
+    encoder_seq_lengths: Dict[str, int] = field(default_factory=dict)
     modality_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     text_prompt: str = "Describe this input."
     random_seed: int = 0
@@ -192,6 +197,7 @@ class MockMimoProvider(MimoDatasetProvider):
             tokenizer=tokenizer,
             seq_length=self.seq_length,
             special_token_ids=self.special_token_ids,
+            encoder_seq_lengths=self.encoder_seq_lengths,
             modality_columns=modality_columns,
             text_column="text",
         )
