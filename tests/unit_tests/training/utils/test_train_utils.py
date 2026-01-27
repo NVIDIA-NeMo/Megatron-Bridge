@@ -132,6 +132,7 @@ class TestTrainingLog:
         config.logger.log_world_size_to_tensorboard = True
         config.logger.log_memory_to_tensorboard = False
         config.logger.log_throughput = False
+        config.logger.timing_log_level = 0
 
         # Training config
         config.train.micro_batch_size = 2
