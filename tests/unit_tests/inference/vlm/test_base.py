@@ -103,7 +103,9 @@ class TestGenerate:
 
     @patch("megatron.bridge.inference.vlm.base.VLMEngine")
     @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
-    def test_generate_with_inference_params(self, mock_qwen_controller, mock_engine, mock_tokenizer, mock_image_processor):
+    def test_generate_with_inference_params(
+        self, mock_qwen_controller, mock_engine, mock_tokenizer, mock_image_processor
+    ):
         from megatron.core.inference.common_inference_params import CommonInferenceParams
 
         mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
