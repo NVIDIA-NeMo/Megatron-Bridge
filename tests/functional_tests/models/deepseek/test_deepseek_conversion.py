@@ -136,6 +136,7 @@ class TestDeepSeekConversion:
             str(pp),
             "--ep",
             str(ep),
+            "--trust-remote-code",
         ]
 
         result = subprocess.run(

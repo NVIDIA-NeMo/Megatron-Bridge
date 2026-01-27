@@ -260,15 +260,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("attention_bias", "add_qkv_bias"),
         ("mlp_bias", "add_bias_linear"),
         ("use_qk_norm", "qk_layernorm"),
-        # RoPE (Rotary Position Embedding)
+        # RoPE
         ("rope_theta", "rotary_base"),
         ("partial_rotary_factor", "rotary_percent"),
-        ("rope_scaling.factor", "rotary_scaling_factor"),
-        ("rope_scaling.mscale", "mscale"),
-        ("rope_scaling.mscale_all_dim", "mscale_all_dim"),
-        ("rope_scaling.beta_fast", "beta_fast"),
-        ("rope_scaling.beta_slow", "beta_slow"),
-        # MoE (Mixture of Experts)
+        # MoE
         ("num_experts", "num_moe_experts"),
         ("num_local_experts", "num_moe_experts"),
         ("num_experts_per_tok", "moe_router_topk"),
@@ -279,13 +274,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("n_group", "moe_router_num_groups"),
         ("topk_group", "moe_router_group_topk"),
         ("routed_scaling_factor", "moe_router_topk_scaling_factor"),
-        # MLA (Multi-Latent Attention)
+        # MLA
         ("q_lora_rank", "q_lora_rank"),
         ("kv_lora_rank", "kv_lora_rank"),
         ("qk_nope_head_dim", "qk_head_dim"),
         ("qk_rope_head_dim", "qk_pos_emb_head_dim"),
         ("v_head_dim", "v_head_dim"),
-        # MTP (Multi-Token Prediction) - GLM
+        # MTP
         ("num_nextn_predict_layers", "mtp_num_layers"),
     ]
 
@@ -360,11 +355,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         rope_scaling = getattr(hf_config, "rope_scaling", None)
         if rope_scaling is not None and isinstance(rope_scaling, dict):
             if rope_scaling.get("rope_type") == "yarn":
-                yarn_params = {}
+                yarn_params = {"position_embedding_type": "yarn"}
                 for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
                     value = rope_scaling.get(hf_key)
-                    if value is not None:
-                        yarn_params[megatron_key] = value
+                    yarn_params[megatron_key] = value
                 if "truncate" in rope_scaling:
                     yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
                 if yarn_params:
@@ -381,8 +375,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         provider_kwargs["bf16"] = params_dtype == torch.bfloat16
         provider_kwargs["params_dtype"] = params_dtype
 
-        # Convert activation function
-        hidden_act = getattr(hf_config, "hidden_act", "silu")
+        # Convert activation function (some models use hidden_act, others use hidden_activation)
+        hidden_act = getattr(hf_config, "hidden_act", None) or getattr(hf_config, "hidden_activation", "silu")
         provider_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
 
         return provider_kwargs
