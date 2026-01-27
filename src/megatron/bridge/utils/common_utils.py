@@ -201,7 +201,7 @@ def print_rank_last(message: str) -> None:
     Args:
         message: The message string to print.
     """
-    if torch.distributed.is_initialized():
+    if torch.distributed.is_initialized() and torch.distributed.get_backend() != "fake":
         if is_last_rank():
             print(message, flush=True)
     else:
