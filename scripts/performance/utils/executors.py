@@ -86,7 +86,6 @@ def slurm_executor(
     srun_args = custom_srun_args.copy() + [
         "--mpi=pmix",
         "--no-container-mount-home",
-        "--container-writable",
     ]
 
     if log_dir is not None:
