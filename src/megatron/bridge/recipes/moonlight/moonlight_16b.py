@@ -356,10 +356,8 @@ def _model_config(
     layout = _get_moonlight_pipeline_layout(pp_size, vp_size)
     cfg.pipeline_model_parallel_layout = layout
 
-    if enable_deepep:
-        cfg.moe_token_dispatcher_type = "flex"
-        cfg.moe_flex_dispatcher_backend = "deepep"
-        cfg.moe_shared_expert_overlap = False
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
 
     return cfg
 
