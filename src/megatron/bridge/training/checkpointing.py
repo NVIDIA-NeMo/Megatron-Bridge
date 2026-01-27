@@ -379,12 +379,17 @@ def get_rng_state(data_parallel_random_init: bool, ckpt_format: str = "torch_dis
     Optionally gathers states across data parallel ranks.
     Returns format depends on checkpoint format.
 
+    For torch_dist format with Expert Parallelism (EP > 1), RNG states are sharded
+    by (PP, TP, DP) dimensions since different EP ranks may have different RNG states.
+    Without EP, states are sharded by (PP, TP) with DP rank as replica_id.
+
     Args:
         data_parallel_random_init: If True, gathers RNG states across data parallel ranks.
         ckpt_format: The checkpoint format being used.
 
     Returns:
-        For torch_dist: A ShardedObject containing the RNG states.
+        For torch_dist: A ShardedObject containing the RNG states, sharded by
+            (PP, TP, DP) when EP > 1, or (PP, TP) with DP as replica_id otherwise.
         For fsdp_dtensor: A dict mapping (pp_rank, tp_rank) to RNG state lists.
     """
     rng_state = {
@@ -407,13 +412,30 @@ def get_rng_state(data_parallel_random_init: bool, ckpt_format: str = "torch_dis
         pp_size = mpu.get_pipeline_model_parallel_world_size()
         tp_rank = mpu.get_tensor_model_parallel_rank()
         tp_size = mpu.get_tensor_model_parallel_world_size()
-        rng_state_list = ShardedObject(
-            "rng_state",
-            rng_state_list,
-            (pp_size, tp_size),
-            (pp_rank, tp_rank),
-            replica_id=mpu.get_data_parallel_rank(with_context_parallel=True),
-        )
+        ep_size = mpu.get_expert_model_parallel_world_size()
+
+        if ep_size > 1:
+            # Shard RNG by PP, TP, DP when using expert parallelism.
+            # With EP, different EP ranks within the same DP group may have different
+            # RNG states for their respective experts, so DP rank must be part of
+            # the sharding dimensions rather than replica_id.
+            dp_rank = mpu.get_data_parallel_rank(with_context_parallel=True)
+            dp_size = mpu.get_data_parallel_world_size(with_context_parallel=True)
+            rng_state_list = ShardedObject(
+                "rng_state",
+                rng_state_list,
+                (pp_size, tp_size, dp_size),
+                (pp_rank, tp_rank, dp_rank),
+                replica_id=0,
+            )
+        else:
+            rng_state_list = ShardedObject(
+                "rng_state",
+                rng_state_list,
+                (pp_size, tp_size),
+                (pp_rank, tp_rank),
+                replica_id=mpu.get_data_parallel_rank(with_context_parallel=True),
+            )
     elif ckpt_format == "fsdp_dtensor":
         pp_rank = mpu.get_pipeline_model_parallel_rank()
         tp_rank = mpu.get_tensor_model_parallel_rank()
