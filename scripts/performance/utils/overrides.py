@@ -317,14 +317,29 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+    if args.hidden_size is not None:
+        recipe.model.hidden_size = args.hidden_size
+    if args.num_layers is not None or args.first_k_dense_replace is not None:
+        if args.first_k_dense_replace is not None:
+            num_dense_layers = args.first_k_dense_replace
+        else:
+            num_dense_layers = recipe.model.moe_layer_freq.count(0)
+        if args.num_layers is not None:
+            recipe.model.num_layers = args.num_layers
+        recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
+    if args.pipeline_model_parallel_layout is not None:
+        recipe.model.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
     # Reconfigure the DeepSeek-V3 pipeline model parallel layout
     # if the user has provided a custom PP and VP sizes
     model_recipe_name = args.model_recipe_name
     pp_size = args.pipeline_model_parallel_size
     vp_size = args.virtual_pipeline_model_parallel_size
-    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
-        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+    pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+    if model_recipe_name == "deepseek_v3" and (
+        pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
+    ):
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
