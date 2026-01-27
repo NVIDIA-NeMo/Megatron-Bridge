@@ -70,7 +70,7 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         preprocess_and_split_data(
-            dset=load_dataset("boolq"),
+            dset=load_dataset("google/boolq"),
             dataset_name="boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
@@ -90,7 +90,7 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         preprocess_and_split_data(
-            dset=load_dataset("boolq"),
+            dset=load_dataset("google/boolq"),
             dataset_name="boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
@@ -147,7 +147,7 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         builder = HFDatasetBuilder(
-            dataset_dict=load_dataset("boolq"),
+            dataset_dict=load_dataset("google/boolq"),
             dataset_name="boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
