@@ -584,7 +584,17 @@ class TestLoadMegatronModel:
 
 
 class TestSaveMegatronModel:
-    """Test save_megatron_model function."""
+    """Test save_megatron_model function.
+
+    Note: These tests use low_memory_save=False because the low_memory_save=True path
+    requires parallel state to be initialized (get_rng_state calls mpu.get_pipeline_model_parallel_rank()).
+    Testing the low_memory_save=True path would require either:
+    1. Full distributed initialization, or
+    2. Extensive mocking of checkpointing internals (get_rng_state, generate_state_dict, etc.)
+
+    The low_memory_save=False path tests the core save_checkpoint integration without
+    those dependencies, which is sufficient for unit testing the function's API and behavior.
+    """
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
@@ -619,7 +629,7 @@ class TestSaveMegatronModel:
 
         # Test
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist")
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -681,7 +691,11 @@ class TestSaveMegatronModel:
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
             save_megatron_model(
-                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=False,
             )
 
         # Assertions
@@ -749,7 +763,9 @@ class TestSaveMegatronModel:
 
         # Test without tokenizer path (should be None)
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None)
+            save_megatron_model(
+                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None, low_memory_save=False
+            )
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)

@@ -81,6 +81,9 @@ class TestNemotronHBridge:
             "use_conv_bias": True,
             "use_mamba_kernels": True,
             "vocab_size": 131072,
+            # Explicitly set to 0 to disable MoE; Mock objects return Mock for any attr access,
+            # so hasattr() always returns True - we need a real value for the `> 0` comparison.
+            "n_routed_experts": 0,
         }
 
     @pytest.fixture
@@ -212,6 +215,145 @@ class TestNemotronHBridge:
         assert result.position_embedding_type == "none"  # Mamba doesn't use position embeddings
         assert result.rotary_percent == 1.0
         assert result.rotary_base == 10000
+
+    def test_provider_bridge_moe_config(self, nemotronh_8b_config_dict):
+        """Test MoE configuration mapping when n_routed_experts > 0."""
+        # Add MoE-specific configurations to the base config
+        moe_config_dict = {
+            **nemotronh_8b_config_dict,
+            "n_routed_experts": 64,
+            "moe_intermediate_size": 2048,
+            "moe_shared_expert_intermediate_size": 8192,
+            "num_experts_per_tok": 8,
+            "n_group": 4,
+            "topk_group": 2,
+            "routed_scaling_factor": 2.0,
+        }
+
+        cfg = Mock()
+        for k, v in moe_config_dict.items():
+            setattr(cfg, k, v)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = cfg
+        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
+
+        bridge = NemotronHBridge()
+        result = bridge.provider_bridge(mock_pretrained)
+
+        # Check MoE configuration mappings
+        assert result.num_moe_experts == cfg.n_routed_experts
+        assert result.moe_ffn_hidden_size == cfg.moe_intermediate_size
+        assert result.moe_shared_expert_intermediate_size == cfg.moe_shared_expert_intermediate_size
+        assert result.moe_router_topk == cfg.num_experts_per_tok
+        assert result.moe_router_num_groups == cfg.n_group
+        assert result.moe_router_group_topk == cfg.topk_group
+        assert result.moe_router_topk_scaling_factor == cfg.routed_scaling_factor
+
+    def test_provider_bridge_no_moe_when_n_routed_experts_zero(self, nemotronh_8b_config_dict):
+        """Test that MoE configs are not added when n_routed_experts is 0."""
+        # Add MoE config with n_routed_experts = 0
+        moe_config_dict = {
+            **nemotronh_8b_config_dict,
+            "n_routed_experts": 0,
+            "moe_intermediate_size": 2048,
+            "moe_shared_expert_intermediate_size": 8192,
+            "num_experts_per_tok": 8,
+            "n_group": 4,
+            "topk_group": 2,
+            "routed_scaling_factor": 2.0,
+        }
+
+        cfg = Mock()
+        for k, v in moe_config_dict.items():
+            setattr(cfg, k, v)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = cfg
+        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
+
+        bridge = NemotronHBridge()
+        result = bridge.provider_bridge(mock_pretrained)
+
+        # MoE configs should not be set (will use defaults or not exist)
+        assert not hasattr(result, "num_moe_experts") or result.num_moe_experts is None
+
+    def test_provider_bridge_no_moe_when_attribute_missing(self, nemotronh_8b_config_dict):
+        """Test that MoE configs are not added when n_routed_experts attribute is missing."""
+        from types import SimpleNamespace
+
+        # Create config without n_routed_experts using SimpleNamespace (hasattr returns False for missing attrs)
+        config_dict = {k: v for k, v in nemotronh_8b_config_dict.items() if k != "n_routed_experts"}
+        cfg = SimpleNamespace(**config_dict)
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = cfg
+        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
+
+        bridge = NemotronHBridge()
+        result = bridge.provider_bridge(mock_pretrained)
+
+        # Should work without MoE configs - provider should still be created
+        assert isinstance(result, NemotronHModelProvider)
+        assert not hasattr(result, "num_moe_experts") or result.num_moe_experts is None
+
+    def test_mapping_registry_contains_moe_mappings(self):
+        """Test that mapping_registry contains MoE parameter mappings."""
+        bridge = NemotronHBridge()
+        mapping_registry = bridge.mapping_registry()
+
+        # Get all megatron params from mappings
+        megatron_params = [m.megatron_param for m in mapping_registry.mappings if hasattr(m, "megatron_param")]
+
+        # Check MoE router mappings exist
+        assert "decoder.layers.*.mlp.router.weight" in megatron_params
+        assert "decoder.layers.*.mlp.router.expert_bias" in megatron_params
+
+        # Check MoE expert mappings exist
+        assert "decoder.layers.*.mlp.experts.linear_fc1.weight*" in megatron_params
+        assert "decoder.layers.*.mlp.experts.linear_fc2.weight*" in megatron_params
+
+        # Check shared expert mappings exist
+        assert "decoder.layers.*.mlp.shared_experts.linear_fc1.weight" in megatron_params
+        assert "decoder.layers.*.mlp.shared_experts.linear_fc2.weight" in megatron_params
+
+        # Check pre_mlp_layernorm mapping exists
+        assert "decoder.layers.*.pre_mlp_layernorm.weight" in megatron_params
+
+    def test_mapping_registry_moe_hf_params(self):
+        """Test that MoE mappings have correct HF parameter names."""
+        bridge = NemotronHBridge()
+        mapping_registry = bridge.mapping_registry()
+
+        # Create a lookup dict of megatron -> hf params
+        param_map = {
+            m.megatron_param: m.hf_param
+            for m in mapping_registry.mappings
+            if hasattr(m, "megatron_param") and hasattr(m, "hf_param")
+        }
+
+        # Check MoE HF param mappings are correct
+        assert param_map.get("decoder.layers.*.mlp.router.weight") == "backbone.layers.*.mixer.gate.weight"
+        assert (
+            param_map.get("decoder.layers.*.mlp.router.expert_bias")
+            == "backbone.layers.*.mixer.gate.e_score_correction_bias"
+        )
+        assert (
+            param_map.get("decoder.layers.*.mlp.experts.linear_fc1.weight*")
+            == "backbone.layers.*.mixer.experts.*.up_proj.weight"
+        )
+        assert (
+            param_map.get("decoder.layers.*.mlp.experts.linear_fc2.weight*")
+            == "backbone.layers.*.mixer.experts.*.down_proj.weight"
+        )
+        assert (
+            param_map.get("decoder.layers.*.mlp.shared_experts.linear_fc1.weight")
+            == "backbone.layers.*.mixer.shared_experts.up_proj.weight"
+        )
+        assert (
+            param_map.get("decoder.layers.*.mlp.shared_experts.linear_fc2.weight")
+            == "backbone.layers.*.mixer.shared_experts.down_proj.weight"
+        )
 
 
 class TestAutoBridgeIntegration:

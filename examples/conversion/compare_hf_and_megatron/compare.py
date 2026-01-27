@@ -729,7 +729,7 @@ def compare_models_one_step(args) -> None:
             vocab_size = getattr(
                 tokenizer, "vocab_size", len(tokenizer.vocab) if hasattr(tokenizer, "vocab") else 32000
             )
-            hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.bfloat16)
+            hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.float32)
 
         # Broadcast from rank 0 to all ranks
         torch.distributed.broadcast(hf_next_token, 0)

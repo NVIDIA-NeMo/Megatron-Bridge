@@ -578,6 +578,12 @@ def get_model(
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
         model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
 
+        # Maintain expert bias in float32 wrapped in Float16Module
+        for model_module in model:
+            for submodule in model_module.modules():
+                if hasattr(submodule, "_maintain_float32_expert_bias"):
+                    submodule._maintain_float32_expert_bias()
+
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
 
