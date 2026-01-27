@@ -209,10 +209,11 @@ def _hf_dataset_forward_loop_func(
             disable_tqdm=True,
         )
 
-        if force_all_expert_routing:
-            for name, module in model.named_modules():
-                if isinstance(module, TopKRouter):
-                    module.topk = module.config.moe_router_topk
+    # Restore original topk after calibration is complete
+    if force_all_expert_routing:
+        for name, module in model.named_modules():
+            if isinstance(module, TopKRouter):
+                module.topk = module.config.moe_router_topk
 
 
 def _custom_prompt_forward_loop_func(
@@ -393,6 +394,10 @@ def main(
     if megatron_save_path is None:
         model_name = hf_model_id.replace("/", "_")
         megatron_save_path = f"./{model_name}_quantized_{export_quant_cfg}"
+        if is_rank_0:
+            console.print(
+                f"[yellow]No --megatron-save-path specified. Using default path: {megatron_save_path}[/yellow]"
+            )
 
     if is_rank_0:
         console.print("[green]Testing model AFTER quantization...[/green]")
@@ -406,18 +411,9 @@ def main(
         _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
 
     # Save quantized model in Megatron format
-    if megatron_save_path:
-        save_path = megatron_save_path
-    else:
-        # Create default save path using model name and quantization config
-        model_name = hf_model_id.split("/")[-1]
-        save_path = f"{model_name}_quantized_{export_quant_cfg}"
-        if is_rank_0:
-            console.print(f"[yellow]No --megatron-save-path specified. Using default path: {save_path}[/yellow]")
-
     if is_rank_0:
-        console.print(f"Saving quantized Megatron checkpoint in {save_path}...")
-    bridge.save_megatron_model(megatron_model, save_path)
+        console.print(f"Saving quantized Megatron checkpoint in {megatron_save_path}...")
+    bridge.save_megatron_model(megatron_model, megatron_save_path)
 
 
 if __name__ == "__main__":
@@ -459,25 +455,26 @@ if __name__ == "__main__":
         "Useful for offline CI environments.",
     )
     args = parser.parse_args()
-    main(
-        args.hf_model_id,
-        args.tp,
-        args.pp,
-        args.ep,
-        args.etp,
-        args.megatron_save_path,
-        args.export_quant_cfg,
-        args.calib_size,
-        args.compress,
-        args.weight_only,
-        args.export_kv_cache_quant,
-        args.force_all_expert_routing,
-        args.trust_remote_code,
-        args.prompts,
-        args.skip_quantization,
-        args.test_image_path,
-        args.use_random_calib,
-    )
-
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
+    try:
+        main(
+            args.hf_model_id,
+            args.tp,
+            args.pp,
+            args.ep,
+            args.etp,
+            args.megatron_save_path,
+            args.export_quant_cfg,
+            args.calib_size,
+            args.compress,
+            args.weight_only,
+            args.export_kv_cache_quant,
+            args.force_all_expert_routing,
+            args.trust_remote_code,
+            args.prompts,
+            args.skip_quantization,
+            args.test_image_path,
+            args.use_random_calib,
+        )
+    finally:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()

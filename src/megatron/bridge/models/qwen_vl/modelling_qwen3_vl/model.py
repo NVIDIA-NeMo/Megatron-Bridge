@@ -189,8 +189,8 @@ class Qwen3VLModel(MegatronModule):
         video_grid_thw: torch.Tensor = None,
         # cat set at dataset
         image_input_mask: torch.Tensor = None,
-        inference_context=None,
-        runtime_gather_output=None,
+        inference_context: object | None = None,
+        runtime_gather_output: bool | None = None,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
 
@@ -212,6 +212,7 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
+        del inference_context, runtime_gather_output  # Unused, kept for API compatibility
         assert pixel_values_videos is None and video_grid_thw is None, "not support video now"
         assert inference_params is None, "not support inference"
 
