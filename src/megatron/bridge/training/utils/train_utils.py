@@ -287,9 +287,7 @@ def calc_dtensor_params_l2_norm(params):
     return total_norm_2.item() ** 0.5
 
 
-def reduce_max_stat_across_model_parallel_group(
-    stat: float | None, mp_group: "TorchProcessGroup"
-) -> float | None:
+def reduce_max_stat_across_model_parallel_group(stat: float | None, mp_group: "TorchProcessGroup") -> float | None:
     """Calculates the max of a stat across the model parallel group.
 
     Handles cases where some ranks might have the stat as None (e.g., grad norm

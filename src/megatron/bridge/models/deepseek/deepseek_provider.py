@@ -132,9 +132,7 @@ class DeepSeekV3ModelProvider(MLAModelProvider):
     num_moe_experts: int = 256
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
-    moe_layer_freq: int | list[int] = field(
-        default_factory=lambda: [0] * 3 + [1] * 58
-    )  # first three layers are dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] * 3 + [1] * 58)  # first three layers are dense
     moe_router_topk: int = 8
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 4

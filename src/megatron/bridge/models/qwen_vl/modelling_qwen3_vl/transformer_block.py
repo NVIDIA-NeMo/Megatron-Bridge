@@ -59,12 +59,12 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
     def __init__(
         self,
         config: Qwen3VLTransformerConfig,
-        spec: Union[TransformerBlockSubmodules, ModuleSpec],
+        spec: TransformerBlockSubmodules | ModuleSpec,
         post_layer_norm: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
         # model_comm_pgs: ModelCommProcessGroups = None,
-        vp_stage: Optional[int] = None,
+        vp_stage: int | None = None,
         patch_merger_spec: ModuleSpec = None,
     ):
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
@@ -207,19 +207,19 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
     def forward(
         self,
-        hidden_states: Union[Tensor, WrappedTensor],
-        attention_mask: Optional[Tensor],
-        context: Optional[Tensor] = None,
-        context_mask: Optional[Tensor] = None,
-        rotary_pos_emb: Optional[Tensor] = None,
-        rotary_pos_cos: Optional[Tensor] = None,
-        rotary_pos_sin: Optional[Tensor] = None,
-        attention_bias: Optional[Tensor] = None,
-        inference_context: Optional[BaseInferenceContext] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
-        sequence_len_offset: Optional[Tensor] = None,
+        hidden_states: Tensor | WrappedTensor,
+        attention_mask: Tensor | None,
+        context: Tensor | None = None,
+        context_mask: Tensor | None = None,
+        rotary_pos_emb: Tensor | None = None,
+        rotary_pos_cos: Tensor | None = None,
+        rotary_pos_sin: Tensor | None = None,
+        attention_bias: Tensor | None = None,
+        inference_context: BaseInferenceContext | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        sequence_len_offset: Tensor | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
+        inference_params: BaseInferenceContext | None = None,
     ):
         """
         Perform the forward pass through the transformer block.

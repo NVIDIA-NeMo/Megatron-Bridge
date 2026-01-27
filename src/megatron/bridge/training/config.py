@@ -1375,7 +1375,7 @@ class ConfigContainer(Container):
     checkpoint: CheckpointConfig
     dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
     ft: FaultToleranceConfig | None = None
-    straggler: StragglerDetectionConfig  | None = None
+    straggler: StragglerDetectionConfig | None = None
     nvrx_straggler: NVRxStragglerDetectionConfig | None = None
     profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     peft: PEFT | None = None

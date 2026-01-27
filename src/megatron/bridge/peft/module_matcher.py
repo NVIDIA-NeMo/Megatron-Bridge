@@ -63,9 +63,7 @@ class ModuleMatcher:
     exclude_modules: list[str] = field(default_factory=list)
     canonical_mapping: dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
 
-    def match(
-        self, m: nn.Module, name: str | None = None, prefix: str | None = None
-    ) -> tuple[str, str] | None:
+    def match(self, m: nn.Module, name: str | None = None, prefix: str | None = None) -> tuple[str, str] | None:
         """
         Determines whether a given module matches specified target patterns.
 

@@ -130,9 +130,7 @@ class PreTrainedBase(ABC):
 
         return copied_files
 
-    def save_artifacts(
-        self, save_directory: str | Path, original_source_path: str | Path | None = None
-    ):
+    def save_artifacts(self, save_directory: str | Path, original_source_path: str | Path | None = None):
         """
         Saves all loaded, generic artifacts that have a `save_pretrained` method
         to the specified directory. Note: This does not save the `model` attribute.

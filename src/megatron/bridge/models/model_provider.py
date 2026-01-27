@@ -120,7 +120,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             Callable[[list[MegatronModule]], list[MegatronModule]]
             | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
             | None
-            ) = None,
+        ) = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
@@ -442,9 +442,9 @@ class GetModelKwargs(TypedDict, total=False):
     use_cpu_initialization: bool | None
     init_model_with_meta_device: bool | None
     pre_wrap_hook: (
-            Callable[[list[MegatronModule]], list[MegatronModule]]
-            | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
-            | None
+        Callable[[list[MegatronModule]], list[MegatronModule]]
+        | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
+        | None
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
@@ -488,7 +488,7 @@ def get_model(
         Callable[[list[MegatronModule]], list[MegatronModule]]
         | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
         | None
-        ) = None,
+    ) = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,

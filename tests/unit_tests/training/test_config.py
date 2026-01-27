@@ -2623,9 +2623,7 @@ class TestDatasetSequenceLengthValidation:
 
             data_path: str = "/path/to/data"
 
-            def build_datasets(
-                self, context: DatasetBuildContext
-            ) -> tuple[Any | None, Any | None, Any | None]:
+            def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
                 # Mock implementation
                 return None, None, None
 
@@ -2728,9 +2726,7 @@ class TestDatasetSequenceLengthValidation:
 
             custom_field: str = "custom"
 
-            def build_datasets(
-                self, context: DatasetBuildContext
-            ) -> tuple[Any | None, Any | None, Any | None]:
+            def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
                 # Mock implementation
                 return None, None, None
 

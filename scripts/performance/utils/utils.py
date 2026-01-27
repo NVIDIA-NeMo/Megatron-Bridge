@@ -62,7 +62,7 @@ class WorkloadBaseConfig:
     peft: str | None = None
 
     # Pipeline parallelism layout
-    pp_layout: Optional[str] = None
+    pp_layout: str | None = None
 
     @property
     def sequence_parallel(self) -> bool:

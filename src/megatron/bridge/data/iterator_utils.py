@@ -22,9 +22,7 @@ from typing import TypeVar
 DataT = TypeVar("DataT")
 
 
-def make_data_iterator_list(
-    model: list, data_iterator: Iterator[DataT]
-) -> Iterator[DataT] | list[Iterator[DataT]]:
+def make_data_iterator_list(model: list, data_iterator: Iterator[DataT]) -> Iterator[DataT] | list[Iterator[DataT]]:
     """Convert data iterator into form expected by Megatron with virtual pipeline parallelism.
 
     With interleaved/virtual pipeline parallelism, Megatron expects a list of one data
