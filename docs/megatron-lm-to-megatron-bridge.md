@@ -281,7 +281,7 @@ Additional distributed/optimizer overlap settings:
 | --- | --- | --- |
 | `--error-injection-rate` | `rerun_state_machine.error_injection_rate` | Frequency of injected validation perturbations. |
 | `--error-injection-type` | `rerun_state_machine.error_injection_type` | Kind of injection (correct/transient/persistent). |
-| `--rerun-mode` | `rerun_state_machine.rerun_mode` | Disabled/validate_results/report_stats. |
+| `--rerun-mode` | `rerun_state_machine.rerun_mode` | Disabled/validate_results/report_determinism_stats. |
 
 ### Data / Tokenizer args
 

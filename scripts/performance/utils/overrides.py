@@ -47,7 +47,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
-    recipe.logger.save_config_filepath = "/nemo_run/configs/ConfigContainer.yaml"
 
     recipe.ddp.check_for_nan_in_grad = False
     recipe.ddp.check_for_large_grads = False
@@ -239,6 +238,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_exp_name = args.wandb_experiment_name
         recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
+
+    recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
     if args.tensor_model_parallel_size is not None:
@@ -275,7 +277,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+        if args.domain == "llm":
+            # Override the dataset configuration for LLM models.
+            # For vlm models, use the default dataset configuration in model recipe,
+            # becuase preprocess of dataset is different for each vlm model.
+            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -287,15 +293,28 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=False
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=False,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=True
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=True,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
+        if recipe.model.cuda_graph_impl != "none":
+            recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+        recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
 
@@ -322,9 +341,12 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
+    config_variant: str = "v1",
 ) -> ConfigContainer:
     """Set the post overrides."""
-    workload_base_config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task)
+    workload_base_config = get_workload_base_config(
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+    )
 
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
@@ -336,7 +358,8 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
+    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    if dp > 1 and pp > 1 and vp > 1 and compute_dtype != "fp8_mx":
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True

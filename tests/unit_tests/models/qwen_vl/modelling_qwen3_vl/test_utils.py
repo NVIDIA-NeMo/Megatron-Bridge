@@ -14,6 +14,8 @@
 
 """Unit tests for Qwen3VL utils functions."""
 
+from types import SimpleNamespace
+
 import torch
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_index, split_deepstack_embs
@@ -96,3 +98,49 @@ class TestQwen3VLUtils:
 
         assert position_ids.shape == (3, batch_size, seq_len)
         assert deltas.shape == (batch_size, 1)
+
+    def test_get_rope_index_packed_seq_params_builds_mask(self):
+        """Test get_rope_index builds attention mask from packed sequence params."""
+        batch_size, seq_len = 2, 5
+        input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(cu_seqlens_q=torch.tensor([0, 3, 5], dtype=torch.int32))
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=151655,
+            video_token_id=151656,
+            vision_start_token_id=151652,
+            input_ids=input_ids,
+            packed_seq_params=packed_seq_params,
+        )
+
+        expected_mask = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 0, 0, 0]], dtype=input_ids.dtype)
+        expected_positions = expected_mask.long().cumsum(-1) - 1
+        expected_positions.masked_fill_(expected_mask == 0, 1)
+        expected_positions = expected_positions.unsqueeze(0).expand(3, -1, -1)
+        expected_max = expected_positions.max(0, keepdim=False)[0].max(-1, keepdim=True)[0]
+        expected_deltas = expected_max + 1 - expected_mask.shape[-1]
+
+        assert torch.equal(position_ids, expected_positions)
+        assert torch.equal(deltas, expected_deltas)
+
+    def test_get_rope_index_packed_seq_params_fallback_dense_mask(self):
+        """Test get_rope_index falls back to dense mask when cu_seqlens is missing."""
+        batch_size, seq_len = 2, 4
+        input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(cu_seqlens_q=torch.tensor([0], dtype=torch.int32))
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=151655,
+            video_token_id=151656,
+            vision_start_token_id=151652,
+            input_ids=input_ids,
+            packed_seq_params=packed_seq_params,
+        )
+
+        expected_positions = torch.arange(seq_len, dtype=input_ids.dtype).view(1, 1, -1).expand(3, batch_size, -1)
+        expected_deltas = torch.zeros((batch_size, 1), dtype=input_ids.dtype)
+
+        assert torch.equal(position_ids, expected_positions)
+        assert torch.equal(deltas, expected_deltas)
