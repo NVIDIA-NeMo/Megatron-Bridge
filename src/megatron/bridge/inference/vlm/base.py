@@ -41,6 +41,18 @@ def setup_model_and_tokenizer(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
 ):
+    """Set up model and tokenizer from a Megatron checkpoint.
+
+    Args:
+        megatron_model_path: Path to the Megatron checkpoint.
+        tp: Tensor model parallel size.
+        pp: Pipeline model parallel size.
+        params_dtype: Data type for model parameters.
+        inference_batch_times_seqlen_threshold: Threshold for inference batching.
+
+    Returns:
+        A tuple of (inference_wrapped_model, processor).
+    """
     # Load from Megatron checkpoint
     print_rank_0(f"Loading Megatron model from: {megatron_model_path}")
 
