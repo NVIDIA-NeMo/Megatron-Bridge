@@ -124,7 +124,6 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
@@ -227,7 +226,6 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
