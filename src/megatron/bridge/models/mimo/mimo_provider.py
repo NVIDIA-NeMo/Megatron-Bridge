@@ -141,8 +141,10 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     modality_submodules_spec: Dict[str, ModuleSpec] = field(default_factory=dict)
     special_token_ids: Dict[str, int] = field(default_factory=dict)
     
-    # Parallelism config (Bridge's value-add)
     mimo_parallelism_config: Optional[MimoParallelismConfig] = None
+    
+    # Cached grids after build_model() - used by data loading
+    _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
     
     # Freezing options
     freeze_language_model: bool = False
@@ -213,6 +215,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             grids = {}
             pg_collections = {}
             topology = {}
+        
+        # Cache grids for later use (e.g., data loading)
+        object.__setattr__(self, "_grids", grids)
         
         participating_modules = [
             name for name, pg in pg_collections.items() if pg is not None
