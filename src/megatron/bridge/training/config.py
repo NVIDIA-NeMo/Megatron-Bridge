@@ -1431,6 +1431,13 @@ class ConfigContainer(Container):
 
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 
+        # Gloo process groups are not supported when using decentralized process groups (NCCL only).
+        if self.dist.use_decentralized_pg:
+            assert not self.dist.use_gloo_process_groups, (
+                "Gloo process groups are not supported when use_decentralized_pg=True. "
+                "Decentralized process groups only support NCCL backend."
+            )
+
         # Make sure all functionality that requires Gloo process groups is disabled.
         if not self.dist.use_gloo_process_groups:
             if self.optimizer.use_distributed_optimizer:
