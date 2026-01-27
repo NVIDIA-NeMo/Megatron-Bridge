@@ -139,6 +139,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     position_embedding_type: Literal["learned_absolute", "rope", "yarn"] = "learned_absolute"
     rotary_base: int = 10000
     rotary_percent: float = 1.0
+    rope_scaling: bool = False
+    rope_scaling_factor: float = 1.0
     rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
     seq_length: int = 1024
