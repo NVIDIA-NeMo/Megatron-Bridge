@@ -202,6 +202,34 @@ def parse_cli_args():
         required=True,
     )
     parser.add_argument(
+        "--hidden_size",
+        type=int,
+        help="Hidden size to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        help="Number of layers to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--pipeline_model_parallel_layout",
+        type=str,
+        help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--first_k_dense_replace",
+        type=int,
+        help="Number of MoE layers to be converted to dense layers. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "-d",
         "--dryrun",
         help="If true, prints sbatch script to terminal without launching experiment.",
@@ -643,7 +671,7 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2'. Use --list_config_variants to see available options.",
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2' ('v1' if 'v2' doens't exist). Use --list_config_variants to see available options.",
         default="v2",
     )
     config_variant_args.add_argument(
@@ -676,8 +704,6 @@ def parse_cli_args():
         default=0.70,
         help="Percentage of iterations to skip for timing comparison (default: 0.75 = 75%%)",
     )
-
-    # Convergence loss validation parameters
     testing_args.add_argument(
         "--correlation_threshold", type=float, default=0.95, help="Correlation threshold for loss curve validation"
     )
