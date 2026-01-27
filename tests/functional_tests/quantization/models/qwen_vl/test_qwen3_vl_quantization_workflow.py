@@ -326,7 +326,7 @@ class TestQwen3VLQuantizationWorkflow:
             if quantize_result.returncode != 0:
                 print(f"Quantization STDOUT: {quantize_result.stdout}")
                 print(f"Quantization STDERR: {quantize_result.stderr}")
-                assert False, f"Quantization step failed with return code {quantize_result.returncode}"
+                pytest.fail(f"Quantization step failed with return code {quantize_result.returncode}")
 
             # Verify quantization succeeded
             assert "Quantizing the model with fp8 configuration" in quantize_result.stdout, (
@@ -350,7 +350,7 @@ class TestQwen3VLQuantizationWorkflow:
             if generation_result.returncode != 0:
                 print(f"Generation STDOUT: {generation_result.stdout}")
                 print(f"Generation STDERR: {generation_result.stderr}")
-                assert False, f"Generation step failed with return code {generation_result.returncode}"
+                pytest.fail(f"Generation step failed with return code {generation_result.returncode}")
 
             # Verify generation succeeded
             stdout_normalized = generation_result.stdout.replace("\n", "")
@@ -408,7 +408,7 @@ class TestQwen3VLQuantizationWorkflow:
             if quantize_result.returncode != 0:
                 print(f"Quantization STDOUT: {quantize_result.stdout}")
                 print(f"Quantization STDERR: {quantize_result.stderr}")
-                assert False, f"Quantization step for {test_name} failed with return code {quantize_result.returncode}"
+                pytest.fail(f"Quantization step for {test_name} failed with return code {quantize_result.returncode}")
 
             # Verify quantization succeeded with correct parallelism
             assert "Quantizing the model with fp8 configuration" in quantize_result.stdout, (
@@ -438,7 +438,7 @@ class TestQwen3VLQuantizationWorkflow:
             if generation_result.returncode != 0:
                 print(f"Generation STDOUT: {generation_result.stdout}")
                 print(f"Generation STDERR: {generation_result.stderr}")
-                assert False, f"Generation step for {test_name} failed with return code {generation_result.returncode}"
+                pytest.fail(f"Generation step for {test_name} failed with return code {generation_result.returncode}")
 
             # Verify generation succeeded with correct parallelism
             stdout_normalized = generation_result.stdout.replace("\n", "")
