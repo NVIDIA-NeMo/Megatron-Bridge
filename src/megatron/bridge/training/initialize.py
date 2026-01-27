@@ -554,7 +554,10 @@ def _initialize_distributed(
     # data-parallel communicators.
 
     if device_count == 0:
-        raise RuntimeError("Cannot initialize parallel groups with no CUDA devices available (device_count=0)")
+        if dist_config.use_decentralized_pg or dist_config.distributed_backend == "nccl":
+            raise RuntimeError(
+                "Cannot initialize parallel groups with no CUDA devices available (device_count=0)"
+            )
 
     if dist_config.use_decentralized_pg:
         # Use HyperCommGrid to create local parallel groups passed through functions
