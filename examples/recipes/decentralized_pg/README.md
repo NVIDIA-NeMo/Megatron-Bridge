@@ -155,17 +155,6 @@ train(
 
 `HyperCommGrid` creates a multi-dimensional grid of ranks. The grid shape `[TP, CP, DP, PP]` defines how ranks are organized:
 
-```
-World Size = 8, Shape = [2, 1, 2, 2] means:
-  TP=2, CP=1, DP=2, PP=2
-
-Rank layout:
-  TP=0,DP=0,PP=0: rank 0    TP=1,DP=0,PP=0: rank 1
-  TP=0,DP=0,PP=1: rank 2    TP=1,DP=0,PP=1: rank 3
-  TP=0,DP=1,PP=0: rank 4    TP=1,DP=1,PP=0: rank 5
-  TP=0,DP=1,PP=1: rank 6    TP=1,DP=1,PP=1: rank 7
-```
-
 When you call `grid.create_pg(["tp"])`, it creates groups of ranks that share the same DP and PP coordinates but differ in TP:
 - Group 1: [rank 0, rank 1] (DP=0, PP=0)
 - Group 2: [rank 2, rank 3] (DP=0, PP=1)
