@@ -358,7 +358,10 @@ def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvide
 
 
 def _create_pg_collection(
-    model_config: GPTModelProvider | T5ModelProvider, num_distributed_optimizer_instances: int
+    model_config: GPTModelProvider | T5ModelProvider,
+    num_distributed_optimizer_instances: int,
+    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
 ) -> ProcessGroupCollection:
     """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
     world_size = torch.distributed.get_world_size()
@@ -444,9 +447,18 @@ def _create_pg_collection(
     for ranks in pp_rank_lists:
         if not ranks:
             continue
-        # embedding_ranks: first and last pp stage (or only one if pp_size==1)
-        embedding_rank_lists.append([ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]])
-        pos_embedding_rank_lists.append([ranks[0]])
+        if get_embedding_ranks is not None:
+            # Use custom callback to determine embedding ranks
+            embedding_rank_lists.append(get_embedding_ranks(ranks, pp_size))
+        else:
+            # Default: embedding_ranks are first and last pp stage (or only one if pp_size==1)
+            embedding_rank_lists.append([ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]])
+        if get_position_embedding_ranks is not None:
+            # Use custom callback to determine position embedding ranks
+            pos_embedding_rank_lists.append(get_position_embedding_ranks(ranks, pp_size))
+        else:
+            # Default: position embedding ranks are first pp stage only
+            pos_embedding_rank_lists.append([ranks[0]])
     if embedding_rank_lists:
         embd_pg, _ = torch.distributed.new_subgroups_by_enumeration(embedding_rank_lists, backend="nccl")
     if pos_embedding_rank_lists:
@@ -555,15 +567,18 @@ def _initialize_distributed(
 
     if device_count == 0:
         if dist_config.use_decentralized_pg or dist_config.distributed_backend == "nccl":
-            raise RuntimeError(
-                "Cannot initialize parallel groups with no CUDA devices available (device_count=0)"
-            )
+            raise RuntimeError("Cannot initialize parallel groups with no CUDA devices available (device_count=0)")
 
     if dist_config.use_decentralized_pg:
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
-        pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
+        pg_collection = _create_pg_collection(
+            model_config,
+            num_distributed_optimizer_instances,
+            get_embedding_ranks=get_embedding_ranks,
+            get_position_embedding_ranks=get_position_embedding_ranks,
+        )
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
             pp = int(model_config.pipeline_model_parallel_size)
