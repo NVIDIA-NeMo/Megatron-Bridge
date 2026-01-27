@@ -13,7 +13,10 @@
 # limitations under the License.
 import warnings
 from dataclasses import dataclass, field
-from typing import List, Union
+from typing import Callable, List, Optional, Union
+
+import torch
+import torch.nn.functional as F
 
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.utils.common_utils import get_rank_safe
@@ -37,6 +40,22 @@ class DeepSeekModelProvider(MLAModelProvider):
         This alias remains for backward compatibility and will be removed in a
         future release. Use ``MLAModelProvider`` instead.
     """
+
+    # Common DeepSeek defaults
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    share_embeddings_and_output_weights: bool = False
+    qk_layernorm: bool = True
+    bf16: bool = True
+    params_dtype: torch.dtype = torch.bfloat16
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    # MLA defaults
+    q_lora_rank: Optional[int] = 1536
+    kv_lora_rank: int = 512
 
     def __post_init__(self) -> None:
         _warn_deprecated("DeepSeekModelProvider")
@@ -82,7 +101,7 @@ class DeepSeekV2LiteModelProvider(MLAModelProvider):
     ffn_hidden_size: int = 10944
     num_attention_heads: int = 16
     kv_channels: int = 16
-    q_lora_rank: int = None
+    q_lora_rank: Optional[int] = None
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared experts
@@ -91,6 +110,8 @@ class DeepSeekV2LiteModelProvider(MLAModelProvider):
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1
     moe_router_topk_scaling_factor: float = 1.0
+    mscale: float = 0.707
+    mscale_all_dim: float = 0.707
     vocab_size: int = 102400
 
     def __post_init__(self) -> None:
@@ -107,6 +128,7 @@ class DeepSeekV3ModelProvider(MLAModelProvider):
     num_layers: int = 61
     hidden_size: int = 7168
     ffn_hidden_size: int = 18432
+    kv_channels: int = 128
     num_moe_experts: int = 256
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
