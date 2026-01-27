@@ -250,7 +250,7 @@ class PerfEnvPlugin(Plugin):
     ):
         """Set model-specific environment variables"""
         if (
-            model_family_name in ["llama31"]
+            model_family_name in ["llama"]
             and model_recipe_name in ["llama31_405b"]
             and train_task == "pretrain"
             and gpu in ["gb200"]
@@ -259,16 +259,16 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         del_cudnn_ln = True
         if gpu in ["h100"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_family_name == "llama31" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:

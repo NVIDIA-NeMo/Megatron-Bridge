@@ -24,7 +24,6 @@ from megatron.bridge.recipes.gemma3_vl import *
 from megatron.bridge.recipes.gpt import *
 from megatron.bridge.recipes.gpt_oss import *
 from megatron.bridge.recipes.llama import *
-from megatron.bridge.recipes.mamba import *
 from megatron.bridge.recipes.moonlight import *
 from megatron.bridge.recipes.nemotronh import *
 from megatron.bridge.recipes.olmoe import *
