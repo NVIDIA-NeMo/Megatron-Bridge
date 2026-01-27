@@ -453,7 +453,6 @@ def validate_memory(
         results["alloc_diff"] = alloc_diff
         results["memory_threshold"] = config["memory_threshold"]
     else:
-        results["passed"] = True
         logger.info(f"✓ Alloc validation passed: {alloc_diff * 100:.2f}% <= {config['memory_threshold'] * 100:.1f}%")
 
     # Generate summary
