@@ -173,8 +173,8 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
             recipe.checkpoint.save = args.save_dir
             logger.info(f"Checkpoint save directory set to: {args.save_dir}")
         else:
-            recipe.checkpoint.save = "/nemo_run/code/nemo_experiments/default/checkpoints"
-            logger.info("Checkpoint save directory defaulting to: /nemo_run/code/nemo_experiments/default/checkpoints")
+            recipe.checkpoint.save = "/nemo_run/checkpoints"
+            logger.info("Checkpoint save directory defaulting to: /nemo_run/checkpoints")
     
     # If only save_dir is provided without save_interval, still enable checkpointing
     elif args.save_dir is not None:
