@@ -1,12 +1,6 @@
 # Callbacks
 
-Megatron Bridge provides a lightweight callback system for injecting custom logic into the training and evaluation loop without modifying framework code. This is ideal for:
-
-- Proprietary integrations
-- Custom logging and metrics tracking
-- Company-specific monitoring
-- Infrastructure heartbeats
-- Experiment tracking
+Megatron Bridge provides a lightweight callback system for injecting custom logic into the training and evaluation loop without modifying framework code. This is ideal for propietary integrations or custom logging and metrics tracking.
 
 ## Quick Start
 
@@ -48,10 +42,10 @@ def log_step(context):
     if context.loss_dict:
         print(f"Step {step}: {context.loss_dict}")
 
-manager = CallbackManager()
-manager.register("on_train_step_end", log_step)
+callback_manager = CallbackManager()
+callback_manager.register("on_train_step_end", log_step)
 
-pretrain(config, forward_step_func, callbacks=manager)
+pretrain(config, forward_step_func, callbacks=callback_manager)
 ```
 
 ### Mixing Both Patterns
@@ -136,7 +130,7 @@ class StepCounterCallback(Callback):
 
 ## Distributed Training
 
-Callbacks fire on **all ranks** without framework-level synchronization. If your callback should only run on specific ranks, add rank guards:
+Callbacks fire on **all ranks** without framework-level synchronization. If your callback should only run on specific ranks, add guards:
 
 ```python
 import torch.distributed as dist
@@ -198,8 +192,6 @@ The callback system follows these principles:
 2. **Zero Overhead**: When no callbacks are registered, there is zero performance overhead.
 
 3. **Safety**: Callbacks receive framework state but modifying it is at the user's own risk. The framework makes no guarantees about the effects of modifications.
-
-4. **Simplicity**: No priority ordering, no control flow back to the training loop, no framework-level exception handling. Callbacks are purely additive.
 
 ## Examples
 
