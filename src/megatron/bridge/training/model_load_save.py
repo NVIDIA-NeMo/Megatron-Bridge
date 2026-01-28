@@ -265,6 +265,7 @@ def build_and_load_model(
         The model instance with loaded weights if return_state_dict is False,
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
+    from megatron.bridge.models.gpt_provider import _supports_modelopt_te_spec
     from megatron.bridge.training.checkpointing import (
         _load_model_weights_from_checkpoint,
     )
@@ -275,6 +276,11 @@ def build_and_load_model(
     if has_modelopt_state(checkpoint_path):
         if hasattr(model_cfg, "restore_modelopt_state"):
             model_cfg.restore_modelopt_state = True
+        # Check if the model supports TE spec for modelopt (e.g., Qwen3-8B)
+        # If so, set modelopt_use_te=True to use TE spec instead of local spec
+        hf_model_id = getattr(model_cfg, "hf_model_id", None)
+        if hasattr(model_cfg, "modelopt_use_te") and _supports_modelopt_te_spec(hf_model_id):
+            model_cfg.modelopt_use_te = True
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""

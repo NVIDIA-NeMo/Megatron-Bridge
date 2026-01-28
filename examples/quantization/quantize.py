@@ -39,13 +39,21 @@ from datasets import load_dataset
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
-from rich.console import Console
-from rich.table import Table
+from quantize_utils import (
+    QUANT_CFG_CHOICES,
+    add_common_quantization_args,
+    console,
+    create_quantization_stats_table,
+    get_modelopt_torch_quantization_config,
+)
 from tqdm import tqdm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.gpt_provider import modelopt_transformer_layer_spec
+from megatron.bridge.models.gpt_provider import (
+    _supports_modelopt_te_spec,
+    modelopt_transformer_layer_spec,
+)
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, modelopt_mamba_stack_spec
 
@@ -53,48 +61,6 @@ from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, mode
 warnings.filterwarnings("ignore")
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
-console = Console()
-
-
-QUANT_CFG_CHOICES = {
-    "int8_sq": mtq.INT8_SMOOTHQUANT_CFG,
-    "fp8": mtq.FP8_DEFAULT_CFG,
-    "fp8_blockwise": mtq.FP8_2D_BLOCKWISE_WEIGHT_ONLY_CFG,
-    "int4_awq": mtq.INT4_AWQ_CFG,
-    "w4a8_awq": mtq.W4A8_AWQ_BETA_CFG,
-    "nvfp4": mtq.NVFP4_DEFAULT_CFG,
-}
-
-
-def get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant=False, weight_only=False):
-    """Return a quantization config based on the specified configuration."""
-    mtq_config = QUANT_CFG_CHOICES[export_quant_cfg]
-
-    fp8_config = {"enable": True, "num_bits": (4, 3), "axis": None}
-    fp4_config = {
-        "num_bits": (2, 1),
-        "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)},
-        "axis": None,
-        "enable": True,
-    }
-
-    if "fp8" == export_quant_cfg:
-        # Enable Medusa heads and kv-cache quantization
-        mtq_config["quant_cfg"]["*medusa_heads**"] = fp8_config
-    if "fp4" in export_quant_cfg:
-        # Enable Medusa heads and kv-cache quantization
-        mtq_config["quant_cfg"]["*medusa_heads**"] = fp4_config
-    if "awq" in export_quant_cfg:
-        weight_quantizer = mtq_config["quant_cfg"]["*weight_quantizer"]  # type: ignore
-        if isinstance(weight_quantizer, list):
-            weight_quantizer = weight_quantizer[0]
-        weight_quantizer["block_sizes"][-1] = 128
-    if export_kv_cache_quant:
-        mtq_config["quant_cfg"]["*linear_qkv.output_quantizer"] = fp8_config
-    if weight_only:
-        mtq_config["quant_cfg"]["*input_quantizer"] = {"enable": False}
-
-    return mtq_config
 
 
 def get_calib_dataloader(calib_size=512, max_sequence_length=512):
@@ -118,7 +84,6 @@ def _hf_dataset_forward_loop_func(model, tokenizer, calib_size, force_all_expert
 
     for prompt in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank()):
         tokens = tokenizer(prompt, return_tensors="pt")
-        # Use megatron_generate for calibration (same as quantize.py)
         megatron_generate(model, tokens.input_ids.cuda(), osl=1)
 
         if force_all_expert_routing:
@@ -177,17 +142,23 @@ def main(
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = torch.bfloat16
-    # Disable MoE permute fusion for SequentialMLP (used by modelopt_transformer_layer_spec)
-    # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
-    model_provider.moe_permute_fusion = False
 
     # Set the correct layer spec for quantization based on model type
-    if isinstance(model_provider, MambaModelProvider):
-        # For Mamba/Nemotron-H models: use modelopt_mamba_stack_spec
-        model_provider.mamba_stack_spec = modelopt_mamba_stack_spec
+    # Only certain models support TE spec; others use quantization_layer_spec
+    if _supports_modelopt_te_spec(hf_model_id):
+        # Model supports TE spec, use default (TE) layer spec
+        _layer_spec_used = "TE spec (default)"
     else:
-        # For GPT/Llama models: use the standard quantization layer spec
-        model_provider.transformer_layer_spec = modelopt_transformer_layer_spec
+        # For models that don't support TE spec: use quantization layer specs
+        # Disable MoE permute fusion for SequentialMLP (used by quantization specs)
+        # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
+        model_provider.moe_permute_fusion = False
+        if isinstance(model_provider, MambaModelProvider):
+            model_provider.mamba_stack_spec = modelopt_mamba_stack_spec
+            _layer_spec_used = "quantization_mamba_stack_spec"
+        else:
+            model_provider.transformer_layer_spec = modelopt_transformer_layer_spec
+            _layer_spec_used = "quantization_layer_spec"
 
     # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
     model_provider.finalize()
@@ -202,13 +173,11 @@ def main(
         console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
         console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
         console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
+        console.print(f"[green]Layer spec used: {_layer_spec_used}[/green]")
 
     # Formatting
     if is_rank_0:
-        table = Table(title="Quantization Statistics")
-        table.add_column("Parameter Name", style="cyan")
-        table.add_column("Shape")
-        table.add_column("Max Value", justify="right")
+        table = create_quantization_stats_table()
 
     # Apply quantization
     if export_quant_cfg in QUANT_CFG_CHOICES:
@@ -281,50 +250,11 @@ if __name__ == "__main__":
         description="Quantize HuggingFace model to Megatron-LM format using ModelOpt on multiple GPUs"
     )
     parser.add_argument("--hf-model-id", type=str, default=HF_MODEL_ID, help="HuggingFace model ID to quantize")
-    parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
-    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
-    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
-    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
 
-    parser.add_argument(
-        "--megatron-save-path",
-        type=str,
-        default=None,
-        help="Path to save the quantized model in Megatron checkpoint format. If not provided, will use default path: {model_name}_quantized_{config}",
-    )
-    parser.add_argument(
-        "--export-quant-cfg",
-        type=str,
-        default="fp8",
-        choices=list(QUANT_CFG_CHOICES.keys()),
-        help="Quantization configuration to use.",
-    )
-    parser.add_argument(
-        "--calib-size",
-        type=int,
-        default=512,
-        help="Samples to use for PTQ calibration.",
-    )
-    parser.add_argument(
-        "--compress",
-        action="store_true",
-        help="Enable real low-bit quantization.",
-    )
-    parser.add_argument(
-        "--weight-only",
-        action="store_true",
-        help="Disable input quantization.",
-    )
-    parser.add_argument(
-        "--export-kv-cache-quant",
-        action="store_true",
-        help="Enable KV cache quantization.",
-    )
-    parser.add_argument(
-        "--force-all-expert-routing",
-        action="store_true",
-        help="Forcing all experts to be routed during the calibration.",
-    )
+    # Add common quantization arguments
+    add_common_quantization_args(parser)
+
+    # LLM-specific arguments
     parser.add_argument(
         "--prompts",
         type=str,
@@ -336,7 +266,6 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable HF datasets file lock. This is only needed when testing with data in a read-only directory.",
     )
-    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
     if args.disable_hf_datasets_file_lock:
