@@ -127,7 +127,7 @@ def calc_params_l2_norm(
 
         return calc_dtensor_params_l2_norm(params)
 
-    # Seperate moe and dense params
+    # Separate moe and dense params
     params_data = []
     moe_params_data = []
     sharded_params_data = []
@@ -141,10 +141,21 @@ def calc_params_l2_norm(
                 continue
             assert is_not_tp_duplicate
             if not getattr(param, "allreduce", True):
-                # TODO: Implement memory optimization for MoE parameters.
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
-                moe_params_data.append(param.data.float() if model_config.bf16 else param.data)
+                if model_config.bf16:
+                    if not force_create_fp32_copy and hasattr(param, "main_param"):
+                        if getattr(param, "main_param_sharded", False):
+                            if param.main_param is not None:
+                                sharded_params_data.append(param.main_param)
+                        else:
+                            moe_params_data.append(param.main_param)
+                    else:
+                        # Fallback to original logic of making a fp32 copy of the
+                        # parameter if `.main_param` attribute is not available.
+                        moe_params_data.append(param.data.float())
+                else:
+                    moe_params_data.append(param.data)
             else:
                 if param_is_not_shared(param):
                     param = to_local_if_dtensor(param)
