@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import logging
+from functools import partial
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Glm4MoeForCausalLM
 
@@ -27,6 +29,14 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +61,8 @@ class GLM45Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
+        # Use decoder block spec to properly handle moe_layer_freq (mixed dense/MoE layers)
+        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
