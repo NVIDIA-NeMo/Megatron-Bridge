@@ -84,6 +84,7 @@ class MockMimoProvider(MimoDatasetProvider):
     modality_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     text_prompt: str = "Describe this input."
     random_seed: int = 0
+    trust_remote_code: bool = False
     
     # DataloaderConfig fields
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"

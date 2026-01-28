@@ -40,8 +40,8 @@ class FakeGrid:
 def _make_mimo_cfg(deployment_mode: str) -> MimoParallelismConfig:
     """Create test MIMO config."""
     module_parallelisms = {
-        "vision": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=0),
-        "llm": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=4),
+        "vision": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
+        "llm": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
     }
     return MimoParallelismConfig(
         llm_module_name="llm",
@@ -71,7 +71,7 @@ def test_get_mimo_dp_info_colocated(monkeypatch):
 def test_get_mimo_dp_info_colocated_llm_first_pp(monkeypatch):
     """Test colocated mode with LLM as loader, first PP stage."""
     mimo_cfg = _make_mimo_cfg("colocated")
-    mimo_cfg.module_parallelisms["vision"].data_parallel = 8  # Make vision larger
+    mimo_cfg.module_parallelisms["vision"].data_parallel_size = 8  # Make vision larger
     monkeypatch.setattr(dist, "get_rank", lambda: 0)
 
     grids = {
