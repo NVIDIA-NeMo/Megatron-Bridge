@@ -236,9 +236,9 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
 
     # Freeze options for fine-tuning scenarios
     # Whether to freeze language model weights
-    freeze_language_model: bool = True
+    freeze_language_model: bool = False
     # Whether to freeze vision encoder weights
-    freeze_vision_model: bool = True
+    freeze_vision_model: bool = False
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
     language_max_sequence_length: int = 2048
