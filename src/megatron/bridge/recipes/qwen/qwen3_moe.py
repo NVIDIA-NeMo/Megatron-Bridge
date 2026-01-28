@@ -154,9 +154,7 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = (
-        "deepep"
-    )
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config
