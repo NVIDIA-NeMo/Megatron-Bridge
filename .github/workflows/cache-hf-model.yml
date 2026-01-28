@@ -41,13 +41,13 @@ jobs:
       - name: Install dependencies
         run: |
           TRANSFORMERS_VERSION=$(grep -E 'transformers[[:space:]]*[=><!~]+' ${GITHUB_WORKSPACE}/pyproject.toml | sed -E 's/.*transformers[[:space:]]*([=><!~]+)[[:space:]]*"?([0-9a-zA-Z\.\-\*]+)"?.*/\1\2/')
-          pip install torch "transformers${TRANSFORMERS_VERSION}" "huggingface_hub[cli]"
+          pip install torch "transformers${TRANSFORMERS_VERSION}" "huggingface_hub[cli]" accelerate
 
       - name: Log in to HuggingFace
         env:
           HF_ACCESS_TOKEN: ${{ secrets.HF_ACCESS_TOKEN }}
         run: |
-            hf auth login --token ${HF_ACCESS_TOKEN}
+          hf auth login --token ${HF_ACCESS_TOKEN}
 
       - name: Download model
         env:
