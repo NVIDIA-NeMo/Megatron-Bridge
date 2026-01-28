@@ -25,6 +25,7 @@ import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.state import TrainState
+from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 
@@ -277,7 +278,9 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
                 else:
                     with open(run_config_filename, "r") as f:
                         config_dict = yaml.safe_load(f)
-                config_obj[0] = _sanitize_run_config_object(config_dict)
+                config_dict = _sanitize_run_config_object(config_dict)
+                config_dict = apply_run_config_backward_compat(config_dict)
+                config_obj[0] = config_dict
             except Exception as e:
                 error_msg = f"ERROR: Unable to load config file {run_config_filename}: {e}"
                 sys.stderr.write(error_msg + "\n")
@@ -289,7 +292,7 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
         if isinstance(config_obj[0], dict) and config_obj[0].get("error", False):
             raise RuntimeError(config_obj[0]["msg"])
 
-        return _sanitize_run_config_object(config_obj[0])
+        return config_obj[0]
     else:
         try:
             if MultiStorageClientFeature.is_enabled():
@@ -302,7 +305,9 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
         except Exception as e:
             raise RuntimeError(f"Unable to load config file {run_config_filename}: {e}") from e
 
-        return _sanitize_run_config_object(config_dict)
+        config_dict = _sanitize_run_config_object(config_dict)
+        config_dict = apply_run_config_backward_compat(config_dict)
+        return config_dict
 
 
 @lru_cache()
