@@ -267,8 +267,9 @@ def train(
     # Run training iterations till done.
     rank = torch.distributed.get_rank()
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+    dp_size = pg_collection.dp.size()
 
-    print("Running new code 11:20AM #########################")
+    print("Running new code 12:11 AM #########################")
     while global_state.train_state.step < train_config.train_iters:
 
         # Handle profiling for this step
@@ -413,7 +414,6 @@ def train(
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
-        dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
@@ -430,9 +430,7 @@ def train(
 
         # Logging.
         if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
-            print("Logging enabled: Not expected")
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
-                print("Getting loss scale for optimizer")
                 loss_scale = optimizer.get_loss_scale().item()
             else:
                 loss_scale = 1.0
@@ -468,7 +466,7 @@ def train(
                 model,
                 log_max_attention_logit,
             )
-        """
+        
         if (
             global_state.train_state.do_valid
             and train_config.eval_interval
@@ -476,7 +474,7 @@ def train(
         ):
             if energy_monitor is not None:
                 energy_monitor.pause()
-            timers("interval-time").stop()
+            #timers("interval-time").stop()
             if should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model)
                 pre_hook_enabled = False
@@ -484,7 +482,7 @@ def train(
                 # Collect all objects.
                 gc.collect()
             prefix = f"iteration {global_state.train_state.step}"
-            timers("eval-time", log_level=0).start(barrier=True)
+            #timers("eval-time", log_level=0).start(barrier=True)
             evaluate_and_print_results(
                 global_state,
                 prefix,
@@ -497,9 +495,9 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
             )
-            eval_duration += timers("eval-time").elapsed()
+            #eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
-            timers("eval-time").stop()
+            #timers("eval-time").stop()
 
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect only the objects created and used in evaluation.
@@ -507,13 +505,13 @@ def train(
             if should_toggle_forward_pre_hook:
                 enable_forward_pre_hook(model)
                 pre_hook_enabled = True
-            timers("interval-time", log_level=0).start(barrier=True)
+            #timers("interval-time", log_level=0).start(barrier=True)
             if energy_monitor is not None:
                 energy_monitor.resume()
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
-        """       
+        
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
@@ -593,6 +591,7 @@ def train(
 
     # Close NVIDIA DLFw Inspect at clean finish
     tensor_inspect_end_if_enabled(config.tensor_inspect)
+
 
 def train_step(
     forward_step_func: ForwardStepCallable,
