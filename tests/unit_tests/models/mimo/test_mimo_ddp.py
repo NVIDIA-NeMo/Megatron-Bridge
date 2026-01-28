@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
-from megatron.bridge.training.mimo_ddp import wrap_mimo_model_distributed
+from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 

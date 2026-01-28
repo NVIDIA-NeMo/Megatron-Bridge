@@ -34,8 +34,8 @@ from megatron.bridge.models.mimo.mimo_builder import (
     is_pp_last_stage,
 )
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
+from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.training.mimo_ddp import wrap_mimo_model_distributed
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
