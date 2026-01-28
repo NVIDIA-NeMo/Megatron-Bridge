@@ -433,13 +433,12 @@ def train(
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
         #"""
 
-        global_state.train_state.step += 1        
+        global_state.train_state.step += 1
 
-        #"""        
+        #"""
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
-
 
         dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
