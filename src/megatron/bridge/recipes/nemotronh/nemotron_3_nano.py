@@ -166,6 +166,7 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
 
     return cfg
 
+
 class Nemotron3NanoFinetuneKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron 3 Nano finetune recipe helpers."""
 
