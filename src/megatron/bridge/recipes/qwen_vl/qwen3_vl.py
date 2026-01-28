@@ -378,7 +378,7 @@ def _qwen3_vl_common(
 
     # Determine dataset selection strategy.
     _processor_model = tokenizer_model or hf_path
-    mock = mock or dataset_type == "mock"
+    mock = mock or dataset_type == "hf"
 
     if mock:
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
