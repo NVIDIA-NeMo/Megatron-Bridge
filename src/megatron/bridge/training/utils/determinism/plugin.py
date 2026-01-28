@@ -137,10 +137,11 @@ class DeterminismDebugPlugin:
         
         # Storage for hashes from all runs
         # We store hashes instead of full tensors to save CPU memory
-        self._tensors: Dict[Tuple[str, int, str, int], Any] = {}
+        self._tensors: Dict[Tuple[str, int, str, int, Optional[int]], Any] = {}
         
-        self._call_counts: Dict[Tuple[str, int, str], int] = {}  # Track call count per (name, run_id, pass_type)
+        self._call_counts: Dict[Tuple[str, int, str, Optional[int]], int] = {}  # Track call count per (name, run_id, pass_type, microbatch_id)
         self._run_id = 0
+        self._microbatch_id: Optional[int] = None  # Current microbatch ID
         self._results: Dict[str, bool] = {}  # "name:pass_type:call_idx" -> match/mismatch
         self._first_mismatch: Optional[str] = None
         
@@ -193,7 +194,7 @@ class DeterminismDebugPlugin:
         # Detach and move to CPU (async, non-blocking)
         return tensor.detach().cpu()
     
-    def _record(self, name: str, tensor: torch.Tensor, pass_type: str, module: Optional[torch.nn.Module] = None):
+    def _record(self, name: str, tensor: torch.Tensor, pass_type: str):
         """
         Record a tensor's hash for later comparison.
         
@@ -209,20 +210,24 @@ class DeterminismDebugPlugin:
             name: Layer name or parameter name
             tensor: Activation or gradient tensor
             pass_type: "forward", "backward", "output_grad", or "param_grad"
-            module: The module that triggered the hook (optional)
         """
-        # Attempt to get microbatch ID from module if available
-        microbatch_id = None
-        if module is not None:
-            microbatch_id = getattr(module, 'current_microbatch', None)
-        
-        # Track call count for this (name, run_id, pass_type, microbatch_id) combination
-        count_key = (name, self._run_id, pass_type, microbatch_id)
+        # Auto-detect microbatch ID from Megatron parallel state if not manually set
+        mb_id = self._microbatch_id
+        if mb_id is None:
+            try:
+                from megatron.core.pipeline_parallel.schedules import get_current_microbatch_id
+                mb_id = get_current_microbatch_id()
+            except (ImportError, AttributeError):
+                pass
+
+        # Track call count for this (name, run_id, pass_type, mb_id) combination
+        # mb_id helps align interleaved microbatches in PP
+        count_key = (name, self._run_id, pass_type, mb_id)
         call_idx = self._call_counts.get(count_key, 0)
         self._call_counts[count_key] = call_idx + 1
         
-        # Store with call_idx to handle multiple calls to same layer
-        key = (name, self._run_id, pass_type, call_idx, microbatch_id)
+        # Store with call_idx and mb_id to handle multiple calls to same layer
+        key = (name, self._run_id, pass_type, call_idx, mb_id)
         
         # #region agent log
         try:
@@ -242,7 +247,7 @@ class DeterminismDebugPlugin:
                     "name": name,
                     "pass_type": pass_type,
                     "call_idx": call_idx,
-                    "microbatch_id": microbatch_id,
+                    "microbatch_id": mb_id,
                     "run_id": self._run_id,
                     "shape": list(tensor.shape) if hasattr(tensor, 'shape') else None,
                     "dtype": str(tensor.dtype) if hasattr(tensor, 'dtype') else None
@@ -292,7 +297,7 @@ class DeterminismDebugPlugin:
                         "name": name,
                         "pass_type": pass_type,
                         "call_idx": call_idx,
-                        "microbatch_id": microbatch_id,
+                        "microbatch_id": mb_id,
                         "hash": tensor_hash
                     },
                     "timestamp": int(time.time() * 1000)
@@ -319,7 +324,7 @@ class DeterminismDebugPlugin:
                 return
             tensor = self._get_output_tensor(output)
             if tensor is not None:
-                self._record(layer_name, tensor, "forward", module=module)
+                self._record(layer_name, tensor, "forward")
                 # Gradient will be captured by backward hook instead
         return hook
     
@@ -330,7 +335,7 @@ class DeterminismDebugPlugin:
                 return
             tensor = self._get_output_tensor(grad_output)
             if tensor is not None:
-                self._record(layer_name, tensor, "backward", module=module)
+                self._record(layer_name, tensor, "backward")
         return hook
     
     def _create_param_grad_hook(self, param_name: str):
@@ -385,13 +390,13 @@ class DeterminismDebugPlugin:
         (activation checkpointing), call 0 from run1 is compared with call 0 from run2.
         """
         # Find all keys from run2
-        run2_keys = [(name, pass_type, call_idx, microbatch_id) 
-                     for (name, rid, pass_type, call_idx, microbatch_id) in self._tensors.keys() 
+        run2_keys = [(name, pass_type, call_idx, mb_id) 
+                     for (name, rid, pass_type, call_idx, mb_id) in self._tensors.keys() 
                      if rid == run2]
         
-        for name, pass_type, call_idx, microbatch_id in run2_keys:
-            key1 = (name, run1, pass_type, call_idx, microbatch_id)
-            key2 = (name, run2, pass_type, call_idx, microbatch_id)
+        for name, pass_type, call_idx, mb_id in run2_keys:
+            key1 = (name, run1, pass_type, call_idx, mb_id)
+            key2 = (name, run2, pass_type, call_idx, mb_id)
             
             if key1 not in self._tensors:
                 continue
@@ -399,12 +404,12 @@ class DeterminismDebugPlugin:
             val1 = self._tensors[key1]
             val2 = self._tensors[key2]
             
-            # Include call_idx and microbatch_id in result key if there are multiple calls
+            # Include call_idx and mb_id in result key if there are multiple calls or microbatches
             result_key_parts = [name, pass_type]
-            if microbatch_id is not None:
-                result_key_parts.append(f"mb{microbatch_id}")
+            if mb_id is not None:
+                result_key_parts.append(f"mb{mb_id}")
             if call_idx > 0:
-                result_key_parts.append(f"call{call_idx}")
+                result_key_parts.append(f"idx{call_idx}")
             result_key = ":".join(result_key_parts)
 
             if self.config.memory_efficient:
@@ -476,8 +481,19 @@ class DeterminismDebugPlugin:
         # Reset call counts for the new run so that call_idx starts from 0
         # This prevents "false alarms" caused by index shifting between runs
         self._call_counts.clear()
+        self._microbatch_id = None  # Reset microbatch ID for new run
         
         self._run_id += 1
+    
+    def set_microbatch_id(self, microbatch_id: Optional[int]):
+        """
+        Set the current microbatch ID for alignment.
+        
+        In PP, microbatches are interleaved. By setting the microbatch ID,
+        the plugin can align tensors from the same microbatch across runs,
+        even if the execution order of microbatches changes.
+        """
+        self._microbatch_id = microbatch_id
     
     def _move_run_to_cpu(self, run_id: int):
         """
@@ -494,8 +510,8 @@ class DeterminismDebugPlugin:
             return
         
         # Non-memory-efficient mode: move to CPU now
-        keys_to_move = [(name, rid, pass_type, call_idx, microbatch_id) 
-                        for (name, rid, pass_type, call_idx, microbatch_id) in self._tensors.keys() 
+        keys_to_move = [(name, rid, pass_type, call_idx, mb_id) 
+                        for (name, rid, pass_type, call_idx, mb_id) in self._tensors.keys() 
                         if rid == run_id]
         
         for key in keys_to_move:
@@ -515,6 +531,7 @@ class DeterminismDebugPlugin:
         self._results.clear()
         self._first_mismatch = None
         self._run_id = 0
+        self._microbatch_id = None
         
         import gc
         gc.collect()
@@ -588,6 +605,7 @@ class DeterminismDebugPlugin:
         self._results.clear()
         self._first_mismatch = None
         self._run_id = 0
+        self._microbatch_id = None
     
     def get_summary(self) -> Dict[str, Any]:
         """Get summary of determinism check results."""
