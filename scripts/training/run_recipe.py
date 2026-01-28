@@ -95,16 +95,23 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         choices=sorted(STEP_MODULES.keys()),
         help="Step function: gpt_step (text-only), vlm_step (vision-language), or llava_step (LLaVA models)",
     )
+    parser.add_argument(
+        "--peft_scheme",
+        type=str,
+        default=None,
+        help="PEFT scheme to use: 'lora', 'dora', or None.",
+    )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
 
 
-def load_recipe(recipe_name: str) -> ConfigContainer:
+def load_recipe(recipe_name: str, peft_scheme: str | None) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
 
     Args:
         recipe_name: Full recipe function name (e.g., 'llama32_1b_pretrain_config')
+        peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
 
     Returns:
         ConfigContainer from calling the recipe
@@ -120,7 +127,7 @@ def load_recipe(recipe_name: str) -> ConfigContainer:
         )
 
     config_builder = getattr(recipes, recipe_name)
-    return config_builder()
+    return config_builder(peft=peft_scheme)
 
 
 def load_forward_step(step_type: str):
@@ -151,7 +158,7 @@ def main() -> None:
     """Run GPT training (pretrain or finetune)."""
     args, cli_overrides = parse_args()
 
-    config: ConfigContainer = load_recipe(args.recipe)
+    config: ConfigContainer = load_recipe(args.recipe, args.peft_scheme)
 
     config = process_config_with_overrides(
         config,
