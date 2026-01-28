@@ -74,11 +74,11 @@ logger:
   # wandb_entity: my_team
   # mlflow_experiment: llama32_1b_finetuned  # Uncomment to enable MLFlow logging
   # mlflow_run_name: llama32_1b_finetuned
+  # mlflow_tracking_uri: http://localhost:5000  # Optional: use remote MLflow server
   # mlflow_tags:
   #   project: llama32
   #   phase: finetune
   #   variant: mlflow_example
-  #   mlflow_tracking_uri: http://localhost:5000  # Optional: use remote MLflow server
 
 
 
