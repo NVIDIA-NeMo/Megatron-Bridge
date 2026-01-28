@@ -656,6 +656,7 @@ def save_megatron_model(
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
+            pg_collection=pg_collection,
         )
     else:
         # Save the checkpoint

@@ -450,6 +450,7 @@ def save_checkpoint(
     train_data_iterator: Optional[Any] = None,
     preprocess_common_state_dict_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
     prebuilt_state_dict: Optional[dict[str, Any]] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> None:
     """Save a model checkpoint.
 
@@ -473,6 +474,8 @@ def save_checkpoint(
         prebuilt_state_dict: Optional pre-built state dict. When provided, skips state dict
                             generation and uses this directly. Used for low-memory save mode
                             where factories are expanded and model deleted before save.
+        pg_collection: Optional ProcessGroupCollection. When provided, uses this instead of
+                      extracting from model. Required when model is empty (e.g., low-memory save).
     """
 
     train_state = state.train_state
@@ -519,7 +522,8 @@ def save_checkpoint(
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
 
     # Collect rng state across data parallel ranks.
-    pg_collection = get_pg_collection(model)
+    if pg_collection is None:
+        pg_collection = get_pg_collection(model)
     rng_state = get_rng_state(
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
         ckpt_format=ckpt_cfg.ckpt_format,
