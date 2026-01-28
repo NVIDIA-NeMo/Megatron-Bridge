@@ -240,7 +240,6 @@ python -c "from megatron.bridge import AutoBridge; b=AutoBridge.from_hf_pretrain
 
 Or with a helper script:
 ```bash
-huggingface-cli login --token <your token>
 python examples/conversion/convert_checkpoints.py export --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b --hf-path ./hf_exports/llama32_1b
 ```
 
