@@ -312,7 +312,7 @@ class DeterminismDebugPlugin:
             self._tensors[key] = tensor.detach().clone()
     
     def _create_forward_hook(self, layer_name: str):
-        """Create forward hook to record output tensor.
+        """Create forward hook to record input and output tensors.
         
         NOTE: We do NOT use tensor.register_hook() here because it prevents
         PyTorch memory optimization by keeping all intermediate tensors alive
@@ -322,6 +322,12 @@ class DeterminismDebugPlugin:
         def hook(module, inputs, output):
             if not self.config.enabled:
                 return
+            
+            # Record Input (for root cause analysis)
+            if inputs and isinstance(inputs[0], torch.Tensor):
+                self._record(f"{layer_name}.input", inputs[0], "forward_input")
+
+            # Record Output
             tensor = self._get_output_tensor(output)
             if tensor is not None:
                 self._record(layer_name, tensor, "forward")
@@ -329,11 +335,18 @@ class DeterminismDebugPlugin:
         return hook
     
     def _create_backward_hook(self, layer_name: str):
-        """Create backward hook to record gradient tensor."""
+        """Create backward hook to record gradient tensors (input and output)."""
         def hook(module, grad_input, grad_output):
             if not self.config.enabled:
                 return
-            tensor = self._get_output_tensor(grad_output)
+            
+            # Record "Input" to backward (gradient from next layer/loss side)
+            input_tensor = self._get_output_tensor(grad_output)
+            if input_tensor is not None:
+                self._record(f"{layer_name}.grad_output", input_tensor, "backward_input")
+
+            # Record "Output" of backward (gradient to previous layer)
+            tensor = self._get_output_tensor(grad_input)
             if tensor is not None:
                 self._record(layer_name, tensor, "backward")
         return hook
@@ -663,13 +676,21 @@ def analyze_results(all_results: List[Dict]) -> str:
         return "All ranks deterministic across runs"
     
     # Collect ALL mismatches from all ranks (not just first)
-    all_mismatches_by_type = {'forward': set(), 'backward': set(), 'output_grad': set(), 'param_grad': set()}
+    all_mismatches_by_type = {
+        'forward': set(), 'forward_input': set(),
+        'backward': set(), 'backward_input': set(),
+        'output_grad': set(), 'param_grad': set()
+    }
     for r in all_results:
         for result_key, is_match in r['results'].items():
             if not is_match:  # mismatch
                 # result_key format: "layer_name:pass_type"
-                if ':forward' in result_key:
+                if ':forward_input' in result_key:
+                    all_mismatches_by_type['forward_input'].add(result_key)
+                elif ':forward' in result_key:
                     all_mismatches_by_type['forward'].add(result_key)
+                elif ':backward_input' in result_key:
+                    all_mismatches_by_type['backward_input'].add(result_key)
                 elif ':backward' in result_key:
                     all_mismatches_by_type['backward'].add(result_key)
                 elif ':output_grad' in result_key:
@@ -689,6 +710,30 @@ def analyze_results(all_results: List[Dict]) -> str:
     lines.append(f"\n  Checks performed: ~{total_checks} per rank")
     lines.append(f"  Total unique mismatches: {sum(len(v) for v in all_mismatches_by_type.values())}")
     
+    # Root Cause Analysis
+    root_causes = []
+    for r in all_results:
+        res = r['results']
+        for key, is_match in res.items():
+            if not is_match:
+                # Forward Root Cause: Input matches, Output mismatches
+                if ':forward' in key and ':forward_input' not in key:
+                    input_key = key.replace(':forward', '.input:forward_input')
+                    if input_key in res and res[input_key]:
+                        root_causes.append(f"    [FORWARD ROOT CAUSE] {key}")
+                
+                # Backward Root Cause: grad_output (input) matches, grad_input (output) mismatches
+                if ':backward' in key and ':backward_input' not in key:
+                    input_key = key.replace(':backward', '.grad_output:backward_input')
+                    if input_key in res and res[input_key]:
+                        root_causes.append(f"    [BACKWARD ROOT CAUSE] {key}")
+    
+    if root_causes:
+        lines.append("\n  Identified Root Causes (Input matches, Output mismatches):")
+        # Deduplicate and show
+        for rc in sorted(set(root_causes)):
+            lines.append(rc)
+
     # Separate forward, backward, and param_grad mismatches
     if all_mismatches_by_type['forward']:
         lines.append(f"\n  Forward pass mismatches ({len(all_mismatches_by_type['forward'])} unique):")
