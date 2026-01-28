@@ -45,9 +45,9 @@ from tqdm import tqdm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.gpt_provider import quantization_layer_spec
+from megatron.bridge.models.gpt_provider import modelopt_transformer_layer_spec
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, quantization_mamba_stack_spec
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, modelopt_mamba_stack_spec
 
 
 warnings.filterwarnings("ignore")
@@ -177,17 +177,17 @@ def main(
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = torch.bfloat16
-    # Disable MoE permute fusion for SequentialMLP (used by quantization_layer_spec)
+    # Disable MoE permute fusion for SequentialMLP (used by modelopt_transformer_layer_spec)
     # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
     model_provider.moe_permute_fusion = False
 
     # Set the correct layer spec for quantization based on model type
     if isinstance(model_provider, MambaModelProvider):
-        # For Mamba/Nemotron-H models: use quantization_mamba_stack_spec
-        model_provider.mamba_stack_spec = quantization_mamba_stack_spec
+        # For Mamba/Nemotron-H models: use modelopt_mamba_stack_spec
+        model_provider.mamba_stack_spec = modelopt_mamba_stack_spec
     else:
         # For GPT/Llama models: use the standard quantization layer spec
-        model_provider.transformer_layer_spec = quantization_layer_spec
+        model_provider.transformer_layer_spec = modelopt_transformer_layer_spec
 
     # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
     model_provider.finalize()
@@ -331,9 +331,21 @@ if __name__ == "__main__":
         default="Hello!|Born in California, Soyer trained as a",
         help="Input texts for testing quantized model. Please use | to separate different batches.",
     )
+    parser.add_argument(
+        "--disable-hf-datasets-file-lock",
+        action="store_true",
+        help="Disable HF datasets file lock. This is only needed when testing with data in a read-only directory.",
+    )
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
+    if args.disable_hf_datasets_file_lock:
+        from unittest.mock import MagicMock
+
+        import datasets
+
+        datasets.builder.FileLock = MagicMock()
+
     main(
         args.hf_model_id,
         args.tp,
