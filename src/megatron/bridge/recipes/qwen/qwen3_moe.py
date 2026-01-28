@@ -154,7 +154,9 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"  # Options: alltoall, allgather, flex
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep (default from TransformerConfig)
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # Options: None, deepep, hybridep (default from TransformerConfig)
+    )
     cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend (default from TransformerConfig)
 
     # Training config
@@ -173,7 +175,9 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.moe_router_fusion = False  # MoE-specific: Fuse router computation
     cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations (default from Qwen3MoEModelProvider)
-    cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM for experts (default from Qwen3MoEModelProvider)
+    cfg.model.moe_grouped_gemm = (
+        True  # MoE-specific: Use grouped GEMM for experts (default from Qwen3MoEModelProvider)
+    )
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
@@ -301,7 +305,7 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None  # not enabled
     # cfg.mixed_precision.fp8_param_gather = False  # default
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
-    cfg.model.moe_router_padding_for_fp8 = False # MoE FP8 setting
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
 
     # Optimizer precision settings
     cfg.optimizer.use_precision_aware_optimizer = False

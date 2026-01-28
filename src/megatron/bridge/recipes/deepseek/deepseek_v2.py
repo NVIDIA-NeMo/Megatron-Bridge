@@ -80,7 +80,9 @@ def deepseek_v2_lite_pretrain_config() -> ConfigContainer:
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.moe_router_fusion = False  # MoE-specific: Fuse router computation
     cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations (default from DeepSeekModelProvider)
-    cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM for experts (default from DeepSeekModelProvider)
+    cfg.model.moe_grouped_gemm = (
+        True  # MoE-specific: Use grouped GEMM for experts (default from DeepSeekModelProvider)
+    )
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
 
@@ -112,7 +114,9 @@ def deepseek_v2_lite_pretrain_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = True  # Overlap shared expert computation (default from DeepSeekModelProvider)
+    cfg.model.moe_shared_expert_overlap = (
+        True  # Overlap shared expert computation (default from DeepSeekModelProvider)
+    )
 
     # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=2000 vs 500)
     cfg.checkpoint.save_interval = 2000
@@ -194,7 +198,9 @@ def deepseek_v2_pretrain_config() -> ConfigContainer:
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.moe_router_fusion = False  # MoE-specific: Fuse router computation
     cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations (default from DeepSeekModelProvider)
-    cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM for experts (default from DeepSeekModelProvider)
+    cfg.model.moe_grouped_gemm = (
+        True  # MoE-specific: Use grouped GEMM for experts (default from DeepSeekModelProvider)
+    )
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
 
@@ -226,7 +232,9 @@ def deepseek_v2_pretrain_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = True  # Overlap shared expert computation (default from DeepSeekModelProvider)
+    cfg.model.moe_shared_expert_overlap = (
+        True  # Overlap shared expert computation (default from DeepSeekModelProvider)
+    )
 
     # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=2000 vs 500)
     cfg.checkpoint.save_interval = 2000

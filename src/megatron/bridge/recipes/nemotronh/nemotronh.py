@@ -34,7 +34,6 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,

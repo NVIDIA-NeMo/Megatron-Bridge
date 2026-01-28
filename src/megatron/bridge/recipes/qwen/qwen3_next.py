@@ -35,7 +35,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 class Qwen3NextCommonKwargs(TypedDict, total=False):
@@ -118,7 +118,9 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(
+        load_weights=False
+    )
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
@@ -147,7 +149,9 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"  # Options: alltoall, allgather, flex
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep (default from TransformerConfig)
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # Options: None, deepep, hybridep (default from TransformerConfig)
+    )
     cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend (default from TransformerConfig)
 
     # Training config

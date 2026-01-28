@@ -20,7 +20,6 @@ from typing_extensions import TypedDict, Unpack
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -33,7 +32,6 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
@@ -1205,7 +1203,9 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").to_megatron_provider(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None

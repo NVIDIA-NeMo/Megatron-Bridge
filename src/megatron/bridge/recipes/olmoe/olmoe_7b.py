@@ -28,7 +28,6 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
