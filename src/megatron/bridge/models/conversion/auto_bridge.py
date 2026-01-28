@@ -1008,7 +1008,14 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        return model_bridge.get_model_bridge(self._causal_lm_architecture)
+        hf_config = getattr(self.hf_pretrained, "hf_config", None)
+        if hf_config is None:
+            if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+                hf_config = self.hf_pretrained.config
+            else:
+                hf_config = self.hf_pretrained
+
+        return model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
 
     @property
     def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
