@@ -295,30 +295,30 @@ def train(
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
 
 
-        if config.train.rampup_batch_size is not None:
-            # Update number of microbatches first without consistency check to decide if a
-            # checkpoint should be saved. If the number of microbatches is different
-            # from the previous iteration, save a checkpoint. Then run consistency check
-            # to make sure training configuration is still valid.
-            update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=False, verbose=True)
-            if get_num_microbatches() != num_microbatches and global_state.train_state.step != 0:
-                assert get_num_microbatches() > num_microbatches, (
-                    f"Number of microbatches should be increasing due to batch size rampup; "
-                    f"instead going from {num_microbatches} to {get_num_microbatches()}"
+        #if config.train.rampup_batch_size is not None:
+        # Update number of microbatches first without consistency check to decide if a
+        # checkpoint should be saved. If the number of microbatches is different
+        # from the previous iteration, save a checkpoint. Then run consistency check
+        # to make sure training configuration is still valid.
+        update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=False, verbose=True)
+        if get_num_microbatches() != num_microbatches and global_state.train_state.step != 0:
+            assert get_num_microbatches() > num_microbatches, (
+                f"Number of microbatches should be increasing due to batch size rampup; "
+                f"instead going from {num_microbatches} to {get_num_microbatches()}"
+            )
+            if config.checkpoint.save is not None:
+                save_checkpoint_and_time(
+                    global_state,
+                    model,
+                    optimizer,
+                    scheduler,
+                    num_floating_point_operations_so_far,
+                    checkpointing_context,
+                    non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
+                    train_data_iterator=train_data_iterator,
                 )
-                if config.checkpoint.save is not None:
-                    save_checkpoint_and_time(
-                        global_state,
-                        model,
-                        optimizer,
-                        scheduler,
-                        num_floating_point_operations_so_far,
-                        checkpointing_context,
-                        non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
-                        train_data_iterator=train_data_iterator,
-                    )
-            num_microbatches = get_num_microbatches()
-            update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
+        num_microbatches = get_num_microbatches()
+        update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
