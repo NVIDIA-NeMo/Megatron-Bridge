@@ -280,7 +280,6 @@ def train(
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
- 
 
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
@@ -323,7 +322,6 @@ def train(
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
-        
 
         # Capture CUDA Graphs after warmup.
         if (
@@ -515,9 +513,7 @@ def train(
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
-        """
-        
-        
+        """       
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
@@ -555,7 +551,6 @@ def train(
             checkpointing_context,
             train_data_iterator,
         )
-        
         if should_exit:
             break
 
