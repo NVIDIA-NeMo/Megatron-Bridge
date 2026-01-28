@@ -239,7 +239,7 @@ def _qwen3_vl_common(
     )
 
     # Determine dataset selection strategy.
-    _dataset_choice = dataset_type or "mock"
+    _dataset_choice = dataset_type or "hf"
     _processor_model = tokenizer_model or hf_path
 
     if _dataset_choice == "mock":
