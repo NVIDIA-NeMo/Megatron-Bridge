@@ -156,7 +156,7 @@ def train(
         energy_monitor.setup()
         energy_monitor.resume()
 
-    timers("interval-time", log_level=0).start(barrier=True)
+    #timers("interval-time", log_level=0).start(barrier=True)
     report_memory_flag = True
     pre_hook_enabled = False
     should_exit = False
@@ -265,9 +265,10 @@ def train(
     num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
 
     # Run training iterations till done.
+    rank = torch.distributed.get_rank()
+    """
     step = 0
     full_train_iters = train_config.train_iters
-    rank = torch.distributed.get_rank()
     is_ft_enabled = (global_state.cfg.ft is not None)
     #while global_state.train_state.step < train_config.train_iters:
     rampup_batch_size = config.train.rampup_batch_size
@@ -282,41 +283,36 @@ def train(
     global_state.train_state.do_valid = False
 
     while step < full_train_iters:
+    """
 
-        """
+    while global_state.train_state.step < train_config.train_iters:
+
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
             prof_config,
-            step, #global_state.train_state.step,
+            global_state.train_state.step,
             rank, #torch.distributed.get_rank(),
             prof,
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
  
-        if is_ft_enabled:
-            fault_tolerance.on_checkpointing_start(global_state)
-            maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
-            fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
-        """
+
+        fault_tolerance.on_checkpointing_start(global_state)
+        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
+        fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
         
 
         # Update the timeout for all process groups after initialization
         # We update the timeout after the first successful iteration,
         # which takes longer than others usually
-        #if global_state.train_state.step == start_iteration + 1:
-        """
-        if step == start_iteration + 1:
+        if global_state.train_state.step == start_iteration + 1:
             distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
             if distributed_timeout_seconds_after_init is not None:
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
-        """
 
-        #if config.train.rampup_batch_size is not None:
-        """
-        if rampup_batch_size is not None:
-            print("Rampup batch size is not None. Not expected.")
 
+        if config.train.rampup_batch_size is not None:
             # Update number of microbatches first without consistency check to decide if a
             # checkpoint should be saved. If the number of microbatches is different
             # from the previous iteration, save a checkpoint. Then run consistency check
@@ -340,17 +336,14 @@ def train(
                     )
             num_microbatches = get_num_microbatches()
             update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
-        """
 
         # Completely skip iteration if needed.
-        #if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
-        #    continue
+        if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
+            continue
 
         # Capture CUDA Graphs after warmup.
-        """
         if (
-            #model_config.cuda_graph_impl == "transformer_engine" and
-            cuda_graph_impl == "transformer_engine"
+            model_config.cuda_graph_impl == "transformer_engine"
             and cuda_graph_helper is not None
             and not cuda_graph_helper.graphs_created()
             and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
@@ -361,11 +354,9 @@ def train(
             if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
                 enable_forward_pre_hook(model)
                 cuda_graph_helper.cuda_graph_set_manual_hooks()
-        """
 
         # Run training step.
-        if is_ft_enabled:
-            fault_tolerance.on_training_step_start(global_state)
+        fault_tolerance.on_training_step_start(global_state)
         (
             loss_dict,
             skipped_iter,
@@ -386,16 +377,14 @@ def train(
             forward_backward_func,
         )
 
-        """
-        if is_ft_enabled:
-            fault_tolerance.on_training_step_end(global_state)
+        
+        fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
-        if tensor_inspect_config is not None:
-            tensor_inspect_step_if_enabled(tensor_inspect_config)
+        if config.tensor_inspect is not None:
+            tensor_inspect_step_if_enabled(config.tensor_inspect)
 
-        #if config.logger.log_throughput_to_tensorboard:
-        if log_throughput_to_tensorboard:
+        if config.logger.log_throughput_to_tensorboard:
             history_wct.append(time.time() - global_state.start_time)
 
         if should_checkpoint:
@@ -411,14 +400,11 @@ def train(
             )
         if should_exit:
             break 
-        """
 
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
         # is reached.
-        #if global_state.train_state.step == start_iteration:
-        """
-        if step == start_iteration:
+        if global_state.train_state.step == start_iteration:
             if skipped_iter:
                 # Only enable forward pre-hook after a training step has successfully run. Relevant
                 # for fp16 codepath where first XX iterations are skipped until steady-state loss
@@ -439,20 +425,15 @@ def train(
                     ):
                         assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
-        """
 
 
-        #global_state.train_state.step += 1
-        step += 1
+        global_state.train_state.step += 1
+        
 
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
-        #if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
-        """
-        if step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
+        if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
-        """
 
-        """
         dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
@@ -466,14 +447,12 @@ def train(
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
-        """
+
 
 
 
         # Logging.
-        #if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
-        """
-        if enable_logging and tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
+        if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
             print("Logging enabled: Not expected")
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 print("Getting loss scale for optimizer")
@@ -512,10 +491,7 @@ def train(
                 model,
                 log_max_attention_logit,
             )
-        #else:
-        #    print_rank_0("This is expected")
 
-        """
 
         
         """
@@ -567,7 +543,6 @@ def train(
         # Some of these only happen at specific iterations.
         
 
-        """
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
@@ -584,8 +559,7 @@ def train(
         )
         handle_profiling_stop(
             config.profiling,
-            #global_state.train_state.step,
-            step,
+            global_state.train_state.step,
             rank,
             prof,
             nsys_nvtx_context,
@@ -593,8 +567,7 @@ def train(
         maybe_run_manual_gc(
             config.train.manual_gc,
             config.train.manual_gc_interval,
-            #global_state.train_state.step,
-            step,
+            global_state.train_state.step,
         )
 
         # Checkpoint and decide whether to exit.
@@ -609,9 +582,8 @@ def train(
         )
         if should_exit:
             break
-        """
 
-    #_delete_cuda_graphs(cuda_graph_helper)
+    _delete_cuda_graphs(cuda_graph_helper)
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -685,44 +657,59 @@ def train_step(
         - max_attention_logit: Maximum attention logit if available, None otherwise
     """
     cfg: ConfigContainer = global_state.cfg
-    #timers = global_state.timers
+    timers = global_state.timers
     model_config =  get_model_config(model[0])
     train_config = cfg.train
-    #optim_config = cfg.optimizer
+    optim_config = cfg.optimizer
 
-    #train_config = global_state.cfg.train
+    train_config = global_state.cfg.train
 
-    # rerun_state_machine = get_rerun_state_machine()
-    # while rerun_state_machine.should_run_forward_backward(data_iterator):
-    #if True:
-    #    # Set grad to zero.
-    for model_chunk in model:
-        model_chunk.zero_grad_buffer()
-    optimizer.zero_grad()
+    
+    rerun_state_machine = get_rerun_state_machine()
+    
+    while rerun_state_machine.should_run_forward_backward(data_iterator):
+        # Set grad to zero.
+        for model_chunk in model:
+            model_chunk.zero_grad_buffer()
+        optimizer.zero_grad()
 
-    #"""
-    _handle_mxfp8_param_buffer_copy(
-        optimizer=optimizer,
-        reuse_grad_buf_for_mxfp8_param_ag=global_state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
-        overlap_param_gather=global_state.cfg.ddp.overlap_param_gather,
-    )
-    #"""
+        # Handle finetuning vs pretraining data consumption
+        seq_length = model_config.seq_length  # Default for pretraining
+        forward_backward_data_iterator = data_iterator  # Default for pretraining
 
-    # Handle finetuning vs pretraining data consumption
-    seq_length = model_config.seq_length  # Default for pretraining
-    forward_backward_data_iterator = data_iterator  # Default for pretraining
+        #"""
+        if cfg.dataset.dataloader_type == "batch":
+            # Finetuning path to support variable-length sequences
+            from megatron.bridge.data.finetuning import prepare_finetuning_batch
 
-    if cfg.dataset.dataloader_type == "batch":
-        # Finetuning path to support variable-length sequences
-        from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+                data_iterator=data_iterator,
+                num_microbatches=get_num_microbatches(),
+                default_seq_length=model_config.seq_length,
+                seq_key="tokens",
+            )
 
-        forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
-            data_iterator=data_iterator,
-            num_microbatches=get_num_microbatches(),
-            default_seq_length=model_config.seq_length,
-            seq_key="tokens",
-        )
+            # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
+            if not cfg.dist.use_decentralized_pg:
+                adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+                    model,
+                    seq_length=model_config.seq_length,
+                    micro_batch_size=train_config.micro_batch_size,
+                    decoder_seq_length=model_config.seq_length,
+                )
+            else:
+                adjust_tensor_shapes_fn = None
+        #"""
 
+        if len(model) > 1:
+            # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
+            )
+
+        #print("no modelopt stuff")
+        #"""
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
         if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
@@ -733,43 +720,23 @@ def train_step(
             )
         else:
             adjust_tensor_shapes_fn = None
+        #"""
 
-    if len(model) > 1:
-        # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
-        forward_backward_data_iterator = make_data_iterator_list(
-            model=model,
+        # Forward pass.
+        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+        losses_reduced = forward_backward_func(
+            forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
-        )
-
-    #print("no modelopt stuff")
-    #"""
-    # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-    if not cfg.dist.use_decentralized_pg:
-        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-            model,
-            seq_length=model_config.seq_length,
+            model=model,
+            num_microbatches=get_num_microbatches(),
+            seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
+            decoder_seq_length=seq_length,
+            forward_only=False,
+            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            p2p_communicator=p2p_communicator,
+            pg_collection=pg_collection,
         )
-    else:
-        adjust_tensor_shapes_fn = None
-    #"""
-
-    # Forward pass.
-    p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
-    losses_reduced = forward_backward_func(
-        forward_step_func=forward_step_func,
-        data_iterator=forward_backward_data_iterator,
-        model=model,
-        num_microbatches=get_num_microbatches(),
-        seq_length=seq_length,
-        micro_batch_size=train_config.micro_batch_size,
-        decoder_seq_length=seq_length,
-        forward_only=False,
-        adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
-        p2p_communicator=p2p_communicator,
-        pg_collection=pg_collection,
-    )
     
     should_checkpoint, should_exit, exit_code = False, False, 0  # rerun_state_machine.should_checkpoint_and_exit()
     # if should_exit:
@@ -797,9 +764,7 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    #numeric_checks = False
-    #"""
-    if False:
+    if train_config.numeric_checks:
         update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
         # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
         # so we must gather across mp ranks
