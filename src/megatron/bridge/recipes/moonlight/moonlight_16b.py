@@ -286,6 +286,84 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
+def _model_config(
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 8,
+    sequence_parallel: bool = True,
+    # Recomputation
+    recompute_granularity: str = "selective",
+    recompute_modules: Optional[List[str]] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
+    enable_deepep: bool = False,
+    apply_rope_fusion: bool = False,
+) -> MoonlightModelProvider16B:
+    """
+    Configure the Moonlight-16B model.
+
+    Args:
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
+        pipeline_dtype: Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism.
+        context_parallel_size: Degree of context parallelism.
+        expert_model_parallel_size: Degree of expert model parallelism.
+        sequence_parallel: Whether to use sequence parallelism.
+        recompute_granularity: Recomputation granularity.
+        recompute_modules: Modules to recompute.
+        recompute_method: Recomputation method.
+        recompute_num_layers: Number of layers to recompute.
+        enable_deepep: Whether to use DeePEP.
+        apply_rope_fusion: Whether to apply RoPE fusion.
+
+    Returns:
+        MoonlightModelProvider16B: Configuration for the Moonlight-16B model.
+    """
+    cfg = MoonlightModelProvider16B(
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        expert_model_parallel_size=expert_model_parallel_size,
+        sequence_parallel=sequence_parallel,
+        expert_tensor_parallel_size=1,  # Do not use ETP
+        # Recomputation
+        recompute_granularity=recompute_granularity,
+        recompute_modules=recompute_modules,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
+    )
+
+    # Pipeline split for asymmetric stages as used in NeMo recipe
+    cfg.account_for_embedding_in_pipeline_split = False
+    cfg.account_for_loss_in_pipeline_split = False
+    cfg.num_layers_in_first_pipeline_stage = None
+    cfg.num_layers_in_last_pipeline_stage = None
+
+    # Performance optimization knobs
+    cfg.moe_permute_fusion = True
+    if apply_rope_fusion:
+        cfg.apply_rope_fusion = True
+
+    # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
+    pp_size = pipeline_model_parallel_size or 1
+    vp_size = virtual_pipeline_model_parallel_size or 1
+    layout = _get_moonlight_pipeline_layout(pp_size, vp_size)
+    cfg.pipeline_model_parallel_layout = layout
+
+    if enable_deepep:
+        cfg.moe_token_dispatcher_type = "flex"
+        cfg.moe_flex_dispatcher_backend = "deepep"
+        cfg.moe_shared_expert_overlap = False
+
+    return cfg
+
+
 def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightFinetuneKwargs]) -> ConfigContainer:
     """Return a finetuning config for Moonlight-16B.
 

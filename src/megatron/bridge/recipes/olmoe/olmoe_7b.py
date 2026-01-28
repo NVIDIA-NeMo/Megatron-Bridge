@@ -279,6 +279,70 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
+def _model_config(
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 8,
+    sequence_parallel: bool = False,
+    # Recomputation
+    recompute_granularity: str = "selective",
+    recompute_modules: Optional[List[str]] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
+    apply_rope_fusion: bool = False,
+) -> OlMoEModelProvider:
+    """
+    Configure the OLMoE-7B model (7B total, ~1B active).
+
+    Args:
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
+        pipeline_dtype: Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism.
+        context_parallel_size: Degree of context parallelism.
+        expert_model_parallel_size: Degree of expert model parallelism.
+        sequence_parallel: Whether to use sequence parallelism.
+        recompute_granularity: Recomputation granularity.
+        recompute_modules: Modules to recompute.
+        recompute_method: Recomputation method.
+        recompute_num_layers: Number of layers to recompute.
+        apply_rope_fusion: Whether to apply RoPE fusion.
+
+    Returns:
+        OlMoEModelProvider: Configuration for the OLMoE-7B model (7B total, ~1B active).
+    """
+    cfg = OlMoEModelProvider(
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        expert_model_parallel_size=expert_model_parallel_size,
+        sequence_parallel=sequence_parallel,
+        # Recomputation
+        recompute_granularity=recompute_granularity,
+        recompute_modules=recompute_modules,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
+    )
+
+    # Performance optimization knobs
+    cfg.moe_permute_fusion = True
+    if apply_rope_fusion:
+        cfg.apply_rope_fusion = True
+
+    # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
+    pp_size = pipeline_model_parallel_size or 1
+    vp_size = virtual_pipeline_model_parallel_size or 1
+    layout = _get_olmoe_pipeline_layout(pp_size, vp_size)
+    cfg.pipeline_model_parallel_layout = layout
+
+    return cfg
+
+
 def olmoe_7b_finetune_config(**user_kwargs: Unpack[OLMoEFinetuneKwargs]) -> ConfigContainer:
     """Return a finetuning config for OLMoE-7B (7B total, ~1B active).
 

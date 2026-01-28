@@ -191,8 +191,8 @@ def gemma2_2b_pretrain_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = False  # Different from _pretrain_common (uses megatron-core default)
-    cfg.ddp.average_in_collective = False  # Different from _pretrain_common (uses megatron-core default)
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     return cfg

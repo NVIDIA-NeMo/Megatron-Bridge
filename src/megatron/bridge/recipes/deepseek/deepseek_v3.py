@@ -166,8 +166,8 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
 
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    # cfg.comm_overlap.delay_wgrad_compute = False  # Left as None, defaults to False during finalization
-    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False  # Left as None, defaults to False during finalization
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.model.moe_shared_expert_overlap = True  # Default from DeepSeekModelProvider
 
     # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=2000 vs 500)
@@ -308,8 +308,8 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
 
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    # cfg.comm_overlap.delay_wgrad_compute = False  # Left as None, defaults to False during finalization
-    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False  # Left as None, defaults to False during finalization
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.model.moe_shared_expert_overlap = True
 
     # Checkpoint config
