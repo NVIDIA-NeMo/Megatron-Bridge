@@ -77,7 +77,7 @@ class TestGPTOSSFinetuneRecipes:
         # Download and save tokenizer from the reference GPT-OSS model
         try:
             tokenizer = AutoTokenizer.from_pretrained(HF_GPT_OSS_REFERENCE_MODEL, trust_remote_code=True)
-        except AttributeError:
+        except Exception:
             # Fallback to GPT-2 tokenizer for testing purposes
             tokenizer = AutoTokenizer.from_pretrained("gpt2")
             tokenizer.pad_token = tokenizer.eos_token
