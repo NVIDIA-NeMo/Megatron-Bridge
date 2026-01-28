@@ -229,6 +229,10 @@ class GlobalState:
                 }
                 wandb.init(**wandb_kwargs)
 
+                # Configure wandb to use trainer/global_step as the default x-axis
+                wandb.define_metric("trainer/global_step")
+                wandb.define_metric("*", step_metric="trainer/global_step")
+
                 self._wandb_logger = wandb
             else:
                 self._wandb_logger = None
@@ -368,6 +372,8 @@ def _timers_write_to_wandb(
     assert normalizer > 0.0
     name_to_min_max_time = self._get_global_min_max_time(names, reset, barrier, normalizer)
     if writer is not None:
+        # Use 0-indexed iteration for wandb
+        wandb_iteration = iteration - 1 if iteration > 0 else 0
         for name in name_to_min_max_time:
             _, max_time = name_to_min_max_time[name]
-            writer.log({name + "-time": max_time}, iteration)
+            writer.log({name + "-time": max_time, "trainer/global_step": wandb_iteration})
