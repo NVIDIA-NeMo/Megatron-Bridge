@@ -1,5 +1,8 @@
+# Workspace directory for checkpoints and results
+WORKSPACE=${WORKSPACE:-/workspace}
+
 # Common configurations
-PRETRAINED_CHECKPOINT=/models/gemma-3-4b-it
+PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-3-4b-it
 MODEL_NAME=gemma3_vl_4b
 DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
@@ -32,7 +35,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=/result/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP} \

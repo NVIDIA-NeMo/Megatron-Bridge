@@ -2,6 +2,18 @@
 
 This directory contains examples for Gemma 3 Vision Language Model, including checkpoint conversion, inference, and fine-tuning.
 
+## Workspace Configuration
+
+All scripts use a `WORKSPACE` environment variable to define the base directory for checkpoints and results. By default, this is set to `/workspace`. You can override it:
+
+```bash
+export WORKSPACE=/your/custom/path
+```
+
+Directory structure:
+- `${WORKSPACE}/models/` - Converted checkpoints
+- `${WORKSPACE}/results/` - Training outputs and experiment results
+
 ## Checkpoint Conversion
 
 See the [conversion.sh](conversion.sh) script for commands to:
