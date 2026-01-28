@@ -49,7 +49,7 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Dataset config
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.seq_length = 2048
     cfg.dataset.num_workers = 8
 

@@ -145,7 +145,7 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.seq_length = 4096  # Must match model.seq_length
     cfg.dataset.num_workers = 8
 
@@ -265,7 +265,7 @@ def gpt_oss_120b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 

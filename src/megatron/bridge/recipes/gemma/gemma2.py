@@ -129,7 +129,7 @@ def gemma2_2b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = "google/gemma-2-2b"
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8  # --num-workers for dataloader
 
     # Parallelism settings
@@ -213,7 +213,7 @@ def gemma2_9b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = "google/gemma-2-9b"
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
     # Parallelism settings
@@ -295,7 +295,7 @@ def gemma2_27b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = "google/gemma-2-27b"
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
     # Parallelism settings

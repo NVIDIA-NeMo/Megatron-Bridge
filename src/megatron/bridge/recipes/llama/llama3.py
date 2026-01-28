@@ -247,7 +247,7 @@ def llama32_3b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = 8192
 
@@ -333,7 +333,7 @@ def llama3_8b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = 8192
 
@@ -414,7 +414,7 @@ def llama3_8b_16k_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_16K
 
@@ -495,7 +495,7 @@ def llama3_8b_64k_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_64K
 
@@ -576,7 +576,7 @@ def llama3_8b_128k_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_128K
 
@@ -677,7 +677,7 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = 8192
 
@@ -766,7 +766,7 @@ def llama3_70b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = 8192
 
@@ -856,7 +856,7 @@ def llama3_70b_16k_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_16K
 
@@ -945,7 +945,7 @@ def llama3_70b_64k_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_64K
 
@@ -1039,7 +1039,7 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = 8192
 
@@ -1120,7 +1120,7 @@ def llama31_70b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_128K
 
@@ -1211,7 +1211,7 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
     cfg.dataset.seq_length = SEQUENCE_LENGTH_128K
 

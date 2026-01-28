@@ -180,7 +180,7 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
 
     # Dataset config
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 

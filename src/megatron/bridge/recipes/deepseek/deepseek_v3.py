@@ -65,7 +65,7 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
     # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
@@ -102,7 +102,7 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"  # Default from DeepSeekModelProvider
-    apply_flex_dispatcher_backend(cfg.model, None)  # Apply default flex dispatcher backend
+    apply_flex_dispatcher_backend(cfg.model, None)
     cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
 
@@ -212,7 +212,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     # Dataset config - mock data by default
-    cfg.dataset.blend = None
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
 
     # Parallelism settings (32 nodes configuration)
