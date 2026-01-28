@@ -104,7 +104,7 @@ def build_mimo_data_loaders(
 
     # Build data loaders with DP-aware sampling
     collate_fn = mimo_provider.get_collate_fn()
-    micro_batch_size = cfg.train.global_batch_size // dp_size
+    micro_batch_size = cfg.train.micro_batch_size
     
     def _make_loader(dataset, shuffle: bool = True) -> Optional[DataLoader]:
         if dataset is None:

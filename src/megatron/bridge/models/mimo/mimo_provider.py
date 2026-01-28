@@ -148,9 +148,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     init_model_with_meta_device: bool = False
     virtual_pipeline_model_parallel_size: Optional[int] = None
     
-    # Internal state
-    _cached_infra: Optional[MimoModelInfra] = field(default=None, repr=False)
-    
     @property
     def tensor_model_parallel_size(self) -> int:
         """Return LLM's tensor parallel size for compatibility with standard code paths."""
@@ -428,6 +425,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         
         if wrap_with_ddp and ddp_config is None:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
+        
+        if use_megatron_fsdp or use_torch_fsdp2:
+            raise NotImplementedError(
+                "FSDP is not yet supported for MIMO models. "
+                "Use DDP (wrap_with_ddp=True) instead."
+            )
         
         # Finalize parallelism config
         self.finalize()

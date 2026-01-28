@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import AutoProcessor, AutoTokenizer
 
@@ -45,7 +46,6 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
         valid_split: Dataset split for validation. Default: "validation".
         test_split: Dataset split for testing. Default: "test".
         trust_remote_code: Whether to trust remote code for HF models/processors.
-        streaming: Whether to use streaming mode for large datasets.
         
     Example:
         >>> provider = HFMimoDatasetProvider(
@@ -73,7 +73,6 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
     train_split: str = "train"
     valid_split: str = "validation"
     test_split: str = "test"
-    streaming: bool = False
     
     # Cached processors and tokenizer (loaded once)
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)
@@ -121,14 +120,11 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
     
     def _load_hf_dataset(self, split: str) -> Any:
         """Load a HuggingFace dataset split."""
-        from datasets import load_dataset
-        
         try:
             dataset = load_dataset(
                 self.hf_dataset_path,
                 name=self.hf_dataset_name,
                 split=split,
-                streaming=self.streaming,
                 trust_remote_code=is_safe_repo(
                     trust_remote_code=self.trust_remote_code,
                     hf_path=self.hf_dataset_path,
