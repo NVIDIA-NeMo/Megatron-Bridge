@@ -35,9 +35,9 @@ from typing import (
 )
 
 import torch
-from torch.distributed._tensor import DTensor
 from megatron.core import parallel_state
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
+from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -45,6 +45,7 @@ from megatron.core.utils import (
     unwrap_model,
 )
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from torch.distributed._tensor import DTensor
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -782,16 +783,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
 
             # 2) Delegate conversion & distribution to the bridge
-            if use_megatron_fsdp:
-                converted_weights = task.mapping.hf_to_megatron_fsdp(hf_weights, task.megatron_module, task.param_weight)
-            else:
-                converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
+            converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
 
             # 3) Copy into Megatron param if this rank received a shard
             if converted_weights is not None:
                 # Assert that param_weight is not None for HF->Megatron tasks
                 assert task.param_weight is not None, "param_weight is required for HF->Megatron conversion"
                 if isinstance(task.param_weight, DTensor):
+                    converted_weights = converted_weights.reshape(-1)[task.param_weight.megatron_fsdp_slice]
                     task.param_weight._local_tensor.reshape(-1).copy_(converted_weights)
                     continue
 
@@ -969,10 +968,12 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            if use_megatron_fsdp:
-                converted_weights_dict = task.mapping.megatron_fsdp_to_hf(task.param_weight, task.megatron_module) 
+            if isinstance(task.param_weight, DTensor):
+                full_dtensor = gather_uneven_dtensor_to_full_tensor(task.param_weight)
+                megatron_weights = full_dtensor.to_local()
             else:
-                converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module) 
+                megatron_weights = task.param_weight
+            converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,

@@ -128,7 +128,6 @@ def _pretrain(
     ckpt_context = setup_output.checkpointing_context
     pg_collection = setup_output.pg_collection
 
-
     # TRAINING
     if not config.train.skip_train:
         if state.train_state.do_train and config.train.train_iters > 0:
