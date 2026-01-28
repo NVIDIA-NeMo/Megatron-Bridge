@@ -38,6 +38,7 @@ HF_GLM45_TOY_MODEL_CONFIG = {
     "moe_intermediate_size": 512,
     "n_routed_experts": 8,
     "n_shared_experts": 1,
+    "num_local_experts": 8,
     "n_group": 1,
     "topk_group": 1,
     "norm_topk_prob": True,

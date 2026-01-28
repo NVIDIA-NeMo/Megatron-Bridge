@@ -41,6 +41,10 @@ class Gemma3VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
+        # Handle rope_local_base_freq for Gemma3 VL
+        rope_local_base_freq = self.rope_local_base_freq_from_hf(text_config)
+        rope_theta = self.rope_theta_from_hf(text_config)
+
         provider = Gemma3VLModelProvider(
             # Text configuration
             init_method_std=text_config.initializer_range,
@@ -52,7 +56,7 @@ class Gemma3VLBridge(MegatronModelBridge):
             num_layers=text_config.num_hidden_layers,
             num_query_groups=text_config.num_key_value_heads,
             window_size=text_config.sliding_window,
-            rotary_base=(text_config.rope_local_base_freq, text_config.rope_theta),
+            rotary_base=(rope_local_base_freq, rope_theta),
             layernorm_epsilon=text_config.rms_norm_eps,
             vocab_size=text_config.vocab_size,
             softmax_scale=1.0 / math.sqrt(text_config.query_pre_attn_scalar),

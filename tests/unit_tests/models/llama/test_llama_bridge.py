@@ -59,10 +59,10 @@ class TestMegatronLlamaBridge:
                 "original_max_position_embeddings": 8192,
                 "rope_type": "llama3",
             },
-            "rope_theta": 500000.0,
+            "rope_parameters": {"rope_type": "llama3", "rope_theta": 500000.0},
             "tie_word_embeddings": True,
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.45.0.dev0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 128256,
         }
@@ -111,7 +111,7 @@ class TestMegatronLlamaBridge:
         assert result.hidden_size == llama_config.hidden_size
         assert result.num_attention_heads == llama_config.num_attention_heads
         assert result.seq_length == llama_config.max_position_embeddings
-        assert result.rotary_base == llama_config.rope_theta
+        assert result.rotary_base == llama_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_llama, llama_config):
         """Test vocabulary size mapping."""
@@ -159,7 +159,7 @@ class TestMegatronLlamaBridge:
         result = bridge.provider_bridge(mock_pretrained_llama)
 
         # Check position embedding
-        assert result.rotary_base == llama_config.rope_theta
+        assert result.rotary_base == llama_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_rope_scaling(self, mock_pretrained_llama, llama_config):
         """Test RoPE scaling configuration."""
@@ -211,7 +211,7 @@ class TestMegatronLlamaBridge:
             "intermediate_size": 8192,
             "vocab_size": 128256,
             "max_position_embeddings": 4096,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "rms_norm_eps": 1e-05,
             "tie_word_embeddings": True,
             "model_type": "llama",
@@ -271,7 +271,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 8192,
                 "vocab_size": 128256,
                 "max_position_embeddings": 131072,
-                "rope_theta": 500000.0,
+                "rope_parameters": {"rope_type": "llama3", "rope_theta": 500000.0},
                 "rms_norm_eps": 1e-05,
                 "tie_word_embeddings": True,
                 "rope_scaling": {
@@ -292,7 +292,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 11008,
                 "vocab_size": 32000,
                 "max_position_embeddings": 4096,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-05,
                 "tie_word_embeddings": False,
                 # No rope_scaling for Llama 2

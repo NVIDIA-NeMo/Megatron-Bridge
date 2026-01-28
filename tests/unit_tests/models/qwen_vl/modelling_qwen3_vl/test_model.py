@@ -153,8 +153,12 @@ class TestQwen3VLModel:
             in_channels=hf_config.vision_config.in_channels,
             spatial_merge_size=hf_config.vision_config.spatial_merge_size,
             out_hidden_size=hf_config.text_config.hidden_size,  # Vision output = language input
-            # RoPE settings
-            rotary_base=hf_config.text_config.rope_theta,
+            # RoPE settings - handle both transformers <5.0 (rope_theta) and >=5.0 (rope_parameters)
+            rotary_base=(
+                hf_config.text_config.rope_theta
+                if hasattr(hf_config.text_config, "rope_theta")
+                else hf_config.text_config.rope_parameters.get("rope_theta", 5000000.0)
+            ),
             rotary_percent=1.0,
             mrope_section=hf_config.text_config.rope_scaling.get("mrope_section", [16, 24, 24]),
             hf_text_config=hf_config.text_config,

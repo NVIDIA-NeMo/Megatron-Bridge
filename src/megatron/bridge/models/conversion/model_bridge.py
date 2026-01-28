@@ -827,6 +827,61 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             base //= 2
         return base
 
+    @staticmethod
+    def rope_theta_from_hf(config) -> float:
+        """Extract rope_theta from a HuggingFace config.
+
+        This utility method handles the extraction of rope_theta (rotary position
+        embedding base frequency) from HuggingFace configs, supporting both the
+        legacy format (direct rope_theta attribute) and the new transformers 5.0+
+        format (rope_parameters dictionary).
+
+        Args:
+            config: HuggingFace configuration object.
+
+        Returns:
+            float: The rope_theta value for rotary embeddings.
+
+        Raises:
+            ValueError: If rope_theta is not found in either format.
+        """
+        # Handle rope_theta for both transformers <5.0 (rope_theta) and >=5.0 (rope_parameters)
+        if hasattr(config, "rope_theta"):
+            return config.rope_theta
+        elif hasattr(config, "rope_parameters") and config.rope_parameters:
+            if "rope_theta" in config.rope_parameters:
+                return config.rope_parameters["rope_theta"]
+        raise ValueError(
+            "rope_theta not found in config. Expected either 'rope_theta' attribute "
+            "(transformers <5.0) or 'rope_parameters[\"rope_theta\"]' (transformers >=5.0)."
+        )
+
+    @staticmethod
+    def rope_local_base_freq_from_hf(config) -> float:
+        """Extract rope_local_base_freq from a HuggingFace config.
+
+        Similar to rope_theta_from_hf but for the local base frequency parameter
+        used by some models (e.g., Gemma3).
+
+        Args:
+            config: HuggingFace configuration object.
+
+        Returns:
+            float: The rope_local_base_freq value.
+
+        Raises:
+            ValueError: If rope_local_base_freq is not found in either format.
+        """
+        if hasattr(config, "rope_local_base_freq"):
+            return config.rope_local_base_freq
+        elif hasattr(config, "rope_parameters") and config.rope_parameters:
+            if "rope_local_base_freq" in config.rope_parameters:
+                return config.rope_parameters["rope_local_base_freq"]
+        raise ValueError(
+            "rope_local_base_freq not found in config. Expected either 'rope_local_base_freq' attribute "
+            "(transformers <5.0) or 'rope_parameters[\"rope_local_base_freq\"]' (transformers >=5.0)."
+        )
+
     def _get_provider_from_model(self, model: MegatronModule) -> ModelProviderTarget:
         """Extract provider/config from model."""
         model = unwrap_model(model)

@@ -42,11 +42,12 @@ class GLM45VBridge(MegatronModelBridge):
         moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )
+
         provider = GLM45VModelProvider(
             add_qkv_bias=text_config.attention_bias,
             kv_channels=text_config.head_dim,
             hidden_size=text_config.hidden_size,
-            rotary_base=text_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(text_config),
             rotary_percent=text_config.partial_rotary_factor,
             init_method_std=text_config.initializer_range,
             ffn_hidden_size=text_config.intermediate_size,
