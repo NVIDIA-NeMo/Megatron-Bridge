@@ -88,7 +88,6 @@ dependencies = [
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
-    "pyarrow>=14.0.0",
 ]
 
 
@@ -127,6 +126,9 @@ nvidia-modelopt = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.gi
 [project.optional-dependencies]
 recipes = [
     "nemo-run>=0.5.0a0,<0.6.0",
+]
+parquet = [
+    "pyarrow>=14.0.0",
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",

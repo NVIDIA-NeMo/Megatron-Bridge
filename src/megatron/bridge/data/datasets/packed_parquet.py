@@ -59,15 +59,9 @@ def is_packed_parquet_file(path) -> bool:
         pattern that would match such files.
     """
     name = str(path).lower()
-    # Direct file match
-    if name.endswith(".idx.parquet") or name.endswith(".idx.pq"):
-        return True
-    # Glob pattern that would match packed parquet (e.g., "data*.idx.parquet")
-    # Require pattern to end with the extension to avoid false positives like "data.idx.parquet.bak"
-    if "*" in name or "?" in name:
-        if name.endswith(".idx.parquet") or name.endswith(".idx.pq"):
-            return True
-    return False
+    # Matches both direct files and glob patterns (e.g., "data*.idx.parquet")
+    # since both end with the extension.
+    return name.endswith(".idx.parquet") or name.endswith(".idx.pq")
 
 
 def _lazy_import_pyarrow():
@@ -344,6 +338,43 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             f"across {len(self._parquet_paths)} file(s)"
         )
 
+    @staticmethod
+    def validate_row(idx: int, input_ids: list, loss_mask: list, seq_start_id: list) -> None:
+        """Validate packed row invariants.
+
+        This is NOT called in the training hot path for performance reasons.
+        Use it during data preparation or for debugging.
+
+        Args:
+            idx: Row index (for error messages).
+            input_ids: Token IDs for the packed sequence.
+            loss_mask: Per-token loss mask.
+            seq_start_id: Start offsets for each sub-sequence.
+
+        Raises:
+            ValueError: If any invariant is violated.
+        """
+        if len(loss_mask) != len(input_ids):
+            raise ValueError(
+                f"Row {idx}: loss_mask length ({len(loss_mask)}) != input_ids length ({len(input_ids)})"
+            )
+
+        if not seq_start_id or seq_start_id[0] != 0:
+            raise ValueError(
+                f"Row {idx}: seq_start_id must start with 0, got {seq_start_id[:5] if seq_start_id else []}"
+            )
+
+        for i, start in enumerate(seq_start_id):
+            if start >= len(input_ids):
+                raise ValueError(
+                    f"Row {idx}: seq_start_id[{i}]={start} >= len(input_ids)={len(input_ids)}"
+                )
+            if i > 0 and start < seq_start_id[i - 1]:
+                raise ValueError(
+                    f"Row {idx}: seq_start_id is not non-decreasing at index {i}: "
+                    f"{seq_start_id[i - 1]} > {start}"
+                )
+
     def _ensure_reader(self, file_idx: int):
         """Lazily open a Parquet file for reading.
 
@@ -420,17 +451,15 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
     def _build_samples_mapping(self):
         """Build epoch-level sample mapping for shuffling.
 
-        This mirrors the logic from GPTSFTPackedDataset but uses self._num_rows
-        instead of len(self.indexed_dataset).
+        Mirrors GPTSFTPackedDataset._build_samples_mapping() exactly,
+        using self._num_rows instead of len(self.indexed_dataset).
         """
         if self.max_num_samples is not None:
-            # Epoch-level shuffling: sampling without replacement until end of epoch, then repeat
             dataset_len = self._num_rows
-            max_num_epochs = int(np.ceil(self.max_num_samples / dataset_len))
+            max_num_epochs = np.ceil(self.max_num_samples / dataset_len)
             indices = np.arange(dataset_len)[None, :].repeat(max_num_epochs, axis=0)
-            for row in indices:
-                np.random.shuffle(row)
-            self.samples_mapping = indices.reshape(-1)[: self.max_num_samples]
+            [np.random.shuffle(x) for x in indices]
+            self.samples_mapping = indices.reshape(1, -1).squeeze()[: self.max_num_samples]
         else:
             self.samples_mapping = None
 
@@ -503,29 +532,6 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
         input_ids = table.column("input_ids")[row_in_group].as_py()
         seq_start_id = table.column("seq_start_id")[row_in_group].as_py()
         loss_mask = table.column("loss_mask")[row_in_group].as_py()
-
-        # Validate per-row invariants
-        if len(loss_mask) != len(input_ids):
-            raise ValueError(
-                f"Row {idx}: loss_mask length ({len(loss_mask)}) != input_ids length ({len(input_ids)})"
-            )
-
-        if not seq_start_id or seq_start_id[0] != 0:
-            raise ValueError(
-                f"Row {idx}: seq_start_id must start with 0, got {seq_start_id[:5] if seq_start_id else []}"
-            )
-
-        # Check seq_start_id is non-decreasing and within bounds
-        for i, start in enumerate(seq_start_id):
-            if start >= len(input_ids):
-                raise ValueError(
-                    f"Row {idx}: seq_start_id[{i}]={start} >= len(input_ids)={len(input_ids)}"
-                )
-            if i > 0 and start < seq_start_id[i - 1]:
-                raise ValueError(
-                    f"Row {idx}: seq_start_id is not non-decreasing at index {i}: "
-                    f"{seq_start_id[i-1]} > {start}"
-                )
 
         # Compute derived field
         seq_boundaries = seq_start_id + [len(input_ids)]
