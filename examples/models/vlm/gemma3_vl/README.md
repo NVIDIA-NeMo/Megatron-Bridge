@@ -21,6 +21,36 @@ See the [conversion.sh](conversion.sh) script for commands to:
 - Export Megatron checkpoints back to Hugging Face format
 - Run multi-GPU round-trip validation between formats
 
+
+## Inference
+
+**See the [inference.sh](inference.sh) script for commands to:
+- Run inference with Hugging Face checkpoints
+- Run inference with imported Megatron checkpoints
+- Run inference with exported Hugging Face checkpoints
+
+**Expected output:**
+```
+...
+Generation step 46
+Generation step 47
+Generation step 48
+Generation step 49
+======== GENERATED TEXT OUTPUT ========
+Image: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png
+Prompt: Describe this image.
+Generated: <bos><bos><start_of_turn>user
+...
+Describe this image.<end_of_turn>
+<start_of_turn>model
+Here's a description of the image you sent, breaking down the technical specifications of the H100 SXM and H100 NVL server cards:
+
+**Overall:**
+
+The image is a table comparing the technical specifications of two
+=======================================
+```
+
 ## Pretrain
 
 Pretraining is not verified for this model.
@@ -37,25 +67,6 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor 
 
 [W&B Report](TODO)
 
-## Inference
+## Evaluation
 
-See the [inference.sh](inference.sh) script for commands to:
-- Run inference with Hugging Face checkpoints
-- Run inference with imported Megatron checkpoints
-- Run inference with exported Hugging Face checkpoints
-
-**Example output:**
-```
-Describe this image.<end_of_turn>
-<start_of_turn>model
-Here's a description of the image you sent, breaking down the technical specifications of the H100 SXM and H100 NVL server cards:
-
-**Overall:**
-
-The image is a table comparing the technical specifications of two NVIDIA server cards: the H100 SXM and the H100 NVL. It's designed to highlight the performance differences between the two cards, particularly in terms of compute power and memory.
-
-**Column Breakdown:**
-
-*
-=======================================
-```
+TBD
