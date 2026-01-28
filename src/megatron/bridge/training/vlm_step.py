@@ -137,7 +137,7 @@ def get_batch(
     # Slice only text tensors for context parallelism
     cp_keys = ("tokens", "input_ids", "labels", "loss_mask", "attention_mask", "position_ids")
     cp_slice = {k: batch.get(k) for k in cp_keys if k in batch}
-    cp_slice = get_batch_on_this_cp_rank(cp_slice)
+    cp_slice = get_batch_on_this_cp_rank(cp_slice, cp_group=pg_collection.cp)
     for k, v in cp_slice.items():
         batch[k] = v
 
