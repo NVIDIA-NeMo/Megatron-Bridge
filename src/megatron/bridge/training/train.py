@@ -119,7 +119,7 @@ def train(
     config: ConfigContainer = global_state.cfg
     model_config = get_model_config(model[0])
     train_config = config.train
-    timers = global_state.timers
+    #timers = global_state.timers
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
 
@@ -171,6 +171,7 @@ def train(
         gc.disable()
         gc.collect()
 
+    #"""
     if config.straggler and config.straggler.log_straggler:
         world = torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
@@ -196,6 +197,7 @@ def train(
             print_rank_0(f"Failed to initialize NVRx straggler detection: {e}")
             # Set to None to disable further checks
             global_state._nvrx_straggler_manager = None
+    #"""
 
     num_microbatches = get_num_microbatches()
     eval_duration = 0.0
@@ -284,7 +286,9 @@ def train(
 
     while step < full_train_iters:
     """
+    p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
 
+    print("Running new code 11:20AM #########################")
     while global_state.train_state.step < train_config.train_iters:
 
         # Handle profiling for this step
@@ -340,6 +344,7 @@ def train(
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
+        
 
         # Capture CUDA Graphs after warmup.
         if (
@@ -375,9 +380,11 @@ def train(
             global_state,
             pg_collection,
             forward_backward_func,
+            p2p_communicator,
         )
 
-        
+
+        #"""
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -424,12 +431,15 @@ def train(
                     ):
                         assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
+        #"""
 
         global_state.train_state.step += 1        
 
+        #"""        
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
+
 
         dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
@@ -444,9 +454,7 @@ def train(
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
-
-
-
+        #"""
 
         # Logging.
         if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
@@ -488,7 +496,7 @@ def train(
                 model,
                 log_max_attention_logit,
             )
-
+        """
         if (
             global_state.train_state.do_valid
             and train_config.eval_interval
@@ -533,8 +541,9 @@ def train(
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
+        """
         
-
+        
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
@@ -572,6 +581,7 @@ def train(
             checkpointing_context,
             train_data_iterator,
         )
+        
         if should_exit:
             break
 
@@ -624,6 +634,7 @@ def train_step(
     global_state: GlobalState,
     pg_collection: ProcessGroupCollection,
     forward_backward_func: Callable,
+    p2p_communicator: P2PCommunicator,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -656,6 +667,7 @@ def train_step(
     
     rerun_state_machine = get_rerun_state_machine()
     while rerun_state_machine.should_run_forward_backward(data_iterator):
+    #if True:
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -671,7 +683,6 @@ def train_step(
         seq_length = model_config.seq_length  # Default for pretraining
         forward_backward_data_iterator = data_iterator  # Default for pretraining
 
-        #"""
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
@@ -682,7 +693,6 @@ def train_step(
                 default_seq_length=model_config.seq_length,
                 seq_key="tokens",
             )
-        #"""
 
         if len(model) > 1:
             # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
@@ -691,8 +701,6 @@ def train_step(
                 data_iterator=forward_backward_data_iterator,
             )
 
-        #print("no modelopt stuff")
-        #"""
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
         if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
@@ -703,10 +711,8 @@ def train_step(
             )
         else:
             adjust_tensor_shapes_fn = None
-        #"""
 
         # Forward pass.
-        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -720,13 +726,17 @@ def train_step(
             p2p_communicator=p2p_communicator,
             pg_collection=pg_collection,
         )
-    
+
+    should_checkpoint, should_exit, exit_code = False, False, 0
+    #"""
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
+    #"""
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:
+        print("======== Running empty cache =============")
         torch.cuda.empty_cache()
 
     # Update parameters.
@@ -744,6 +754,7 @@ def train_step(
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
     if train_config.numeric_checks:
+        print("======== Running numeric checks =============")
         update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
         # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
         # so we must gather across mp ranks
@@ -763,6 +774,7 @@ def train_step(
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 2:
+        print("======== Running empty cache =============")
         torch.cuda.empty_cache()
 
     if is_pp_last_stage(pg_collection.pp):
@@ -891,6 +903,7 @@ def maybe_run_manual_gc(manual_gc_enabled: bool, manual_gc_interval: int, iterat
 
     if manual_gc_enabled and manual_gc_interval != 0:
         if iteration % manual_gc_interval == 0:
+            print("Running manual GC 10:47 AM #########################")
             gc.collect()
 
 
