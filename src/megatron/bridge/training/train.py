@@ -381,8 +381,7 @@ def train(
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
-        if config.tensor_inspect is not None:
-            tensor_inspect_step_if_enabled(config.tensor_inspect)
+        tensor_inspect_step_if_enabled(config.tensor_inspect)
 
         if config.logger.log_throughput_to_tensorboard:
             history_wct.append(time.time() - global_state.start_time)
@@ -399,7 +398,7 @@ def train(
                 non_persistent_ckpt=False,  # TODO: implement non-persistent checkpointing
             )
         if should_exit:
-            break 
+            break
 
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
@@ -426,9 +425,7 @@ def train(
                         assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
-
-        global_state.train_state.step += 1
-        
+        global_state.train_state.step += 1        
 
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
@@ -492,9 +489,6 @@ def train(
                 log_max_attention_logit,
             )
 
-
-        
-        """
         if (
             global_state.train_state.do_valid
             and train_config.eval_interval
@@ -523,7 +517,6 @@ def train(
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
             )
-
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
             timers("eval-time").stop()
@@ -537,7 +530,6 @@ def train(
             timers("interval-time", log_level=0).start(barrier=True)
             if energy_monitor is not None:
                 energy_monitor.resume()
-        """
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
@@ -658,20 +650,22 @@ def train_step(
     """
     cfg: ConfigContainer = global_state.cfg
     timers = global_state.timers
-    model_config =  get_model_config(model[0])
+    model_config = get_model_config(model[0])
     train_config = cfg.train
     optim_config = cfg.optimizer
-
-    train_config = global_state.cfg.train
-
     
     rerun_state_machine = get_rerun_state_machine()
-    
     while rerun_state_machine.should_run_forward_backward(data_iterator):
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
         optimizer.zero_grad()
+
+        _handle_mxfp8_param_buffer_copy(
+            optimizer=optimizer,
+            reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
+            overlap_param_gather=cfg.ddp.overlap_param_gather,
+        )
 
         # Handle finetuning vs pretraining data consumption
         seq_length = model_config.seq_length  # Default for pretraining
@@ -688,17 +682,6 @@ def train_step(
                 default_seq_length=model_config.seq_length,
                 seq_key="tokens",
             )
-
-            # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-            if not cfg.dist.use_decentralized_pg:
-                adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-                    model,
-                    seq_length=model_config.seq_length,
-                    micro_batch_size=train_config.micro_batch_size,
-                    decoder_seq_length=model_config.seq_length,
-                )
-            else:
-                adjust_tensor_shapes_fn = None
         #"""
 
         if len(model) > 1:
@@ -738,15 +721,13 @@ def train_step(
             pg_collection=pg_collection,
         )
     
-    should_checkpoint, should_exit, exit_code = False, False, 0  # rerun_state_machine.should_checkpoint_and_exit()
-    # if should_exit:
-    #     return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
+    should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
+    if should_exit:
+        return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
 
-    #"""
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:
         torch.cuda.empty_cache()
-    #"""
 
     # Update parameters.
     # timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
@@ -755,10 +736,8 @@ def train_step(
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
     log_max_attention_logit = None
-    #"""
     if hasattr(global_state.cfg.model, "qk_clip") and global_state.cfg.model.qk_clip:
         log_max_attention_logit = clip_qk(model)
-    #"""
 
     # timers("optimizer").stop()
 
@@ -773,7 +752,6 @@ def train_step(
             num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(
                 num_zeros_in_grad, mp_group=pg_collection.mp
             )
-    #"""
 
     # Update learning rate.
     if update_successful:
@@ -781,14 +759,11 @@ def train_step(
         scheduler.step(increment=increment)
         skipped_iter = 0
     else:
-    #     print("Not expected to happen")
         skipped_iter = 1
 
-    #"""
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
-    #"""
 
     if is_pp_last_stage(pg_collection.pp):
         # Average loss across microbatches.
