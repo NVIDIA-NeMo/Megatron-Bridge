@@ -15,9 +15,10 @@
 from unittest.mock import patch
 
 import pytest
+from transformers import AutoTokenizer
 
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.utils import build_new_tokenizer
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
 class TestTokenizers:
@@ -30,10 +31,10 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
-        assert tokenizer.library == "null"
+        assert tokenizer.library == "null-text"
         assert tokenizer.vocab_size == vocab_size
 
     @patch("megatron.core.tokenizers.text.libraries.MegatronHFTokenizer")
@@ -52,7 +53,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "megatron"
@@ -72,7 +73,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "huggingface"
@@ -94,7 +95,7 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "sentencepiece"
@@ -113,10 +114,55 @@ class TestTokenizers:
         )
 
         # Execute
-        tokenizer = build_new_tokenizer(config)
+        tokenizer = build_tokenizer(config)
 
         # Verify
         assert tokenizer.library == "tiktoken"
         assert tokenizer.path == "tiktoken.json"
         assert tokenizer.additional_args["pattern"] == pattern
         assert tokenizer.additional_args["num_special_tokens"] == num_special_tokens
+
+    @pytest.mark.timeout(30)
+    def test_hf_tokenizer_as_local_path_object(self, tmp_path):
+        # Cover the user case where a user has made a local path object of a WIP tokenizer and wants
+        #  to use that in some megatron model at train time.
+
+        # First as a proxy download a tokenizer from HF and save it to a local path. A user would
+        #  do this differently by exporting their WIP tokenizer to a local path.
+
+        # 1. Download a common, small tokenizer from the Hub
+        # "bert-base-uncased" is a safe choice as it's small and standard.
+        model_id = "bert-base-uncased"
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+        # 2. Define a local path in the temporary directory
+        local_model_path = tmp_path / "my_local_tokenizer"
+
+        # 3. Save the tokenizer to disk
+        # This creates tokenizer_config.json, vocab.txt, special_tokens_map.json, etc.
+        tokenizer.save_pretrained(str(local_model_path))
+
+        # 4. Load it back using the local path
+        # This simulates the user providing a path to a folder instead of a Hub ID
+        cfg = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=local_model_path,
+            hf_tokenizer_kwargs={
+                "trust_remote_code": True,
+                "include_special_tokens": True,
+            },
+        )
+        loaded_tokenizer = build_tokenizer(cfg)
+
+        # 5. Verify it functions identically
+        test_text = "Unit testing is important."
+
+        original_tokens = tokenizer.encode(test_text)
+        reloaded_tokens = loaded_tokenizer.tokenize(test_text)
+
+        assert original_tokens == reloaded_tokens
+        assert loaded_tokenizer.vocab_size == tokenizer.vocab_size
+
+        # verify that the directory actually contains files (sanity check)
+        assert (local_model_path / "tokenizer_config.json").exists()
+        assert (local_model_path / "tokenizer.json").exists()
