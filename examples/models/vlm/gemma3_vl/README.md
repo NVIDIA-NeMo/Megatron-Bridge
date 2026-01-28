@@ -2,58 +2,37 @@
 
 This directory contains examples for Gemma 3 Vision Language Model, including checkpoint conversion, inference, and fine-tuning.
 
-## Conversion with 🤗 Hugging Face
+## Checkpoint Conversion
 
-See the [conversion.sh](conversion.sh) script for example commands to:
-- Importing Hugging Face checkpoints into Megatron format on CPU
-- Exporting Megatron checkpoints back to Hugging Face on CPU
-- Running a multi-GPU round-trip validation to automatically convert between formats and verify model weights for compatibility between Hugging Face and Megatron-LM checkpoints
-
-```{literalinclude} conversion.sh
-:language: bash
-```
+See the [conversion.sh](conversion.sh) script for commands to:
+- Import Hugging Face checkpoints to Megatron format
+- Export Megatron checkpoints back to Hugging Face format
+- Run multi-GPU round-trip validation between formats
 
 ## Pretrain
 
 Pretraining is not verified for this model.
 
-## Finetune Recipes
+## Supervised Fine-Tuning (SFT)
 
-See the [sft.sh](sft.sh) script for example commands to:
-- Full finetuning with all model parameters
+See the [sft.sh](sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
 
-```{literalinclude} sft.sh
-:language: bash
-```
+[W&B Report](TODO)
 
-## PEFT Recipes
+## Parameter-Efficient Fine-Tuning (PEFT)
 
-See the [peft.sh](peft.sh) script for example commands to:
-- Parameter-Efficient Finetuning (PEFT) with LoRA
+See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
 
-```{literalinclude} peft.sh
-:language: bash
-```
+[W&B Report](TODO)
 
-You will see the following wandb result when the commands succeed:
-```
-wandb result
-```
+## Inference
 
-## Run Inference
-
-See the [inference.sh](inference.sh) script for example commands to:
+See the [inference.sh](inference.sh) script for commands to:
 - Run inference with Hugging Face checkpoints
-- Run inference with converted Megatron checkpoints
-- Run inference with trained Megatron checkpoints
+- Run inference with imported Megatron checkpoints
+- Run inference with exported Hugging Face checkpoints
 
-```{literalinclude} inference.sh
-:language: bash
-```
-
-You will see the following output when the commands succeed:
-
-**Inference output:**
+**Example output:**
 ```
 Describe this image.<end_of_turn>
 <start_of_turn>model
