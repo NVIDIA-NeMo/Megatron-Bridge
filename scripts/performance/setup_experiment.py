@@ -256,7 +256,7 @@ def main(
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
-            else f"{task}_{model_family_name}_{compute_dtype}_{exp_config}"
+            else f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
         )
 
     if pretrained_checkpoint is not None:

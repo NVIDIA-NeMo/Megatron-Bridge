@@ -160,7 +160,7 @@ def get_exp_name_config(
     )
     vp_size = (
         args.virtual_pipeline_model_parallel_size
-        if args.virtual_pipeline_model_parallel_size is not None
+        if args.virtual_pipeline_model_parallel_size != -1
         else base_config.virtual_pipeline_model_parallel_size
     )
     ep_size = (
