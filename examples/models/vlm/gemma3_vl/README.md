@@ -21,9 +21,17 @@ Pretraining is not verified for this model.
 
 See the [sft.sh](sft.sh) script for example commands to:
 - Full finetuning with all model parameters
-- Parameter-Efficient Finetuning (PEFT) with LoRA
 
 ```{literalinclude} sft.sh
+:language: bash
+```
+
+## PEFT Recipes
+
+See the [peft.sh](peft.sh) script for example commands to:
+- Parameter-Efficient Finetuning (PEFT) with LoRA
+
+```{literalinclude} peft.sh
 :language: bash
 ```
 

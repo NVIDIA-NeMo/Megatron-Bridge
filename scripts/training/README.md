@@ -67,14 +67,18 @@ Configuration priority:
 Mode is inferred from the recipe name. If your recipe name doesn't include
 `pretrain` or `finetune`, pass `--mode` explicitly.
 
-## Forward Step Selection
+## Step Function Selection
 
-Use `--step` to choose the forward step implementation:
+Use `--step_func` to control the step function used during training. Available options:
+
+- `gpt_step` - Text-only models (default)
+- `vlm_step` - Vision-language models
+- `llava_step` - LLaVA models
 
 ```bash
-torchrun --nproc_per_node=8 train.py \
+torchrun --nproc_per_node=8 run_recipe.py \
     --recipe qwen25_vl_pretrain_config \
-    --step vlm
+    --step_func vlm_step
 ```
 
 ## Multi-Node and Distributed Training
@@ -94,7 +98,7 @@ Before launching on Slurm, test your configuration locally:
 ```bash
 python launch_with_nemo_run.py \
     --local \
-    --script train.py \
+    --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --devices 2 \
     --dry-run \
@@ -110,7 +114,7 @@ Once tested, scale to Slurm by removing `--local` and adding Slurm parameters:
 ```bash
 # From the cluster (LocalTunnel)
 python launch_with_nemo_run.py \
-    --script train.py \
+    --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
     --devices 8 \
@@ -119,7 +123,7 @@ python launch_with_nemo_run.py \
 
 # From your local machine (SSHTunnel)
 python launch_with_nemo_run.py \
-    --script train.py \
+    --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
     --devices 8 \
@@ -137,7 +141,7 @@ When using containers, scripts are automatically packaged using `PatternPackager
 
 ```bash
 python launch_with_nemo_run.py \
-    --script train.py \
+    --script run_recipe.py \
     --recipe qwen3_8b_pretrain_config \
     --nodes 4 \
     --devices 8 \
@@ -153,7 +157,7 @@ python launch_with_nemo_run.py \
 
 ```bash
 python launch_with_nemo_run.py \
-    --script train.py \
+    --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
     --partition gpu \
@@ -171,7 +175,7 @@ For git-based packaging:
 
 ```bash
 python launch_with_nemo_run.py \
-    --script train.py \
+    --script run_recipe.py \
     --recipe llama3_8b_pretrain_config \
     --nodes 2 \
     --partition gpu \
@@ -186,7 +190,7 @@ Use the fault-tolerant launcher for better resiliency:
 
 ```bash
 python launch_with_nemo_run.py \
-    --script train.py \
+    --script run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --launcher ft \
     --nodes 2 \
@@ -202,13 +206,13 @@ Edit the configuration section in `launch_with_sbatch.sh`:
 
 ```bash
 # Training script to run
-TRAINING_SCRIPT="train.py"
+TRAINING_SCRIPT="run_recipe.py"
 
 # Recipe name
 RECIPE="llama32_1b_pretrain_config"
 
-# Forward step type
-STEP_TYPE="gpt"
+# Step function (controls the step function: gpt_step, vlm_step, or llava_step)
+STEP_TYPE="gpt_step"
 
 # Optional: CLI overrides
 CLI_OVERRIDES="train.train_iters=5000 optimizer.lr=0.0003"

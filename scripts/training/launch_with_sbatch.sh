@@ -44,9 +44,9 @@
 # ==============================================================================
 
 # Training script to run
-TRAINING_SCRIPT="train.py"
+TRAINING_SCRIPT="run_recipe.py"
 # Options:
-# TRAINING_SCRIPT="train.py"
+# TRAINING_SCRIPT="run_recipe.py"
 # TRAINING_SCRIPT="pretrain_vlm.py"  # For VLM models
 # TRAINING_SCRIPT="finetune_vlm.py"  # For VLM finetuning
 
