@@ -16,7 +16,6 @@ import logging
 from typing import Tuple
 
 import numpy as np
-
 from megatron.core.datasets.gpt_dataset import GPTDataset
 from megatron.core.datasets.indexed_dataset import IndexedDataset
 from megatron.core.datasets.utils import Split
