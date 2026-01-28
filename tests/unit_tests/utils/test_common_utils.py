@@ -225,32 +225,42 @@ class TestPrintRankLast:
     """Test print_rank_last function."""
 
     @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_backend")
     @patch("megatron.bridge.utils.common_utils.is_last_rank")
     @patch("builtins.print")
-    def test_print_on_last_rank_when_initialized(self, mock_print, mock_is_last_rank, mock_is_initialized):
+    def test_print_on_last_rank_when_initialized(
+        self, mock_print, mock_is_last_rank, mock_get_backend, mock_is_initialized
+    ):
         """Test print_rank_last prints message when torch.distributed is initialized and rank is last."""
         mock_is_initialized.return_value = True
+        mock_get_backend.return_value = "nccl"
         mock_is_last_rank.return_value = True
         message = "Test message"
 
         print_rank_last(message)
 
         mock_is_initialized.assert_called_once()
+        mock_get_backend.assert_called_once()
         mock_is_last_rank.assert_called_once()
         mock_print.assert_called_once_with(message, flush=True)
 
     @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_backend")
     @patch("megatron.bridge.utils.common_utils.is_last_rank")
     @patch("builtins.print")
-    def test_no_print_on_non_last_rank_when_initialized(self, mock_print, mock_is_last_rank, mock_is_initialized):
+    def test_no_print_on_non_last_rank_when_initialized(
+        self, mock_print, mock_is_last_rank, mock_get_backend, mock_is_initialized
+    ):
         """Test print_rank_last does not print message when torch.distributed is initialized and rank is not last."""
         mock_is_initialized.return_value = True
+        mock_get_backend.return_value = "nccl"
         mock_is_last_rank.return_value = False
         message = "Test message"
 
         print_rank_last(message)
 
         mock_is_initialized.assert_called_once()
+        mock_get_backend.assert_called_once()
         mock_is_last_rank.assert_called_once()
         mock_print.assert_not_called()
 
@@ -266,17 +276,39 @@ class TestPrintRankLast:
         mock_is_initialized.assert_called_once()
         mock_print.assert_called_once_with(message, flush=True)
 
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_backend")
+    @patch("builtins.print")
+    def test_print_with_fake_backend(self, mock_print, mock_get_backend, mock_is_initialized):
+        """Test print_rank_last prints message when using fake distributed backend.
+
+        With fake backend, print_rank_last skips the is_last_rank check and always prints.
+        """
+        mock_is_initialized.return_value = True
+        mock_get_backend.return_value = "fake"
+        message = "Test message"
+
+        print_rank_last(message)
+
+        mock_is_initialized.assert_called_once()
+        mock_get_backend.assert_called_once()
+        mock_print.assert_called_once_with(message, flush=True)
+
 
 class TestIntegration:
     """Integration tests for common_utils functions."""
 
     @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_backend")
     @patch("torch.distributed.get_rank")
     @patch("torch.distributed.get_world_size")
     @patch("builtins.print")
-    def test_print_functions_integration(self, mock_print, mock_get_world_size, mock_get_rank, mock_is_initialized):
+    def test_print_functions_integration(
+        self, mock_print, mock_get_world_size, mock_get_rank, mock_get_backend, mock_is_initialized
+    ):
         """Test integration of print functions with rank determination."""
         mock_is_initialized.return_value = True
+        mock_get_backend.return_value = "nccl"
         mock_get_rank.return_value = 0
         mock_get_world_size.return_value = 1
 
