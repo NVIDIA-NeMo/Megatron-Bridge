@@ -251,4 +251,4 @@ Generic scripts call recipes with no arguments passed to the recipe function.
 
 All customization happens through CLI overrides after the config is built.
 
-If you need to pass arguments to the recipe constructor itself (e.g., custom parallelism at recipe build time), use model-specific examples, create a custom script.
+If you need to pass arguments to the recipe constructor itself (e.g., custom parallelism at recipe build time), use model-specific examples or create a custom script.

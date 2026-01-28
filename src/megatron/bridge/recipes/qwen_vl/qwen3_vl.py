@@ -378,9 +378,9 @@ def _qwen3_vl_common(
 
     # Determine dataset selection strategy.
     _processor_model = tokenizer_model or hf_path
-    mock = mock or dataset_type == "hf"
+    _dataset_choice = dataset_type or ("mock" if mock else "hf")
 
-    if mock:
+    if _dataset_choice == "mock":
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
             seq_length=seq_length,
             hf_processor_path=_processor_model,
@@ -393,7 +393,7 @@ def _qwen3_vl_common(
             create_attention_mask=True,
             pad_to_max_length=True,
         )
-    elif dataset_type == "preloaded":
+    elif _dataset_choice == "preloaded":
         dataset_cfg = PreloadedVLMConversationProvider(
             seq_length=seq_length,
             hf_processor_path=_processor_model,
@@ -407,7 +407,7 @@ def _qwen3_vl_common(
             pin_memory=True,
             persistent_workers=False,
         )
-    elif dataset_type == "hf":
+    elif _dataset_choice == "hf":
         dataset_cfg = HFDatasetConversationProvider(
             seq_length=seq_length,
             hf_processor_path=_processor_model,
@@ -418,7 +418,7 @@ def _qwen3_vl_common(
             pin_memory=True,
             persistent_workers=False,
         )
-    elif dataset_type == "energon":
+    elif _dataset_choice == "energon":
         tokenizer = AutoTokenizer.from_pretrained(_processor_model)
         # Use from_pretrained to ensure correct normalization (mean/std) and config (min_pixels)
         # matching Preloaded provider behavior.
@@ -441,7 +441,7 @@ def _qwen3_vl_common(
         )
     else:
         raise ValueError(
-            f"Unsupported dataset_type '{dataset_type}'. Expected one of ['mock', 'preloaded', 'hf', 'energon']."
+            f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf', 'energon']."
         )
     # Config Container
     cfg = ConfigContainer(

@@ -48,25 +48,36 @@ Recipe Arguments:
 """
 
 import argparse
-import importlib
+import inspect
+from typing import Callable
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
+from megatron.bridge.training.llava_step import forward_step as llava_forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
-STEP_MODULES = {
-    "gpt_step": "megatron.bridge.training.gpt_step",
-    "vlm_step": "megatron.bridge.training.vlm_step",
-    "llava_step": "megatron.bridge.training.llava_step",
+STEP_FUNCTIONS: dict[str, Callable] = {
+    "gpt_step": gpt_forward_step,
+    "vlm_step": vlm_forward_step,
+    "llava_step": llava_forward_step,
 }
 
 TRAIN_MODES = {
     "pretrain": pretrain,
     "finetune": finetune,
 }
+
+# Error message constants
+ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
+ERR_INFER_MODE_FAILED = (
+    "Unable to infer training mode from recipe name. "
+    "Please include 'pretrain' or 'finetune' in the recipe name or pass --mode explicitly."
+)
 
 
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -92,7 +103,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--step_func",
         type=str,
         default="gpt_step",
-        choices=sorted(STEP_MODULES.keys()),
+        choices=sorted(STEP_FUNCTIONS.keys()),
         help="Step function: gpt_step (text-only), vlm_step (vision-language), or llava_step (LLaVA models)",
     )
     parser.add_argument(
@@ -127,18 +138,32 @@ def load_recipe(recipe_name: str, peft_scheme: str | None) -> ConfigContainer:
         )
 
     config_builder = getattr(recipes, recipe_name)
-    return config_builder(peft=peft_scheme)
+
+    # Check if the recipe accepts a 'peft' argument
+    try:
+        sig = inspect.signature(config_builder)
+        params = sig.parameters
+        accepts_peft = "peft" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    except (ValueError, TypeError):
+        # If signature inspection fails, fall back to try/except
+        accepts_peft = True
+
+    if accepts_peft:
+        try:
+            return config_builder(peft=peft_scheme)
+        except TypeError:
+            # Fallback if peft is not accepted despite signature inspection
+            return config_builder()
+    else:
+        return config_builder()
 
 
-def load_forward_step(step_type: str):
+def load_forward_step(step_type: str) -> Callable:
     """Load forward_step function based on the requested step type."""
     step_key = step_type.lower()
-    if step_key not in STEP_MODULES:
-        raise ValueError(f"Unknown step type: {step_type}. Choose from: {', '.join(STEP_MODULES)}")
-    module = importlib.import_module(STEP_MODULES[step_key])
-    if not hasattr(module, "forward_step"):
-        raise AttributeError(f"{STEP_MODULES[step_key]} does not define forward_step")
-    return module.forward_step
+    if step_key not in STEP_FUNCTIONS:
+        raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
+    return STEP_FUNCTIONS[step_key]
 
 
 def infer_train_mode(recipe_name: str) -> str:
@@ -148,10 +173,7 @@ def infer_train_mode(recipe_name: str) -> str:
     has_finetune = "finetune" in lowered
     if has_pretrain ^ has_finetune:
         return "pretrain" if has_pretrain else "finetune"
-    raise ValueError(
-        "Unable to infer training mode from recipe name. "
-        "Please include 'pretrain' or 'finetune' in the recipe name or pass --mode explicitly."
-    )
+    raise ValueError(ERR_INFER_MODE_FAILED)
 
 
 def main() -> None:
