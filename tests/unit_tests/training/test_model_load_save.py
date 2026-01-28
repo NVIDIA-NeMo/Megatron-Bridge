@@ -425,7 +425,7 @@ class TestLoadMegatronModel:
             result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
 
         # Verify modelopt state was detected and set
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path, ignore_kd_state=True)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
         assert mock_model_cfg.restore_modelopt_state is True
 
         # Verify modelopt state was loaded
@@ -503,7 +503,7 @@ class TestLoadMegatronModel:
             result = load_megatron_model(ckpt_path, model_type="gpt", return_state_dict=True, use_cpu_init=True)
 
         # Verify modelopt state was detected but not set (no attribute on TransformerConfig)
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path, ignore_kd_state=True)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
         # TransformerConfig doesn't have restore_modelopt_state, so hasattr returns False
         assert not hasattr(mock_model_cfg, "restore_modelopt_state")
 
@@ -584,7 +584,17 @@ class TestLoadMegatronModel:
 
 
 class TestSaveMegatronModel:
-    """Test save_megatron_model function."""
+    """Test save_megatron_model function.
+
+    Note: These tests use low_memory_save=False because the low_memory_save=True path
+    requires parallel state to be initialized (get_rng_state calls mpu.get_pipeline_model_parallel_rank()).
+    Testing the low_memory_save=True path would require either:
+    1. Full distributed initialization, or
+    2. Extensive mocking of checkpointing internals (get_rng_state, generate_state_dict, etc.)
+
+    The low_memory_save=False path tests the core save_checkpoint integration without
+    those dependencies, which is sufficient for unit testing the function's API and behavior.
+    """
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
@@ -619,7 +629,7 @@ class TestSaveMegatronModel:
 
         # Test
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist")
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -681,7 +691,11 @@ class TestSaveMegatronModel:
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
             save_megatron_model(
-                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=False,
             )
 
         # Assertions
@@ -749,7 +763,9 @@ class TestSaveMegatronModel:
 
         # Test without tokenizer path (should be None)
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None)
+            save_megatron_model(
+                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None, low_memory_save=False
+            )
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)

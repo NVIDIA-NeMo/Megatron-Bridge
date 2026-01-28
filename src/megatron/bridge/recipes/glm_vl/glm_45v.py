@@ -16,17 +16,17 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from transformers import AutoTokenizer, Qwen2VLImageProcessor
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import (
-    EnergonProvider,
     HFDatasetConversationProvider,
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
 )
-from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -43,8 +43,41 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-class Qwen3VLCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Qwen3-VL recipe helper functions."""
+def set_glm_45v_pipeline_model_parallel_layout(
+    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+) -> None:
+    """Set the GLM-4.5V pipeline model parallel layout.
+
+    GLM-4.5V (based on GLM-4.5 Air) has 46 decoder layers and no MTP layers.
+    This function sets up predefined layouts for common PP/VP combinations.
+
+    Args:
+        model_cfg: The model provider configuration to modify.
+        layout: Optional custom layout. If None, uses predefined layouts based on PP/VP sizes.
+    """
+    # GLM-4.5V has no MTP layers
+    last_layer = ["loss"]
+    pp_size = model_cfg.pipeline_model_parallel_size or 1
+    vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
+
+    # GLM-4.5 Air has 46 decoder layers
+    # Layout maps for common PP/VP combinations
+    layout_map = {
+        (1, 1): None,
+        (2, 1): [["embedding"] + ["decoder"] * 23, ["decoder"] * 23 + last_layer],
+        (4, 1): [["embedding"] + ["decoder"] * 11, ["decoder"] * 12, ["decoder"] * 12, ["decoder"] * 11 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 5] + [["decoder"] * 6] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 2] + [["decoder"] * 3] * 14 + [["decoder"] * 2 + last_layer],
+    }
+
+    if layout is not None:
+        model_cfg.pipeline_model_parallel_layout = layout
+    elif (pp_size, vp_size) in layout_map:
+        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
+
+
+class GLM45VCommonKwargs(TypedDict, total=False):
+    """Typed options accepted by GLM-4.5V recipe helper functions."""
 
     # Core identifiers
     hf_path: str
@@ -58,13 +91,13 @@ class Qwen3VLCommonKwargs(TypedDict, total=False):
     image_folder: Optional[str]
     tokenizer_model: Optional[str]
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    expert_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    expert_model_parallel_size: int
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     # Training hyperparameters
     train_iters: int
@@ -86,83 +119,52 @@ class Qwen3VLCommonKwargs(TypedDict, total=False):
     freeze_vision_projection: bool
     # Checkpoint options
     pretrained_checkpoint: Optional[str]
+    # Pipeline layout
+    layout: Optional[Union[str, List[List[str]]]]
+    # PEFT options
+    peft: Optional[Union[str, PEFT]]
+    finetune_lr: float
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
 
 
-def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL 8B Instruct.
+def glm_45v_finetune_config(**user_kwargs: Unpack[GLM45VCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for GLM-4.5V (based on GLM-4.5 Air 106B).
 
-    See `_qwen3_vl_common` for the full list of parameters.
+    Default configuration: 4 nodes, 32 GPUs total
+    - LoRA/DoRA: TP=1, PP=8, EP=4 (32 GPUs, 4 nodes), LR=1e-4
+    - Full SFT: TP=1, PP=8, EP=16 (128 GPUs, 16 nodes), LR=5e-6
+
+    GLM-4.5V is a Vision-Language model with:
+    - 106B total parameters (based on GLM-4.5 Air)
+    - Sparse MoE with shared experts
+    - Multi-modality support for images and videos
+
+    See `_glm_45v_common` for the full list of parameters.
     """
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 1,
-        "freeze_language_model": True,
-        "freeze_vision_model": True,
-        "freeze_vision_projection": False,
-        "min_lr": 1e-6,
-        "lr": 1e-5,
-        "lr_warmup_iters": 200,
-        "micro_batch_size": 1,
-        "global_batch_size": 32,
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: GLM45VCommonKwargs = {
+        "hf_path": "zai-org/GLM-4.5V",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "expert_model_parallel_size": 16 if is_full_sft else 2,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
+    combined_kwargs: GLM45VCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _glm_45v_common(**combined_kwargs)
 
 
-def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen/Qwen3-VL-30B-A3B-Instruct.
-
-    This is a Mixture-of-Experts model with 128 experts and top-8 routing.
-    Recommended to use with expert parallelism (EP) for efficient training.
-    """
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "expert_parallelism": 8,
-        "freeze_language_model": True,
-        "freeze_vision_model": True,
-        "freeze_vision_projection": False,
-        "min_lr": 2e-6,
-        "lr": 2e-5,
-        "lr_warmup_iters": 200,
-        "micro_batch_size": 1,
-        "global_batch_size": 32,
-    }
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
-
-
-def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen/Qwen3-VL-235B-A22B-Instruct.
-
-    This is a Mixture-of-Experts model with 128 experts and top-8 routing.
-    Recommended to use with expert parallelism (EP) for efficient training.
-    """
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 1,
-        "expert_parallelism": 8,
-        "expert_tensor_parallelism": 1,
-        "freeze_language_model": True,
-        "freeze_vision_model": True,
-        "freeze_vision_projection": False,
-        "min_lr": 2e-6,
-        "lr": 2e-5,
-        "lr_warmup_iters": 200,
-        "micro_batch_size": 1,
-        "global_batch_size": 32,
-    }
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
-
-
-def _qwen3_vl_common(
+def _glm_45v_common(
     hf_path: str,
     dir: Optional[str] = None,
-    name: str = "qwen3_vl_finetune",
+    name: str = "glm_45v_finetune",
     pretrained_checkpoint: Optional[str] = None,
     # Dataset configuration
     train_data_path: Optional[List[str]] = None,
@@ -172,19 +174,18 @@ def _qwen3_vl_common(
     image_folder: Optional[str] = None,
     tokenizer_model: Optional[str] = None,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: Optional[int] = None,
-    expert_tensor_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 2,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    expert_model_parallel_size: int = 4,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
     global_batch_size: int = 32,
-    micro_batch_size: int = 2,
+    micro_batch_size: int = 1,
     seq_length: int = 4096,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
@@ -196,15 +197,29 @@ def _qwen3_vl_common(
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     # Freeze options
-    freeze_language_model: bool = True,
-    freeze_vision_model: bool = True,
+    freeze_language_model: bool = False,
+    freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
+    # Pipeline layout
+    layout: Optional[Union[str, List[List[str]]]] = None,
+    # PEFT options
+    peft: Optional[Union[str, PEFT]] = None,
+    finetune_lr: Optional[float] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """
-    Create a fine-tuning configuration for Qwen2.5-VL models using a given HuggingFace path.
+    Create a fine-tuning configuration for GLM-4.5V models using a given HuggingFace path.
 
     The dataset pipeline is conversation-based. To train multimodal tokens, ensure your
     preprocessed data includes placeholders (e.g., <image>) as needed.
+
+    GLM-4.5V is a Vision-Language model based on GLM-4.5 Air (106B parameters) with:
+    - Sparse MoE architecture with shared experts
+    - Multi-modal support for images and videos
+    - MRoPE (Multi-Resolution Rotary Position Embedding)
     """
     base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, name)
@@ -214,29 +229,39 @@ def _qwen3_vl_common(
     # Build provider via AutoBridge and set parallel/seq params here
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.expert_model_parallel_size = expert_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.freeze_language_model = freeze_language_model
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
 
-    if expert_parallelism is not None:
-        model_cfg.expert_model_parallel_size = expert_parallelism
-    if expert_tensor_parallelism is not None:
-        model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
+    # Set pipeline model parallel layout for asymmetric stages
+    set_glm_45v_pipeline_model_parallel_layout(model_cfg, layout)
 
-    # Optimizer and scheduler
+    # Pipeline split for asymmetric stages are specified with the layout above
+    model_cfg.account_for_embedding_in_pipeline_split = False
+    model_cfg.account_for_loss_in_pipeline_split = False
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
+
+    # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
+    # Ensure min_lr does not exceed max_lr (use 10% of effective_lr as default min)
+    effective_lr = finetune_lr if finetune_lr is not None else lr
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=lr,
-        min_lr=min_lr,
+        max_lr=effective_lr,
+        min_lr=min(min_lr, effective_lr * 0.1),
     )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
     _dataset_choice = dataset_type or "mock"
@@ -280,31 +305,8 @@ def _qwen3_vl_common(
             pin_memory=True,
             persistent_workers=False,
         )
-    elif _dataset_choice == "energon":
-        tokenizer = AutoTokenizer.from_pretrained(_processor_model)
-        # Use from_pretrained to ensure correct normalization (mean/std) and config (min_pixels)
-        # matching Preloaded provider behavior.
-        image_processor = Qwen2VLImageProcessor.from_pretrained(_processor_model)
-
-        dataset_cfg = EnergonProvider(
-            seq_length=seq_length,
-            path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-            num_workers=2,
-            dataloader_type="external",
-            task_encoder=QwenVLTaskEncoder(
-                tokenizer=tokenizer,
-                image_processor=image_processor,
-                max_padding_length=seq_length,
-                min_pixels=200704,
-                max_pixels=1003520,
-            ),
-        )
     else:
-        raise ValueError(
-            f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf', 'energon']."
-        )
+        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf'].")
 
     cfg = ConfigContainer(
         model=model_cfg,
@@ -335,6 +337,9 @@ def _qwen3_vl_common(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
@@ -346,6 +351,7 @@ def _qwen3_vl_common(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        peft=peft_config,
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )

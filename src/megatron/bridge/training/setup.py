@@ -129,7 +129,10 @@ def setup(
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
-    initialize_megatron(
+    # pg_collection is returned from initialize_megatron:
+    # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
+    # - When use_decentralized_pg=False: uses mpu's global parallel state
+    pg_collection = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
@@ -157,9 +160,6 @@ def setup(
 
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
-
-    # Initialize process group collection once and pass through
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -217,17 +217,20 @@ def setup(
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        pg_collection=pg_collection,
     )
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    if cfg.scheduler.no_weight_decay_cond_type == "qwen3_next":
-        raise NotImplementedError("qwen3_next style weight decay disabled until mcore fix.")
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
+        # Only pass pg_collection when use_decentralized_pg is True.
+        # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
+        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
+        optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -283,6 +286,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=pg_collection.dp,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")

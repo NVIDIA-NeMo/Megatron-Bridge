@@ -123,9 +123,9 @@ def get_batch(
     """
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
-        return None, None, None, None, None, None, None, None, None
 
+    # All PP stages load from iterator to get input_ids and visual grid info
+    # This allows each stage to compute MRoPE position_ids locally without broadcasting
     batch = get_batch_from_iterator(
         data_iterator,
         use_mtp,
@@ -137,7 +137,7 @@ def get_batch(
     # Slice only text tensors for context parallelism
     cp_keys = ("tokens", "input_ids", "labels", "loss_mask", "attention_mask", "position_ids")
     cp_slice = {k: batch.get(k) for k in cp_keys if k in batch}
-    cp_slice = get_batch_on_this_cp_rank(cp_slice)
+    cp_slice = get_batch_on_this_cp_rank(cp_slice, cp_group=pg_collection.cp)
     for k, v in cp_slice.items():
         batch[k] = v
 
@@ -195,10 +195,10 @@ def get_batch(
 
     return (
         (batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")),
-        batch["labels"],
-        batch["loss_mask"],
-        batch["attention_mask"],
-        batch["position_ids"],
+        batch.get("labels"),
+        batch.get("loss_mask"),
+        batch.get("attention_mask"),
+        batch.get("position_ids"),
         batch.get("cu_seqlens"),
         batch.get("cu_seqlens_argmin"),
         batch.get("max_seqlen"),

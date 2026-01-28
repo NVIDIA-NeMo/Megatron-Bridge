@@ -63,7 +63,7 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.models.gpt_provider import GPTDistillationProvider
+from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config, llama32_3b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.distill import distill
@@ -112,7 +112,7 @@ def main() -> None:
 
     This function orchestrates the complete configuration workflow:
     1. Loads the base student configuration (Llama3.2-1B) and teacher configuration (Llama3.2-3B)
-    2. Wraps both in a GPTDistillationProvider to create a unified distillation model
+    2. Wraps both in a DistillationProvider to create a unified distillation model
     3. Applies YAML overrides from --config-file (if exists)
     4. Applies CLI overrides using Hydra-style syntax
     5. Starts Megatron distillation with the final merged configuration
@@ -147,9 +147,9 @@ def main() -> None:
 
     # Load base configurations as recipes and wrap provider for distillation mode
     cfg: ConfigContainer = llama32_1b_pretrain_config(load_weights=True)
-    cfg.model.__class__ = GPTDistillationProvider
-    cfg.model.teacher = llama32_3b_pretrain_config(load_weights=True).model
-    cfg.model.kd_config = ModelOptDistillConfig()
+    teacher_cfg = llama32_3b_pretrain_config(load_weights=True)
+    kd_config = ModelOptDistillConfig()
+    cfg.model = convert_to_distillation_provider(cfg.model, teacher_cfg.model, kd_config)
     logger.info("Loaded base student and teacher configurations")
 
     # Print configuration on rank 0

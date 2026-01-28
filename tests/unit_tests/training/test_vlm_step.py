@@ -135,9 +135,18 @@ def test_get_batch_padding_paths(monkeypatch):
     # Iterator
     it = _Iterator(batch)
 
+    # Create a proper mock pg_collection with rank/size methods
+    class _MockProcessGroup:
+        def rank(self):
+            return 0
+
+        def size(self):
+            return 1
+
     class _PG:
         def __init__(self):
-            self.pp = object()
+            self.pp = _MockProcessGroup()
+            self.cp = _MockProcessGroup()
 
     tokens, labels, loss_mask, attention_mask, position_ids, *_ = get_batch(
         it, cfg, use_mtp=False, pg_collection=_PG()
@@ -157,11 +166,29 @@ def test_forward_step_schedule_plan(monkeypatch):
     # No-op CUDA and CP functions
     monkeypatch.setattr("megatron.core.utils.get_batch_on_this_cp_rank", lambda x: x, raising=True)
 
+    # Create a proper mock process group with rank/size methods
+    class _MockProcessGroup:
+        def rank(self):
+            return 0
+
+        def size(self):
+            return 1
+
+    # Create mock pg_collection with proper process groups
+    class _MockPGCollection:
+        def __init__(self):
+            self.pp = _MockProcessGroup()
+            self.cp = _MockProcessGroup()
+
     # Dummy model with required interface
     class _Model:
         def __init__(self):
             self.config = type("C", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
-            self.pg_collection = type("PG", (), {"pp": object()})()
+            self._pg_collection = _MockPGCollection()
+
+        @property
+        def pg_collection(self):
+            return self._pg_collection
 
         def build_schedule_plan(self, tokens, position_ids, attention_mask, labels=None, loss_mask=None):  # noqa: ARG002
             return torch.tensor(1)
