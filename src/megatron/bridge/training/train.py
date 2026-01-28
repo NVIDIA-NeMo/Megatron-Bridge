@@ -119,7 +119,7 @@ def train(
     config: ConfigContainer = global_state.cfg
     model_config = get_model_config(model[0])
     train_config = config.train
-    #timers = global_state.timers
+    timers = global_state.timers
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
 
@@ -156,7 +156,7 @@ def train(
         energy_monitor.setup()
         energy_monitor.resume()
 
-    #timers("interval-time", log_level=0).start(barrier=True)
+    timers("interval-time", log_level=0).start(barrier=True)
     report_memory_flag = True
     pre_hook_enabled = False
     should_exit = False
@@ -198,8 +198,8 @@ def train(
             global_state._nvrx_straggler_manager = None
 
     num_microbatches = get_num_microbatches()
-    eval_duration = 0.0
-    eval_iterations = 0
+    #eval_duration = 0.0
+    #eval_iterations = 0
 
     prof = None
     nsys_nvtx_context = None  # NVTX context for nsys profiling
@@ -426,7 +426,6 @@ def train(
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
-        #"""
 
         # Logging.
         if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
@@ -474,7 +473,7 @@ def train(
         ):
             if energy_monitor is not None:
                 energy_monitor.pause()
-            #timers("interval-time").stop()
+            timers("interval-time").stop()
             if should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model)
                 pre_hook_enabled = False
@@ -482,7 +481,7 @@ def train(
                 # Collect all objects.
                 gc.collect()
             prefix = f"iteration {global_state.train_state.step}"
-            #timers("eval-time", log_level=0).start(barrier=True)
+            timers("eval-time", log_level=0).start(barrier=True)
             evaluate_and_print_results(
                 global_state,
                 prefix,
@@ -496,8 +495,8 @@ def train(
                 non_loss_data_func=non_loss_data_func,
             )
             #eval_duration += timers("eval-time").elapsed()
-            eval_iterations += train_config.eval_iters
-            #timers("eval-time").stop()
+            #eval_iterations += train_config.eval_iters
+            timers("eval-time").stop()
 
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect only the objects created and used in evaluation.
@@ -505,13 +504,12 @@ def train(
             if should_toggle_forward_pre_hook:
                 enable_forward_pre_hook(model)
                 pre_hook_enabled = True
-            #timers("interval-time", log_level=0).start(barrier=True)
+            timers("interval-time", log_level=0).start(barrier=True)
             if energy_monitor is not None:
                 energy_monitor.resume()
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
-        
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
@@ -702,11 +700,10 @@ def train_step(
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:
-        print("======== Running empty cache =============")
         torch.cuda.empty_cache()
 
     # Update parameters.
-    # timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
+    timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     # get max attention logit for logging and run clip_qk()
@@ -715,12 +712,11 @@ def train_step(
     if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
         log_max_attention_logit = clip_qk(model)
 
-    # timers("optimizer").stop()
+    timers("optimizer").stop()
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
     if train_config.numeric_checks:
-        print("======== Running numeric checks =============")
         update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
         # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
         # so we must gather across mp ranks
@@ -740,7 +736,6 @@ def train_step(
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 2:
-        print("======== Running empty cache =============")
         torch.cuda.empty_cache()
 
     if is_pp_last_stage(pg_collection.pp):
@@ -869,7 +864,6 @@ def maybe_run_manual_gc(manual_gc_enabled: bool, manual_gc_interval: int, iterat
 
     if manual_gc_enabled and manual_gc_interval != 0:
         if iteration % manual_gc_interval == 0:
-            print("Running manual GC 10:47 AM #########################")
             gc.collect()
 
 
@@ -1088,7 +1082,7 @@ def save_checkpoint_and_time(
     # Recover timing
     if energy_monitor is not None:
         energy_monitor.resume()
-    timers("interval-time", log_level=0).start(barrier=True)
+    timers("interval-time", log_level=1).start(barrier=True)
 
 
 def checkpoint_and_decide_exit(
