@@ -549,6 +549,14 @@ class TestAutoBridge:
                 mock_megatron_model, "./output_dir", True, True, merge_adapter_weights=True
             )
 
+    def test_save_hf_pretrained_config_only_raises(self):
+        """Test save_hf_pretrained raises when bridge has config only."""
+        mock_config = Mock(spec=PretrainedConfig)
+        bridge = AutoBridge(mock_config)
+
+        with pytest.raises(ValueError, match="from_hf_pretrained"):
+            bridge.save_hf_pretrained([Mock()], "./output_dir")
+
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.is_available", return_value=True)
@@ -764,6 +772,7 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            low_memory_save=True,
         )
 
     @patch.object(AutoBridge, "save_megatron_model")
@@ -790,6 +799,7 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             hf_tokenizer_path="./local_model",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            low_memory_save=True,
         )
 
     def test_export_ckpt_basic(self):
@@ -817,6 +827,16 @@ class TestAutoBridge:
                 mock_save_hf_pretrained.assert_called_once_with(
                     mock_megatron_model, "./hf_export", show_progress=True, source_path=None, strict=False
                 )
+
+    def test_export_ckpt_config_only_raises(self):
+        """Test export_ckpt raises when bridge has config only."""
+        mock_config = Mock(spec=PretrainedConfig)
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_config
+
+        with pytest.raises(ValueError, match="from_hf_pretrained"):
+            bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
 
     def test_export_ckpt_with_kwargs(self):
         """Test export_ckpt with custom kwargs."""
@@ -857,10 +877,14 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
-            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
+            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path", low_memory_save=True)
 
             mock_save_megatron_model.assert_called_once_with(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path=None, hf_tokenizer_kwargs=None
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path=None,
+                low_memory_save=True,
+                hf_tokenizer_kwargs=None,
             )
 
     def test_save_megatron_model_with_tokenizer(self):
@@ -877,13 +901,17 @@ class TestAutoBridge:
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
             )
 
             mock_save_megatron_model.assert_called_once_with(
                 mock_megatron_model,
                 "./checkpoint_path",
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
                 hf_tokenizer_kwargs=None,
             )
 
