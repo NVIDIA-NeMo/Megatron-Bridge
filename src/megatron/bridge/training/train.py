@@ -663,10 +663,9 @@ def train_step(
     model_config = get_model_config(model[0])
     train_config = cfg.train
     optim_config = cfg.optimizer
-    
+
     rerun_state_machine = get_rerun_state_machine()
     while rerun_state_machine.should_run_forward_backward(data_iterator):
-    #if True:
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -693,6 +692,9 @@ def train_step(
                 seq_key="tokens",
             )
 
+        # Forward-backward pass.
+        # Convert to list of iterators for virtual pipeline parallelism
+        # With virtual PP, each model chunk needs independent access to the same microbatch.
         if len(model) > 1:
             # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
             forward_backward_data_iterator = make_data_iterator_list(
@@ -726,12 +728,9 @@ def train_step(
             pg_collection=pg_collection,
         )
 
-    should_checkpoint, should_exit, exit_code = False, False, 0
-    #"""
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
-    #"""
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:
