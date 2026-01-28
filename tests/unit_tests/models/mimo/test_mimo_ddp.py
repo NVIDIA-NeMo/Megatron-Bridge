@@ -3,8 +3,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from megatron.bridge.models.mimo.mimo_builder import is_current_rank_in_grid
 from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
@@ -105,8 +103,8 @@ class TestWrapMimoModelDistributed:
         """Create a MimoParallelismConfig."""
         module_parallelisms = {
             name: ModuleParallelismConfig(
-                tensor_parallel=config.get("tp", 1),
-                data_parallel=config.get("dp", 1),
+                tensor_model_parallel_size=config.get("tp", 1),
+                data_parallel_size=config.get("dp", 1),
                 rank_offset=config.get("rank_offset", 0),
             )
             for name, config in modules.items()
@@ -191,7 +189,7 @@ class TestWrapMimoModelDistributed:
             "images": MagicMock(),
         }
         
-        result = wrap_mimo_model_distributed(
+        wrap_mimo_model_distributed(
             mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
         )
         
@@ -226,7 +224,7 @@ class TestWrapMimoModelDistributed:
             "images": MagicMock(),
         }
         
-        result = wrap_mimo_model_distributed(
+        wrap_mimo_model_distributed(
             mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections
         )
         

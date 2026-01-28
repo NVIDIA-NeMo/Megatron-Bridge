@@ -12,10 +12,10 @@ from megatron.bridge.models.mimo.mimo_provider import (
 from megatron.bridge.models.mimo.llava_provider import LlavaMimoProvider
 
 __all__ = [
-    "MimoParallelismConfig",
-    "ModuleParallelismConfig",
-    "MimoModelProvider",
-    "MimoModelInfra",
-    "MimoStubModel",
     "LlavaMimoProvider",
+    "MimoModelInfra",
+    "MimoModelProvider",
+    "MimoParallelismConfig",
+    "MimoStubModel",
+    "ModuleParallelismConfig",
 ]

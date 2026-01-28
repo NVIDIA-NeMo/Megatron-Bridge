@@ -78,8 +78,8 @@ def test_mimo_heterogeneous_rank_offset_overlap():
 def test_mimo_heterogeneous_gap_in_middle_raises_error():
     """Test that gaps between modules raise an error (likely misconfiguration)."""
     module_parallelisms = {
-        "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=0),
-        "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=4),
+        "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
+        "language_module": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
     }
     mimo_parallelism_config = MimoParallelismConfig(
         llm_module_name="language_module",
@@ -94,8 +94,8 @@ def test_mimo_heterogeneous_gap_in_middle_raises_error():
 def test_mimo_heterogeneous_leading_gap_warns():
     """Test that leading unused ranks (before first module) emit a warning."""
     module_parallelisms = {
-        "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=2),
-        "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=4),
+        "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=2),
+        "language_module": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
     }
     mimo_parallelism_config = MimoParallelismConfig(
         llm_module_name="language_module",
@@ -110,8 +110,8 @@ def test_mimo_heterogeneous_leading_gap_warns():
 def test_mimo_heterogeneous_contiguous_no_warning():
     """Test that contiguous rank allocation doesn't warn."""
     module_parallelisms = {
-        "encoder": ModuleParallelismConfig(tensor_parallel=1, data_parallel=2, rank_offset=0),
-        "language_module": ModuleParallelismConfig(tensor_parallel=1, data_parallel=4, rank_offset=2),
+        "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0),
+        "language_module": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2),
     }
     mimo_parallelism_config = MimoParallelismConfig(
         llm_module_name="language_module",
