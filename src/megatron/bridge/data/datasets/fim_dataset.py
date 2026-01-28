@@ -23,6 +23,7 @@ from megatron.core.datasets.utils import Split
 
 from megatron.bridge.training.config import GPTFIMDatasetConfig
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -229,7 +230,6 @@ class GPTFIMDataset(GPTDataset):
         Maintain the same sample length (if transform creates a few extra tokens, drop them).
         """
         if self.np_rng.binomial(1, fim_rate):  # sample bernoulli dist
-
             contents = tokenizer._tokenizer.ids_to_text(sample)
 
             # Do not apply FIM if the sample starts with no_fim_prefix
