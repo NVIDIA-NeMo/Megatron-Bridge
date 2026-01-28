@@ -712,11 +712,16 @@ def train_step(
     seq_length = model_config.seq_length  # Default for pretraining
     forward_backward_data_iterator = data_iterator  # Default for pretraining
 
-    #"""
-    if global_state.cfg.dataset.dataloader_type == "batch":
+    if cfg.dataset.dataloader_type == "batch":
         # Finetuning path to support variable-length sequences
         from megatron.bridge.data.finetuning import prepare_finetuning_batch
-        #from megatron.bridge.data.iterator_utils import make_data_iterator_list
+
+        forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+            data_iterator=data_iterator,
+            num_microbatches=get_num_microbatches(),
+            default_seq_length=model_config.seq_length,
+            seq_key="tokens",
+        )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
         if not cfg.dist.use_decentralized_pg:
@@ -729,41 +734,29 @@ def train_step(
         else:
             adjust_tensor_shapes_fn = None
 
-        # Forward pass.
-        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
-        losses_reduced = forward_backward_func(
-            forward_step_func=forward_step_func,
-            data_iterator=forward_backward_data_iterator,
+    if len(model) > 1:
+        # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
+        forward_backward_data_iterator = make_data_iterator_list(
             model=model,
-            num_microbatches=get_num_microbatches(),
-            seq_length=seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=seq_length,
-            forward_only=False,
-            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
-            p2p_communicator=p2p_communicator,
-            pg_collection=pg_collection,
+            data_iterator=forward_backward_data_iterator,
         )
-    #"""
 
-    #elif len(model) > 1:
-
-    forward_backward_data_iterator = make_data_iterator_list(
-        model=model,
-        data_iterator=forward_backward_data_iterator,
-    )
-
-    # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
     #print("no modelopt stuff")
     #"""
-    adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-        model,
-        seq_length=model_config.seq_length,
-        micro_batch_size=train_config.micro_batch_size,
-        decoder_seq_length=model_config.seq_length,
-    )
+    # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
+    if not cfg.dist.use_decentralized_pg:
+        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+            model,
+            seq_length=model_config.seq_length,
+            micro_batch_size=train_config.micro_batch_size,
+            decoder_seq_length=model_config.seq_length,
+        )
+    else:
+        adjust_tensor_shapes_fn = None
     #"""
 
+    # Forward pass.
+    p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     losses_reduced = forward_backward_func(
         forward_step_func=forward_step_func,
         data_iterator=forward_backward_data_iterator,
@@ -774,6 +767,8 @@ def train_step(
         decoder_seq_length=seq_length,
         forward_only=False,
         adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+        p2p_communicator=p2p_communicator,
+        pg_collection=pg_collection,
     )
     
     should_checkpoint, should_exit, exit_code = False, False, 0  # rerun_state_machine.should_checkpoint_and_exit()
