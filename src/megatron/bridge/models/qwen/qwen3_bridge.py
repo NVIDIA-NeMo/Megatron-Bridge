@@ -22,6 +22,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
     QKVMapping,
+    WordEmbeddingMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
@@ -75,8 +76,6 @@ class Qwen3Bridge(MegatronModelBridge):
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
@@ -86,7 +85,18 @@ class Qwen3Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
 
-        mapping_list = []
+        mapping_list = [
+            WordEmbeddingMapping(
+                megatron_param="embedding.word_embeddings.weight",
+                hf_param="model.embed_tokens.weight",
+                hf_vocab_size=self.hf_config.vocab_size
+            ),
+            WordEmbeddingMapping(
+                megatron_param="output_layer.weight",
+                hf_param="lm_head.weight",
+                hf_vocab_size=self.hf_config.vocab_size
+            ),
+        ]
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
