@@ -1307,17 +1307,44 @@ def _train_step_with_determinism_check(
             print(f"  model_config id: {id(model_config)}")
             print(f"  hasattr(get_determinism_plugin): {hasattr(model_config, 'get_determinism_plugin')}")
             print(f"  determinism_debug_enabled: {getattr(model_config, 'determinism_debug_enabled', 'NOT FOUND')}")
-        # Fall back to normal train_step
-        return train_step(forward_step_func, data_iterator, model, optimizer, scheduler, global_state, forward_backward_func)
+            print(f"\n  Attempting to initialize plugin manually...")
+        
+        # Try to initialize plugin manually (all ranks need to do this)
+        if hasattr(model_config, '_setup_determinism_plugin'):
+            try:
+                model_config._setup_determinism_plugin()
+                plugin = model_config.get_determinism_plugin()
+                if rank == 0:
+                    if plugin is not None:
+                        print(f"  SUCCESS: Plugin initialized manually (id={id(plugin)})")
+                    else:
+                        print(f"  WARNING: _setup_determinism_plugin() completed but plugin is still None")
+                        print(f"           This usually means import failed or plugin was explicitly set to None")
+            except Exception as e:
+                if rank == 0:
+                    print(f"  FAILED: Could not initialize plugin: {e}")
+                    import traceback
+                    traceback.print_exc()
+                plugin = None
+        
+        # If still no plugin, fall back to normal train_step
+        if plugin is None:
+            if rank == 0:
+                print(f"  Falling back to normal train_step without determinism checking")
+            return train_step(forward_step_func, data_iterator, model, optimizer, scheduler, global_state, forward_backward_func)
     
     # Register hooks on model if not already registered (lazy initialization case)
     # This is needed because the plugin is created after model wrapping
     if not hasattr(plugin, '_hooks_registered'):
+        if rank == 0:
+            print(f"  Registering hooks on model chunks...")
         for model_chunk in model:
             # Unwrap DDP/FSDP wrapper to get the actual model
             actual_model = model_chunk.module if hasattr(model_chunk, 'module') else model_chunk
             plugin.register_hooks(actual_model)
         plugin._hooks_registered = True
+        if rank == 0:
+            print(f"  Hooks registered successfully")
     
     # Cache the batch BEFORE any runs
     # Store the batch data, not an iterator
