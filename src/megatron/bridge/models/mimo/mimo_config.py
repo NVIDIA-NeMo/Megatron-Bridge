@@ -9,46 +9,47 @@ import warnings
 class ModuleParallelismConfig:
     """Parallelism config for a single module in a MIMO model."""
 
-    tensor_parallel: int = 1
-    pipeline_parallel: int = 1
-    context_parallel: int = 1
-    expert_parallel: int = 1
-    data_parallel: Optional[int] = None
+    tensor_model_parallel_size: int = 1
+    pipeline_model_parallel_size: int = 1
+    context_parallel_size: int = 1
+    expert_tensor_parallel_size: int = 1
+    data_parallel_size: Optional[int] = None
     rank_offset: int = 0
 
     @property
     def total_model_parallel_size(self) -> int:
         return (
-            self.tensor_parallel
-            * self.pipeline_parallel
-            * self.context_parallel
-            * self.expert_parallel
+            self.tensor_model_parallel_size
+            * self.pipeline_model_parallel_size
+            * self.context_parallel_size
+            * self.expert_tensor_parallel_size
         )
 
     @property
     def total_ranks(self) -> int:
-        if self.data_parallel is None:
-            raise ValueError("data_parallel must be set before accessing total_ranks.")
-        return self.total_model_parallel_size * self.data_parallel
+        if self.data_parallel_size is None:
+            raise ValueError("data_parallel_size must be set before accessing total_ranks.")
+        return self.total_model_parallel_size * self.data_parallel_size
 
     def finalize(self, world_size: Optional[int]) -> None:
-        """Compute data_parallel if unset, and validate parallelism constraints."""
-        if self.data_parallel is None:
+        """Compute data_parallel_size if unset, and validate parallelism constraints."""
+        if self.data_parallel_size is None:
             if world_size is None or world_size <= 0:
-                raise ValueError("world_size must be provided to compute data_parallel.")
+                raise ValueError("world_size must be provided to compute data_parallel_size.")
             if world_size % self.total_model_parallel_size != 0:
                 raise ValueError(
                     f"world_size ({world_size}) is not divisible by total_model_parallel_size "
                     f"({self.total_model_parallel_size})."
                 )
-            self.data_parallel = world_size // self.total_model_parallel_size
+            self.data_parallel_size = world_size // self.total_model_parallel_size
 
-        if self.data_parallel <= 0:
-            raise ValueError("data_parallel must be positive.")
+        if self.data_parallel_size <= 0:
+            raise ValueError("data_parallel_size must be positive.")
 
-        if self.expert_parallel > 1 and self.pipeline_parallel > 1:
+        if self.expert_tensor_parallel_size > 1 and self.pipeline_model_parallel_size > 1:
             warnings.warn(
-                "Using expert_parallel > 1 with pipeline_parallel > 1 is complex and may be unsupported.",
+                "Using expert_tensor_parallel_size > 1 with pipeline_model_parallel_size > 1 "
+                "is complex and may be unsupported.",
                 stacklevel=2,
             )
 
@@ -93,11 +94,11 @@ class MimoParallelismConfig:
             if parallelism.rank_offset != 0:
                 raise ValueError("rank_offset must be 0 for homogeneous deployment.")
             values = (
-                parallelism.tensor_parallel,
-                parallelism.pipeline_parallel,
-                parallelism.context_parallel,
-                parallelism.expert_parallel,
-                parallelism.data_parallel,
+                parallelism.tensor_model_parallel_size,
+                parallelism.pipeline_model_parallel_size,
+                parallelism.context_parallel_size,
+                parallelism.expert_tensor_parallel_size,
+                parallelism.data_parallel_size,
             )
             if first is None:
                 first = values
@@ -108,8 +109,8 @@ class MimoParallelismConfig:
         # "heterogeneous" describes rank placement across distinct modules.
         ranges = []
         for parallelism in self.module_parallelisms.values():
-            if parallelism.data_parallel is None:
-                raise ValueError("data_parallel must be set for heterogeneous deployment.")
+            if parallelism.data_parallel_size is None:
+                raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
             ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
 
         ranges.sort()
