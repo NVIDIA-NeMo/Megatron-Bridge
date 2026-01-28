@@ -171,7 +171,6 @@ def train(
         gc.disable()
         gc.collect()
 
-    #"""
     if config.straggler and config.straggler.log_straggler:
         world = torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
@@ -197,7 +196,6 @@ def train(
             print_rank_0(f"Failed to initialize NVRx straggler detection: {e}")
             # Set to None to disable further checks
             global_state._nvrx_straggler_manager = None
-    #"""
 
     num_microbatches = get_num_microbatches()
     eval_duration = 0.0
@@ -268,24 +266,6 @@ def train(
 
     # Run training iterations till done.
     rank = torch.distributed.get_rank()
-    """
-    step = 0
-    full_train_iters = train_config.train_iters
-    is_ft_enabled = (global_state.cfg.ft is not None)
-    #while global_state.train_state.step < train_config.train_iters:
-    rampup_batch_size = config.train.rampup_batch_size
-    cuda_graph_impl = model_config.cuda_graph_impl
-    tensor_inspect_config = config.tensor_inspect
-
-    log_throughput_to_tensorboard = config.logger.log_throughput_to_tensorboard
-    tensorboard_dir = config.logger.tensorboard_dir
-    enable_logging = False
-
-    print(f"full_train_iters:{full_train_iters}")
-    global_state.train_state.do_valid = False
-
-    while step < full_train_iters:
-    """
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
 
     print("Running new code 11:20AM #########################")
@@ -305,7 +285,6 @@ def train(
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
-        
 
         # Update the timeout for all process groups after initialization
         # We update the timeout after the first successful iteration,
@@ -383,8 +362,6 @@ def train(
             p2p_communicator,
         )
 
-
-        #"""
         fault_tolerance.on_training_step_end(global_state)
 
         # Advance NVIDIA DLFw Inspect step if enabled
@@ -431,11 +408,9 @@ def train(
                     ):
                         assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
-        #"""
 
         global_state.train_state.step += 1
 
-        #"""
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
