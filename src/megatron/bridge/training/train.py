@@ -702,7 +702,6 @@ def train_step(
             p2p_communicator=p2p_communicator,
             pg_collection=pg_collection,
         )
-
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
@@ -719,7 +718,7 @@ def train_step(
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
     log_max_attention_logit = None
-    if hasattr(global_state.cfg.model, "qk_clip") and global_state.cfg.model.qk_clip:
+    if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
         log_max_attention_logit = clip_qk(model)
 
     # timers("optimizer").stop()
@@ -739,7 +738,7 @@ def train_step(
 
     # Update learning rate.
     if update_successful:
-        increment = get_num_microbatches() * train_config.micro_batch_size * global_state.cfg.data_parallel_size
+        increment = get_num_microbatches() * train_config.micro_batch_size * cfg.data_parallel_size
         scheduler.step(increment=increment)
         skipped_iter = 0
     else:
