@@ -60,7 +60,6 @@ def kimi_k2_pretrain_config_gb300(
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
     set_kimi_k2_common_configs(cfg)
@@ -95,7 +94,6 @@ def kimi_k2_pretrain_config_gb200(
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
     set_kimi_k2_common_configs(cfg)
