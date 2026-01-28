@@ -15,13 +15,16 @@
 """Packed Parquet dataset support for SFT training.
 
 This module provides GPTSFTPackedParquetDataset, which reads packed sequence data
-from Parquet files (*.idx.parquet or *.idx.pq) as an alternative to the NumPy-based
-GPTSFTPackedDataset.
+from Parquet files as an alternative to the NumPy-based GPTSFTPackedDataset.
 
 Supports multiple files via:
-- Single file: "data.idx.parquet"
-- Glob pattern: "data*.idx.parquet" or "shard_*.idx.pq"
-- Directory: "/path/to/data/" (globs for *.idx.parquet and *.idx.pq)
+- Single file: "data.idx.parquet", "shard_0.parquet"
+- Glob pattern: "data*.idx.parquet", "shard_*.parquet"
+- Directory: "/path/to/data/" (globs for *.parquet and *.pq)
+
+Key functions:
+- is_packed_parquet_spec(): Check if a spec refers to packed Parquet data
+- resolve_packed_parquet_paths(): Resolve a spec to actual file paths
 """
 
 from __future__ import annotations
@@ -64,6 +67,40 @@ def is_packed_parquet_file(path) -> bool:
     return name.endswith(".idx.parquet") or name.endswith(".idx.pq")
 
 
+def is_packed_parquet_spec(spec: str | Path) -> bool:
+    """Check if a spec refers to a packed Parquet source (file, directory, or glob).
+
+    This predicate reflects what the dataset loader supports in packed mode:
+    - Single .parquet/.idx.parquet/.idx.pq files
+    - Glob patterns ending in .parquet/.idx.parquet/.idx.pq
+    - Directories (in packed mode, resolution validates contents)
+
+    Args:
+        spec: A path specification (file, directory, or glob pattern).
+
+    Returns:
+        True if the spec could refer to packed Parquet data.
+    """
+    spec_str = str(spec).lower()
+
+    # Check for parquet file extensions (including glob patterns)
+    if spec_str.endswith(".parquet") or spec_str.endswith(".pq"):
+        return True
+
+    # Check for glob patterns containing parquet extension
+    if "*" in spec_str or "?" in spec_str:
+        # Extract the pattern part after the last glob character
+        return ".parquet" in spec_str or ".pq" in spec_str
+
+    # Check if it's a directory (could contain packed parquet files)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        msc_path = msc.Path(str(spec))
+        return msc_path.is_dir() if hasattr(msc_path, "is_dir") else False
+    else:
+        return Path(spec).is_dir()
+
+
 def _lazy_import_pyarrow():
     """Lazily import pyarrow and raise a clear error if not installed."""
     try:
@@ -78,13 +115,26 @@ def _lazy_import_pyarrow():
         ) from e
 
 
+def _is_parquet_file(path: str) -> bool:
+    """Check if a path refers to any Parquet file.
+
+    Args:
+        path: A string path.
+
+    Returns:
+        True if the path ends with .parquet or .pq (case-insensitive).
+    """
+    name = path.lower()
+    return name.endswith(".parquet") or name.endswith(".pq")
+
+
 def _resolve_parquet_paths(file_path: str) -> list[str]:
     """Resolve a file path specification to a list of actual file paths.
 
     Supports:
-    - Single file: "data.idx.parquet"
-    - Glob pattern: "data*.idx.parquet", "shard_?.idx.pq"
-    - Directory: "/path/to/data/" (globs for *.idx.parquet and *.idx.pq)
+    - Single file: "data.idx.parquet", "shard_0.parquet"
+    - Glob pattern: "data*.idx.parquet", "shard_*.parquet"
+    - Directory: "/path/to/data/" (globs for *.parquet and *.pq)
 
     Args:
         file_path: Path specification (file, glob pattern, or directory).
@@ -106,11 +156,19 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
                 paths = [str(p) for p in msc.glob(path_str)]
             else:
                 # Fallback: try to use msc.Path with glob
-                parent = str(Path(path_str).parent)
-                pattern = Path(path_str).name
-                msc_path = msc.Path(parent)
-                if hasattr(msc_path, "glob"):
-                    paths = [str(p) for p in msc_path.glob(pattern)]
+                # Use msc.Path to split parent/pattern to handle URIs correctly
+                msc_full_path = msc.Path(path_str)
+                parent = str(msc_full_path.parent) if hasattr(msc_full_path, "parent") else None
+                pattern = msc_full_path.name if hasattr(msc_full_path, "name") else None
+
+                if parent is not None and pattern is not None:
+                    msc_parent_path = msc.Path(parent)
+                    if hasattr(msc_parent_path, "glob"):
+                        paths = [str(p) for p in msc_parent_path.glob(pattern)]
+                    else:
+                        raise ValueError(
+                            f"MSC backend does not support glob operations for pattern: {path_str}"
+                        )
                 else:
                     raise ValueError(
                         f"MSC backend does not support glob operations for pattern: {path_str}"
@@ -118,14 +176,14 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
         else:
             paths = glob.glob(path_str)
 
-        # Filter to only packed parquet files
-        paths = [p for p in paths if is_packed_parquet_file(p)]
+        # Filter to only parquet files (accepts both *.parquet and *.idx.parquet)
+        paths = [p for p in paths if _is_parquet_file(p)]
         paths = sorted(paths)
 
         if not paths:
             raise ValueError(
-                f"No packed Parquet files found matching pattern: {path_str}. "
-                f"Files must end with .idx.parquet or .idx.pq"
+                f"No Parquet files found matching pattern: {path_str}. "
+                f"Files must end with .parquet or .pq"
             )
         return paths
 
@@ -138,9 +196,9 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
         is_dir = Path(path_str).is_dir()
 
     if is_dir:
-        # Glob for packed parquet files in directory
+        # Glob for parquet files in directory (accepts both *.parquet and *.idx.parquet)
         paths = []
-        for ext in ["*.idx.parquet", "*.idx.pq"]:
+        for ext in ["*.parquet", "*.pq"]:
             pattern = os.path.join(path_str, ext)
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
@@ -156,8 +214,8 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
 
         if not paths:
             raise ValueError(
-                f"No packed Parquet files found in directory: {path_str}. "
-                f"Files must end with .idx.parquet or .idx.pq"
+                f"No Parquet files found in directory: {path_str}. "
+                f"Files must end with .parquet or .pq"
             )
         return paths
 
@@ -172,6 +230,29 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
         raise ValueError(f"Packed Parquet file not found: {path_str}")
 
     return [path_str]
+
+
+def resolve_packed_parquet_paths(spec: str | Path) -> list[str]:
+    """Resolve a packed parquet spec to a list of shard file paths.
+
+    Public wrapper around the internal _resolve_parquet_paths function.
+    Use this to validate and resolve packed parquet specs before dataset creation.
+
+    Supports:
+    - Single file: "data.idx.parquet", "shard_0.parquet"
+    - Glob pattern: "data*.idx.parquet", "shard_*.parquet"
+    - Directory: "/path/to/data/" (globs for *.parquet and *.pq)
+
+    Args:
+        spec: Path specification (file, glob pattern, or directory).
+
+    Returns:
+        Sorted list of resolved file paths.
+
+    Raises:
+        ValueError: If no matching files are found.
+    """
+    return _resolve_parquet_paths(str(spec))
 
 
 class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
