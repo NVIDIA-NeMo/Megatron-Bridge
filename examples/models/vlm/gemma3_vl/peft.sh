@@ -1,18 +1,17 @@
 # Common configurations
 PRETRAINED_CHECKPOINT=/models/gemma-3-4b-it
 MODEL_NAME=gemma3_vl_4b
-DATASET_NAME=raven
+DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
-TRAIN_ITERS=200
+TRAIN_ITERS=50
 GLOBAL_BATCH_SIZE=32
 MICRO_BATCH_SIZE=1
-EVAL_ITERS=0  # Raven dataset only supports train split
+EVAL_ITERS=10
 LR=0.0002
 MIN_LR=0.00002
 LR_WARMUP_ITERS=10
 LOG_INTERVAL=1
-WANDB_PROJECT=mbridge_gemma3_vl
-SEED=42
+WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
 PARALLELISM_CONFIGS=("2,1" "1,2")
@@ -40,8 +39,6 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP} \
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
-        rng.seed=$SEED \
-        ddp.grad_reduce_in_fp32=true \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP
 done
