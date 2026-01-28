@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, List
 
 import torch
@@ -99,8 +100,14 @@ def mimo_collate_fn(
                 # Stack tensors along batch dimension
                 try:
                     modality_inputs[modality_name][key] = torch.stack(values)
-                except RuntimeError:
-                    # Tensors have different shapes - keep as list
+                except RuntimeError as e:
+                    # Tensors have different shapes - keep as list but warn user
+                    warnings.warn(
+                        f"Cannot stack tensors for '{modality_name}.{key}' - shapes differ "
+                        f"across batch. Keeping as list. This may cause issues in model "
+                        f"forward pass. Consider padding inputs to uniform shapes. Error: {e}",
+                        stacklevel=2,
+                    )
                     modality_inputs[modality_name][key] = values
             elif values:
                 # Keep non-tensor values as list
