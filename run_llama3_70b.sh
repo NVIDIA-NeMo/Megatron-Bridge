@@ -14,7 +14,7 @@ if [ "$GPU" = "h100" ]; then
     NUM_GPUS=64
     GPUS_PER_NODE=8
 elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
-    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-TE-bumpup.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
     NUM_GPUS=64
