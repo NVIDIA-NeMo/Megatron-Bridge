@@ -97,7 +97,7 @@ class TestMimoModelProvider:
     
     @patch('megatron.bridge.models.mimo.mimo_provider.MimoModel')
     @patch('megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids')
-    def test_provide_signature_matches_mixin(self, mock_build_grids, mock_mimo_model):
+    def test_provide_signature_matches_mixin(self, _mock_build_grids, mock_mimo_model):
         """Test provide() accepts standard mixin signature arguments."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         provider = MimoModelProvider(language_model_spec=language_spec)
@@ -372,7 +372,7 @@ class TestMimoModelProvider:
             freeze_language_model=True,
         )
         
-        model = provider.provide()
+        provider.provide()
         
         # Check parameter was frozen
         assert mock_param.requires_grad is False
@@ -517,7 +517,7 @@ class TestEmbeddingGroupHelpers:
         mock_get_ranks.return_value = [0]  # Single PP rank
         mock_new_group.return_value = MagicMock()
 
-        pos_embd_pg, embd_pg = populate_embedding_and_position_groups(mock_pp_group)
+        populate_embedding_and_position_groups(mock_pp_group)
 
         # Should create groups for both position and word embeddings
         assert mock_new_group.call_count == 2
@@ -540,7 +540,7 @@ class TestEmbeddingGroupHelpers:
         mock_get_ranks.return_value = [0, 4, 8, 12]  # PP=4
         mock_new_group.return_value = MagicMock()
 
-        pos_embd_pg, embd_pg = populate_embedding_and_position_groups(mock_pp_group)
+        populate_embedding_and_position_groups(mock_pp_group)
 
         # Should create two groups
         assert mock_new_group.call_count == 2

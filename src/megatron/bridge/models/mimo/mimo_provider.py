@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 import torch
 import torch.distributed as dist
 
-from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -245,7 +245,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         
         # Inject into encoders
         if spec.submodules and "encoders" in spec.submodules:
-            for encoder_name, encoder_spec in spec.submodules["encoders"].items():
+            for _encoder_name, encoder_spec in spec.submodules["encoders"].items():
                 if encoder_spec.params is None:
                     encoder_spec.params = {}
                 encoder_spec.params["pg_collection"] = pg_collection
