@@ -16,6 +16,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from megatron.bridge.training.utils.mlflow_utils import (
     _sanitize_mlflow_metrics,
     on_load_checkpoint_success,
@@ -23,6 +25,7 @@ from megatron.bridge.training.utils.mlflow_utils import (
 )
 
 
+@pytest.mark.unit
 class TestOnSaveCheckpointSuccess:
     """Test cases for on_save_checkpoint_success function."""
 
@@ -134,6 +137,7 @@ class TestOnSaveCheckpointSuccess:
             assert "MLFlow connection error" in error_msg
 
 
+@pytest.mark.unit
 class TestOnLoadCheckpointSuccess:
     """Test cases for on_load_checkpoint_success function."""
 
@@ -209,6 +213,7 @@ class TestOnLoadCheckpointSuccess:
             assert "MLFlow API error" in error_msg
 
 
+@pytest.mark.unit
 class TestSanitizeMlflowMetrics:
     """Test cases for _sanitize_mlflow_metrics function."""
 
