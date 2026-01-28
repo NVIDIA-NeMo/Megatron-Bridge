@@ -49,6 +49,7 @@ from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -93,27 +94,26 @@ def train(
     pg_collection: ProcessGroupCollection,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
+    callback_manager: CallbackManager | None = None,
 ) -> None:
-    """Main training loop.
-
-    Handles the overall training process, including the iteration loop,
-    calling train_step, evaluation, checkpointing, logging, and exit conditions.
-
-    Args:
-        forward_step_func: Callable that executes a single forward step.
-        model: list of model chunks (potentially wrapped in DDP).
-        optimizer: The optimizer instance.
-        scheduler: The learning rate scheduler instance.
-        train_data_iterator: Iterator for the training dataset.
-        valid_data_iterator: Iterator for the validation dataset.
-        global_state: The GlobalState object holding various training states.
-        checkpointing_context: Context dictionary for checkpointing.
-        process_non_loss_data_func: Optional function to process non-loss data during evaluation.
-        non_loss_data_func: Optional function to compute non-loss data during evaluation.
-
-    Warnings:
-        This is an experimental API and is subject to change in backwards
-        incompatible ways without notice.
+    """
+    Drive the full training loop, coordinating forward/backward execution, optimizer updates, evaluation, checkpointing, logging, and callbacks.
+    
+    Runs iterations until the configured number of training iterations is reached, invoking the provided forward_step function and the pipeline forward/backward machinery, updating optimizer and scheduler state, emitting configured logs and throughput metrics, handling profiling and CUDA-graph warmup, performing periodic evaluation and checkpoint saves, and honoring exit conditions (signals, duration, iteration limits, or straggler detection). This function also integrates optional energy monitoring and callback hooks.
+    
+    Parameters:
+        forward_step_func: Callable that performs a single forward step for one microbatch.
+        model: List of model chunks (modules may be wrapped in DDP/FSDP) participating in training.
+        optimizer: Optimizer managing parameter updates.
+        scheduler: Scheduler controlling optimizer parameter schedules.
+        train_data_iterator: Iterator or list of iterators for training data; may be None for special workflows.
+        valid_data_iterator: Iterator or list of iterators for validation/evaluation; may be None.
+        global_state: GlobalState carrying runtime state, timers, and monitoring objects.
+        checkpointing_context: Context dictionary passed through checkpoint/save workflows.
+        pg_collection: Collection of process groups used for model/data/pipe parallelism.
+        process_non_loss_data_func: Optional callable to process non-loss evaluation data.
+        non_loss_data_func: Optional callable to compute non-loss metrics during evaluation.
+        callback_manager: Optional CallbackManager used to fire lifecycle callbacks (on_train_start, on_train_step_start/end, on_train_end).
     """
     config: ConfigContainer = global_state.cfg
     model_config = get_model_config(model[0])
@@ -258,6 +258,18 @@ def train(
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
 
+    if should_fire(callback_manager, "on_train_start"):
+        callback_manager.fire(
+            "on_train_start",
+            CallbackContext(
+                state=global_state,
+                model=model,
+                user_state=callback_manager.user_state,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            ),
+        )
+
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
@@ -326,6 +338,19 @@ def train(
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
+
+        if should_fire(callback_manager, "on_train_step_start"):
+            callback_manager.fire(
+                "on_train_step_start",
+                CallbackContext(
+                    state=global_state,
+                    model=model,
+                    user_state=callback_manager.user_state,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                ),
+            )
+
         (
             loss_dict,
             skipped_iter,
@@ -347,6 +372,21 @@ def train(
         )
 
         fault_tolerance.on_training_step_end(global_state)
+
+        if should_fire(callback_manager, "on_train_step_end"):
+            callback_manager.fire(
+                "on_train_step_end",
+                CallbackContext(
+                    state=global_state,
+                    model=model,
+                    user_state=callback_manager.user_state,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    loss_dict=loss_dict,
+                    grad_norm=grad_norm,
+                    skipped_iter=bool(skipped_iter),
+                ),
+            )
 
         # Advance NVIDIA DLFw Inspect step if enabled
         tensor_inspect_step_if_enabled(config.tensor_inspect)
@@ -476,6 +516,7 @@ def train(
                 write_to_tensorboard=True,
                 process_non_loss_data_func=process_non_loss_data_func,
                 non_loss_data_func=non_loss_data_func,
+                callback_manager=callback_manager,
             )
             eval_duration += timers("eval-time").elapsed()
             eval_iterations += train_config.eval_iters
@@ -573,6 +614,18 @@ def train(
     # Close NVIDIA DLFw Inspect at clean finish
     tensor_inspect_end_if_enabled(config.tensor_inspect)
 
+    if should_fire(callback_manager, "on_train_end"):
+        callback_manager.fire(
+            "on_train_end",
+            CallbackContext(
+                state=global_state,
+                model=model,
+                user_state=callback_manager.user_state,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            ),
+        )
+
 
 def train_step(
     forward_step_func: ForwardStepCallable,
@@ -584,28 +637,19 @@ def train_step(
     pg_collection: ProcessGroupCollection,
     forward_backward_func: Callable,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
-    """Single training step.
-
-    Args:
-        forward_step_func: Function that performs a forward step (already wrapped if needed)
-        data_iterator: Iterator over training data
-        model: list of model chunks
-        optimizer: Optimizer for model parameters
-        scheduler: Learning rate scheduler
-        global_state: Global training state
-        pg_collection: Process group collection
-        forward_backward_func: forward-backward function
-
+    """
+    Execute one training forward-backward pass (over microbatches if configured) and apply an optimizer update.
+    
     Returns:
         tuple containing:
-        - loss_dict: Dictionary of reduced losses
-        - skipped_iter: Whether the iteration was skipped (1) or not (0)
-        - should_checkpoint: Whether a checkpoint should be saved
-        - should_exit: Whether training should exit
-        - exit_code: Exit code if should_exit is True
-        - grad_norm: Gradient norm if available, None otherwise
-        - num_zeros_in_grad: Number of zeros in gradient if available, None otherwise
-        - max_attention_logit: Maximum attention logit if available, None otherwise
+        - loss_dict (dict[str, torch.Tensor]): Reduced loss metrics on the last pipeline-parallel rank; empty dict on other ranks.
+        - skipped_iter (int): `0` if the optimizer update was applied, `1` if the update was skipped.
+        - should_checkpoint (bool): `True` if a checkpoint should be saved after this step.
+        - should_exit (bool): `True` if training should exit after this step.
+        - exit_code (int): Exit code to use when `should_exit` is `True`.
+        - grad_norm (Optional[float]): Maximum gradient norm across model-parallel ranks, or `None` if unavailable.
+        - num_zeros_in_grad (Optional[int]): Number of zero gradients across model-parallel ranks if logged, otherwise `None`.
+        - max_attention_logit (Optional[float]): Maximum attention logit observed (for qk clipping), or `None` if not applicable.
     """
     cfg: ConfigContainer = global_state.cfg
     timers = global_state.timers
