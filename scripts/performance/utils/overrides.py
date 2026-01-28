@@ -47,7 +47,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
-    recipe.logger.save_config_filepath = "/nemo_run/configs/ConfigContainer.yaml"
 
     recipe.ddp.check_for_nan_in_grad = False
     recipe.ddp.check_for_large_grads = False
@@ -239,6 +238,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_exp_name = args.wandb_experiment_name
         recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
+
+    recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
     if args.tensor_model_parallel_size is not None:
@@ -275,7 +277,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+        if args.domain == "llm":
+            # Override the dataset configuration for LLM models.
+            # For vlm models, use the default dataset configuration in model recipe,
+            # becuase preprocess of dataset is different for each vlm model.
+            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -311,14 +317,29 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+    if args.hidden_size is not None:
+        recipe.model.hidden_size = args.hidden_size
+    if args.num_layers is not None or args.first_k_dense_replace is not None:
+        if args.first_k_dense_replace is not None:
+            num_dense_layers = args.first_k_dense_replace
+        else:
+            num_dense_layers = recipe.model.moe_layer_freq.count(0)
+        if args.num_layers is not None:
+            recipe.model.num_layers = args.num_layers
+        recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
+    if args.pipeline_model_parallel_layout is not None:
+        recipe.model.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
     # Reconfigure the DeepSeek-V3 pipeline model parallel layout
     # if the user has provided a custom PP and VP sizes
     model_recipe_name = args.model_recipe_name
     pp_size = args.pipeline_model_parallel_size
     vp_size = args.virtual_pipeline_model_parallel_size
-    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
-        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+    pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+    if model_recipe_name == "deepseek_v3" and (
+        pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
+    ):
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
@@ -352,7 +373,8 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
+    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    if dp > 1 and pp > 1 and vp > 1 and compute_dtype != "fp8_mx":
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True

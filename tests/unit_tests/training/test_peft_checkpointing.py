@@ -413,8 +413,9 @@ class TestPEFTCheckpointLoading:
     @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
     @patch("megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
     @patch("megatron.bridge.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     def test_load_checkpoint_peft_resume_detection(
-        self, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
+        self, mock_dist_ckpt, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
     ):
         """Test that PEFT resume is properly detected and triggers filtering."""
         # Setup mocks
@@ -463,6 +464,8 @@ class TestPEFTCheckpointLoading:
         mock_cfg.checkpoint.auto_detect_ckpt_format = False
         mock_cfg.checkpoint.ckpt_format = "torch_dist"
         mock_cfg.checkpoint.non_persistent_save_interval = None
+        mock_cfg.dist = Mock()
+        mock_cfg.dist.use_decentralized_pg = False
         mock_state.cfg = mock_cfg
         mock_state.train_state = Mock()
         mock_state.train_state.consumed_train_samples = 0
@@ -470,6 +473,10 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+
+        # Mock dist_checkpointing
+        mock_dist_ckpt.load_content_metadata.return_value = {}
+        mock_dist_ckpt.load.return_value = {}
 
         # Create mock model
         mock_model = [Mock()]
@@ -486,15 +493,21 @@ class TestPEFTCheckpointLoading:
             patch("megatron.bridge.training.checkpointing.print_rank_0"),
             patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
             patch("megatron.bridge.training.checkpointing.unwrap_model") as mock_unwrap_model,
-            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
-            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
-            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
-            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection") as mock_get_pg_collection,
             patch("os.path.exists") as mock_exists,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
+
+            # Create mock pg_collection
+            mock_pg_collection = Mock()
+            mock_pg_collection.tp.rank.return_value = 0
+            mock_pg_collection.tp.size.return_value = 1
+            mock_pg_collection.pp.rank.return_value = 0
+            mock_pg_collection.pp.size.return_value = 1
+            mock_pg_collection.dp_cp.rank.return_value = 0
+            mock_get_pg_collection.return_value = mock_pg_collection
 
             # Mock file existence - run_config.yaml exists, train_state.pt doesn't (to use read_train_state mock)
             def mock_exists_side_effect(path):
@@ -537,7 +550,8 @@ class TestPEFTCheckpointLoading:
 
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
-    def test_load_checkpoint_non_peft_regular_loading(self, mock_checkpoint_exists, mock_load_base):
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_checkpoint_non_peft_regular_loading(self, mock_dist_ckpt, mock_checkpoint_exists, mock_load_base):
         """Test that non-PEFT scenarios use regular loading without filtering."""
         # Setup mocks
         mock_checkpoint_exists.return_value = True
@@ -573,6 +587,8 @@ class TestPEFTCheckpointLoading:
         mock_cfg.checkpoint.auto_detect_ckpt_format = False
         mock_cfg.checkpoint.ckpt_format = "torch_dist"
         mock_cfg.checkpoint.non_persistent_save_interval = None
+        mock_cfg.dist = Mock()
+        mock_cfg.dist.use_decentralized_pg = False
         mock_state.cfg = mock_cfg
         mock_state.train_state = Mock()
         mock_state.train_state.consumed_train_samples = 0
@@ -580,6 +596,10 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+
+        # Mock dist_checkpointing
+        mock_dist_ckpt.load_content_metadata.return_value = {}
+        mock_dist_ckpt.load.return_value = {}
 
         # Create mock model
         mock_model = [Mock()]
@@ -596,15 +616,21 @@ class TestPEFTCheckpointLoading:
             patch("megatron.bridge.training.checkpointing.print_rank_0"),
             patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
             patch("megatron.bridge.training.checkpointing.unwrap_model") as mock_unwrap_model,
-            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
-            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
-            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
-            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection") as mock_get_pg_collection,
             patch("os.path.exists") as mock_exists,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
+
+            # Create mock pg_collection
+            mock_pg_collection = Mock()
+            mock_pg_collection.tp.rank.return_value = 0
+            mock_pg_collection.tp.size.return_value = 1
+            mock_pg_collection.pp.rank.return_value = 0
+            mock_pg_collection.pp.size.return_value = 1
+            mock_pg_collection.dp_cp.rank.return_value = 0
+            mock_get_pg_collection.return_value = mock_pg_collection
 
             # Mock file existence - run_config.yaml exists, train_state.pt doesn't (to use read_train_state mock)
             def mock_exists_side_effect(path):
@@ -643,8 +669,9 @@ class TestPEFTCheckpointLoading:
     @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
     @patch("megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
     @patch("megatron.bridge.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     def test_load_checkpoint_peft_resume_multi_model(
-        self, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
+        self, mock_dist_ckpt, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
     ):
         """Test PEFT resume with multiple model chunks (pipeline parallelism)."""
         # Setup mocks
@@ -698,6 +725,8 @@ class TestPEFTCheckpointLoading:
         mock_cfg.checkpoint.auto_detect_ckpt_format = False
         mock_cfg.checkpoint.ckpt_format = "torch_dist"
         mock_cfg.checkpoint.non_persistent_save_interval = None
+        mock_cfg.dist = Mock()
+        mock_cfg.dist.use_decentralized_pg = False
         mock_state.cfg = mock_cfg
         mock_state.train_state = Mock()
         mock_state.train_state.consumed_train_samples = 0
@@ -705,6 +734,10 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+
+        # Mock dist_checkpointing
+        mock_dist_ckpt.load_content_metadata.return_value = {}
+        mock_dist_ckpt.load.return_value = {}
 
         # Create mock models (2 chunks for pipeline parallelism)
         mock_model = [Mock(), Mock()]
@@ -723,15 +756,21 @@ class TestPEFTCheckpointLoading:
             patch("megatron.bridge.training.checkpointing.print_rank_0"),
             patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
             patch("megatron.bridge.training.checkpointing.unwrap_model") as mock_unwrap_model,
-            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
-            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
-            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
-            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection") as mock_get_pg_collection,
             patch("os.path.exists") as mock_exists,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
+
+            # Create mock pg_collection
+            mock_pg_collection = Mock()
+            mock_pg_collection.tp.rank.return_value = 0
+            mock_pg_collection.tp.size.return_value = 1
+            mock_pg_collection.pp.rank.return_value = 0
+            mock_pg_collection.pp.size.return_value = 1
+            mock_pg_collection.dp_cp.rank.return_value = 0
+            mock_get_pg_collection.return_value = mock_pg_collection
 
             # Mock file existence - run_config.yaml exists, train_state.pt doesn't (to use read_train_state mock)
             def mock_exists_side_effect(path):
@@ -813,13 +852,19 @@ class TestPEFTCheckpointingIntegration:
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
 
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield

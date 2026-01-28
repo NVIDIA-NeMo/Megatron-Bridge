@@ -143,6 +143,13 @@ def parse_cli_args():
         argument_default=None,
     )
     parser.add_argument(
+        "--domain",
+        type=lower_str,
+        choices=["llm", "vlm"],
+        help="Domain to use for experiment.",
+        default="llm",
+    )
+    parser.add_argument(
         "-m",
         "--model_family_name",
         type=lower_str,
@@ -195,6 +202,34 @@ def parse_cli_args():
         required=True,
     )
     parser.add_argument(
+        "--hidden_size",
+        type=int,
+        help="Hidden size to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        help="Number of layers to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--pipeline_model_parallel_layout",
+        type=str,
+        help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--first_k_dense_replace",
+        type=int,
+        help="Number of MoE layers to be converted to dense layers. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "-d",
         "--dryrun",
         help="If true, prints sbatch script to terminal without launching experiment.",
@@ -245,9 +280,6 @@ def parse_cli_args():
     checkpointing_args.add_argument("--load_dir", type=str, help="Directory to load checkpoints")
     checkpointing_args.add_argument("--save_interval", type=int, help="Number of iterations between checkpoint saves")
     checkpointing_args.add_argument("--most_recent_k", type=int, help="Number of latest checkpoints to keep")
-    checkpointing_args.add_argument(
-        "--save_config_filepath", type=str, help="Path to save the task configuration file"
-    )
 
     # Data
     data_args = parser.add_argument_group("Data arguments")
@@ -631,6 +663,7 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    logging_args.add_argument("--save_config_filepath", type=str, help="Path to save the task configuration file")
 
     # Config variant selection
     config_variant_args = parser.add_argument_group("Config variant arguments")
@@ -638,7 +671,7 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2'. Use --list_config_variants to see available options.",
+        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2' ('v1' if 'v2' doens't exist). Use --list_config_variants to see available options.",
         default="v2",
     )
     config_variant_args.add_argument(
@@ -671,8 +704,6 @@ def parse_cli_args():
         default=0.70,
         help="Percentage of iterations to skip for timing comparison (default: 0.75 = 75%%)",
     )
-
-    # Convergence loss validation parameters
     testing_args.add_argument(
         "--correlation_threshold", type=float, default=0.95, help="Correlation threshold for loss curve validation"
     )
