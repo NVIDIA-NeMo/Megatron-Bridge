@@ -20,10 +20,10 @@ from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatr
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.training.datasets.fim_dataset import GPTFIMDataset
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
+from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
 from megatron.bridge.training.config import (
     DataloaderConfig,
     DatasetBuildContext,

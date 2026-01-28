@@ -329,10 +329,9 @@ class TestGPTFIMDatasetConfig:
 
         # Should be an instance GPTFIMDatasetConfig
         from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
-        from megatron.training.datasets.fim_dataset import GPTFIMDatasetConfig as MCoreGPTFIMDatasetConfig
 
         assert isinstance(config, GPTFIMDatasetConfig)
-        assert isinstance(config, MCoreGPTFIMDatasetConfig)
+        assert isinstance(config, GPTDatasetConfig)
         assert isinstance(config, BlendedMegatronDatasetConfig)
 
         # Should have all the expected fields from parent class
