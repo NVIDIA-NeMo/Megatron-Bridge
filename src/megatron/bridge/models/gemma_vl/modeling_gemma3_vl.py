@@ -14,14 +14,16 @@
 
 import types
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import get_batch_on_this_cp_rank
 from torch import Tensor
 from transformers import AutoModel, Gemma3Model
 
@@ -139,7 +141,7 @@ class Gemma3VLModel(MegatronModule):
                 special_image_mask = special_image_mask.expand_as(inputs_embeds).to(inputs_embeds.device)
 
                 if inputs_embeds[special_image_mask].numel() != image_features.numel():
-                    image_tokens_in_text = special_image_mask.sum(dim=1).item(dim=0)[0]
+                    image_tokens_in_text = special_image_mask[:, :, 0].sum().item()
                     raise ValueError(
                         f"Number of images does not match number of special image tokens in the input text. "
                         f"Got {image_tokens_in_text} image tokens in the text but {image_features.shape[0] * image_features.shape[1]} "
@@ -149,14 +151,49 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
+            # Apply sequence parallelism scatter if enabled
+            if self.config.sequence_parallel:
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+
+        # Compute attention mask on FULL sequence (before CP slicing)
+        # This is needed because image regions need bidirectional attention
         attention_mask = self._compute_attention_mask(input_ids)
+
+        # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
+        # This must happen AFTER vision-text merge so image token positions are correct
+        if self.config._pg_collection.cp.size() > 1:
+            # inputs_embeds is (T, B, D), need to transpose to (B, T, D) for get_batch_on_this_cp_rank
+            if inputs_embeds is not None:
+                inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
+
+            cp_group = self.config._pg_collection.cp
+            cp_batch = get_batch_on_this_cp_rank(
+                {
+                    "decoder_input": inputs_embeds,
+                    "labels": labels,
+                    "loss_mask": loss_mask,
+                    "position_ids": position_ids,
+                    "attention_mask": attention_mask,
+                },
+                cp_group=cp_group,
+            )
+
+            inputs_embeds = cp_batch.get("decoder_input")
+            labels = cp_batch.get("labels")
+            loss_mask = cp_batch.get("loss_mask")
+            position_ids = cp_batch.get("position_ids")
+            attention_mask = cp_batch.get("attention_mask")
+
+            # Transpose back to (T, B, D)
+            if inputs_embeds is not None:
+                inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
         outputs = self.language_model.forward(
             input_ids=None,
             position_ids=position_ids,
-            attention_mask=attention_mask,  # (B, 1, T, T)
-            decoder_input=inputs_embeds,  # (T, B, D)
-            labels=labels,  # (B, T)
+            attention_mask=attention_mask,
+            decoder_input=inputs_embeds,
+            labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
@@ -197,7 +234,7 @@ class Gemma3VLModel(MegatronModule):
     def _compute_attention_mask(
         self,
         input_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Optional[torch.Tensor]:
         if not self.pre_process:
             return None
         batch_size, seq_len = input_ids.shape
