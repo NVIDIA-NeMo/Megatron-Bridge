@@ -155,7 +155,7 @@ def llama32_1b_pretrain_config() -> ConfigContainer:
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.num_workers = 8
-    cfg.dataset.seq_length = 8192  # Must match model.seq_length
+    cfg.dataset.seq_length = 8192
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -192,7 +192,7 @@ def llama32_1b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"  # Llama3 uses te
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -692,13 +692,13 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
 
     # Low precision specific training params
     cfg.train.train_iters = 1168251
-    cfg.train.global_batch_size = 768  # Different from default
+    cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # Low precision specific optimizer params (set via scheduler)
+    # Low precision specific optimizer params
     cfg.scheduler.lr_warmup_iters = 2000
 
     cfg.logger.log_timers_to_tensorboard = True

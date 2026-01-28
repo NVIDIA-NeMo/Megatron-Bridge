@@ -31,7 +31,7 @@ def llama2_7b_pretrain_config() -> ConfigContainer:
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").to_megatron_provider(load_weights=False)
 
-    # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
+    # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -43,7 +43,7 @@ def llama2_7b_pretrain_config() -> ConfigContainer:
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_layout = None  # Custom pipeline layout, None uses default
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -73,12 +73,12 @@ def llama2_7b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Llama2 uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
-    cfg.model.recompute_granularity = None  # Not enabled for 7B
+    cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
@@ -98,7 +98,7 @@ def llama2_7b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # Checkpoint config (paths set in _pretrain_common)
+    # Checkpoint config
     cfg.checkpoint.save_interval = 2000
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
     # cfg.checkpoint.save = "path/to/save"

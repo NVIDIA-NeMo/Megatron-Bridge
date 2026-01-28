@@ -122,7 +122,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
         load_weights=False
     )
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
 
     # Dataset config - mock data by default
@@ -133,12 +133,12 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_layout = None  # Custom pipeline layout, None uses default
-    cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8  # MoE-specific: Expert parallelism
-    cfg.model.expert_tensor_parallel_size = 1  # MoE-specific: Expert tensor parallelism (default from qwen3_next.py)
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
@@ -170,14 +170,14 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections (includes MoE-specific kernels)
-    cfg.model.attention_backend = None  # None means auto selection
-    cfg.model.moe_router_fusion = False  # MoE-specific: Fuse router computation
-    cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations (set in qwen3_next.py)
-    cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM for experts (set in qwen3_next.py)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen3-Next uses native (model default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
-    # Memory saving (recompute & offloading) - ENABLED for 80B with selective recompute
+    # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = "selective"  # Qwen3-Next uses selective recompute
     cfg.model.recompute_modules = ["layernorm", "moe", "moe_act"]  # Qwen3-Next specific modules
     cfg.model.recompute_method = None  # Not used for selective recompute
@@ -192,7 +192,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None  # not enabled
     # cfg.mixed_precision.fp8_param_gather = False  # default
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
-    cfg.model.moe_router_padding_for_fp8 = False  # Pad router for FP8 alignment, MoE FP8 setting
+    cfg.model.moe_router_padding_for_fp8 = False
 
     # Optimizer precision settings
     cfg.optimizer.use_precision_aware_optimizer = False
@@ -207,7 +207,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False  # MoE-specific: Overlap EP communication
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 
-    # Checkpoint config (paths set in _pretrain_common)
+    # Checkpoint config
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
@@ -220,7 +220,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg.ddp.use_megatron_fsdp = False
 
     # MoE Force Load Balancing
-    cfg.model.moe_router_force_load_balancing = False  # Force load balancing in router
+    cfg.model.moe_router_force_load_balancing = False
 
     return cfg
 

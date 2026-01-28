@@ -185,11 +185,11 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     cfg.dataset.num_workers = 8
 
     # MoE Token Dispatcher settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"  # Default
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
-    cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 500_000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
@@ -198,12 +198,12 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Optimizer - override what differs from _pretrain_common
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
-    cfg.optimizer.adam_eps = 1e-8  # Different from default 1e-5
+    cfg.optimizer.adam_eps = 1e-8
 
-    # Precision-aware optimizer settings (DIFFERENT: uses bf16 moments)
+    # Precision-aware optimizer settings
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.bfloat16
@@ -221,10 +221,9 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     # Kernel selections (includes MoE-specific kernels)
     cfg.model.attention_backend = None
     cfg.model.moe_router_fusion = False
-    # cfg.model.moe_permute_fusion = True  # Already set above
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # OLMoE uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading) - already set in OlMoEModelProvider
     # cfg.model.recompute_granularity = "selective"
@@ -252,7 +251,7 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = False  # OLMoE doesn't have shared experts
+    cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
     cfg.checkpoint.save_interval = 2000
@@ -260,7 +259,7 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT: grad_reduce_in_fp32=False)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.check_for_nan_in_grad = True
@@ -271,7 +270,7 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     if cfg.model.apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for rope fusion
+        cfg.dist.enable_megatron_core_experimental = True
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False

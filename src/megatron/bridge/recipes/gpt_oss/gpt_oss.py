@@ -146,18 +146,18 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = 4096  # Must match model.seq_length
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 
-    # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
+    # Parallelism settings
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 4  # MoE-specific
-    cfg.model.expert_tensor_parallel_size = 1  # MoE-specific
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
 
@@ -174,7 +174,7 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
@@ -182,9 +182,8 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # Scheduler config (DIFFERENT from _pretrain_common: lr_warmup_iters=2000 vs 500)
+    # Scheduler config
     cfg.scheduler.lr_warmup_iters = 2000
-    # Note: lr=3e-4, min_lr=3e-5 are defaults from _pretrain_common()
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -194,13 +193,13 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # Kernel selections (includes MoE-specific kernels)
-    cfg.model.attention_backend = None  # None means auto selection
-    cfg.model.moe_router_fusion = False  # MoE-specific
-    cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations
-    cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # GPT-OSS uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -229,7 +228,7 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.model.moe_shared_expert_overlap = False  # GPT-OSS default
 
-    # Checkpoint config - save_interval matches _pretrain_common default (500)
+    # Checkpoint config
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
@@ -340,7 +339,7 @@ def gpt_oss_120b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = False  # GPT-OSS default
+    cfg.model.moe_shared_expert_overlap = False
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = True

@@ -53,7 +53,7 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     cfg.dataset.seq_length = 2048
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 2
@@ -62,10 +62,10 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Optimizer - override what differs from _pretrain_common
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
-    cfg.optimizer.lr = 0.9e-4  # Different from default 3e-4
-    cfg.optimizer.min_lr = 0.9e-5  # 0.1 * lr
+    cfg.optimizer.lr = 0.9e-4
+    cfg.optimizer.min_lr = 0.9e-5
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -94,11 +94,11 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # Explicitly set to False
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap - enabled with userbuffers config
     cfg.comm_overlap = CommOverlapConfig(

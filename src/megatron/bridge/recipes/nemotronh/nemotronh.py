@@ -130,20 +130,19 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     cfg.dataset.seq_length = 8192
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-    # Old recipe doesn't set manual_gc
+
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
 
-    # Optimizer - override only lr_warmup_iters
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Logger - old recipe doesn't set log_timers_to_tensorboard
     cfg.logger.log_timers_to_tensorboard = False
 
     # TE (Transformer Engine)
@@ -157,7 +156,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # NemotronH uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving
     cfg.model.recompute_granularity = None
@@ -172,11 +171,11 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap - enabled by default
     cfg.comm_overlap = CommOverlapConfig(
@@ -190,7 +189,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT from _pretrain_common)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
@@ -232,20 +231,19 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     cfg.dataset.seq_length = 8192
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-    # Old recipe doesn't set manual_gc
+
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
 
-    # Optimizer - override only lr_warmup_iters
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Logger - old recipe doesn't set log_timers_to_tensorboard
     cfg.logger.log_timers_to_tensorboard = False
 
     # TE (Transformer Engine)
@@ -259,7 +257,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # NemotronH uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving
     cfg.model.recompute_granularity = None
@@ -274,11 +272,11 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap - enabled by default
     cfg.comm_overlap = CommOverlapConfig(
@@ -292,7 +290,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT from _pretrain_common)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
@@ -336,20 +334,19 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     cfg.dataset.seq_length = 8192
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-    # Old recipe doesn't set manual_gc
+
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
 
-    # Optimizer - override only lr_warmup_iters
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Logger - old recipe doesn't set log_timers_to_tensorboard
     cfg.logger.log_timers_to_tensorboard = False
 
     # TE (Transformer Engine)
@@ -363,7 +360,7 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # NemotronH uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving
     cfg.model.recompute_granularity = None
@@ -378,11 +375,11 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap - enabled by default
     cfg.comm_overlap = CommOverlapConfig(
@@ -440,20 +437,19 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     cfg.dataset.seq_length = 8192
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-    # Old recipe doesn't set manual_gc
+
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
 
-    # Optimizer - override only lr_warmup_iters
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Logger - old recipe doesn't set log_timers_to_tensorboard
     cfg.logger.log_timers_to_tensorboard = False
 
     # TE (Transformer Engine)
@@ -467,7 +463,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # NemotronH uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving
     cfg.model.recompute_granularity = None
@@ -482,11 +478,11 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap - enabled by default
     cfg.comm_overlap = CommOverlapConfig(
@@ -500,7 +496,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT from _pretrain_common)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True

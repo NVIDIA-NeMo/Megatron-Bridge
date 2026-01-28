@@ -93,7 +93,7 @@ def qwen2_500m_pretrain_config() -> ConfigContainer:
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-0.5B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     # Qwen2 uses NullTokenizer by default for pretraining
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -127,9 +127,9 @@ def qwen2_500m_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -157,14 +157,14 @@ def qwen2_500m_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.overlap_grad_reduce = False  # Qwen2 default
-    cfg.ddp.overlap_param_gather = False  # Qwen2 default
-    cfg.ddp.average_in_collective = False  # Qwen2 default
-    cfg.ddp.grad_reduce_in_fp32 = False  # Qwen2 default
-    cfg.ddp.data_parallel_sharding_strategy = "no_shard"  # Qwen2 default
-    cfg.ddp.check_for_nan_in_grad = False  # Qwen2 default
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+    cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
 
     return cfg
@@ -180,7 +180,7 @@ def qwen2_1p5b_pretrain_config() -> ConfigContainer:
     # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -213,9 +213,9 @@ def qwen2_1p5b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -243,7 +243,7 @@ def qwen2_1p5b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -263,10 +263,9 @@ def qwen2_7b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -299,9 +298,9 @@ def qwen2_7b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -329,7 +328,7 @@ def qwen2_7b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -349,10 +348,10 @@ def qwen2_72b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # Model config
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2-72B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -385,9 +384,9 @@ def qwen2_72b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -415,7 +414,7 @@ def qwen2_72b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (Qwen2 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -476,9 +475,9 @@ def qwen25_500m_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -501,14 +500,14 @@ def qwen25_500m_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
-    cfg.ddp.check_for_nan_in_grad = True  # Qwen2.5 enables this
+    cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
     return cfg
@@ -521,10 +520,10 @@ def qwen25_1p5b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # Model config
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-1.5B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -557,9 +556,9 @@ def qwen25_1p5b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -582,7 +581,7 @@ def qwen25_1p5b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -602,10 +601,10 @@ def qwen25_7b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # Model config
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-7B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -638,9 +637,9 @@ def qwen25_7b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -663,7 +662,7 @@ def qwen25_7b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -683,7 +682,7 @@ def qwen25_14b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # Model config
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-14B").to_megatron_provider(load_weights=False)
 
     # Tokenizer (--tokenizer-model)
@@ -719,9 +718,9 @@ def qwen25_14b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -749,7 +748,7 @@ def qwen25_14b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -769,10 +768,10 @@ def qwen25_32b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # Model config
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-32B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -805,9 +804,9 @@ def qwen25_32b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -830,7 +829,7 @@ def qwen25_32b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # DDP config (Qwen2.5 uses simpler DDP settings than _pretrain_common)
+    # DDP config
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -850,10 +849,10 @@ def qwen25_72b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config (--tensor-model-parallel-size, --pipeline-model-parallel-size, etc.)
+    # Model config
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-72B").to_megatron_provider(load_weights=False)
 
-    # Tokenizer (--tokenizer-model)
+    # Tokenizer
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -886,9 +885,9 @@ def qwen25_72b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # Qwen2 uses native (default)
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None

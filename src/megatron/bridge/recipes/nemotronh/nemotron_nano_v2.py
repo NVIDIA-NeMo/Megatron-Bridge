@@ -116,24 +116,22 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = 8192  # Must match model.seq_length
+    cfg.dataset.seq_length = 8192
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-    # Old recipe doesn't set manual_gc, uses TrainingConfig defaults (not _pretrain_common)
+
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
 
-    # Optimizer - override only what differs from _pretrain_common
-    # _pretrain_common defaults: lr_warmup_iters=500
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Logger - old recipe doesn't set log_timers_to_tensorboard
     cfg.logger.log_timers_to_tensorboard = False
 
     # TE (Transformer Engine)
@@ -145,9 +143,9 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # NemotronH uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -162,31 +160,31 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # Communication overlap - enabled by default for 9B
+    # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_bootstrap_backend="nccl",
         tp_comm_overlap=True,
     )
 
-    # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=10 vs 500)
+    # Checkpoint config
     cfg.checkpoint.save_interval = 10
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT from _pretrain_common)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.average_in_collective = False  # Different from _pretrain_common
-    cfg.ddp.data_parallel_sharding_strategy = "no_shard"  # Different from _pretrain_common
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     return cfg
 
@@ -221,24 +219,22 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = 8192  # Must match model.seq_length
+    cfg.dataset.seq_length = 8192
     cfg.dataset.num_workers = 8
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 10
-    # Old recipe doesn't set manual_gc
+
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
     cfg.train.manual_gc_eval = True
 
-    # Optimizer - override only what differs from _pretrain_common
-    # _pretrain_common defaults: lr_warmup_iters=500
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Logger - old recipe doesn't set log_timers_to_tensorboard
     cfg.logger.log_timers_to_tensorboard = False
 
     # TE (Transformer Engine)
@@ -250,9 +246,9 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"  # NemotronH uses native
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -260,35 +256,35 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # Mixed precision - FP8 with current scaling for 12B
+    # Mixed precision - FP8 with current scaling
     cfg.mixed_precision = "nanov2_bf16_with_fp8_current_scaling_mixed"
     # FP8 settings (commented - already enabled via precision string above)
     # cfg.mixed_precision.fp8_recipe = "tensorwise"
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.optimizer.use_precision_aware_optimizer = False  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_grads_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.main_params_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_dtype = torch.float32  # default in mcore's OptimizerConfig
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32  # default in mcore's OptimizerConfig
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Communication overlap - disabled by default for 12B (FP8 compatibility)
     cfg.comm_overlap = None
 
-    # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=10 vs 500)
+    # Checkpoint config
     cfg.checkpoint.save_interval = 10
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT from _pretrain_common)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.average_in_collective = False  # Different from _pretrain_common
-    cfg.ddp.data_parallel_sharding_strategy = "no_shard"  # Different from _pretrain_common
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     return cfg
 

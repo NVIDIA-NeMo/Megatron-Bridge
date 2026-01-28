@@ -84,25 +84,24 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.sequence_length = 4096  # Must match model.seq_length
+    cfg.dataset.sequence_length = 4096
     cfg.dataset.num_workers = 8
 
     # MoE Token Dispatcher settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"  # Default; use "flex" with enable_deepep
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
-    cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 2000
     cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 5  # Different from default 100
+    cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Optimizer - Kimi-K2 uses Muon optimizer by default
-    # Replace the default optimizer from _pretrain_common with Muon
+    # Optimizer
     opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
         lr_warmup_iters=2000,
         lr_decay_iters=cfg.train.train_iters,
@@ -120,13 +119,13 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # Kernel selections (includes MoE-specific kernels)
-    cfg.model.attention_backend = None  # None means auto selection
-    cfg.model.moe_router_fusion = False  # MoE-specific
-    cfg.model.moe_permute_fusion = True  # Performance optimization
-    cfg.model.moe_grouped_gemm = True  # MoE-specific
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"  # Default from TransformerConfig
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory saving (recompute & offloading) - already set in KimiK2Provider
     # cfg.model.recompute_granularity = "selective"
@@ -158,11 +157,11 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
 
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    # cfg.comm_overlap.delay_wgrad_compute = False
-    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = True  # Default from KimiK2Provider
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.model.moe_shared_expert_overlap = True
 
-    # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=2000 vs 500)
+    # Checkpoint config
     cfg.checkpoint.save_interval = 2000
     cfg.checkpoint.async_save = False
     # cfg.checkpoint.save = "path/to/save"
@@ -179,7 +178,7 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     if cfg.model.apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+        cfg.dist.enable_megatron_core_experimental = True
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False

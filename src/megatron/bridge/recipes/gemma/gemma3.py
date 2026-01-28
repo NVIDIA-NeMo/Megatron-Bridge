@@ -142,7 +142,7 @@ def gemma3_1b_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = SEQUENCE_LENGTH_32K  # Must match model.seq_length
+    cfg.dataset.seq_length = SEQUENCE_LENGTH_32K
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -166,9 +166,7 @@ def gemma3_1b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # Scheduler config (DIFFERENT from _pretrain_common: lr_warmup_iters=2000 vs 500)
     cfg.scheduler.lr_warmup_iters = 2000
-    # Note: lr=3e-4, min_lr=3e-5 are defaults from _pretrain_common()
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -203,11 +201,11 @@ def gemma3_1b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # Checkpoint config - save_interval matches _pretrain_common default (500)
+    # Checkpoint config
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (matches _pretrain_common defaults)
+    # DDP config
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.check_for_nan_in_grad = True

@@ -154,18 +154,18 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = 4096  # Must match model.seq_length
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 
-    # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
+    # Parallelism settings
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 16  # MoE-specific
-    cfg.model.expert_tensor_parallel_size = 1  # MoE-specific
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
 
@@ -182,7 +182,7 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
@@ -190,14 +190,14 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
-    # Scheduler config (DIFFERENT from _pretrain_common: lr_warmup_iters=2000 vs 500)
+    # Scheduler config
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Optimizer config (DIFFERENT from _pretrain_common: lr, min_lr, adam_beta2, adam_eps)
-    cfg.optimizer.lr = 1e-4  # Different from default 3e-4
-    cfg.optimizer.min_lr = 1e-5  # Different from default 3e-5
-    cfg.optimizer.adam_beta2 = 0.95  # Different from default 0.999
-    cfg.optimizer.adam_eps = 1e-8  # Different from default 1e-5
+    # Optimizer config
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 1e-5
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -207,7 +207,7 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # Kernel selections (includes MoE-specific kernels)
+    # Kernel selections
     cfg.model.attention_backend = None  # None means auto selection
     cfg.model.moe_router_fusion = False  # MoE-specific
     cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations
@@ -244,7 +244,7 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.model.moe_shared_expert_overlap = True  # Default from GLM model provider
 
-    # Checkpoint config - save_interval matches _pretrain_common default (500)
+    # Checkpoint config
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
@@ -284,7 +284,7 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 
-    # Parallelism settings (MoE-specific)
+    # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_layout = None
@@ -309,7 +309,7 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_hybridep_num_sms = 16
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
@@ -320,7 +320,7 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     # Scheduler config
     cfg.scheduler.lr_warmup_iters = 2000
 
-    # Optimizer config (DIFFERENT from _pretrain_common)
+    # Optimizer config
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-5
     cfg.optimizer.adam_beta2 = 0.95

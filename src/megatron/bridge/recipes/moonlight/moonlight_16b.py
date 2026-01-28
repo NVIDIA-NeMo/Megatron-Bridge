@@ -188,30 +188,29 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = 4096  # Must match model.seq_length
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
-    cfg.dataset.split = "99990,8,2"  # Moonlight uses this split
+    cfg.dataset.split = "99990,8,2"
 
     # MoE Token Dispatcher settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"  # Default; use "flex" with enable_deepep
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
-    cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
 
-    # Training config (DIFFERENT from _pretrain_common)
+    # Training config
     cfg.train.train_iters = 500_000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
     cfg.train.eval_interval = 2000
     cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 5  # Different from default 100
+    cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Optimizer - override only what differs from _pretrain_common
-    # _pretrain_common defaults: lr_warmup_iters=500, lr_decay_iters=None
+    # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
 
-    # Precision-aware optimizer settings (DIFFERENT: uses bf16 moments)
+    # Precision-aware optimizer settings
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.bfloat16
@@ -226,13 +225,13 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # Kernel selections (includes MoE-specific kernels)
-    cfg.model.attention_backend = None  # None means auto selection
-    cfg.model.moe_router_fusion = False  # MoE-specific
-    cfg.model.moe_permute_fusion = True  # Performance optimization
-    cfg.model.moe_grouped_gemm = True  # MoE-specific
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"  # Default from TransformerConfig
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory saving (recompute & offloading) - already set in MoonlightModelProvider16B
     # cfg.model.recompute_granularity = "selective"
@@ -253,15 +252,15 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8 = None
     # cfg.mixed_precision.fp8_param_gather = False
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    cfg.model.moe_router_padding_for_fp8 = False  # Pad router for FP8 alignment
+    cfg.model.moe_router_padding_for_fp8 = False
 
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    # cfg.comm_overlap.delay_wgrad_compute = False
-    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = True  # Default from MoonlightModelProvider
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.model.moe_shared_expert_overlap = True
 
-    # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=2000 vs 500)
+    # Checkpoint config
     cfg.checkpoint.save_interval = 2000
     cfg.checkpoint.async_save = False
     # cfg.checkpoint.save = "path/to/save"
