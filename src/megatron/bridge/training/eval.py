@@ -124,6 +124,12 @@ def evaluate(
                     model=model,
                     data_iterator=eval_microbatch_iterator,
                 )
+            
+            elif len(model) > 1:
+                eval_data_iterator = make_data_iterator_list(
+                    model=model,
+                    data_iterator=eval_data_iterator,
+                )
 
             # Don't care about timing during evaluation
             config.timers = None

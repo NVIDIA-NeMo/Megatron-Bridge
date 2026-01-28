@@ -58,6 +58,9 @@ def handle_profiling_step(
     Returns:
         NVTX context if nsys profiling was started at this step, None otherwise
     """
+    if config is None:
+        return None
+        
     if not should_profile_rank(config, rank):
         return None
 

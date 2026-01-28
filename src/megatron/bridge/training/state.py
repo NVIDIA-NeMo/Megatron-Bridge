@@ -35,7 +35,7 @@ from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_saf
 
 
 @dataclass
-class TrainState(Stateful):
+class TrainState():
     """Dataclass to hold the state of the training process.
 
     Inherits from Stateful for distributed checkpointing compatibility.
