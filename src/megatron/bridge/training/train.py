@@ -1369,26 +1369,34 @@ def _train_step_with_determinism_check(
         plugin.start_new_run()
         
         # Create an INFINITE iterator that repeats the cached batch
-        # Much simpler - just keep yielding the same batch forever
+        # We must deepcopy the cached batch to prevent in-place modifications
+        # from contaminating subsequent micro-batches or runs.
+        import copy
         if cached_batch is not None:
             if isinstance(cached_batch, list):
                 # For virtual pipeline parallelism, create a list of infinite iterators
                 def make_infinite_iterator_list():
                     """Create a list of infinite iterators for virtual pipeline."""
+                    # Deepcopy the whole list once per run to avoid modifying the original cache
+                    run_cached_batch = copy.deepcopy(cached_batch)
                     iterators = []
-                    for batch in cached_batch:
+                    for batch in run_cached_batch:
                         def make_iter(b=batch):
                             while True:
-                                yield b
+                                # Deepcopy EACH micro-batch to ensure it's fresh for every re-computation
+                                yield copy.deepcopy(b)
                         iterators.append(make_iter())
                     return iterators
                 run_data_iterator = make_infinite_iterator_list()
             else:
                 # For regular pipeline, create a single infinite iterator
+                # Deepcopy the batch once per run
+                run_cached_batch = copy.deepcopy(cached_batch)
                 def make_infinite_iterator():
                     """Create an infinite iterator that repeats the cached batch."""
                     while True:
-                        yield cached_batch
+                        # Deepcopy EACH micro-batch to ensure it's fresh for every re-computation
+                        yield copy.deepcopy(run_cached_batch)
                 run_data_iterator = make_infinite_iterator()
         else:
             run_data_iterator = data_iterator
@@ -1456,9 +1464,26 @@ def _single_determinism_run(
     skip_optimizer_step: bool,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """
-    Single forward+backward run, optionally skipping optimizer.step().
+    Single forward+backward run for determinism checking, optionally skipping optimizer.step().
     
-    This is a modified version of train_step() that can skip the optimizer step.
+    This function runs exactly ONE forward+backward pass with the provided data iterator.
+    Unlike train_step(), it does NOT use rerun_state_machine because:
+    1. We use an infinite iterator to repeat the same batch
+    2. We want exactly one pass per call (controlled by outer loop in _train_step_with_determinism_check)
+    3. rerun_state_machine is for fault tolerance, not determinism checking
+    
+    Args:
+        forward_step_func: Function that performs a forward step
+        data_iterator: Iterator (may be infinite for determinism checking)
+        model: List of model chunks
+        optimizer: Optimizer instance
+        scheduler: Learning rate scheduler
+        global_state: Global training state
+        forward_backward_func: Forward-backward function
+        skip_optimizer_step: If True, skip optimizer.step() to keep weights unchanged
+        
+    Returns:
+        Tuple of (loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad)
     """
     cfg: ConfigContainer = global_state.cfg
     timers = global_state.timers
@@ -1466,62 +1491,56 @@ def _single_determinism_run(
     train_config = cfg.train
     optim_config = cfg.optimizer
 
-    rerun_state_machine = get_rerun_state_machine()
-    
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
-        # Set grad to zero.
-        for model_chunk in model:
-            model_chunk.zero_grad_buffer()
-        optimizer.zero_grad()
+    # Set grad to zero
+    for model_chunk in model:
+        model_chunk.zero_grad_buffer()
+    optimizer.zero_grad()
 
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=optimizer,
-            reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
-            overlap_param_gather=cfg.ddp.overlap_param_gather,
-        )
+    _handle_mxfp8_param_buffer_copy(
+        optimizer=optimizer,
+        reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
+        overlap_param_gather=cfg.ddp.overlap_param_gather,
+    )
 
-        # Handle finetuning vs pretraining data consumption
-        seq_length = model_config.seq_length
-        forward_backward_data_iterator = data_iterator
+    # Handle finetuning vs pretraining data consumption
+    seq_length = model_config.seq_length
+    forward_backward_data_iterator = data_iterator
 
-        if cfg.dataset.dataloader_type == "batch":
-            from megatron.bridge.data.finetuning import prepare_finetuning_batch
-            from megatron.bridge.data.iterator_utils import make_data_iterator_list
+    if cfg.dataset.dataloader_type == "batch":
+        from megatron.bridge.data.finetuning import prepare_finetuning_batch
+        from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
-            forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
-                data_iterator=data_iterator,
-                num_microbatches=get_num_microbatches(),
-                default_seq_length=model_config.seq_length,
-                seq_key="tokens",
-            )
-
-            forward_backward_data_iterator = make_data_iterator_list(
-                model=model,
-                data_iterator=forward_backward_data_iterator,
-            )
-
-        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-            model,
-            seq_length=model_config.seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
-        )
-
-        losses_reduced = forward_backward_func(
-            forward_step_func=forward_step_func,
-            data_iterator=forward_backward_data_iterator,
-            model=model,
+        forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+            data_iterator=data_iterator,
             num_microbatches=get_num_microbatches(),
-            seq_length=seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=seq_length,
-            forward_only=False,
-            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            default_seq_length=model_config.seq_length,
+            seq_key="tokens",
         )
-        
-    should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
-    if should_exit:
-        return {}, True, should_checkpoint, should_exit, exit_code, None, None
+
+        forward_backward_data_iterator = make_data_iterator_list(
+            model=model,
+            data_iterator=forward_backward_data_iterator,
+        )
+
+    adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+        model,
+        seq_length=model_config.seq_length,
+        micro_batch_size=train_config.micro_batch_size,
+        decoder_seq_length=model_config.seq_length,
+    )
+
+    # Run forward+backward pass once
+    losses_reduced = forward_backward_func(
+        forward_step_func=forward_step_func,
+        data_iterator=forward_backward_data_iterator,
+        model=model,
+        num_microbatches=get_num_microbatches(),
+        seq_length=seq_length,
+        micro_batch_size=train_config.micro_batch_size,
+        decoder_seq_length=seq_length,
+        forward_only=False,
+        adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+    )
 
     # Empty unused memory.
     if train_config.empty_unused_memory_level >= 1:

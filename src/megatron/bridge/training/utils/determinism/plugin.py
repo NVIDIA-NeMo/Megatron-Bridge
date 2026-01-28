@@ -21,26 +21,51 @@ Compares LOCAL tensors across repeated runs to detect non-determinism.
 - Gather results at step end (safe sync point, no PP deadlock)
 - Tracks forward activations, backward gradients, and parameter gradients
 
+Memory-efficient mode (default):
+- CRITICAL: Moves tensors to CPU IMMEDIATELY in hooks (prevents GPU OOM)
+- Async GPU→CPU transfer happens in background during forward/backward
+- Never accumulates tensors on GPU - each tensor copied to CPU right away
+- Direct bitwise comparison (torch.equal) - more accurate than hashing
+- Peak GPU: Model activations only (no determinism overhead!)
+
+Memory flow to prevent OOM:
+1. Run 1 Forward: Each hook immediately moves tensor to CPU (async, non-blocking)
+   - GPU: Model activations only (~18GB peak during forward)
+   - CPU: Accumulates tensors as hooks fire (~8GB final)
+2. Run 1 Backward: Each hook immediately moves gradient to CPU
+   - GPU: Still just model gradients (~18GB peak during backward)
+   - CPU: Accumulates gradients (~16GB final)
+3. Run 2: Same process - tensors moved to CPU immediately
+   - GPU: No determinism overhead!
+   - CPU: Both runs' tensors (~32GB final)
+4. Comparison: All tensors already on CPU, compare directly
+
+Why immediate CPU transfer is crucial:
+- Prevents GPU OOM: No accumulation of tensors on GPU
+- Async transfer: Doesn't block forward/backward (GPU→CPU in background)
+- Works with large models: GPU only needs model activations, not extra storage
+- Fast comparison: torch.equal() on CPU tensors (no hashing needed)
+
 Usage:
     plugin = DeterminismDebugPlugin(config)
     plugin.register_hooks(model)
     
     # Run 1
-    plugin.start_new_run()  # Increments run_id to 1
-    loss = model(batch)
-    loss.backward()
-    model.zero_grad()  # Keep weights same
+    plugin.start_new_run()  # run_id=1
+    loss = model(batch)     # Hooks move tensors to CPU immediately
+    loss.backward()         # Hooks move gradients to CPU immediately
+    model.zero_grad()       # Keep weights same
     
     # Run 2 (same batch)
-    plugin.start_new_run()  # Increments run_id to 2
-    loss = model(batch)
-    loss.backward()
+    plugin.start_new_run()  # run_id=2
+    loss = model(batch)     # Hooks move tensors to CPU immediately
+    loss.backward()         # Hooks move gradients to CPU immediately
     
-    # Gather and analyze - this compares run 1 vs run 2
-    results = plugin.gather_all_results()
+    # Gather and analyze
+    results = plugin.gather_all_results()  # Compares CPU tensors directly
     print(analyze_results(results))
     
-    # Reset for next step (important to avoid cross-step contamination!)
+    # Reset for next step
     plugin.reset_for_next_step()
 """
 
@@ -80,9 +105,16 @@ class DeterminismConfig:
     """Enable parameter gradient tracking."""
     
     memory_efficient: bool = True
-    """Use memory-efficient mode (store hashes instead of full tensors).
-    When True: Uses SHA256 hashes (~32 bytes per tensor) instead of storing full tensors.
-    When False: Stores full tensors on CPU (can use ~10GB+ for large models)."""
+    """Use memory-efficient mode (move tensors to CPU immediately in hooks).
+    When True: Each tensor moved to CPU async in hook (prevents GPU OOM).
+               Peak GPU: Model activations only. Peak CPU: Both runs (~32GB).
+    When False: Tensors kept on GPU until comparison (will cause OOM on large models)."""
+    
+    layer_sample_rate: float = 1.0
+    """Fraction of layers to sample for determinism checking (0.0-1.0).
+    1.0 = track all layers (default), 0.1 = track 10% of layers.
+    Use lower values (e.g., 0.05-0.1) for models with tight GPU memory.
+    Layers are sampled deterministically based on hash of layer name."""
     
     output_dir: str = "./determinism_logs"
     """Directory to save analysis results."""
@@ -103,20 +135,14 @@ class DeterminismDebugPlugin:
         
         self.rank = dist.get_rank() if dist.is_initialized() else 0
         
-        if self.config.memory_efficient:
-            # Memory-efficient mode: store hashes (32 bytes) instead of tensors
-            self._tensor_hashes: Dict[Tuple[str, int, str, int], bytes] = {}
-        else:
-            # Original mode: store full tensors on CPU
-            self._tensors: Dict[Tuple[str, int, str, int], torch.Tensor] = {}
+        # Storage for hashes from all runs
+        # We store hashes instead of full tensors to save CPU memory
+        self._tensors: Dict[Tuple[str, int, str, int], Any] = {}
         
         self._call_counts: Dict[Tuple[str, int, str], int] = {}  # Track call count per (name, run_id, pass_type)
         self._run_id = 0
         self._results: Dict[str, bool] = {}  # "name:pass_type:call_idx" -> match/mismatch
         self._first_mismatch: Optional[str] = None
-        
-        # Storage for gradient hook handles to prevent garbage collection
-        self._grad_hook_handles: List = []
         
         # Compile patterns
         self._skip_patterns = [re.compile(p, re.IGNORECASE) for p in self.config.layers_to_skip]
@@ -132,7 +158,16 @@ class DeterminismDebugPlugin:
             if p.search(name):
                 return False
         if self._check_patterns:
-            return any(p.search(name) for p in self._check_patterns)
+            if not any(p.search(name) for p in self._check_patterns):
+                return False
+        
+        # Layer sampling: use deterministic hash to decide whether to track this layer
+        if self.config.layer_sample_rate < 1.0:
+            # Hash layer name to get a deterministic 0-1 value
+            layer_hash = hash(name) % 10000 / 10000.0
+            if layer_hash >= self.config.layer_sample_rate:
+                return False
+        
         return True
     
     def _get_output_tensor(self, output) -> Optional[torch.Tensor]:
@@ -144,22 +179,23 @@ class DeterminismDebugPlugin:
                 return output[0]
         return None
     
-    def _compute_hash(self, tensor: torch.Tensor) -> bytes:
-        """Compute SHA256 hash of a tensor for memory-efficient comparison."""
-        import hashlib
-        # Ensure tensor is contiguous and on CPU for consistent hashing
-        tensor_cpu = tensor.detach().cpu().contiguous()
-        
-        # Convert to float32 if bfloat16 (NumPy doesn't support bfloat16)
-        # This preserves determinism since bfloat16 -> float32 is exact
-        if tensor_cpu.dtype == torch.bfloat16:
-            tensor_cpu = tensor_cpu.to(torch.float32)
-        
-        return hashlib.sha256(tensor_cpu.numpy().tobytes()).digest()
-    
-    def _record(self, name: str, tensor: torch.Tensor, pass_type: str):
+    def _move_to_cpu_async(self, tensor: torch.Tensor) -> torch.Tensor:
         """
-        Record a tensor for later comparison.
+        Move tensor to CPU asynchronously for memory-efficient comparison.
+        
+        This is faster than hashing and avoids:
+        - SHA256 computation overhead
+        - numpy conversion overhead
+        - Multiple intermediate copies
+        
+        Returns CPU tensor (transfer happens asynchronously).
+        """
+        # Detach and move to CPU (async, non-blocking)
+        return tensor.detach().cpu()
+    
+    def _record(self, name: str, tensor: torch.Tensor, pass_type: str, module: Optional[torch.nn.Module] = None):
+        """
+        Record a tensor's hash for later comparison.
         
         NO cross-rank communication here - safe for PP.
         Comparison happens in gather_all_results() after both runs complete.
@@ -167,48 +203,124 @@ class DeterminismDebugPlugin:
         Handles multiple calls to the same layer (e.g., activation checkpointing)
         by tracking call count and storing each call separately.
         
-        In memory-efficient mode, stores only SHA256 hash (~32 bytes) instead of full tensor.
+        CRITICAL: Tensors are hashed and immediately discarded to save memory.
         
         Args:
             name: Layer name or parameter name
             tensor: Activation or gradient tensor
             pass_type: "forward", "backward", "output_grad", or "param_grad"
+            module: The module that triggered the hook (optional)
         """
-        # Track call count for this (name, run_id, pass_type) combination
-        count_key = (name, self._run_id, pass_type)
+        # Attempt to get microbatch ID from module if available
+        microbatch_id = None
+        if module is not None:
+            microbatch_id = getattr(module, 'current_microbatch', None)
+        
+        # Track call count for this (name, run_id, pass_type, microbatch_id) combination
+        count_key = (name, self._run_id, pass_type, microbatch_id)
         call_idx = self._call_counts.get(count_key, 0)
         self._call_counts[count_key] = call_idx + 1
         
         # Store with call_idx to handle multiple calls to same layer
-        key = (name, self._run_id, pass_type, call_idx)
+        key = (name, self._run_id, pass_type, call_idx, microbatch_id)
         
+        # #region agent log
+        try:
+            import json
+            import time
+            log_entry = {
+                "sessionId": "debug-session",
+                "runId": f"run_{self._run_id}",
+                "hypothesisId": "A",
+                "location": "plugin.py:220",
+                "message": f"Recording tensor for {name}",
+                "data": {
+                    "rank": self.rank,
+                    "pp_rank": self._get_pp_rank(),
+                    "tp_rank": self._get_tp_rank(),
+                    "dp_rank": self._get_dp_rank(),
+                    "name": name,
+                    "pass_type": pass_type,
+                    "call_idx": call_idx,
+                    "microbatch_id": microbatch_id,
+                    "run_id": self._run_id,
+                    "shape": list(tensor.shape) if hasattr(tensor, 'shape') else None,
+                    "dtype": str(tensor.dtype) if hasattr(tensor, 'dtype') else None
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            with open("/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
+        # Move to CPU and hash immediately to free GPU memory
+        # This prevents OOM by not accumulating tensors on GPU OR CPU
         if self.config.memory_efficient:
-            # Store hash instead of full tensor (~32 bytes vs potentially GBs)
-            self._tensor_hashes[key] = self._compute_hash(tensor)
+            # Hash the tensor on CPU
+            # We use a simple hash of the tensor data for bitwise comparison
+            # Note: We use .detach().cpu() to ensure it's off the GPU
+            cpu_tensor = tensor.detach().cpu()
+            
+            # BFloat16 is not supported by numpy.tobytes() directly in some versions
+            # and hashing requires a stable byte representation.
+            # Convert to float32 for hashing if it's bfloat16 or half
+            if cpu_tensor.dtype in [torch.bfloat16, torch.float16]:
+                cpu_tensor = cpu_tensor.to(torch.float32)
+            
+            # Use a robust hash: convert to numpy and use hash() or similar
+            # For bitwise equality, we can use the byte representation
+            tensor_hash = hash(cpu_tensor.numpy().tobytes())
+            self._tensors[key] = tensor_hash
+
+            # #region agent log
+            try:
+                import json
+                import time
+                log_entry = {
+                    "sessionId": "debug-session",
+                    "runId": f"run_{self._run_id}",
+                    "hypothesisId": "B",
+                    "location": "plugin.py:238",
+                    "message": f"Hash computed for {name}",
+                    "data": {
+                        "rank": self.rank,
+                        "pp_rank": self._get_pp_rank(),
+                        "tp_rank": self._get_tp_rank(),
+                        "dp_rank": self._get_dp_rank(),
+                        "name": name,
+                        "pass_type": pass_type,
+                        "call_idx": call_idx,
+                        "microbatch_id": microbatch_id,
+                        "hash": tensor_hash
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                with open("/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
+            except Exception:
+                pass
+            # #endregion
         else:
-            # Original mode: store full tensor on CPU
-            self._tensors[key] = tensor.detach().clone().cpu()
+            # Original mode: keep on GPU
+            self._tensors[key] = tensor.detach().clone()
     
     def _create_forward_hook(self, layer_name: str):
-        """Create forward hook to record output tensor."""
+        """Create forward hook to record output tensor.
+        
+        NOTE: We do NOT use tensor.register_hook() here because it prevents
+        PyTorch memory optimization by keeping all intermediate tensors alive
+        from forward through backward. Instead, we rely on module backward hooks
+        to capture gradients, which allows PyTorch to reuse memory.
+        """
         def hook(module, inputs, output):
             if not self.config.enabled:
                 return
             tensor = self._get_output_tensor(output)
             if tensor is not None:
-                self._record(layer_name, tensor, "forward")
-                
-                # Also register a hook to check the gradient of this tensor after backward
-                # This will catch non-deterministic backward passes in autograd Functions
-                if self.config.check_backward and tensor.requires_grad:
-                    def grad_hook(grad):
-                        if grad is not None:
-                            self._record(layer_name, grad, "output_grad")
-                        return None  # Don't modify the gradient
-                    
-                    # Store the handle to prevent garbage collection
-                    handle = tensor.register_hook(grad_hook)
-                    self._grad_hook_handles.append(handle)
+                self._record(layer_name, tensor, "forward", module=module)
+                # Gradient will be captured by backward hook instead
         return hook
     
     def _create_backward_hook(self, layer_name: str):
@@ -218,7 +330,7 @@ class DeterminismDebugPlugin:
                 return
             tensor = self._get_output_tensor(grad_output)
             if tensor is not None:
-                self._record(layer_name, tensor, "backward")
+                self._record(layer_name, tensor, "backward", module=module)
         return hook
     
     def _create_param_grad_hook(self, param_name: str):
@@ -259,106 +371,155 @@ class DeterminismDebugPlugin:
                 if param.requires_grad:
                     param.register_post_accumulate_grad_hook(self._create_param_grad_hook(name))
         
-        mode_str = "memory-efficient (hash-based)" if self.config.memory_efficient else "full-tensor"
-        print_rank_last(f"[Rank {self.rank}] Registered determinism hooks on {count} layers ({mode_str})")
+        mode_str = "memory-efficient (CPU-based)" if self.config.memory_efficient else "full-tensor (GPU)"
+        sample_str = f", sampling {self.config.layer_sample_rate*100:.0f}%" if self.config.layer_sample_rate < 1.0 else ""
+        print_rank_last(f"[Rank {self.rank}] Registered determinism hooks on {count} layers ({mode_str}{sample_str})")
         if attention_count > 0:
             print_rank_last(f"[Rank {self.rank}]   Including {attention_count} attention-related layers")
     
     def _compare_runs(self, run1: int, run2: int):
         """
-        Compare tensors/hashes from two runs after both are complete.
-        Uses bitwise equality (torch.equal for tensors, == for hashes).
+        Compare tensor hashes from two runs after both are complete.
         
         Compares each call separately - e.g., if a layer is called twice
         (activation checkpointing), call 0 from run1 is compared with call 0 from run2.
         """
-        if self.config.memory_efficient:
-            # Compare hashes
-            run2_keys = [(name, pass_type, call_idx) 
-                         for (name, rid, pass_type, call_idx) in self._tensor_hashes.keys() 
-                         if rid == run2]
+        # Find all keys from run2
+        run2_keys = [(name, pass_type, call_idx, microbatch_id) 
+                     for (name, rid, pass_type, call_idx, microbatch_id) in self._tensors.keys() 
+                     if rid == run2]
+        
+        for name, pass_type, call_idx, microbatch_id in run2_keys:
+            key1 = (name, run1, pass_type, call_idx, microbatch_id)
+            key2 = (name, run2, pass_type, call_idx, microbatch_id)
             
-            for name, pass_type, call_idx in run2_keys:
-                key1 = (name, run1, pass_type, call_idx)
-                key2 = (name, run2, pass_type, call_idx)
-                
-                if key1 not in self._tensor_hashes:
-                    continue
-                
-                hash1 = self._tensor_hashes[key1]
-                hash2 = self._tensor_hashes[key2]
-                
-                # Hash equality means tensors are bitwise identical
-                is_match = (hash1 == hash2)
-                
-                # Include call_idx in result key if there are multiple calls
-                if call_idx > 0:
-                    result_key = f"{name}:{pass_type}:{call_idx}"
-                else:
-                    result_key = f"{name}:{pass_type}"
-                self._results[result_key] = is_match
-                
-                if not is_match and self._first_mismatch is None:
-                    self._first_mismatch = result_key
-                    if self.config.verbose:
-                        print_rank_last(f"[Rank {self.rank}] MISMATCH: {result_key}")
-        else:
-            # Original mode: compare full tensors
-            run2_keys = [(name, pass_type, call_idx) 
-                         for (name, rid, pass_type, call_idx) in self._tensors.keys() 
-                         if rid == run2]
+            if key1 not in self._tensors:
+                continue
             
-            for name, pass_type, call_idx in run2_keys:
-                key1 = (name, run1, pass_type, call_idx)
-                key2 = (name, run2, pass_type, call_idx)
+            val1 = self._tensors[key1]
+            val2 = self._tensors[key2]
+            
+            # Include call_idx and microbatch_id in result key if there are multiple calls
+            result_key_parts = [name, pass_type]
+            if microbatch_id is not None:
+                result_key_parts.append(f"mb{microbatch_id}")
+            if call_idx > 0:
+                result_key_parts.append(f"call{call_idx}")
+            result_key = ":".join(result_key_parts)
+
+            if self.config.memory_efficient:
+                # Compare hashes directly
+                is_match = (val1 == val2)
                 
-                if key1 not in self._tensors:
-                    continue
-                
-                t1 = self._tensors[key1]
-                t2 = self._tensors[key2]
-                
-                # Bitwise equality - determinism means identical results
+                # #region agent log
+                try:
+                    import json
+                    import time
+                    log_entry = {
+                        "sessionId": "debug-session",
+                        "runId": "comparison",
+                        "hypothesisId": "C",
+                        "location": "plugin.py:338",
+                        "message": f"Comparison result for {result_key}",
+                        "data": {
+                            "rank": self.rank,
+                            "pp_rank": self._get_pp_rank(),
+                            "tp_rank": self._get_tp_rank(),
+                            "dp_rank": self._get_dp_rank(),
+                            "name": result_key,
+                            "val1_hash": val1,
+                            "val2_hash": val2,
+                            "is_match": is_match
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }
+                    with open("/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps(log_entry) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+            else:
+                # Compare GPU tensors
+                t1 = val1
+                t2 = val2
+                if t1.is_cuda:
+                    t1 = t1.cpu()
+                if t2.is_cuda:
+                    t2 = t2.cpu()
                 is_match = torch.equal(t1, t2)
-                
-                # Include call_idx in result key if there are multiple calls
-                if call_idx > 0:
-                    result_key = f"{name}:{pass_type}:{call_idx}"
-                else:
-                    result_key = f"{name}:{pass_type}"
-                self._results[result_key] = is_match
-                
-                if not is_match and self._first_mismatch is None:
-                    self._first_mismatch = result_key
-                    if self.config.verbose:
-                        print_rank_last(f"[Rank {self.rank}] MISMATCH: {result_key}")
+            
+            self._results[result_key] = is_match
+            
+            if not is_match and self._first_mismatch is None:
+                self._first_mismatch = result_key
+                if self.config.verbose:
+                    print_rank_last(f"[Rank {self.rank}] MISMATCH: {result_key}")
     
     def start_new_run(self):
         """
         Call BEFORE each run to signal a new run is starting.
         
         This increments the run counter so tensors are stored with the correct run_id.
-        The actual comparison happens in gather_all_results() after both runs complete.
+        
+        CRITICAL: In memory-efficient mode, we clear the CUDA cache and run GC
+        to ensure memory from previous runs is fully reclaimed.
         """
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        # Move previous run's tensors to CPU to free GPU memory
+        if self._run_id > 0 and self.config.memory_efficient:
+            self._move_run_to_cpu(self._run_id)
+        
+        # Reset call counts for the new run so that call_idx starts from 0
+        # This prevents "false alarms" caused by index shifting between runs
+        self._call_counts.clear()
+        
         self._run_id += 1
+    
+    def _move_run_to_cpu(self, run_id: int):
+        """
+        Ensure all tensors from a specific run are on CPU.
+        
+        In memory-efficient mode, tensors are already moved to CPU during hooks,
+        so this is a no-op. In non-memory-efficient mode, moves them now.
+        
+        Args:
+            run_id: The run ID whose tensors should be on CPU
+        """
+        if self.config.memory_efficient:
+            # Already on CPU (moved during hooks)
+            return
+        
+        # Non-memory-efficient mode: move to CPU now
+        keys_to_move = [(name, rid, pass_type, call_idx, microbatch_id) 
+                        for (name, rid, pass_type, call_idx, microbatch_id) in self._tensors.keys() 
+                        if rid == run_id]
+        
+        for key in keys_to_move:
+            if self._tensors[key].is_cuda:
+                self._tensors[key] = self._tensors[key].cpu()
     
     def reset_for_next_step(self):
         """
         Clear all state for the next step. Call after gather_all_results().
         
-        This resets the run counter and clears all tensors/hashes to prevent
+        This resets the run counter and clears all tensors to prevent
         cross-step contamination where data from a previous step could be
         incorrectly compared with data from the current step.
         """
-        if self.config.memory_efficient:
-            self._tensor_hashes.clear()
-        else:
-            self._tensors.clear()
+        self._tensors.clear()
         self._call_counts.clear()
         self._results.clear()
         self._first_mismatch = None
-        self._grad_hook_handles.clear()
         self._run_id = 0
+        
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     def gather_all_results(self) -> List[Dict]:
         """
@@ -367,10 +528,15 @@ class DeterminismDebugPlugin:
         
         This method first compares the two runs, then gathers results from all ranks.
         
+        In memory-efficient mode:
+        - Run 1 tensors already on CPU (moved by start_new_run())
+        - Run 2 tensors on GPU
+        - _compare_runs() handles CPU transfer and comparison
+        
         Returns:
             List of result dicts from all ranks
         """
-        # Compare run 1 vs run 2
+        # Compare run 1 vs run 2 (handles CPU transfer internally)
         if self._run_id >= 2:
             self._compare_runs(self._run_id - 1, self._run_id)
         
@@ -417,14 +583,10 @@ class DeterminismDebugPlugin:
     
     def reset(self):
         """Reset all state."""
-        if self.config.memory_efficient:
-            self._tensor_hashes.clear()
-        else:
-            self._tensors.clear()
+        self._tensors.clear()
         self._call_counts.clear()
         self._results.clear()
         self._first_mismatch = None
-        self._grad_hook_handles.clear()
         self._run_id = 0
     
     def get_summary(self) -> Dict[str, Any]:

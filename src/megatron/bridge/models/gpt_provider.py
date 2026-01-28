@@ -213,6 +213,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     
     determinism_verbose: bool = False
     """Print detailed logs for each layer check."""
+    
+    determinism_layer_sample_rate: float = 0.05
+    """Fraction of layers to sample for determinism checking (0.0-1.0).
+    Default: 0.05 (5% of layers) for memory efficiency on large models.
+    Use 1.0 to check all layers (may cause OOM on memory-constrained GPUs)."""
 
     def __post_init__(self):
         """Initialize the model provider and setup determinism debugging if enabled.
@@ -246,6 +251,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 check_backward=self.determinism_check_backward,
                 check_param_grad=self.determinism_check_param_grad,
                 verbose=self.determinism_verbose,
+                layer_sample_rate=self.determinism_layer_sample_rate,
             )
             
             # Create plugin
