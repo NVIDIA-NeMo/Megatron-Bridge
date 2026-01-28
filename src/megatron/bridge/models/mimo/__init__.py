@@ -6,7 +6,8 @@ from megatron.bridge.models.mimo.mimo_config import (
 )
 from megatron.bridge.models.mimo.mimo_provider import (
     MimoModelProvider,
-    MimoModelProviderResult,
+    MimoModelInfra,
+    MimoStubModel,
 )
 from megatron.bridge.models.mimo.llava_provider import LlavaMimoProvider
 
@@ -14,6 +15,7 @@ __all__ = [
     "MimoParallelismConfig",
     "ModuleParallelismConfig",
     "MimoModelProvider",
-    "MimoModelProviderResult",
+    "MimoModelInfra",
+    "MimoStubModel",
     "LlavaMimoProvider",
 ]

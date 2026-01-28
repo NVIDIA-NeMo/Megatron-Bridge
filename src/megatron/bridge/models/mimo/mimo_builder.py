@@ -24,11 +24,11 @@ def build_hypercomm_grids(
     grids: Dict[str, HyperCommGrid] = {}
     for module_name, parallelism in mimo_parallelism_config.module_parallelisms.items():
         shape = [
-            parallelism.tensor_parallel,
-            parallelism.context_parallel,
-            parallelism.expert_parallel,
-            parallelism.pipeline_parallel,
-            parallelism.data_parallel,
+            parallelism.tensor_model_parallel_size,
+            parallelism.context_parallel_size,
+            parallelism.expert_tensor_parallel_size,
+            parallelism.pipeline_model_parallel_size,
+            parallelism.data_parallel_size,
         ]
         grid = HyperCommGrid(
             shape=shape,
