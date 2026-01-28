@@ -149,6 +149,12 @@ class DeterminismDebugPlugin:
         import hashlib
         # Ensure tensor is contiguous and on CPU for consistent hashing
         tensor_cpu = tensor.detach().cpu().contiguous()
+        
+        # Convert to float32 if bfloat16 (NumPy doesn't support bfloat16)
+        # This preserves determinism since bfloat16 -> float32 is exact
+        if tensor_cpu.dtype == torch.bfloat16:
+            tensor_cpu = tensor_cpu.to(torch.float32)
+        
         return hashlib.sha256(tensor_cpu.numpy().tobytes()).digest()
     
     def _record(self, name: str, tensor: torch.Tensor, pass_type: str):
