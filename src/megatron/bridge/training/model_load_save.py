@@ -38,6 +38,13 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 logger = logging.getLogger(__name__)
 
+HF_BASED_TOKENIZERS = [
+    "BertWordPieceLowerCase",
+    "BertWordPieceCase",
+    "GPT2BPETokenizer",
+    "HuggingFaceTokenizer",
+]
+
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
     """Convert Megatron-Core config dtype settings to torch dtype.
@@ -171,6 +178,9 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
             raise AttributeError(
                 f"Attempting to set a non-existent attribute '{key}' on TokenizerConfig.\nState of TokenizerConfig before attempting this override: {cfg}"
             )
+
+    if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
+        cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
 
     return build_tokenizer(cfg)
 
@@ -514,11 +524,15 @@ def save_megatron_model(
             generate_state_dict,
             get_rng_state,
         )
+        from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
         logger.info("[LOW_MEMORY_SAVE] Generating state dict...")
 
         # Get RNG state (minimal, since save_rng=False)
-        rng_state = get_rng_state(data_parallel_random_init=False, ckpt_format=ckpt_format)
+        pg_collection = get_pg_collection(model)
+        rng_state = get_rng_state(
+            data_parallel_random_init=False, ckpt_format=ckpt_format, pg_collection=pg_collection
+        )
 
         # Build sharded state dict metadata
         sharded_sd_metadata = _build_sharded_state_dict_metadata(False, state.cfg.checkpoint)
@@ -652,6 +666,7 @@ def save_megatron_model(
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
+            pg_collection=pg_collection,
         )
     else:
         # Save the checkpoint

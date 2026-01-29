@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 
@@ -51,17 +51,3 @@ def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[st
     """Infer a default multi-encoder -> LLM topology."""
     llm = mimo_parallelism_config.llm_module_name
     return {name: [llm] for name in mimo_parallelism_config.module_names if name != llm} | {llm: []}
-
-
-def build_colocated_comm_config(
-    mimo_parallelism_config: MimoParallelismConfig, grids: Dict[str, "HyperCommGrid"]
-) -> "ColocatedCommConfig":
-    """Build ColocatedCommConfig with default encoder-to-LLM topology."""
-    from megatron.core.models.mimo.config.base_configs import ColocatedCommConfig
-
-    topology = _default_topology(mimo_parallelism_config)
-    return ColocatedCommConfig(
-        module_to_grid_map=grids.copy(),
-        topology=topology,
-        dim_mapping={"b": 0, "s": 1, "h": 2},
-    )

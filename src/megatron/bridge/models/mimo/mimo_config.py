@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Optional
 import warnings
 
 
@@ -56,12 +56,15 @@ class ModuleParallelismConfig:
 
 @dataclass
 class MimoParallelismConfig:
-    """Configuration for multi-module (MIMO) heterogeneous parallelism."""
+    """Configuration for multi-module (MIMO) heterogeneous parallelism.
+    
+    Note: Phase 1 only supports heterogeneous deployment where each module
+    can have different parallelism configurations and rank offsets.
+    """
 
     llm_module_name: str
     module_parallelisms: dict[str, ModuleParallelismConfig]
     special_token_ids: dict[str, int] = field(default_factory=dict)
-    deployment_mode: Literal["colocated", "heterogeneous", "homogeneous"] = "colocated"
     # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
 
     def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
@@ -73,40 +76,12 @@ class MimoParallelismConfig:
 
     @property
     def total_world_size(self) -> int:
-        if self.deployment_mode in ("colocated", "homogeneous"):
-            totals = [p.total_ranks for p in self.module_parallelisms.values()]
-            return max(totals) if totals else 0
+        """Compute total world size from module rank ranges."""
         ranges = [p.rank_offset + p.total_ranks for p in self.module_parallelisms.values()]
         return max(ranges) if ranges else 0
 
-    def _validate_colocated(self) -> None:
-        totals = []
-        for parallelism in self.module_parallelisms.values():
-            if parallelism.rank_offset != 0:
-                raise ValueError("rank_offset must be 0 for colocated deployment.")
-            totals.append(parallelism.total_ranks)
-        if totals and len(set(totals)) > 1:
-            raise ValueError("All modules must have the same total_ranks in colocated deployment.")
-
-    def _validate_homogeneous(self) -> None:
-        first = None
-        for parallelism in self.module_parallelisms.values():
-            if parallelism.rank_offset != 0:
-                raise ValueError("rank_offset must be 0 for homogeneous deployment.")
-            values = (
-                parallelism.tensor_model_parallel_size,
-                parallelism.pipeline_model_parallel_size,
-                parallelism.context_parallel_size,
-                parallelism.expert_tensor_parallel_size,
-                parallelism.data_parallel_size,
-            )
-            if first is None:
-                first = values
-            elif values != first:
-                raise ValueError("All modules must have identical parallelism in homogeneous deployment.")
-
     def _validate_heterogeneous(self) -> None:
-        # "heterogeneous" describes rank placement across distinct modules.
+        """Validate heterogeneous deployment: no overlapping rank ranges."""
         ranges = []
         for parallelism in self.module_parallelisms.values():
             if parallelism.data_parallel_size is None:
@@ -121,22 +96,15 @@ class MimoParallelismConfig:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
 
     def finalize(self, world_size: Optional[int]) -> None:
+        """Finalize parallelism config: compute data_parallel_size and validate."""
         if self.llm_module_name not in self.module_parallelisms:
             raise ValueError(f"LLM module '{self.llm_module_name}' not in module_parallelisms.")
 
-        if self.deployment_mode in ("colocated", "homogeneous"):
-            for parallelism in self.module_parallelisms.values():
-                parallelism.finalize(world_size)
-        else:
-            for parallelism in self.module_parallelisms.values():
-                parallelism.finalize(None)
+        # In heterogeneous mode, data_parallel_size must be pre-set (not computed from world_size)
+        for parallelism in self.module_parallelisms.values():
+            parallelism.finalize(None)
 
-        if self.deployment_mode == "colocated":
-            self._validate_colocated()
-        elif self.deployment_mode == "homogeneous":
-            self._validate_homogeneous()
-        else:
-            self._validate_heterogeneous()
+        self._validate_heterogeneous()
 
         if world_size and world_size > 1:
             expected = self.total_world_size

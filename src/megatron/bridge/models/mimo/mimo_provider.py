@@ -21,7 +21,7 @@ import torch.distributed as dist
 
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
 from megatron.core.models.mimo import MimoModel
-from megatron.core.models.mimo.config.base_configs import MimoModelConfig, ColocatedCommConfig
+from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -32,7 +32,6 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 from megatron.bridge.models.mimo.mimo_builder import (
     build_hypercomm_grids,
-    build_colocated_comm_config,
     _default_topology,
 )
 
@@ -337,20 +336,11 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 spec = self._inject_pg_collection_into_modality_spec(spec, module_pg)
             modality_specs[module_name] = spec
         
-        # Build colocated comm config if needed
-        colocated_comm_config: Optional[ColocatedCommConfig] = None
-        if (self.mimo_parallelism_config and 
-            self.mimo_parallelism_config.deployment_mode in ("colocated", "homogeneous")):
-            colocated_comm_config = build_colocated_comm_config(
-                self.mimo_parallelism_config, infra.module_to_grid_map
-            )
-        
         # Create MimoModel
         mimo_model_config = MimoModelConfig(
             language_model_spec=language_spec,
             modality_submodules_spec=modality_specs,
             special_token_ids=self.special_token_ids,
-            colocated_comm_config=colocated_comm_config,
         )
         
         mimo_model = MimoModel(mimo_model_config)
