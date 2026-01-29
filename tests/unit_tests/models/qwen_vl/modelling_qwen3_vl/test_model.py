@@ -29,6 +29,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
 from transformers import AutoProcessor, Qwen3VLMoeConfig
@@ -253,6 +254,7 @@ class TestQwen3VLModel:
     def test_model_freeze_api(self, freeze_all, hf_config):
         """Test model freeze API."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
@@ -267,6 +269,7 @@ class TestQwen3VLModel:
             post_process=True,
             add_encoder=True,
             add_decoder=True,
+            pg_collection=pg_collection,
         )
 
         if torch.cuda.is_available():
@@ -284,7 +287,8 @@ class TestQwen3VLModel:
     @pytest.mark.timeout(50)
     def test_shared_embedding_or_output_weight(self, hf_config):
         """Test shared_embedding_or_output_weight method."""
-        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)  # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
@@ -300,6 +304,7 @@ class TestQwen3VLModel:
             post_process=True,
             add_encoder=True,
             add_decoder=True,
+            pg_collection=pg_collection,
         )
 
         weight = model.shared_embedding_or_output_weight()
@@ -324,6 +329,7 @@ class TestQwen3VLModel:
     def test_set_input_tensor(self, hf_config):
         """Test set_input_tensor method."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
@@ -339,6 +345,7 @@ class TestQwen3VLModel:
             post_process=True,
             add_encoder=True,
             add_decoder=True,
+            pg_collection=pg_collection,
         )
 
         if torch.cuda.is_available():

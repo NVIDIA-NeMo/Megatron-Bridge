@@ -580,6 +580,7 @@ def training_log(
             num_layers=layers,
             moe_layer_freq=config.model.moe_layer_freq,
             mtp_num_layers=config.model.mtp_num_layers,
+            pg_collection=pg_collection,
         )
     if config.model.mtp_num_layers is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
