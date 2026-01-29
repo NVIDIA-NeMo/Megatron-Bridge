@@ -56,7 +56,7 @@ def run_pretrain_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
-    shared_base_dir = broadcast_path(tmp_path)
+    shared_base_dir = Path(broadcast_path(tmp_path))
 
     try:
         # Pretrain configs use parameterless API - call without arguments
