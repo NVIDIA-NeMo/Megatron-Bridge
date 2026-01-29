@@ -105,7 +105,7 @@ def pack_batch_sequences(
     position_ids: torch.Tensor,
     pad_token_id: int = 0,
     pad_to_multiple_of: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Pack sequences in a batch by concatenating them and removing padding.
 
@@ -125,8 +125,7 @@ def pack_batch_sequences(
         - packed_attention_mask: None (not used with packing)
         - packed_position_ids: [1, total_len]
         - cu_seqlens: [num_sequences + 1] - cumulative sequence lengths
-        - cu_seqlens_argmin: 0 (dummy)
-        - max_seqlen: int - max sequence length in packed batch
+        - max_seqlen: tensor - max sequence length in packed batch
     """
     batch_size, seq_len = tokens.shape
     device = tokens.device
@@ -159,8 +158,7 @@ def pack_batch_sequences(
             attention_mask,
             position_ids[:1],
             torch.tensor([0, seq_len], dtype=torch.int32, device=device),
-            0,
-            seq_len,
+            torch.tensor(seq_len, dtype=torch.int32, device=device),
         )
 
     # Build cumulative sequence lengths

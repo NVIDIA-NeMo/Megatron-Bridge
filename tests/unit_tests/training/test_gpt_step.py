@@ -115,9 +115,8 @@ class TestGetPackedSeqParams:
         # Verify the result is a PackedSeqParams object
         assert isinstance(result, PackedSeqParams)
 
-        # When there's no -1 padding, argmin returns 0 (index of min value)
-        # So cu_seqlens[:0] returns empty tensor
-        expected_cu_seqlens = torch.empty(0, dtype=torch.int32)  # Empty tensor
+        # When there's no -1 padding, the tensor is returned unchanged
+        expected_cu_seqlens = torch.tensor([0, 7, 14], dtype=torch.int32)
         assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
         assert torch.equal(result.cu_seqlens_kv, expected_cu_seqlens)
 
@@ -180,6 +179,111 @@ class TestGetPackedSeqParams:
         # Verify that q and kv parameters are identical (as expected for this function)
         assert torch.equal(result.cu_seqlens_q, result.cu_seqlens_kv)
         assert torch.equal(result.max_seqlen_q, result.max_seqlen_kv)
+
+    def test_packed_seq_params_with_cu_seqlens_unpadded(self):
+        """Test functionality with cu_seqlens_unpadded for THD CP support."""
+        # Padded cu_seqlens (includes padding for CP divisibility)
+        cu_seqlens_padded = torch.tensor([[0, 8, 16, -1, -1]], dtype=torch.int32)
+        # Unpadded cu_seqlens (actual sequence boundaries)
+        cu_seqlens_unpadded = torch.tensor([[0, 6, 14, -1, -1]], dtype=torch.int32)
+
+        batch = {
+            "cu_seqlens": cu_seqlens_padded,
+            "cu_seqlens_unpadded": cu_seqlens_unpadded,
+            "max_seqlen": torch.tensor([[10]], dtype=torch.int32),
+        }
+
+        result = get_packed_seq_params(batch)
+
+        # cu_seqlens_q and cu_seqlens_kv should use unpadded values
+        expected_unpadded = torch.tensor([0, 6, 14], dtype=torch.int32)
+        assert torch.equal(result.cu_seqlens_q, expected_unpadded)
+        assert torch.equal(result.cu_seqlens_kv, expected_unpadded)
+
+        # cu_seqlens_q_padded and cu_seqlens_kv_padded should use padded values
+        expected_padded = torch.tensor([0, 8, 16], dtype=torch.int32)
+        assert torch.equal(result.cu_seqlens_q_padded, expected_padded)
+        assert torch.equal(result.cu_seqlens_kv_padded, expected_padded)
+
+    def test_packed_seq_params_cu_seqlens_unpadded_with_argmin(self):
+        """Test cu_seqlens_unpadded processing with argmin hint."""
+        batch = {
+            "cu_seqlens": torch.tensor([[0, 4, 8, 12, -1, -1]], dtype=torch.int32),
+            "cu_seqlens_argmin": torch.tensor(4),  # Index where -1 starts
+            "cu_seqlens_unpadded": torch.tensor([[0, 3, 7, 10, -1, -1]], dtype=torch.int32),
+            "cu_seqlens_unpadded_argmin": torch.tensor(4),  # Index where -1 starts
+        }
+
+        result = get_packed_seq_params(batch)
+
+        # Verify unpadded values are used for q/kv
+        expected_unpadded = torch.tensor([0, 3, 7, 10], dtype=torch.int32)
+        assert torch.equal(result.cu_seqlens_q, expected_unpadded)
+        assert torch.equal(result.cu_seqlens_kv, expected_unpadded)
+
+        # Verify padded values are set for _padded fields
+        expected_padded = torch.tensor([0, 4, 8, 12], dtype=torch.int32)
+        assert torch.equal(result.cu_seqlens_q_padded, expected_padded)
+        assert torch.equal(result.cu_seqlens_kv_padded, expected_padded)
+
+    def test_packed_seq_params_without_unpadded_fallback(self):
+        """Test fallback to cu_seqlens when cu_seqlens_unpadded is not provided."""
+        batch = {
+            "cu_seqlens": torch.tensor([[0, 5, 10, 15, -1]], dtype=torch.int32),
+            "max_seqlen": torch.tensor([[8]], dtype=torch.int32),
+        }
+
+        result = get_packed_seq_params(batch)
+
+        expected_cu_seqlens = torch.tensor([0, 5, 10, 15], dtype=torch.int32)
+
+        # Without unpadded, q/kv should use padded values
+        assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
+        assert torch.equal(result.cu_seqlens_kv, expected_cu_seqlens)
+
+        # Padded fields should match q/kv
+        assert torch.equal(result.cu_seqlens_q_padded, expected_cu_seqlens)
+        assert torch.equal(result.cu_seqlens_kv_padded, expected_cu_seqlens)
+
+    def test_packed_seq_params_no_padding_in_cu_seqlens(self):
+        """Test when cu_seqlens has no -1 padding markers."""
+        batch = {
+            "cu_seqlens": torch.tensor([[0, 5, 10]], dtype=torch.int32),  # No -1 padding
+            "max_seqlen": torch.tensor([[7]], dtype=torch.int32),
+        }
+
+        result = get_packed_seq_params(batch)
+
+        # When no -1 present and min != -1, the tensor should remain as-is
+        expected = torch.tensor([0, 5, 10], dtype=torch.int32)
+        assert torch.equal(result.cu_seqlens_q, expected)
+        assert torch.equal(result.cu_seqlens_q_padded, expected)
+
+    def test_packed_seq_params_qkv_format_is_thd(self):
+        """Test that qkv_format is always set to 'thd'."""
+        batch = {
+            "cu_seqlens": torch.tensor([[0, 10, -1]], dtype=torch.int32),
+        }
+
+        result = get_packed_seq_params(batch)
+
+        assert result.qkv_format == "thd"
+
+    def test_packed_seq_params_cu_seqlens_unpadded_no_padding(self):
+        """Test cu_seqlens_unpadded with no padding markers."""
+        batch = {
+            "cu_seqlens": torch.tensor([[0, 6, 12]], dtype=torch.int32),
+            "cu_seqlens_unpadded": torch.tensor([[0, 5, 10]], dtype=torch.int32),  # No -1
+        }
+
+        result = get_packed_seq_params(batch)
+
+        # Unpadded should be used as-is since no -1 and min != -1
+        expected_unpadded = torch.tensor([0, 5, 10], dtype=torch.int32)
+        expected_padded = torch.tensor([0, 6, 12], dtype=torch.int32)
+
+        assert torch.equal(result.cu_seqlens_q, expected_unpadded)
+        assert torch.equal(result.cu_seqlens_q_padded, expected_padded)
 
 
 class TestCreateLossFunction:
