@@ -2573,11 +2573,9 @@ class TestLoggerConfigFinalize:
     def test_finalize_with_mlflow_experiment_and_run_name_succeeds(self):
         """Test finalize succeeds when both mlflow_experiment and mlflow_run_name are set."""
         config = LoggerConfig(mlflow_experiment="my_experiment", mlflow_run_name="my_run")
-        # Should not raise (assuming mlflow is importable)
-        try:
-            config.finalize()
-        except (ModuleNotFoundError, AttributeError):
-            pass
+        # Mock mlflow import to avoid slow actual import
+        with patch("importlib.import_module"):
+            config.finalize()  # Should not raise
 
     def test_finalize_mlflow_not_installed_raises_module_not_found(self):
         """Test finalize raises ModuleNotFoundError when mlflow is configured but not installed."""
@@ -2594,21 +2592,17 @@ class TestLoggerConfigFinalize:
 
         # mlflow_tags without mlflow_experiment should still try to import mlflow
         # but not require mlflow_run_name since experiment is not set
-        try:
-            config.finalize()
-        except (ModuleNotFoundError, AttributeError):
-            # MLflow might not be installed or have import issues in test environment
-            pass
+        # Mock mlflow import to avoid slow actual import
+        with patch("importlib.import_module"):
+            config.finalize()  # Should not raise
 
     def test_finalize_with_mlflow_tracking_uri_only(self):
         """Test finalize with only mlflow_tracking_uri triggers MLFlow validation."""
         config = LoggerConfig(mlflow_tracking_uri="http://localhost:5000")
 
-        try:
-            config.finalize()
-        except (ModuleNotFoundError, AttributeError):
-            # MLflow might not be installed or have import issues in test environment
-            pass
+        # Mock mlflow import to avoid slow actual import
+        with patch("importlib.import_module"):
+            config.finalize()  # Should not raise
 
     def test_finalize_with_all_mlflow_settings(self):
         """Test finalize with all MLFlow settings configured."""
@@ -2619,8 +2613,6 @@ class TestLoggerConfigFinalize:
             mlflow_tags={"env": "test", "version": "1.0"},
         )
 
-        try:
-            config.finalize()
-        except (ModuleNotFoundError, AttributeError):
-            # MLflow might not be installed or have import issues in test environment
-            pass
+        # Mock mlflow import to avoid slow actual import
+        with patch("importlib.import_module"):
+            config.finalize()  # Should not raise
