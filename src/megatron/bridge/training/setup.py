@@ -171,9 +171,6 @@ def setup(
     # Create checkpoint manager for save/load operations.
     checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
 
-    # Initialize process group collection once and pass through
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-
     # Tokenizer
     timers("tokenizer-setup", log_level=0).start(barrier=True)
     tokenizer = build_tokenizer(cfg.tokenizer)
