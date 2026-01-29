@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import math
+
 import logging
 from functools import partial
 from typing import Any, Iterable
@@ -19,14 +19,14 @@ from typing import Any, Iterable
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_thd_batch_on_this_cp_rank
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -98,13 +98,11 @@ def get_batch_from_iterator(
 
 
 def get_batch(
-    data_iterator: Iterable,
-    cfg: ConfigContainer,
-    use_mtp: bool = False,
-    *,
-    is_first_pp_stage: bool,
-    is_last_pp_stage: bool,
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection
 ) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
@@ -118,132 +116,98 @@ def get_batch(
         data_iterator: Input data iterator
         cfg: Configuration container
         use_mtp: Whether Multi-Token Prediction layers are enabled
-        is_first_pp_stage: Whether the current stage is the first stage
-        is_last_pp_stage: Whether the current stage is the last stage
+
     Returns:
-        TODO: add description
+        tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
+        cu_seqlens, cu_seqlens_argmin, max_seqlen, visual_inputs (container of optional modalities)
     """
+    is_first = is_pp_first_stage(pg_collection.pp)
+    is_last = is_pp_last_stage(pg_collection.pp)
+
     # All PP stages load from iterator to get input_ids and visual grid info
     # This allows each stage to compute MRoPE position_ids locally without broadcasting
     batch = get_batch_from_iterator(
         data_iterator,
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
-        is_first_pp_stage=is_first_pp_stage,
-        is_last_pp_stage=is_last_pp_stage,
+        is_first_pp_stage=is_first,
+        is_last_pp_stage=is_last,
     )
 
-    if "visual_inputs" in batch:
-        # convert visual_inputs to multi_modal_inputs which is a dict contains "pixel_values" and "image_grid_thw"
-        # TODO(jinliangl): add video support
-        multi_modal_inputs = batch.get("visual_inputs").normalized_for_model()
-    else:
-        multi_modal_inputs = {}
+    # Slice only text tensors for context parallelism
+    cp_keys = ("tokens", "input_ids", "labels", "loss_mask", "attention_mask", "position_ids")
+    cp_slice = {k: batch.get(k) for k in cp_keys if k in batch}
+    cp_slice = get_batch_on_this_cp_rank(cp_slice)
+    for k, v in cp_slice.items():
+        batch[k] = v
 
-    # return naive batch and don't do any padding or cp slicing
+    # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
+    if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+        seq_len = cfg.model.seq_length
+
+        tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+        tokens_or_input = pad_or_truncate_2d_to_len(tokens_or_input, seq_len, seq_len, pad_value=0)
+        if batch.get("tokens") is not None:
+            batch["tokens"] = tokens_or_input  # type: ignore[assignment]
+        else:
+            batch["input_ids"] = tokens_or_input  # type: ignore[assignment]
+        batch["labels"] = pad_or_truncate_2d_to_len(batch.get("labels"), seq_len, seq_len, pad_value=-100)  # type: ignore[assignment]
+        batch["loss_mask"] = pad_or_truncate_2d_to_len(batch.get("loss_mask"), seq_len, seq_len, pad_value=0)  # type: ignore[assignment]
+        batch["position_ids"] = pad_or_truncate_pos_to_len(batch.get("position_ids"), seq_len, seq_len)  # type: ignore[assignment]
+        if batch.get("attention_mask") is not None:
+            batch["attention_mask"] = pad_or_truncate_attn_to_len(batch.get("attention_mask"), seq_len, seq_len)  # type: ignore[assignment]
+    else:
+        # No PP: pad sequence length to nearest multiple of 128 for efficiency (capped at model seq_length)
+        seq_cap = cfg.model.seq_length
+
+        def _ceil_to_mult(n: int, mult: int) -> int:
+            return ((n + mult - 1) // mult) * mult
+
+        tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+        if tokens_or_input is not None:
+            cur_len = tokens_or_input.size(1)
+            target_len = min(seq_cap, _ceil_to_mult(cur_len, 128))
+
+            # tokens/input_ids
+            padded_tokens = pad_or_truncate_2d_to_len(tokens_or_input, target_len, seq_cap, pad_value=0)
+            if batch.get("tokens") is not None:
+                batch["tokens"] = padded_tokens  # type: ignore[assignment]
+            else:
+                batch["input_ids"] = padded_tokens  # type: ignore[assignment]
+
+            # labels and loss mask
+            batch["labels"] = pad_or_truncate_2d_to_len(batch.get("labels"), target_len, seq_cap, pad_value=-100)  # type: ignore[assignment]
+            batch["loss_mask"] = pad_or_truncate_2d_to_len(batch.get("loss_mask"), target_len, seq_cap, pad_value=0)  # type: ignore[assignment]
+
+            # position_ids: extend with increasing positions
+            pos = batch.get("position_ids")
+            pos = pad_or_truncate_pos_to_len(pos, target_len, seq_cap)
+            if pos is not None:
+                batch["position_ids"] = pos  # type: ignore[assignment]
+
+            # attention_mask if present
+            attn = batch.get("attention_mask")
+        if attn is not None:
+            attn = pad_or_truncate_attn_to_len(attn, target_len, seq_cap)
+            batch["attention_mask"] = attn  # type: ignore[assignment]
+
+    visual_inputs = batch.get("visual_inputs")
+
     return (
-        batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids"),
+        (batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")),
         batch.get("labels"),
         batch.get("loss_mask"),
         batch.get("attention_mask"),
         batch.get("position_ids"),
-        multi_modal_inputs,
+        batch.get("cu_seqlens"),
+        batch.get("cu_seqlens_argmin"),
+        batch.get("max_seqlen"),
+        visual_inputs,
     )
-
-
-def pack_or_pad_batch_sequences(
-    tokens: torch.Tensor,
-    labels: torch.Tensor,
-    loss_mask: torch.Tensor,
-    attention_mask: torch.Tensor,
-    position_ids: torch.Tensor,
-    this_pg_collection,
-    use_fp8_padding: bool = False,
-    data_format: str = "bshd",
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
-    """
-    Pad or truncate the batch sequences to the target length, and build packed sequences.
-    If is_qwen3vl, return bshd tokens for be compatible with qwen3vl model.
-    Otherwise, return thd tokens and packed sequences.
-    """
-
-    batch_size, cur_len = tokens.shape
-    device = tokens.device
-
-    tp_size = this_pg_collection.tp.size()
-    cp_size = this_pg_collection.cp.size()
-    divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
-    divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
-
-    if data_format == "thd":
-        # build thd sequences with tiny padding
-        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-        seqlens_in_batch_padded = seqlens_in_batch + (divisible_by - seqlens_in_batch % divisible_by) % divisible_by
-        cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
-
-        seqlens_in_batch_cpu = seqlens_in_batch.tolist()
-        cu_seqlens_padded_cpu = cu_seqlens_padded.tolist()
-        total_len = cu_seqlens_padded_cpu[-1]
-
-        # Concatenate sequences (remove padding)
-        packed_tokens = torch.zeros(1, total_len, dtype=tokens.dtype, device=device)
-        packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device)
-        packed_loss_mask = torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device)
-        packed_position_ids = torch.zeros(1, total_len, dtype=position_ids.dtype, device=device)
-
-        for i, seqlen in enumerate(seqlens_in_batch_cpu):
-            start_idx = cu_seqlens_padded_cpu[i]
-            packed_tokens[start_idx : start_idx + seqlen] = tokens[i, :seqlen]
-            packed_labels[start_idx : start_idx + seqlen] = labels[i, :seqlen]
-            packed_loss_mask[start_idx : start_idx + seqlen] = loss_mask[i, :seqlen]
-            packed_position_ids[start_idx : start_idx + seqlen] = position_ids[i, :seqlen]
-
-        tokens = packed_tokens
-        labels = packed_labels
-        loss_mask = packed_loss_mask
-        position_ids = packed_position_ids
-        # attention mask is not used with packed sequences (handled by cu_seqlens)
-        attention_mask = None
-    elif data_format == "bshd":
-        # build bshd sequences with tiny padding to be compatible with qwen3vl model
-        target_len = math.ceil(cur_len / divisible_by) * divisible_by
-        tokens = pad_or_truncate_2d_to_len(tokens, target_len=target_len, max_cap=target_len, pad_value=0)
-        labels = pad_or_truncate_2d_to_len(labels, target_len=target_len, max_cap=target_len, pad_value=-100)
-        loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
-        attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len=target_len, max_cap=target_len)
-        position_ids = pad_or_truncate_pos_to_len(position_ids, target_len=target_len, max_cap=target_len)
-
-        seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
-        seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
-        cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
-        cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-        max_seqlen_in_batch = seqlens_in_batch.max().item()
-        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
-    else:
-        raise ValueError(f"Invalid data format: {data_format}")
-
-    packed_seq_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=cu_seqlens_padded,
-        max_seqlen_q=max_seqlen_in_batch_padded,
-        cu_seqlens_kv=cu_seqlens_padded,
-        max_seqlen_kv=max_seqlen_in_batch_padded,
-        cu_seqlens_q_padded=cu_seqlens_padded,
-        cu_seqlens_kv_padded=cu_seqlens_padded,
-    )
-
-    return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
 
 
 def forward_step(
-    state: GlobalState,
-    data_iterator: Iterable,
-    model: GPTModel,
-    return_schedule_plan: bool = False,
+    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
 ) -> tuple[torch.Tensor, partial]:
     """Forward training step.
 
@@ -259,12 +223,6 @@ def forward_step(
     timers = state.timers
     straggler_timer = state.straggler_timer
 
-    this_pg_collection = get_pg_collection(model)
-    is_first = is_pp_first_stage(this_pg_collection.pp)
-    is_last = is_pp_last_stage(this_pg_collection.pp)
-
-    is_qwen3vl = "Qwen3-VL" in getattr(state.cfg.model, "hf_model_id", "")
-
     config = get_model_config(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
 
@@ -276,74 +234,31 @@ def forward_step(
             loss_mask,
             attention_mask,
             position_ids,
-            multi_modal_inputs,
-        ) = get_batch(data_iterator, state.cfg, use_mtp, is_first_pp_stage=is_first, is_last_pp_stage=is_last)
+            cu_seqlens,
+            cu_seqlens_argmin,
+            max_seqlen,
+            visual_inputs,
+        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
     timers("batch-generator").stop()
 
-    # To be compatible with qwen3vl, we move the sequence padding and packing to forward_step function.
-    # Qwen3VL model need the original input and do cp and sp split in model.forward.
-    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
-    if pack_sequences_in_batch:
-        data_format = "thd"
-        if is_qwen3vl:
-            data_format = "bshd"
-    else:
-        data_format = "bshd"
-
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
-        tokens,
-        labels,
-        loss_mask,
-        attention_mask,
-        position_ids,
-        this_pg_collection,
-        use_fp8_padding=True,
-        data_format=data_format,
-    )
     forward_args = {
         "input_ids": tokens,
-        "labels": labels,
-        "loss_mask": loss_mask,
-        "attention_mask": attention_mask,
         "position_ids": position_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
     }
 
-    if data_format == "thd":
-        forward_args, packed_seq_params = get_thd_batch_on_this_cp_rank(
-            forward_args,
-            packed_seq_params.cu_seqlens,
-            packed_seq_params.cu_seqlens_padded,
-            packed_seq_params.max_seqlen,
-            cp_size=this_pg_collection.cp.size(),
-            cp_rank=this_pg_collection.cp.rank(),
-        )
-        forward_args["packed_seq_params"] = packed_seq_params
-    elif data_format == "bshd":
-        original_tokens = tokens.clone()
-        forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
-        forward_args["packed_seq_params"] = None
-        if is_qwen3vl and pack_sequences_in_batch:
-            forward_args["labels"] = forward_args["labels"].reshape(1, -1)
-            attention_mask = torch.ones(original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool)
-            forward_args["attention_mask"] = attention_mask
-            # qwen3vl need the original input_ids and position_ids
-            forward_args["input_ids"] = original_tokens
-            forward_args["position_ids"] = None
-            # use split attention mask for calculate loss
-            loss_mask = forward_args["loss_mask"]
-            forward_args["packed_seq_params"] = packed_seq_params
-    else:
-        raise ValueError(f"Invalid data format: {data_format}")
+    if visual_inputs is not None:
+        forward_args.update(visual_inputs.normalized_for_model())
 
-    # follow the design of verl, we put the multi-modal inputs in the forward args
-    if "pixel_values" in multi_modal_inputs:
-        forward_args["pixel_values"] = multi_modal_inputs["pixel_values"]
-    if "image_grid_thw" in multi_modal_inputs:
-        forward_args["image_grid_thw"] = multi_modal_inputs["image_grid_thw"]
-    if "pixel_values_videos" in multi_modal_inputs:
-        forward_args["pixel_values_videos"] = multi_modal_inputs["pixel_values_videos"]
-    if "video_grid_thw" in multi_modal_inputs:
-        forward_args["video_grid_thw"] = multi_modal_inputs["video_grid_thw"]
+    # Add packed sequence support
+    if cu_seqlens is not None:
+        packed_seq_params = {
+            "cu_seqlens": cu_seqlens,
+            "cu_seqlens_argmin": cu_seqlens_argmin,
+            "max_seqlen": max_seqlen,
+        }
+        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

@@ -103,7 +103,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.training.vlm_step import forward_step
+from megatron.bridge.training.qwen3vl_step import forward_step
 from megatron.bridge.utils.common_utils import get_rank_safe
 from functools import partial
 
