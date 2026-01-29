@@ -19,7 +19,6 @@ from typing import Optional, Union
 import torch
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.utils import get_tensor_model_parallel_group_if_none
 from torch import nn
 from megatron.core import mpu
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -110,7 +109,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
         self.input_size = config.hidden_size
         if self.use_postshuffle_norm:
             self.input_size = self.hidden_size
-        tp_group = get_tensor_model_parallel_group_if_none(tp_group, is_expert=False)
+        self.tp_group = tp_group
 
         self.patch_norm = build_module(
             submodules.patch_norm,

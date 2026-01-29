@@ -6,6 +6,7 @@ from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
@@ -38,12 +39,15 @@ class Qwen3VLVisionModel(VisionModule):
         patch_merger_spec: ModuleSpec,
         pre_process: bool = True,
         post_process: bool = True,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(config=transformer_config)
         self.spatial_merge_size = transformer_config.spatial_merge_size
         self.patch_size = transformer_config.patch_size
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
+        self.pg_collection = pg_collection
+        self.tp_group = self.pg_collection.tp
 
         self.patch_embed = Qwen3VLVisionPatchEmbed(transformer_config)
         self.pos_embed = nn.Embedding(transformer_config.num_position_embeddings, transformer_config.hidden_size)
@@ -55,7 +59,6 @@ class Qwen3VLVisionModel(VisionModule):
         self.model_type = ModelType.encoder_or_decoder
         self.pre_process = pre_process
         self.post_process = post_process
-
         # Transformer layers.
         self.decoder = Qwen3VLVisionTransformerBlock(
             config=transformer_config,
@@ -64,6 +67,7 @@ class Qwen3VLVisionModel(VisionModule):
             post_process=self.post_process,
             post_layer_norm=False,
             patch_merger_spec=patch_merger_spec,
+            pg_collection=self.pg_collection,
         )
 
         self.merger = None
@@ -72,6 +76,7 @@ class Qwen3VLVisionModel(VisionModule):
                 transformer_config,
                 patch_merger_spec,
                 use_postshuffle_norm=False,
+                tp_group=self.tp_group,
             )
 
         self.input_tensor = None

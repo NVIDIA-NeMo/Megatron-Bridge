@@ -130,6 +130,7 @@ class Qwen3VLModel(MegatronModule):
                     vision_patch_merger_spec,
                     pre_process=True,
                     post_process=True,
+                    pg_collection=pg_collection,
                 )
                 print(f"rank {torch.distributed.get_rank()} use megatron vision model")
             else:
