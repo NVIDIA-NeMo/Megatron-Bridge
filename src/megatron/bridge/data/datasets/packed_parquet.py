@@ -73,7 +73,7 @@ def is_packed_parquet_spec(spec: str | Path) -> bool:
     This predicate reflects what the dataset loader supports in packed mode:
     - Single .parquet/.idx.parquet/.idx.pq files
     - Glob patterns ending in .parquet/.idx.parquet/.idx.pq
-    - Directories (in packed mode, resolution validates contents)
+    - Directories containing parquet files
 
     Args:
         spec: A path specification (file, directory, or glob pattern).
@@ -92,7 +92,15 @@ def is_packed_parquet_spec(spec: str | Path) -> bool:
         # Extract the pattern part after the last glob character
         return ".parquet" in spec_str or ".pq" in spec_str
 
-    # Check if it's a directory (could contain packed parquet files)
+    # For directories, try to resolve to parquet files
+    # This is more robust than is_dir() on distributed filesystems (Lustre, S3, etc.)
+    try:
+        resolved = _resolve_parquet_paths(str(spec))
+        return len(resolved) > 0
+    except ValueError:
+        pass
+
+    # Fallback: check if it's a directory using filesystem abstraction
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
         msc_path = msc.Path(str(spec))
