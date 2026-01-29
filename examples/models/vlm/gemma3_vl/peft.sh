@@ -29,6 +29,7 @@ LR=0.0002
 MIN_LR=0.00002
 LR_WARMUP_ITERS=10
 LOG_INTERVAL=1
+LORA_TARGET_MODULES="linear_qkv,linear_proj,linear_fc1,linear_fc2"
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
@@ -58,5 +59,6 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
-        model.pipeline_model_parallel_size=$PP
+        model.pipeline_model_parallel_size=$PP \
+        "peft.target_modules=[${LORA_TARGET_MODULES}]"
 done
