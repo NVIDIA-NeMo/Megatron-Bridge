@@ -241,9 +241,10 @@ class TestGetPackedSeqParams:
         assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
         assert torch.equal(result.cu_seqlens_kv, expected_cu_seqlens)
 
-        # Padded fields should match q/kv
-        assert torch.equal(result.cu_seqlens_q_padded, expected_cu_seqlens)
-        assert torch.equal(result.cu_seqlens_kv_padded, expected_cu_seqlens)
+        # Padded fields should be None when cu_seqlens_unpadded is not provided
+        # (to avoid slower TE kernel paths)
+        assert result.cu_seqlens_q_padded is None
+        assert result.cu_seqlens_kv_padded is None
 
     def test_packed_seq_params_no_padding_in_cu_seqlens(self):
         """Test when cu_seqlens has no -1 padding markers."""
@@ -257,7 +258,8 @@ class TestGetPackedSeqParams:
         # When no -1 present and min != -1, the tensor should remain as-is
         expected = torch.tensor([0, 5, 10], dtype=torch.int32)
         assert torch.equal(result.cu_seqlens_q, expected)
-        assert torch.equal(result.cu_seqlens_q_padded, expected)
+        # Padded fields are None when cu_seqlens_unpadded is not provided
+        assert result.cu_seqlens_q_padded is None
 
     def test_packed_seq_params_qkv_format_is_thd(self):
         """Test that qkv_format is always set to 'thd'."""
