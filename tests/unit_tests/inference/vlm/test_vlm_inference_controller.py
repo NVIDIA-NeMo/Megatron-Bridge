@@ -109,7 +109,7 @@ class TestQwenVLTextGenerationController:
             controller.processor = mock_processor
             controller.inference_wrapped_model = MagicMock()
 
-            # Set up the QwenVLTokenizer which is a nested class
+            # Set up the QwenVLTokenizer matching the actual implementation
             class QwenVLTokenizer(TokenizerWrapper):
                 def detokenize(self, tokens):
                     new_tokens = []
@@ -117,7 +117,7 @@ class TestQwenVLTextGenerationController:
                         if token == 151652:
                             new_tokens.append(token)
                             new_tokens.append(151655)
-                        else:
+                        elif token != 151655:
                             new_tokens.append(token)
                     return self._tokenizer.decode(new_tokens, skip_special_tokens=False)
 
@@ -149,8 +149,8 @@ class TestQwenVLTextGenerationController:
             assert tokens == [1, 2, 3]
             assert image_dict is None
 
-    def test_tokenizer_detokenize(self, controller, mock_tokenizer):
-        # Test special token replacement
+    def test_tokenizer_detokenize_with_special_token_151652(self, controller, mock_tokenizer):
+        """Test that token 151652 is followed by 151655 during detokenization."""
         tokens = [151652, 1]
         controller.tokenizer.detokenize(tokens)
 
@@ -158,3 +158,76 @@ class TestQwenVLTextGenerationController:
         mock_tokenizer.decode.assert_called()
         call_args = mock_tokenizer.decode.call_args[0][0]
         assert call_args == [151652, 151655, 1]
+
+    def test_tokenizer_detokenize_filters_out_151655(self, controller, mock_tokenizer):
+        """Test that standalone token 151655 is filtered out during detokenization."""
+        tokens = [1, 151655, 2, 3]
+        controller.tokenizer.detokenize(tokens)
+
+        # 151655 should be filtered out when it appears standalone
+        mock_tokenizer.decode.assert_called()
+        call_args = mock_tokenizer.decode.call_args[0][0]
+        assert call_args == [1, 2, 3]
+
+    def test_tokenizer_detokenize_regular_tokens(self, controller, mock_tokenizer):
+        """Test that regular tokens pass through unchanged."""
+        tokens = [1, 2, 3, 100, 200]
+        controller.tokenizer.detokenize(tokens)
+
+        mock_tokenizer.decode.assert_called()
+        call_args = mock_tokenizer.decode.call_args[0][0]
+        assert call_args == [1, 2, 3, 100, 200]
+
+    def test_tokenizer_detokenize_complex_sequence(self, controller, mock_tokenizer):
+        """Test detokenization with a complex sequence containing multiple special tokens."""
+        # Sequence: regular, 151652 (should add 151655), 151655 (should be filtered), regular
+        tokens = [10, 151652, 151655, 20]
+        controller.tokenizer.detokenize(tokens)
+
+        mock_tokenizer.decode.assert_called()
+        call_args = mock_tokenizer.decode.call_args[0][0]
+        # 10 -> 10
+        # 151652 -> 151652, 151655
+        # 151655 -> filtered out
+        # 20 -> 20
+        assert call_args == [10, 151652, 151655, 20]
+
+    def test_init_creates_qwen_tokenizer(self, mock_tokenizer, mock_image_processor):
+        """Test that __init__ properly creates the QwenVLTokenizer with correct behavior.
+
+        This test exercises lines 94-110 of vlm_inference_controller.py by calling the
+        actual QwenVLTextGenerationController.__init__ while mocking only the parent class.
+        """
+        mock_processor = MagicMock()
+        mock_inference_model = MagicMock()
+
+        # Patch the direct parent's __init__ to avoid complex initialization chain
+        with patch.object(VLMTextGenerationController, "__init__", return_value=None):
+            controller = QwenVLTextGenerationController(
+                mock_inference_model, mock_tokenizer, mock_image_processor, mock_processor
+            )
+
+            # Verify the QwenVLTokenizer was created and assigned
+            assert controller.tokenizer is not None
+            assert controller.tokenizer._tokenizer == mock_tokenizer
+            assert controller.processor == mock_processor
+
+            # Verify the tokenizer is the custom QwenVLTokenizer (not the base TokenizerWrapper)
+            # by checking that its detokenize method has the special token handling
+
+            # Test 1: Token 151652 should have 151655 appended
+            controller.tokenizer.detokenize([151652])
+            call_args = mock_tokenizer.decode.call_args[0][0]
+            assert call_args == [151652, 151655], "Token 151652 should be followed by 151655"
+
+            # Test 2: Token 151655 alone should be filtered out
+            mock_tokenizer.decode.reset_mock()
+            controller.tokenizer.detokenize([151655])
+            call_args = mock_tokenizer.decode.call_args[0][0]
+            assert call_args == [], "Standalone 151655 should be filtered out"
+
+            # Test 3: Regular tokens should pass through unchanged
+            mock_tokenizer.decode.reset_mock()
+            controller.tokenizer.detokenize([1, 2, 3])
+            call_args = mock_tokenizer.decode.call_args[0][0]
+            assert call_args == [1, 2, 3], "Regular tokens should pass through"
