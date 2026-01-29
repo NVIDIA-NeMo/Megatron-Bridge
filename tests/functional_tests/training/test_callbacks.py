@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from tests.functional_tests.utils import initialize_distributed
 
 
 class TrackingCallback(Callback):
@@ -142,6 +143,7 @@ class TestCallbacksEndToEnd:
         4. Context field availability at each event
         5. user_state persistence across callback invocations
         """
+        initialize_distributed()
 
         # Training configuration
         # eval_interval doesn't evenly divide train_iters to avoid eval at last step
