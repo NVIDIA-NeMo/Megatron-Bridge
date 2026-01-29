@@ -77,6 +77,11 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             vp_stage=vp_stage,
             pg_collection=pg_collection,
         )
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+
         self.deepstack_visual_indexes = config.deepstack_visual_indexes
         self.deepstack_merger_list = nn.ModuleList(
             [
@@ -390,7 +395,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         layer_prefix = f"{prefix}layers."
         num_layers = self.config.num_layers
         for layer in self.layers:
-            offset = get_transformer_layer_offset(self.config, self.vp_stage)
+            offset = get_transformer_layer_offset(self.config, self.vp_stage, pp_rank=self.pp_group.rank())
 
             global_layer_offset = layer.layer_number - 1  # self.layer_number starts at 1
             state_dict_prefix = f"{layer_prefix}{global_layer_offset - offset}."  # module list index in TransformerBlock # pylint: disable=line-too-long
