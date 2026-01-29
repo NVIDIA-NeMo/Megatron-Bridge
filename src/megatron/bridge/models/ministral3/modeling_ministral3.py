@@ -31,7 +31,10 @@ from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+from megatron.bridge.utils.common_utils import (
+    hook_hf_module_setattr_for_tp_grad_sync,
+    slice_batch_for_context_parallel,
+)
 
 
 if TYPE_CHECKING:
@@ -242,6 +245,18 @@ class Ministral3Model(MegatronModule):
             # Transpose back to Megatron format [seq_len, batch, hidden]
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
+        # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
+        # This must happen AFTER vision-text merge so image token positions are correct
+        inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            loss_mask=loss_mask,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=packed_seq_params,
+            pg_collection=self.config._pg_collection,
+        )
+
         # Forward through Megatron language model
         outputs = self.language_model.forward(
             input_ids=None,
@@ -253,7 +268,8 @@ class Ministral3Model(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
         )
-        return outputs
+        # Return both outputs and the CP-sliced loss_mask for consistent loss computation
+        return (outputs, loss_mask)
 
     def freeze(
         self,

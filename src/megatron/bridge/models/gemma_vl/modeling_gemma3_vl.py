@@ -23,12 +23,14 @@ from megatron.core.tensor_parallel.layers import ColumnParallelLinear
 from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import get_batch_on_this_cp_rank
 from torch import Tensor
 from transformers import AutoModel, Gemma3Model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+from megatron.bridge.utils.common_utils import (
+    hook_hf_module_setattr_for_tp_grad_sync,
+    slice_batch_for_context_parallel,
+)
 from megatron.bridge.utils.import_utils import safe_import_from
 
 
@@ -161,58 +163,15 @@ class Gemma3VLModel(MegatronModule):
 
         # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
         # This must happen AFTER vision-text merge so image token positions are correct
-        cp_size = self.config._pg_collection.cp.size()
-        if cp_size > 1:
-            cp_rank = self.config._pg_collection.cp.rank()
-
-            # (T, B, D) -> (B, T, D) for slicing
-            if inputs_embeds is not None:
-                inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
-
-            if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
-                import transformer_engine_torch as tex
-
-                cu_seqlens = packed_seq_params.cu_seqlens_q
-                cu_seqlens_padded = (
-                    packed_seq_params.cu_seqlens_q_padded
-                    if packed_seq_params.cu_seqlens_q_padded is not None
-                    else cu_seqlens
-                )
-                seq_len = inputs_embeds.size(1)
-
-                index = tex.thd_get_partitioned_indices(cu_seqlens_padded, seq_len, cp_size, cp_rank)
-
-                # Slice all tensors using THD indices
-                if inputs_embeds is not None:
-                    inputs_embeds = inputs_embeds.index_select(1, index)
-                if labels is not None:
-                    labels = labels.index_select(1, index)
-                if loss_mask is not None:
-                    loss_mask = loss_mask.index_select(1, index)
-                if position_ids is not None:
-                    position_ids = position_ids.index_select(1, index)
-            else:
-                cp_group = self.config._pg_collection.cp
-                cp_batch = get_batch_on_this_cp_rank(
-                    {
-                        "decoder_input": inputs_embeds,
-                        "labels": labels,
-                        "loss_mask": loss_mask,
-                        "position_ids": position_ids,
-                        "attention_mask": attention_mask,
-                    },
-                    cp_group=cp_group,
-                )
-
-                inputs_embeds = cp_batch.get("decoder_input")
-                labels = cp_batch.get("labels")
-                loss_mask = cp_batch.get("loss_mask")
-                position_ids = cp_batch.get("position_ids")
-                attention_mask = cp_batch.get("attention_mask")
-
-            # Transpose back to (T, B, D)
-            if inputs_embeds is not None:
-                inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
+        inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            loss_mask=loss_mask,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=packed_seq_params,
+            pg_collection=self.config._pg_collection,
+        )
 
         outputs = self.language_model.forward(
             input_ids=None,
