@@ -271,3 +271,97 @@ def resolve_path(path: str) -> Path:
     """Resolve a path to an absolute path."""
 
     return Path(path).expanduser().absolute().resolve()
+
+
+def slice_batch_for_context_parallel(
+    inputs_embeds: torch.Tensor,
+    labels: torch.Tensor,
+    loss_mask: torch.Tensor,
+    position_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    packed_seq_params,
+    pg_collection,
+):
+    """Slice batch tensors for Context Parallelism (CP) in VLM models.
+
+    This function handles CP slicing AFTER vision-text embedding merge, ensuring
+    image token positions are correctly preserved. It supports both:
+    - THD format (packed sequences): Uses TransformerEngine's thd_get_partitioned_indices
+    - BSHD format: Uses Megatron's get_batch_on_this_cp_rank with zigzag pattern
+
+    Args:
+        inputs_embeds: Input embeddings tensor in (T, B, D) format.
+        labels: Labels tensor.
+        loss_mask: Loss mask tensor.
+        position_ids: Position IDs tensor.
+        attention_mask: Attention mask tensor.
+        packed_seq_params: PackedSeqParams for THD format, or None for BSHD.
+        pg_collection: ProcessGroupCollection containing CP group info.
+
+    Returns:
+        Tuple of (inputs_embeds, labels, loss_mask, position_ids, attention_mask)
+        with all tensors sliced for this CP rank. inputs_embeds remains in (T, B, D) format.
+    """
+    from megatron.core.utils import get_batch_on_this_cp_rank
+
+    cp_size = pg_collection.cp.size()
+    if cp_size <= 1:
+        return inputs_embeds, labels, loss_mask, position_ids, attention_mask
+
+    cp_rank = pg_collection.cp.rank()
+
+    # (T, B, D) -> (B, T, D) for slicing
+    if inputs_embeds is not None:
+        inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
+
+    # For THD (packed) format, use TE's thd_get_partitioned_indices
+    # This properly slices WITHIN each packed sequence, not across them
+    if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+        import transformer_engine_torch as tex
+
+        if inputs_embeds is None:
+            raise ValueError("inputs_embeds is required for THD CP slicing")
+
+        cu_seqlens = packed_seq_params.cu_seqlens_q
+        cu_seqlens_padded = (
+            packed_seq_params.cu_seqlens_q_padded if packed_seq_params.cu_seqlens_q_padded is not None else cu_seqlens
+        )
+        seq_len = inputs_embeds.size(1)
+
+        index = tex.thd_get_partitioned_indices(cu_seqlens_padded, seq_len, cp_size, cp_rank)
+
+        # Slice all tensors using THD indices
+        if inputs_embeds is not None:
+            inputs_embeds = inputs_embeds.index_select(1, index)
+        if labels is not None:
+            labels = labels.index_select(1, index)
+        if loss_mask is not None:
+            loss_mask = loss_mask.index_select(1, index)
+        if position_ids is not None:
+            position_ids = position_ids.index_select(1, index)
+        # Note: attention_mask and packed_seq_params stay unchanged for ring attention
+    else:
+        # For BSHD format, use standard zigzag slicing
+        cp_group = pg_collection.cp
+        cp_batch = get_batch_on_this_cp_rank(
+            {
+                "decoder_input": inputs_embeds,
+                "labels": labels,
+                "loss_mask": loss_mask,
+                "position_ids": position_ids,
+                "attention_mask": attention_mask,
+            },
+            cp_group=cp_group,
+        )
+
+        inputs_embeds = cp_batch.get("decoder_input")
+        labels = cp_batch.get("labels")
+        loss_mask = cp_batch.get("loss_mask")
+        position_ids = cp_batch.get("position_ids")
+        attention_mask = cp_batch.get("attention_mask")
+
+    # Transpose back to (T, B, D)
+    if inputs_embeds is not None:
+        inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
+
+    return inputs_embeds, labels, loss_mask, position_ids, attention_mask

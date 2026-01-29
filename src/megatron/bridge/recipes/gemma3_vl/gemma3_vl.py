@@ -234,6 +234,8 @@ def _gemma3_vl_common(
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
+    if model_cfg.context_parallel_size > 1:
+        model_cfg.cp_comm_type = "a2a"
 
     # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
     effective_lr = finetune_lr if finetune_lr is not None else lr
