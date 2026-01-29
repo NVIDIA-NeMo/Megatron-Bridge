@@ -36,3 +36,21 @@ def test_mimo_heterogeneous_rank_offset_overlap():
     )
     with pytest.raises(ValueError, match="overlap"):
         mimo_parallelism_config.finalize(world_size=None)
+
+
+def test_mimo_heterogeneous_valid_contiguous():
+    """Test that contiguous rank allocation works correctly."""
+    module_parallelisms = {
+        "encoder": ModuleParallelismConfig(
+            tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0
+        ),
+        "llm": ModuleParallelismConfig(
+            tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2
+        ),
+    }
+    mimo_parallelism_config = MimoParallelismConfig(
+        module_parallelisms=module_parallelisms,
+    )
+    # No gaps, no overlap - should pass
+    mimo_parallelism_config.finalize(world_size=None)
+    assert mimo_parallelism_config.total_world_size == 6

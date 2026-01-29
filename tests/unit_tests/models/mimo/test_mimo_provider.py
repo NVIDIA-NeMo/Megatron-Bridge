@@ -176,19 +176,23 @@ class TestMimoModelProvider:
         assert "llm" in infra.pg_collections
         assert "llm" in infra.participating_modules
     
+    @patch('torch.distributed.new_group')
+    @patch('torch.distributed.get_process_group_ranks')
     @patch('torch.distributed.get_rank')
     @patch('megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids')
     @patch('megatron.bridge.models.mimo.mimo_provider._default_topology')
     def test_build_infra_is_idempotent(
-        self, mock_topology, mock_build_grids, mock_get_rank
+        self, mock_topology, mock_build_grids, mock_get_rank, mock_get_pg_ranks, mock_new_group
     ):
         """Test build_infra() can be called multiple times."""
         mock_get_rank.return_value = 0
+        mock_get_pg_ranks.return_value = [0, 1]
+        mock_new_group.return_value = MagicMock()
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         
         mimo_parallelism_config = MimoParallelismConfig(
             module_parallelisms={
-                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=1, rank_offset=0),
             },
         )
         
