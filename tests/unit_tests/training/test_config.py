@@ -1206,6 +1206,102 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @patch("megatron.core.utils.is_te_min_version")
+    def test_fine_grained_activation_offloading_requires_transformer_engine(self, mock_is_te_min_version, monkeypatch):
+        """Test that fine_grained_activation_offloading requires transformer_engine implementation."""
+        mock_is_te_min_version.return_value = False  # Pretend TE < 2.10.0
+
+        gpt_model_cfg = create_test_gpt_config(
+            fine_grained_activation_offloading=True,
+            offload_modules=["attn_norm"],  # Required when fine_grained_activation_offloading=True
+            transformer_impl="local",  # Using local instead of transformer_engine
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            with pytest.raises(
+                ValueError,
+                match="Fine-grained activation offloading is only supported with transformer_engine implementation",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.core.utils.is_te_min_version")
+    def test_fine_grained_activation_offloading_with_transformer_engine_passes(
+        self, mock_is_te_min_version, monkeypatch
+    ):
+        """Test that fine_grained_activation_offloading passes with transformer_engine implementation."""
+        mock_is_te_min_version.return_value = False  # Pretend TE < 2.10.0 to skip env var check
+
+        gpt_model_cfg = create_test_gpt_config(
+            fine_grained_activation_offloading=True,
+            offload_modules=["attn_norm"],  # Required when fine_grained_activation_offloading=True
+            transformer_impl="transformer_engine",
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            container.validate()  # Should pass without error
+            assert container.model.fine_grained_activation_offloading is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch.dict("os.environ", {"NVTE_CPU_OFFLOAD_V1": "0"})
+    @patch("megatron.core.utils.is_te_min_version")
+    def test_fine_grained_activation_offloading_te_2_10_requires_env_var(self, mock_is_te_min_version, monkeypatch):
+        """Test that fine_grained_activation_offloading with TE >= 2.10.0 requires NVTE_CPU_OFFLOAD_V1=1."""
+        mock_is_te_min_version.return_value = True  # Pretend TE >= 2.10.0
+
+        gpt_model_cfg = create_test_gpt_config(
+            fine_grained_activation_offloading=True,
+            offload_modules=["attn_norm"],  # Required when fine_grained_activation_offloading=True
+            transformer_impl="transformer_engine",
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            with pytest.raises(
+                ValueError,
+                match="NVTE_CPU_OFFLOAD_V1 environment variable should be set to 1",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch.dict("os.environ", {"NVTE_CPU_OFFLOAD_V1": "1"})
+    @patch("megatron.core.utils.is_te_min_version")
+    def test_fine_grained_activation_offloading_te_2_10_with_env_var_passes(self, mock_is_te_min_version, monkeypatch):
+        """Test that fine_grained_activation_offloading with TE >= 2.10.0 and NVTE_CPU_OFFLOAD_V1=1 passes."""
+        mock_is_te_min_version.return_value = True  # Pretend TE >= 2.10.0
+
+        gpt_model_cfg = create_test_gpt_config(
+            fine_grained_activation_offloading=True,
+            offload_modules=["attn_norm"],  # Required when fine_grained_activation_offloading=True
+            transformer_impl="transformer_engine",
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            container.validate()  # Should pass without error
+            assert container.model.fine_grained_activation_offloading is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fine_grained_activation_offloading_disabled_skips_validation(self, monkeypatch):
+        """Test that validation is skipped when fine_grained_activation_offloading is disabled."""
+        gpt_model_cfg = create_test_gpt_config(
+            fine_grained_activation_offloading=False,
+            transformer_impl="local",  # Would fail if validation was run
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            container.validate()  # Should pass without error since offloading is disabled
+            assert container.model.fine_grained_activation_offloading is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """

@@ -1405,6 +1405,7 @@ class ConfigContainer(Container):
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
+        _validate_fine_grained_activation_offloading(self)
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1704,4 +1705,40 @@ def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
                 "optimizer.bf16 and optimizer.fp16 must both be False when "
                 "model is using fp32 precision (model.bf16=False, model.fp16=False) and "
                 "use_precision_aware_optimizer=True."
+            )
+
+
+def _validate_fine_grained_activation_offloading(config: ConfigContainer) -> None:
+    """Validate fine-grained activation offloading configuration.
+
+    This function ensures that fine-grained activation offloading is only enabled
+    with compatible configurations (transformer_engine implementation) and that
+    necessary environment variables are set for newer TE versions.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        ValueError: If fine-grained activation offloading is enabled with incompatible settings.
+    """
+    from megatron.core.utils import is_te_min_version
+
+    model_cfg = config.model
+
+    if not model_cfg.fine_grained_activation_offloading:
+        return
+
+    # Fine-grained activation offloading requires transformer_engine implementation
+    if model_cfg.transformer_impl != "transformer_engine":
+        raise ValueError(
+            "Fine-grained activation offloading is only supported with transformer_engine implementation. "
+            f"Current transformer_impl: {model_cfg.transformer_impl}"
+        )
+
+    # For TE >= 2.10.0, NVTE_CPU_OFFLOAD_V1 must be set to avoid offloading weights
+    if is_te_min_version("2.10.0"):
+        if os.getenv("NVTE_CPU_OFFLOAD_V1", "0") != "1":
+            raise ValueError(
+                "For fine-grained activation offloading with TE >= 2.10.0, "
+                "NVTE_CPU_OFFLOAD_V1 environment variable should be set to 1 to avoid offloading weights."
             )
