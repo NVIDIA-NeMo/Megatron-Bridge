@@ -383,7 +383,7 @@ def parse_cli_args():
         "-gn",
         "--gpus_per_node",
         type=int,
-        help="Number of gpus per node.",
+        help="Number of gpus per node. Defaults to None. If not provided, will be inferred from the GPU type.",
         default=None,
     )
     slurm_args.add_argument(
