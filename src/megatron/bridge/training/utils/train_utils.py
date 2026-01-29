@@ -397,32 +397,41 @@ def training_log(
     total_loss_dict[nan_iters_key] = total_loss_dict.get(nan_iters_key, 0) + int(got_nan)
 
     # Logging.
-    timers_to_log = [
-        "forward-backward",
-        "forward-compute",
-        "backward-compute",
-        "batch-generator",
-        "forward-recv",
-        "forward-send",
-        "backward-recv",
-        "backward-send",
-        "forward-send-forward-recv",
-        "forward-send-backward-recv",
-        "backward-send-forward-recv",
-        "backward-send-backward-recv",
-        "forward-backward-send-forward-backward-recv",
-        "layernorm-grads-all-reduce",
-        "embedding-grads-all-reduce",
-        "all-grads-sync",
-        "params-all-gather",
-        "optimizer-copy-to-main-grad",
-        "optimizer-unscale-and-check-inf",
-        "optimizer-clip-main-grad",
-        "optimizer-count-zeros",
-        "optimizer-inner-step",
-        "optimizer-copy-main-to-model-params",
-        "optimizer",
-    ]
+    timers_to_log = []
+    if logger_config.timing_log_level >= 1:
+        timers_to_log.extend(
+            [
+                "forward-backward",
+                "layernorm-grads-all-reduce",
+                "embedding-grads-all-reduce",
+                "all-grads-sync",
+                "params-all-gather",
+                "optimizer-copy-to-main-grad",
+                "optimizer-unscale-and-check-inf",
+                "optimizer-clip-main-grad",
+                "optimizer-count-zeros",
+                "optimizer-inner-step",
+                "optimizer-copy-main-to-model-params",
+                "optimizer",
+            ]
+        )
+    if logger_config.timing_log_level >= 2:
+        timers_to_log.extend(
+            [
+                "batch-generator",
+                "forward-compute",
+                "backward-compute",
+                "forward-recv",
+                "forward-send",
+                "backward-recv",
+                "backward-send",
+                "forward-send-forward-recv",
+                "forward-send-backward-recv",
+                "backward-send-forward-recv",
+                "backward-send-backward-recv",
+                "forward-backward-send-forward-backward-recv",
+            ]
+        )
 
     # Calculate batch size.
     batch_size = train_config.micro_batch_size * config.data_parallel_size * get_num_microbatches()
