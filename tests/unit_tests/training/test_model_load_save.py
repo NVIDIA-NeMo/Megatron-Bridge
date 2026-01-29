@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -956,3 +957,31 @@ class TestLoadTokenizer:
                 AttributeError, match="Attempting to set a non-existent attribute 'tensor_model_parallel_size'"
             ):
                 load_tokenizer(ckpt_path, tensor_model_parallel_size=1)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_hf(self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer):
+        """Test loading HF tokenizers."""
+        # Setup mocks
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "make_vocab_size_divisible_by": 128},
+            "tokenizer": {},
+        }
+        mock_read_cfg.return_value = mock_run_cfg_dict
+
+        mock_tokenizer_cfg = Mock(spec=TokenizerConfig)
+        mock_tokenizer_cfg.tokenizer_type = "HuggingFaceTokenizer"
+        mock_tokenizer_cfg.tokenizer_model = Path()
+        mock_instantiate.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        # test if tokenizer_path is absolute
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            _ = load_tokenizer(ckpt_path)
+
+            tokenizer_path = os.path.join(ckpt_path, "tokenizer")
+            assert mock_tokenizer_cfg.tokenizer_model == Path(tokenizer_path)

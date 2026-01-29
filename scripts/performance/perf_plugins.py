@@ -457,6 +457,10 @@ class PerfEnvPlugin(Plugin):
             self.train_task,
         )
 
+        # Set NVFP4-specific environment variables
+        if self.compute_dtype == "nvfp4":
+            executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
+
 
 @dataclass
 class PyTorchProfilerPluginScriptArgs:
