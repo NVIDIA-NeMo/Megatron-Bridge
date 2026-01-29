@@ -27,7 +27,7 @@ ProcessGroupCollection using HyperCommGrid based on the parallelism settings.
 How to Run
 ----------
 # 8 GPUs: EP8
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/decentralized_pg/pretrain_qwen3_vl_simple.py
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/decentralized_pg/pretrain_qwen3_vl_simple.py
 """
 
 import torch
