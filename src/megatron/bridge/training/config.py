@@ -1002,6 +1002,9 @@ class LoggerConfig:
 
     def finalize(self) -> None:
         """Validate logger settings and optional MLFlow dependency."""
+        if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
+            raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
+
         using_mlflow = any(
             [
                 self.mlflow_experiment,
@@ -1021,9 +1024,6 @@ class LoggerConfig:
                     "MLFlow logging is configured, but the 'mlflow' package is not installed. "
                     "Install it via pip install mlflow or uv add mlflow"
                 ) from exc
-
-            if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
-                raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
 
 
 @dataclass(kw_only=True)
