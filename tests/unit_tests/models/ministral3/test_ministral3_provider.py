@@ -20,6 +20,7 @@ from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider3B,
     Ministral3ModelProvider8B,
     Ministral3ModelProvider14B,
+    MinistralTEDotProductAttention,
 )
 
 
@@ -187,20 +188,8 @@ class TestGetLlama4AttnScale:
     packed (3D) vs unpacked (4D) tensors.
     """
 
-    @staticmethod
-    def _get_llama_4_attn_scale(
-        positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
-    ) -> torch.Tensor:
-        """Call the production implementation for testing.
-
-        This mirrors the actual _get_llama_4_attn_scale logic from MinistralTEDotProductAttention.
-        """
-        scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
-        # Add dimensions to match query shape
-        num_dims_to_add = len(query_shape) - 1
-        for _ in range(num_dims_to_add):
-            scaling = scaling.unsqueeze(-1)
-        return scaling
+    # Use the actual production implementation
+    _get_llama_4_attn_scale = staticmethod(MinistralTEDotProductAttention._get_llama_4_attn_scale)
 
     def test_unpacked_4d_query_shape(self):
         """Test attention scaling with unpacked 4D query shape [seq_len, batch, num_heads, head_dim]."""
@@ -324,7 +313,6 @@ class TestGetLlama4AttnScale:
         result_4d = query_4d * scaling_4d.to(query_4d.dtype)
         assert result_4d.shape == query_4d.shape
 
-    @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
     def test_gpu_tensor_support(self):
         """Test that the function works with GPU tensors if available."""

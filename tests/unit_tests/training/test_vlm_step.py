@@ -98,6 +98,30 @@ def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
     assert out_vi.pixel_values is not None and out_vi.image_grid_thw is not None
 
 
+class _MockProcessGroup:
+    """Mock process group with rank/size methods for testing."""
+
+    def rank(self):
+        return 0
+
+    def size(self):
+        return 1
+
+
+class _MockPGCollection:
+    """Mock PG collection for testing."""
+
+    def __init__(self, cp_size=1):
+        self.pp = _MockProcessGroup()
+        self._cp_size = cp_size
+
+    @property
+    def cp(self):
+        pg = _MockProcessGroup()
+        pg.size = lambda: self._cp_size
+        return pg
+
+
 def test_get_batch_padding_paths(monkeypatch):
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
@@ -141,27 +165,183 @@ def test_get_batch_padding_paths(monkeypatch):
     # Iterator
     it = _Iterator(batch)
 
-    # Create a proper mock pg_collection with rank/size methods
-    class _MockProcessGroup:
-        def rank(self):
-            return 0
-
-        def size(self):
-            return 1
-
-    class _PG:
-        def __init__(self):
-            self.pp = _MockProcessGroup()
-            self.cp = _MockProcessGroup()
-
     tokens, labels, loss_mask, attention_mask, position_ids, *_ = get_batch(
-        it, cfg, use_mtp=False, pg_collection=_PG()
+        it, cfg, use_mtp=False, pg_collection=_MockPGCollection()
     )
     # Length padded up to min(seq_cap, ceil_to_128(4)) == 32
     assert tokens.shape[1] == 32
     assert labels.shape[1] == 32
     assert loss_mask.shape[1] == 32
     assert position_ids.shape[1] == 32
+
+
+def test_get_batch_enable_packing_path(monkeypatch):
+    """Test get_batch with pack_sequences_in_batch=True (enable_packing path)."""
+    # Simulate both first and last pipeline stages so tensors are returned
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
+
+    # Disable context parallel slicing effects
+    monkeypatch.setattr(
+        "megatron.core.utils.get_batch_on_this_cp_rank",
+        lambda x: x,
+        raising=True,
+    )
+
+    # Config with packing enabled
+    cfg = type("Cfg", (), {})()
+    cfg.model = type(
+        "M",
+        (),
+        {
+            "seq_length": 64,
+            "pipeline_model_parallel_size": 1,
+        },
+    )()
+    cfg.dataset = type(
+        "D",
+        (),
+        {
+            "skip_getting_attention_mask_from_dataset": True,
+            "pack_sequences_in_batch": True,  # Enable packing
+        },
+    )()
+
+    # Batch with 2 sequences of different lengths (with padding)
+    # Seq 1: [1, 2, 3, 0, 0, 0, 0, 0] - length 3
+    # Seq 2: [4, 5, 6, 7, 8, 0, 0, 0] - length 5
+    tokens = torch.tensor(
+        [
+            [1, 2, 3, 0, 0, 0, 0, 0],
+            [4, 5, 6, 7, 8, 0, 0, 0],
+        ]
+    )
+    labels = torch.tensor(
+        [
+            [2, 3, -100, -100, -100, -100, -100, -100],
+            [5, 6, 7, 8, -100, -100, -100, -100],
+        ]
+    )
+    loss_mask = torch.tensor(
+        [
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        ]
+    )
+    position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
+
+    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    batch = {
+        "input_ids": tokens,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "position_ids": position_ids,
+        "attention_mask": None,
+        "visual_inputs": vi,
+    }
+
+    it = _Iterator(batch)
+
+    (
+        out_tokens,
+        out_labels,
+        out_loss_mask,
+        out_attention_mask,
+        out_position_ids,
+        cu_seqlens,
+        max_seqlen,
+        visual_inputs,
+    ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection())
+
+    # Verify packing occurred
+    # With pad_to_multiple_of=1 (cp_size=1), total packed length = 3 + 5 = 8
+    assert out_tokens.shape == (1, 8), f"Expected packed shape (1, 8), got {out_tokens.shape}"
+    assert out_labels.shape == (1, 8)
+    assert out_loss_mask.shape == (1, 8)
+    assert out_position_ids.shape == (1, 8)
+
+    # Verify cu_seqlens is populated (not None)
+    assert cu_seqlens is not None, "cu_seqlens should be set when packing is enabled"
+    assert cu_seqlens.tolist() == [0, 3, 8], f"Expected cu_seqlens [0, 3, 8], got {cu_seqlens.tolist()}"
+
+    # Verify max_seqlen
+    assert max_seqlen is not None, "max_seqlen should be set when packing is enabled"
+    assert max_seqlen.item() == 5, f"Expected max_seqlen 5, got {max_seqlen.item()}"
+
+    # Verify attention_mask is None for packed sequences
+    assert out_attention_mask is None, "attention_mask should be None for packed sequences"
+
+    # Verify packed tokens content
+    expected_tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
+    assert torch.equal(out_tokens.cpu(), expected_tokens), f"Expected {expected_tokens}, got {out_tokens}"
+
+    # Verify visual_inputs passed through
+    assert visual_inputs is not None
+
+
+def test_get_batch_enable_packing_with_cp(monkeypatch):
+    """Test get_batch packing with context parallelism (pad_to_multiple_of > 1)."""
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
+    monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
+    monkeypatch.setattr(
+        "megatron.core.utils.get_batch_on_this_cp_rank",
+        lambda x: x,
+        raising=True,
+    )
+
+    cfg = type("Cfg", (), {})()
+    cfg.model = type("M", (), {"seq_length": 64, "pipeline_model_parallel_size": 1})()
+    cfg.dataset = type(
+        "D",
+        (),
+        {
+            "skip_getting_attention_mask_from_dataset": True,
+            "pack_sequences_in_batch": True,
+        },
+    )()
+
+    # Sequences: length 3 and length 5
+    # With CP=2, pad_to_multiple_of = 2*2 = 4
+    # Seq 1: 3 -> padded to 4
+    # Seq 2: 5 -> padded to 6
+    # Total: 4 + 6 = 10
+    tokens = torch.tensor(
+        [
+            [1, 2, 3, 0, 0, 0, 0, 0],
+            [4, 5, 6, 7, 8, 0, 0, 0],
+        ]
+    )
+    labels = torch.tensor(
+        [
+            [2, 3, -100, -100, -100, -100, -100, -100],
+            [5, 6, 7, 8, -100, -100, -100, -100],
+        ]
+    )
+    loss_mask = torch.ones_like(tokens, dtype=torch.float)
+    position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
+
+    batch = {
+        "input_ids": tokens,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "position_ids": position_ids,
+        "attention_mask": None,
+        "visual_inputs": None,
+    }
+
+    it = _Iterator(batch)
+
+    # Use CP size of 2
+    out_tokens, out_labels, out_loss_mask, _, out_position_ids, cu_seqlens, max_seqlen, _ = get_batch(
+        it, cfg, use_mtp=False, pg_collection=_MockPGCollection(cp_size=2)
+    )
+
+    # With CP=2, pad_to_multiple_of = 4
+    # Seq 1: 3 -> 4, Seq 2: 5 -> 8 (next multiple of 4)
+    # Total: 4 + 8 = 12
+    assert out_tokens.shape[1] == 12, f"Expected packed length 12, got {out_tokens.shape[1]}"
+    assert cu_seqlens.tolist() == [0, 4, 12], f"Expected cu_seqlens [0, 4, 12], got {cu_seqlens.tolist()}"
+    assert max_seqlen.item() == 8, f"Expected max_seqlen 8, got {max_seqlen.item()}"
 
 
 def test_forward_step_schedule_plan(monkeypatch):

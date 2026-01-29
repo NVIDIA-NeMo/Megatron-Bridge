@@ -260,8 +260,9 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
             self.beta = 0  # No effect
             self.max_position_embeddings = self.config.seq_length
 
+    @staticmethod
     def _get_llama_4_attn_scale(
-        self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
+        positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
     ) -> torch.Tensor:
         scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
         # Add dimensions to match query shape: [seq_len] -> [seq_len, 1, 1] for packed or [seq_len, 1, 1, 1] for unpacked
