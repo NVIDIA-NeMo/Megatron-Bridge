@@ -54,16 +54,16 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     hf_text_config: Optional[Qwen3VLTextConfig] = None
 
 
-def get_vision_model_config(hf_config):
-    # init config from scratch to avoid deepcopy of parallel_state
-    config = Qwen3VLTransformerConfig(
-        num_layers=hf_config.depth,
-        hidden_size=hf_config.hidden_size,
-        num_attention_heads=hf_config.num_heads,
-        ffn_hidden_size=hf_config.intermediate_size,
-        add_bias_linear=True,
-        add_qkv_bias=True,
-    )
+def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
+    # # init config from scratch to avoid deepcopy of parallel_state
+    # config = Qwen3VLTransformerConfig(
+    #     num_layers=hf_config.depth,
+    #     hidden_size=hf_config.hidden_size,
+    #     num_attention_heads=hf_config.num_heads,
+    #     ffn_hidden_size=hf_config.intermediate_size,
+    #     add_bias_linear=True,
+    #     add_qkv_bias=True,
+    # )
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
     config.moe_ffn_hidden_size = None

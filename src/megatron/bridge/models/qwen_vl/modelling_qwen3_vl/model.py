@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from copy import copy
 from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -120,7 +121,7 @@ class Qwen3VLModel(MegatronModule):
                     get_vision_model_config,
                 )
 
-                megatron_vision_transformer_config = get_vision_model_config(vision_transformer_config)
+                megatron_vision_transformer_config = get_vision_model_config(copy(language_transformer_config), vision_transformer_config)
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
                 megatron_vision_transformer_config.first_pipeline_num_layers = None
 
