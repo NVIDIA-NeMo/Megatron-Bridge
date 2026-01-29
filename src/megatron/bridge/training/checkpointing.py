@@ -62,7 +62,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.training.utils import wandb_utils
+from megatron.bridge.training.utils import mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
     ensure_directory_exists,
@@ -788,11 +788,21 @@ def save_checkpoint(
                 wandb_writer=state.wandb_logger,
             )
 
+        def mlflow_finalize_fn() -> None:
+            mlflow_utils.on_save_checkpoint_success(
+                checkpoint_name,
+                save_dir,
+                train_state.step,
+                mlflow_logger=state.mlflow_logger,
+            )
+
         if ckpt_cfg.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(wandb_finalize_fn)
+            async_save_request.add_finalize_fn(mlflow_finalize_fn)
         else:
             wandb_finalize_fn()
+            mlflow_finalize_fn()
 
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
@@ -1739,6 +1749,7 @@ def _load_checkpoint_from_path(
 
     if not torch.distributed.is_initialized() or is_last_rank():
         wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.wandb_logger)
+        mlflow_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.mlflow_logger)
 
     torch.cuda.empty_cache()
 
