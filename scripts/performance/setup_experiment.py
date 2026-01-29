@@ -167,6 +167,70 @@ def maybe_increase_n_attempts_on_flaky_failure(
     return n_attempts
 
 
+def get_final_parallelism_settings(
+    use_recipes: bool,
+    model_family_name: str,
+    model_recipe_name: str,
+    task: str,
+    gpu: str,
+    compute_dtype: str,
+    tp_size: Optional[int],
+    pp_size: Optional[int],
+    cp_size: Optional[int],
+    ep_size: Optional[int],
+    etp_size: Optional[int],
+    vp_size: Optional[int],
+    mbs: Optional[int],
+    gbs: Optional[int],
+    config_variant: str = "v1",
+) -> Dict[str, int]:
+    """Get the final parallelism settings after applying workload base config and CLI overrides."""
+    from utils.utils import get_workload_base_config, get_library_recipe
+    
+    # Default values
+    defaults = {"tp": 1, "pp": 1, "cp": 1, "ep": 1, "etp": None, "vp": None, "mbs": 1, "gbs": 1}
+    
+    # Try to load base config or recipe
+    if not use_recipes:
+        try:
+            config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant)
+            defaults.update({
+                "tp": config.tensor_model_parallel_size,
+                "pp": config.pipeline_model_parallel_size,
+                "cp": config.context_parallel_size,
+                "ep": config.expert_model_parallel_size,
+                "etp": config.expert_tensor_parallel_size,
+                "vp": config.virtual_pipeline_model_parallel_size,
+                "mbs": config.micro_batch_size,
+                "gbs": config.global_batch_size,
+            })
+        except Exception as e:
+            logger.warning(f"Could not load workload config: {e}")
+    else:
+        try:
+            recipe = get_library_recipe(model_family_name, model_recipe_name, task, "temp_for_inspection")
+            defaults.update({
+                "tp": getattr(recipe.model, 'tensor_model_parallel_size', 1),
+                "pp": getattr(recipe.model, 'pipeline_model_parallel_size', 1),
+                "cp": getattr(recipe.model, 'context_parallel_size', 1),
+                "ep": getattr(recipe.model, 'expert_model_parallel_size', 1),
+                "etp": getattr(recipe.model, 'expert_tensor_parallel_size', None),
+                "vp": getattr(recipe.model, 'virtual_pipeline_model_parallel_size', None),
+                "mbs": getattr(recipe.train, 'micro_batch_size', 1),
+                "gbs": getattr(recipe.train, 'global_batch_size', 1),
+            })
+        except Exception as e:
+            logger.warning(f"Could not load recipe: {e}")
+    
+    # Apply CLI overrides
+    overrides = {
+        "tp": tp_size, "pp": pp_size, "cp": cp_size, "ep": ep_size,
+        "etp": etp_size, "vp": vp_size if vp_size != -1 else None, "mbs": mbs, "gbs": gbs
+    }
+    
+    return {k: overrides[k] if overrides[k] is not None else defaults[k] for k in defaults}
+
+
 def main(
     use_recipes: bool,
     model_family_name: str,
@@ -185,6 +249,10 @@ def main(
     pp_size: Optional[int],
     cp_size: Optional[int],
     ep_size: Optional[int],
+    etp_size: Optional[int],
+    vp_size: Optional[int],
+    mbs: Optional[int],
+    gbs: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -194,6 +262,8 @@ def main(
     record_memory_history: bool,
     profiling_gpu_metrics: bool,
     profiling_ranks: Optional[List[int]],
+    nsys_trace: Optional[List[str]],
+    nsys_extra_args: Optional[List[str]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -240,21 +310,30 @@ def main(
             "both wandb_project_name and wandb_experiment_name are required for logging with WandB"
         )
 
-    if use_recipes:
-        script_name = ENTRYPOINT_RECIPE
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
-        )
+    # Get final parallelism settings after applying all overrides
+    parallelism = get_final_parallelism_settings(
+        use_recipes, model_family_name, model_recipe_name, task, gpu, compute_dtype,
+        tp_size, pp_size, cp_size, ep_size, etp_size, vp_size, mbs, gbs, config_variant
+    )
 
+    # Build experiment name
+    if wandb_experiment_name is not None:
+        exp_name = wandb_experiment_name
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{compute_dtype}"
-        )
+        # Base name with optional compute_dtype
+        base = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
+        exp_name = f"{base}_{compute_dtype}" if not use_recipes else base
+        
+        # Add all parallelism settings
+        for key in ["tp", "pp", "cp", "ep"]:
+            exp_name += f"_{key}{parallelism[key]}"
+        
+        # Add optional settings (show "None" if not set)
+        exp_name += f"_etp{parallelism['etp'] or 'None'}"
+        exp_name += f"_vp{parallelism['vp'] or 'None'}"
+        exp_name += f"_mbs{parallelism['mbs']}_gbs{parallelism['gbs']}"
+
+    script_name = ENTRYPOINT_RECIPE if use_recipes else ENTRYPOINT_PEFORMANCE
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -339,6 +418,8 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
+                nsys_trace=args.nsys_trace,
+                nsys_extra_args=args.nsys_extra_args,
             )
         )
     if pytorch_profiler:
@@ -535,6 +616,10 @@ if __name__ == "__main__":
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
         ep_size=args.expert_model_parallel_size,
+        etp_size=args.expert_tensor_parallel_size,
+        vp_size=args.virtual_pipeline_model_parallel_size,
+        mbs=args.micro_batch_size,
+        gbs=args.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
@@ -544,6 +629,8 @@ if __name__ == "__main__":
         record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         profiling_ranks=args.profiling_ranks,
+        nsys_trace=args.nsys_trace,
+        nsys_extra_args=args.nsys_extra_args,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,

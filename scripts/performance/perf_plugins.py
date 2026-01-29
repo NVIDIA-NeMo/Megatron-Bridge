@@ -116,8 +116,19 @@ class NsysPlugin(Plugin):
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
-        launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
-        launcher.nsys_extra_args = self.nsys_extra_args or launcher.nsys_extra_args
+        
+        # Set nsys_trace if provided, otherwise use nemo_run defaults
+        if self.nsys_trace is not None:
+            launcher.nsys_trace = self.nsys_trace
+        
+        # Combine default extra args with user-provided extra args
+        if self.nsys_extra_args is not None:
+            # Get existing launcher extra args (nemo_run defaults)
+            existing_extra_args = launcher.nsys_extra_args or []
+            # Combine with user-provided args (user args take precedence)
+            # Use user-provided args directly (replace defaults for flexibility)
+            launcher.nsys_extra_args = self.nsys_extra_args
+            logger.info(f"Using user-provided nsys_extra_args: {launcher.nsys_extra_args}")
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
