@@ -210,25 +210,28 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        assert pixel_values_videos is None and video_grid_thw is None, "not support video now"
         assert inference_params is None, "not support inference"
 
         video_start_index = 0
         vision_grid_thw = None
         vision_data = None
         image_mask = None
+        video_mask = None
         deepstack_feature_lists = None
         # position ids is computed within the model
         position_ids = None
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
         if self.pre_process:
-            if image_grid_thw is not None:
-                image_mask = image_input_mask
-                if image_mask is None:
-                    image_mask = (input_ids == self.image_token_id).contiguous()
-                vision_grid_thw = image_grid_thw
-                vision_data = pixel_values
+            image_mask = (input_ids == self.image_token_id).contiguous()
+            video_mask = (input_ids == self.video_token_id).contiguous()
+
+            if image_grid_thw is not None or video_grid_thw is not None:
+                v_datas = [p for p in [pixel_values, pixel_values_videos] if p is not None]
+                v_thws = [t for t in [image_grid_thw, video_grid_thw] if t is not None]
+
+                vision_data = torch.cat(v_datas, dim=0) if v_datas else None
+                vision_grid_thw = torch.cat(v_thws, dim=0) if v_thws else None
                 video_start_index = image_mask.sum().item()
                 assert video_start_index > 0
 
@@ -245,26 +248,15 @@ class Qwen3VLModel(MegatronModule):
             ).clone()  # [text_seq_len, b, h_language]
 
             if vision_embeds is not None:
-                if video_start_index == 0:
-                    image_embeds = None
-                    video_embeds = vision_embeds
-                elif video_start_index == vision_embeds.shape[0]:
-                    image_embeds = vision_embeds
-                    video_embeds = None
-                elif 0 < video_start_index < vision_embeds.shape[0]:
-                    image_embeds = vision_embeds[:video_start_index]
-                    video_embeds = vision_embeds[video_start_index:]
-                else:
-                    raise ValueError(
-                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
-                        f"{video_start_index}"
-                    )
-                assert video_embeds is None, "not support video now"
-
+                image_embeds = vision_embeds[:video_start_index] if video_start_index > 0 else None
+                video_embeds = vision_embeds[video_start_index:] if video_start_index < vision_embeds.shape[0] else None
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
                 if image_embeds is not None:
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
                     combined_embeddings[image_mask] = image_embeds
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                if video_embeds is not None:
+                    combined_embeddings[video_mask] = video_embeds
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+    
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
@@ -284,7 +276,13 @@ class Qwen3VLModel(MegatronModule):
                 packed_seq_params=packed_seq_params,
             )
 
-        visual_pos_masks = image_mask
+        visual_pos_masks = None
+        if image_mask is not None and video_mask is not None:
+            visual_pos_masks = image_mask | video_mask
+        elif image_mask is not None:
+            visual_pos_masks = image_mask
+        elif video_mask is not None:
+            visual_pos_masks = video_mask
         deepstack_visual_embeds = deepstack_feature_lists
         if self.config.sequence_parallel:
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(

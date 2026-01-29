@@ -34,6 +34,12 @@ class Qwen2_5_VLVisualInputs:
     # Per-image temporal/spatial grid metadata (T, H, W) for videos, Qwen2.5-VL.
     image_grid_thw: Optional[torch.Tensor] = None
 
+    # Video tensors, processor output for videos
+    pixel_values_videos: Optional[torch.Tensor] = None
+
+    # Per-video temporal/spatial grid metadata (T, H, W)
+    video_grid_thw: Optional[torch.Tensor] = None
+
     def as_model_kwargs(self) -> dict[str, torch.Tensor]:
         """Return a mapping of non-None fields suitable for model forward kwargs."""
         result: dict[str, torch.Tensor] = {}
@@ -59,5 +65,14 @@ class Qwen2_5_VLVisualInputs:
         image_grid_thw = kwargs.get("image_grid_thw")
         if isinstance(image_grid_thw, torch.Tensor) and image_grid_thw.dim() == 3:
             kwargs["image_grid_thw"] = image_grid_thw.view(-1, image_grid_thw.size(-1))
+
+        pixel_values_videos = kwargs.get("pixel_values_videos")
+        if isinstance(pixel_values_videos, torch.Tensor) and pixel_values_videos.dim() == 5:
+            b, n, c, h, w = pixel_values_videos.shape
+            kwargs["pixel_values_videos"] = pixel_values_videos.view(b * n, c, h, w)
+        
+        video_grid_thw = kwargs.get("video_grid_thw")
+        if isinstance(video_grid_thw, torch.Tensor) and video_grid_thw.dim() == 3:
+            kwargs["video_grid_thw"] = video_grid_thw.view(-1, video_grid_thw.size(-1))
 
         return kwargs
