@@ -19,13 +19,12 @@ import pickle
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List
 
 import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 from megatron.energon.flavors.base_dataset import Sample
-from megatron.energon.task_encoder.base import stateless
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 from PIL import Image
 
@@ -169,7 +168,6 @@ class QwenVLTaskSample:
     """Encoded Sample Format For QwenVL"""
 
     __key__: str
-    __restore_key__: Tuple[Union[str, int, tuple], ...]
     __subflavors__: Dict
 
     imgs: List[torch.Tensor]  # (c, h, w)
@@ -187,9 +185,7 @@ class QwenVLTaskSample:
 class QwenVLTaskBatch(Batch):
     """Encoded Batch Format For QwenVL"""
 
-    __key__: List[str]
-    __restore_key__: List[Tuple[Union[str, int, tuple], ...]]
-    __subflavor__: Dict
+    __keys__: List[str]
     __subflavors__: List[Dict]
     # (num_tiles, c, h, w)
     pixel_values: torch.Tensor
@@ -235,7 +231,6 @@ def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", v
     return contents
 
 
-@stateless
 def cook_chatml_sample(sample: dict) -> ChatMLSample:
     """
     Convert crude sampel to ChatMLSample.
@@ -490,7 +485,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         # collect data
         return QwenVLTaskSample(
             __key__=sample.__key__,
-            __restore_key__=sample.__restore_key__,
             __subflavors__=sample.__subflavors__,
             imgs=flattened_imgs["pixel_values"] if flattened_imgs else [],
             videos=flattened_videos["pixel_values_videos"] if flattened_videos else [],
@@ -572,9 +566,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         loss_mask[labels < 0] = 0.0
 
         batch = QwenVLTaskBatch(
-            __key__=[s.__key__ for s in samples],
-            __restore_key__=[s.__restore_key__ for s in samples],
-            __subflavor__=None,
+            __keys__=[s.__key__ for s in samples],
             __subflavors__=[s.__subflavors__ for s in samples],
             pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
             pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,
@@ -594,7 +586,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         """Encode batch in dict"""
 
         raw = dataclasses.asdict(batch)
-        del raw["__subflavor__"]
         del raw["__subflavors__"]
 
         raw["visual_inputs"] = Qwen2_5_VLVisualInputs(
