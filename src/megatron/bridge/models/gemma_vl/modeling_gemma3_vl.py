@@ -161,28 +161,54 @@ class Gemma3VLModel(MegatronModule):
 
         # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
         # This must happen AFTER vision-text merge so image token positions are correct
-        if self.config._pg_collection.cp.size() > 1:
-            # inputs_embeds is (T, B, D), need to transpose to (B, T, D) for get_batch_on_this_cp_rank
+        cp_size = self.config._pg_collection.cp.size()
+        if cp_size > 1:
+            cp_rank = self.config._pg_collection.cp.rank()
+
+            # (T, B, D) -> (B, T, D) for slicing
             if inputs_embeds is not None:
                 inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
-            cp_group = self.config._pg_collection.cp
-            cp_batch = get_batch_on_this_cp_rank(
-                {
-                    "decoder_input": inputs_embeds,
-                    "labels": labels,
-                    "loss_mask": loss_mask,
-                    "position_ids": position_ids,
-                    "attention_mask": attention_mask,
-                },
-                cp_group=cp_group,
-            )
+            if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+                import transformer_engine_torch as tex
 
-            inputs_embeds = cp_batch.get("decoder_input")
-            labels = cp_batch.get("labels")
-            loss_mask = cp_batch.get("loss_mask")
-            position_ids = cp_batch.get("position_ids")
-            attention_mask = cp_batch.get("attention_mask")
+                cu_seqlens = packed_seq_params.cu_seqlens_q
+                cu_seqlens_padded = (
+                    packed_seq_params.cu_seqlens_q_padded
+                    if packed_seq_params.cu_seqlens_q_padded is not None
+                    else cu_seqlens
+                )
+                seq_len = inputs_embeds.size(1)
+
+                index = tex.thd_get_partitioned_indices(cu_seqlens_padded, seq_len, cp_size, cp_rank)
+
+                # Slice all tensors using THD indices
+                if inputs_embeds is not None:
+                    inputs_embeds = inputs_embeds.index_select(1, index)
+                if labels is not None:
+                    labels = labels.index_select(1, index)
+                if loss_mask is not None:
+                    loss_mask = loss_mask.index_select(1, index)
+                if position_ids is not None:
+                    position_ids = position_ids.index_select(1, index)
+            else:
+                cp_group = self.config._pg_collection.cp
+                cp_batch = get_batch_on_this_cp_rank(
+                    {
+                        "decoder_input": inputs_embeds,
+                        "labels": labels,
+                        "loss_mask": loss_mask,
+                        "position_ids": position_ids,
+                        "attention_mask": attention_mask,
+                    },
+                    cp_group=cp_group,
+                )
+
+                inputs_embeds = cp_batch.get("decoder_input")
+                labels = cp_batch.get("labels")
+                loss_mask = cp_batch.get("loss_mask")
+                position_ids = cp_batch.get("position_ids")
+                attention_mask = cp_batch.get("attention_mask")
 
             # Transpose back to (T, B, D)
             if inputs_embeds is not None:
@@ -198,7 +224,8 @@ class Gemma3VLModel(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
         )
-        return outputs
+        # Return both outputs and the CP-sliced loss_mask for consistent loss computation
+        return (outputs, loss_mask)
 
     def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):
         """Freeze model modules.

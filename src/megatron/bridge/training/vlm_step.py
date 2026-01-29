@@ -19,7 +19,7 @@ from typing import Any, Iterable
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
@@ -345,11 +345,10 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         cu_seqlens = None
         max_seqlen = None
 
-    cp_batch = get_batch_on_this_cp_rank({"loss_mask": batch.get("loss_mask")}, cp_group=pg_collection.cp)
     return (
         (batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")),
         batch.get("labels"),
-        cp_batch.get("loss_mask"),
+        batch.get("loss_mask"),  # Full packed loss_mask, will be CP-sliced by model
         batch.get("attention_mask"),
         batch.get("position_ids"),
         cu_seqlens,
@@ -379,6 +378,7 @@ def forward_step(
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
 
     timers("batch-generator", log_level=2).start()
+    pg_collection = get_pg_collection(model)
     with straggler_timer(bdata=True):
         (
             tokens,
@@ -389,7 +389,7 @@ def forward_step(
             cu_seqlens,
             max_seqlen,
             visual_inputs,
-        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
+        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
     forward_args = {
@@ -397,6 +397,7 @@ def forward_step(
         "position_ids": position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
+        "loss_mask": loss_mask,  # Pass full loss_mask so model can slice it consistently with labels
     }
 
     if visual_inputs is not None:
@@ -423,7 +424,12 @@ def forward_step(
             loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function
         else:
-            output_tensor = model(**forward_args)
+            model_output = model(**forward_args)
+            # Handle tuple return: (output_tensor, sliced_loss_mask) from VLM models with CPI'm
+            if isinstance(model_output, tuple):
+                output_tensor, loss_mask = model_output
+            else:
+                output_tensor = model_output
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
 
