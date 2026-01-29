@@ -222,6 +222,7 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
         RerunDiagnostic,
         RerunErrorInjector,
         RerunMode,
+        get_rerun_state_machine,
         initialize_rerun_state_machine,
     )
 
@@ -241,6 +242,10 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
             error_injection_type=RerunDiagnostic(rerun_state_machine_config.error_injection_type),
         ),
     )
+
+    # Store config on the singleton for use in loss validation
+    rsm = get_rerun_state_machine()
+    rsm.spiky_loss_factor = rerun_state_machine_config.spiky_loss_factor
 
 
 def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
