@@ -523,7 +523,7 @@ class TestPackBatchSequences:
         assert packed_pos[0, 4].item() == 2  # Second seq, pos 2
 
     def test_packing_empty_batch_warning(self, caplog):
-        """Test that all-padding batch returns dummy values with warning."""
+        """Test that all-padding batch returns empty tensors with warning."""
         tokens = torch.tensor([[0, 0, 0, 0]])  # All padding
         labels = torch.tensor([[-100, -100, -100, -100]])
         loss_mask = torch.zeros(1, 4)
@@ -541,10 +541,15 @@ class TestPackBatchSequences:
 
         packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
 
-        # Should return first sequence as-is
-        assert packed_tokens.shape == (1, 4)
-        # cu_seqlens should have [0, seq_len]
-        assert len(cu_seqlens) == 2
+        # No valid sequences found, should return empty tensors
+        assert packed_tokens.shape == (1, 0)
+        assert packed_labels.shape == (1, 0)
+        assert packed_loss_mask.shape == (1, 0)
+        assert packed_pos.shape == (1, 0)
+        # cu_seqlens should have just [0] for empty batch
+        assert len(cu_seqlens) == 1
+        assert cu_seqlens[0].item() == 0
+        assert max_seqlen.item() == 0
 
     def test_packing_different_dtypes(self):
         """Test packing with different tensor dtypes."""
