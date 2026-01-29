@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument("--wandb-api-key", type=str, required=True, help="Wandb API key")
     parser.add_argument("--wandb-project", type=str, default="nemo2_mbridge_comparison_new")
     parser.add_argument("--wandb-exp-name", type=str, default="dsv3_2layers_mbridge_final_bs16_tp2pp2ep2cp2sp_100steps")
-    parser.add_argument("--wandb-entity", type=str, default="ao-tang96-none")
+    parser.add_argument("--wandb-entity", type=str, default="dsv3_comparision")
 
     return parser.parse_args()
 
