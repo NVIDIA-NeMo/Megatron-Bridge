@@ -76,6 +76,7 @@ class Qwen3VLModel(MegatronModule):
         super().__init__(config=language_transformer_config)
 
         vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+        language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -94,6 +95,9 @@ class Qwen3VLModel(MegatronModule):
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
+
+        # These attributes are needed to check if the vision model should be frozen.
+        self.freeze_vision_model = False
 
         if self.pre_process:
             if not language_transformer_config.use_hf_vision_model:
@@ -237,6 +241,9 @@ class Qwen3VLModel(MegatronModule):
             for module in modules:
                 for param in module.parameters():
                     param.requires_grad = False
+        
+        self.freeze_vision_model = freeze_vision_model
+
 
     def forward(
         self,
@@ -292,6 +299,9 @@ class Qwen3VLModel(MegatronModule):
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
 
         cp_size = self.pg_collection.cp.size()
+        if cp_size > 1 and not self.freeze_vision_model:
+            raise RuntimeError("When cp_size > 1, the vision model should be frozen. Otherwise, the gradient will be wrong.")
+
         if self.pre_process:
             # can reorganize_inputs at dataset
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(

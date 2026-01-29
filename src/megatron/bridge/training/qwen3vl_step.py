@@ -173,6 +173,7 @@ def pack_or_pad_batch_sequences(
     tp_size = this_pg_collection.tp.size()
     cp_size = this_pg_collection.cp.size()
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+    original_align_size = divisible_by
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
 
     if data_format == "thd":
@@ -181,8 +182,14 @@ def pack_or_pad_batch_sequences(
         seqlens_in_batch_padded = seqlens_in_batch + (divisible_by - seqlens_in_batch % divisible_by) % divisible_by
         cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
         cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
+        
+        if use_fp8_padding:
+            align_size_last = original_align_size * 128
+            pad_size_last = (align_size_last - cu_seqlens_padded[-1] % align_size_last) % align_size_last
+            cu_seqlens_padded[-1] += pad_size_last
+            seqlens_in_batch_padded[-1] += pad_size_last
 
+        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
         seqlens_in_batch_cpu = seqlens_in_batch.tolist()
         cu_seqlens_padded_cpu = cu_seqlens_padded.tolist()
         total_len = cu_seqlens_padded_cpu[-1]

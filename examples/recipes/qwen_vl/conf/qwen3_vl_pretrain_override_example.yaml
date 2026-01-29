@@ -20,13 +20,23 @@ model:
   tensor_model_parallel_size: 1
   pipeline_model_parallel_size: 1
   context_parallel_size: 1
+  cp_comm_type: p2p
   cross_entropy_loss_fusion: false
+  recompute_granularity: full
+  recompute_method: uniform
+  recompute_num_layers: 1
+  freeze_language_model: false
+  freeze_vision_model: false
+  freeze_vision_projection: false
+  # cross_entropy_fusion_impl: te
+  calculate_per_token_loss: true
+
 
 train:
   train_iters: 1000
-  global_batch_size: 16
-  micro_batch_size: 2
-  eval_iters: 100
+  global_batch_size: 8
+  micro_batch_size: 1
+  eval_iters: 5
 
 optimizer:
   lr: 0.00025
@@ -37,7 +47,13 @@ scheduler:
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
-  save: null
+  # save: /lustre/fs1/portfolios/coreai/users/jinliangl/outputs/qwen3-vl-layer-4
+  load: ./outputs/qwen3-vl/
+  load_optim: false
+  ckpt_step: 0
+  ckpt_format: torch_dist
+  # save_interval:10
+
 
 dist:
   use_megatron_fsdp: false
@@ -47,6 +63,9 @@ logger:
   log_interval: 1
   log_throughput: true
   log_params_norm: true
+  wandb_project: null
+  wandb_save_dir: ./outputs/qwen3-vl/
+  wandb_exp_name: null
 
 dataset:
   sequence_length: 4096
@@ -56,6 +75,7 @@ rng:
 
 ddp:
   grad_reduce_in_fp32: true
+  average_in_collective: false
 
 profiling:
   memory_snapshot_path: snapshot.pickle
