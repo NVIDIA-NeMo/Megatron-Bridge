@@ -320,13 +320,14 @@ class TestNVRxStragglerDetectionManager:
 
         mock_straggler_module.Detector.wrap_callables.assert_called_once()
 
-    def test_wrap_train_step_function_callable(self, manager, mock_straggler_module):
+    @pytest.mark.usefixtures("mock_straggler_module")
+    def test_wrap_train_step_function_callable(self, manager) -> None:
         """Test that the wrapped function is callable and routes through train_step."""
         manager.initialized = True
 
         call_count = [0]
 
-        def dummy_func(*args, **kwargs):
+        def dummy_func(*_args, **_kwargs):
             call_count[0] += 1
             return "result"
 
