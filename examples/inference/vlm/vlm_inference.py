@@ -86,6 +86,7 @@ def main(args) -> None:
         tp=args.tp,
         pp=args.pp,
         inference_batch_times_seqlen_threshold=1000,
+        inference_max_seq_length=args.max_seq_length,
     )
 
     # Process inputs (text and image if provided)
@@ -155,6 +156,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument(
+        "--max_seq_length",
+        type=int,
+        default=8192,
+        help="Maximum sequence length for inference (prompt + generated tokens).",
+    )
     parser.add_argument(
         "--image_path",
         type=str,
