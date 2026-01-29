@@ -22,6 +22,8 @@ from megatron.bridge.models.nemotronh import (
     NemotronNanoModelProvider12Bv2,
 )
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     ConfigContainer,
@@ -86,50 +88,205 @@ class NemotronNanoV2FinetuneKwargs(NemotronNanoV2CommonKwargs, total=False):
     wandb_exp_name: str | None
 
 
-def nemotron_nano_9b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2CommonKwargs]) -> ConfigContainer:
+def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron Nano 9B v2.
 
     This recipe is designed for single-node training (1 node).
     Default parallelism: TP=2, PP=1, SP=True.
-
-    See `_nemotronh_common` for the full list of parameters.
     """
-    from megatron.bridge.recipes.nemotronh.nemotronh import _nemotronh_common
+    cfg = _pretrain_common()
 
-    recommended_kwargs: NemotronNanoV2CommonKwargs = {
-        "model_provider": NemotronNanoModelProvider9Bv2,
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 1,
-        "sequence_parallel": True,
-        "precision_config": "bf16_mixed",
-        "enable_default_comm_overlap": True,
-    }
-    combined_kwargs: NemotronNanoV2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotronh_common(tokenizer_model="nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base", **combined_kwargs)
+    # Model config - uses NemotronNanoModelProvider9Bv2
+    cfg.model = NemotronNanoModelProvider9Bv2(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        pipeline_dtype=torch.bfloat16,
+        virtual_pipeline_model_parallel_size=None,
+        context_parallel_size=1,
+        sequence_parallel=True,
+    )
+
+    # Parallel settings (already set in model provider above)
+    cfg.model.pipeline_model_parallel_layout = None
+
+    # Tokenizer - uses NullTokenizer by default
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.num_workers = 8
+
+    # Training config
+    cfg.train.train_iters = 1_168_251
+    cfg.train.global_batch_size = 768
+    cfg.train.micro_batch_size = 1
+    cfg.train.eval_interval = 10
+
+    cfg.train.manual_gc = False
+    cfg.train.manual_gc_interval = 0
+    cfg.train.manual_gc_eval = True
+
+    # Optimizer
+    cfg.scheduler.lr_warmup_iters = 2000
+
+    cfg.logger.log_timers_to_tensorboard = False
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - bf16_mixed
+    cfg.mixed_precision = "bf16_mixed"
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_bootstrap_backend="nccl",
+        tp_comm_overlap=True,
+    )
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 10
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+
+    return cfg
 
 
-def nemotron_nano_12b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2CommonKwargs]) -> ConfigContainer:
+def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron Nano 12B v2.
 
     This recipe is designed for single-node training (1 node).
     Default parallelism: TP=4, PP=1, SP=True.
 
     Note: Uses FP8 precision by default. Communication overlap is disabled by default.
-
-    See `_nemotronh_common` for the full list of parameters.
     """
-    from megatron.bridge.recipes.nemotronh.nemotronh import _nemotronh_common
+    cfg = _pretrain_common()
 
-    recommended_kwargs: NemotronNanoV2CommonKwargs = {
-        "model_provider": NemotronNanoModelProvider12Bv2,
-        "tensor_model_parallel_size": 4,
-        "pipeline_model_parallel_size": 1,
-        "sequence_parallel": True,
-        "precision_config": "nanov2_bf16_with_fp8_current_scaling_mixed",
-        "enable_default_comm_overlap": False,
-    }
-    combined_kwargs: NemotronNanoV2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotronh_common(tokenizer_model="nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base", **combined_kwargs)
+    # Model config - uses NemotronNanoModelProvider12Bv2
+    cfg.model = NemotronNanoModelProvider12Bv2(
+        tensor_model_parallel_size=4,
+        pipeline_model_parallel_size=1,
+        pipeline_dtype=torch.bfloat16,
+        virtual_pipeline_model_parallel_size=None,
+        context_parallel_size=1,
+        sequence_parallel=True,
+    )
+
+    # Parallel settings (already set in model provider above)
+    cfg.model.pipeline_model_parallel_layout = None
+
+    # Tokenizer - uses NullTokenizer by default
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.num_workers = 8
+
+    # Training config
+    cfg.train.train_iters = 1_168_251
+    cfg.train.global_batch_size = 768
+    cfg.train.micro_batch_size = 1
+    cfg.train.eval_interval = 10
+
+    cfg.train.manual_gc = False
+    cfg.train.manual_gc_interval = 0
+    cfg.train.manual_gc_eval = True
+
+    # Optimizer
+    cfg.scheduler.lr_warmup_iters = 2000
+
+    cfg.logger.log_timers_to_tensorboard = False
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - FP8 with current scaling
+    cfg.mixed_precision = "nanov2_bf16_with_fp8_current_scaling_mixed"
+    # FP8 settings (commented - already enabled via precision string above)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap - disabled by default for 12B (FP8 compatibility)
+    cfg.comm_overlap = None
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 10
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+
+    return cfg
 
 
 def nemotron_nano_9b_v2_finetune_config(**user_kwargs: Unpack[NemotronNanoV2FinetuneKwargs]) -> ConfigContainer:
