@@ -184,13 +184,14 @@ def train(
 
     # Initialize NVRx straggler detection if enabled
     nvrx_straggler_manager = global_state.nvrx_straggler_manager
+    wrapped_train_step = train_step  # Default to original function
     if nvrx_straggler_manager is not None:
         try:
             # Initialize the straggler detector first
             nvrx_straggler_manager.initialize()
             # Wrap the train_step function for monitoring
-            # Note: The nvidia-resiliency-ext library will monitor the actual train_step calls
-            nvrx_straggler_manager.wrap_train_step_function(train_step)
+            # The wrapped function must be used instead of the original to collect profiling data
+            wrapped_train_step = nvrx_straggler_manager.wrap_train_step_function(train_step)
         except Exception as e:
             print_rank_0(f"Failed to initialize NVRx straggler detection: {e}")
             # Set to None to disable further checks
@@ -335,7 +336,7 @@ def train(
             grad_norm,
             num_zeros_in_grad,
             log_max_attention_logit,
-        ) = train_step(
+        ) = wrapped_train_step(
             wrapped_forward_step_func,
             train_data_iterator,
             model,
