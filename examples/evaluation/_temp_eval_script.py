@@ -1,15 +1,3 @@
-# Unset SLURM/PMI/PMIX env vars to prevent MPI initialization issues
-for i in $(env | grep ^SLURM_ | cut -d"=" -f 1); do unset -v $i; done
-for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
-for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
-
-OUTPUT_DIR=$1
-PARALLELISM=$2
-
-# Install missing dependency for lm-evaluation-harness
-uv pip install math_verify --quiet
-
-cat << EVAL_EOF > _temp_eval_script.py
 import subprocess
 import time
 
@@ -27,12 +15,12 @@ endpoint_type = "completions"
 model_id = "megatron_model"
 eval_task = "mmlu"
 limit_samples = 100
-parallelism = $PARALLELISM
+parallelism = 2
 request_timeout = 1000
 temperature = None
 top_p = None
 top_k = None
-output_dir = "/$OUTPUT_DIR/results/"
+output_dir = "/1/results/"
 
 # Check server readiness
 server_ready = check_endpoint(
@@ -73,6 +61,3 @@ print("Evaluation completed. Shutting down Ray server...")
 subprocess.run(["ray", "stop", "--force"], check=False, timeout=30)
 print("Ray server shutdown command sent.")
 time.sleep(5)
-EVAL_EOF
-
-uv run --active --no-sync python _temp_eval_script.py
