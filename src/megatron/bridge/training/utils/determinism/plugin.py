@@ -254,7 +254,7 @@ class DeterminismDebugPlugin:
                 },
                 "timestamp": int(time.time() * 1000)
             }
-            with open("/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/.cursor/debug.log", "a") as f:
+            with open("/opt/Megatron-Bridge/.cursor/debug.log", "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
         except Exception:
             pass
@@ -302,7 +302,7 @@ class DeterminismDebugPlugin:
                     },
                     "timestamp": int(time.time() * 1000)
                 }
-                with open("/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/.cursor/debug.log", "a") as f:
+                with open("/opt/Megatron-Bridge/.cursor/debug.log", "a") as f:
                     f.write(json.dumps(log_entry) + "\n")
             except Exception:
                 pass
@@ -451,7 +451,7 @@ class DeterminismDebugPlugin:
                         },
                         "timestamp": int(time.time() * 1000)
                     }
-                    with open("/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/.cursor/debug.log", "a") as f:
+                    with open("/opt/Megatron-Bridge/.cursor/debug.log", "a") as f:
                         f.write(json.dumps(log_entry) + "\n")
                 except Exception:
                     pass
