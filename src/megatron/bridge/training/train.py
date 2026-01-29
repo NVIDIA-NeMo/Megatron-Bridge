@@ -46,6 +46,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
+from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
@@ -254,7 +255,7 @@ def train(
         pp_size=pg_collection.pp.size(),
         vp_size=config.model.virtual_pipeline_model_parallel_size,
     )
-    if config.model.cuda_graph_impl == "local" and "full_iteration" in config.model.cuda_graph_scope:
+    if config.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )

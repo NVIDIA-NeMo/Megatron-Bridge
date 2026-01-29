@@ -20,6 +20,7 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
 from megatron.core.transformer.cuda_graphs import CudaGraphManager
+from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules, get_num_layers_to_build
@@ -228,7 +229,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
         if (
             self.config.cuda_graph_impl == "local"
             and self.training
-            and "full_iteration" not in self.config.cuda_graph_scope
+            and CudaGraphScope.full_iteration not in self.config.cuda_graph_scope
         ):
             assert not config.cpu_offloading and config.recompute_granularity is None, "Cudagraphs not supported"
             self.add_module("cudagraph_manager", CudaGraphManager(config))

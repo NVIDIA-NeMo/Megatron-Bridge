@@ -24,6 +24,7 @@ from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
@@ -95,7 +96,10 @@ def evaluate(
         if verbose:
             print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
 
-        if state.cfg.model.cuda_graph_impl == "local" and "full_iteration" in state.cfg.model.cuda_graph_scope:
+        if (
+            state.cfg.model.cuda_graph_impl == "local"
+            and CudaGraphScope.full_iteration in state.cfg.model.cuda_graph_scope
+        ):
             forward_backward_func = FullCudaGraphWrapper(
                 get_forward_backward_func(
                     pp_size=pg_collection.pp.size(),
