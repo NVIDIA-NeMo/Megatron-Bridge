@@ -19,11 +19,9 @@ def get_mimo_dp_info(
     """Get DP rank, size, data-loading responsibility, and loader module for MIMO.
     
     Determines which module's DP settings to use for data loading based on
-    deployment mode and current rank's participation.
+    current rank's participation in heterogeneous deployment.
     
-    For colocated mode, uses the module with smallest DP size (loads less data
-    per rank, which is the bottleneck). For heterogeneous mode, each rank uses
-    its own module's DP settings.
+    In heterogeneous mode, each rank uses its own module's DP settings.
     
     Args:
         mimo_cfg: MIMO parallelism configuration.
@@ -45,44 +43,6 @@ def get_mimo_dp_info(
         ...     sampler = DistributedSampler(dataset, num_replicas=dp_size, rank=dp_rank)
     """
     current_rank = dist.get_rank()
-
-    if mimo_cfg.deployment_mode == "colocated":
-        # Use module with smallest DP size (loads less data per rank)
-        dp_sizes = {
-            name: grid.get_pg(["dp"]).size() for name, grid in grids.items()
-        }
-        loader_module = min(dp_sizes, key=dp_sizes.get)
-        use_grid = grids[loader_module]
-
-        dp_rank = use_grid.get_pg(["dp"]).rank()
-        dp_size = use_grid.get_pg(["dp"]).size()
-
-        pp_group = use_grid.get_pg(["pp"])
-        pp_rank = pp_group.rank()
-        pp_size = pp_group.size()
-        
-        # LLM needs data on first and last PP stage; encoders only on first
-        if loader_module == mimo_cfg.llm_module_name:
-            needs_data = (pp_rank == 0) or (pp_rank == pp_size - 1)
-        else:
-            needs_data = pp_rank == 0
-
-        return dp_rank, dp_size, needs_data, loader_module
-
-    if mimo_cfg.deployment_mode == "homogeneous":
-        # All modules have same parallelism; use LLM
-        loader_module = mimo_cfg.llm_module_name
-        use_grid = grids[loader_module]
-        
-        dp_rank = use_grid.get_pg(["dp"]).rank()
-        dp_size = use_grid.get_pg(["dp"]).size()
-        
-        pp_group = use_grid.get_pg(["pp"])
-        pp_rank = pp_group.rank()
-        pp_size = pp_group.size()
-        needs_data = (pp_rank == 0) or (pp_rank == pp_size - 1)
-        
-        return dp_rank, dp_size, needs_data, loader_module
 
     # Heterogeneous: find which module this rank belongs to
     my_grid = None
