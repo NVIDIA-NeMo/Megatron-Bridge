@@ -2544,3 +2544,84 @@ class TestDatasetSequenceLengthValidation:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+@pytest.mark.unit
+class TestLoggerConfigFinalize:
+    """Tests for LoggerConfig.finalize() method."""
+
+    def test_finalize_no_mlflow_settings(self):
+        """Test finalize succeeds when no MLFlow settings are configured."""
+        config = LoggerConfig()
+        # Should not raise
+        config.finalize()
+
+    def test_finalize_with_mlflow_experiment_only_raises_error(self):
+        """Test finalize raises error when mlflow_experiment is set but mlflow_run_name is missing."""
+        config = LoggerConfig(mlflow_experiment="my_experiment")
+
+        with pytest.raises(ValueError, match="Set logger.mlflow_run_name"):
+            config.finalize()
+
+    def test_finalize_with_mlflow_experiment_and_empty_run_name_raises_error(self):
+        """Test finalize raises error when mlflow_run_name is empty string."""
+        config = LoggerConfig(mlflow_experiment="my_experiment", mlflow_run_name="")
+
+        with pytest.raises(ValueError, match="Set logger.mlflow_run_name"):
+            config.finalize()
+
+    def test_finalize_with_mlflow_experiment_and_run_name_succeeds(self):
+        """Test finalize succeeds when both mlflow_experiment and mlflow_run_name are set."""
+        config = LoggerConfig(mlflow_experiment="my_experiment", mlflow_run_name="my_run")
+        # Should not raise (assuming mlflow is importable)
+        try:
+            config.finalize()
+        except ModuleNotFoundError:
+            # MLflow might not be installed in test environment
+            pass
+
+    def test_finalize_mlflow_not_installed_raises_module_not_found(self):
+        """Test finalize raises ModuleNotFoundError when mlflow is configured but not installed."""
+        config = LoggerConfig(mlflow_experiment="my_experiment", mlflow_run_name="my_run")
+
+        with patch.dict("sys.modules", {"mlflow": None}):
+            with patch("importlib.import_module", side_effect=ModuleNotFoundError("No module named 'mlflow'")):
+                with pytest.raises(ModuleNotFoundError, match="mlflow"):
+                    config.finalize()
+
+    def test_finalize_with_mlflow_tags_only(self):
+        """Test finalize with only mlflow_tags triggers MLFlow validation."""
+        config = LoggerConfig(mlflow_tags={"env": "test"})
+
+        # mlflow_tags without mlflow_experiment should still try to import mlflow
+        # but not require mlflow_run_name since experiment is not set
+        try:
+            config.finalize()
+        except ModuleNotFoundError:
+            # MLflow might not be installed in test environment
+            pass
+
+    def test_finalize_with_mlflow_tracking_uri_only(self):
+        """Test finalize with only mlflow_tracking_uri triggers MLFlow validation."""
+        config = LoggerConfig(mlflow_tracking_uri="http://localhost:5000")
+
+        try:
+            config.finalize()
+        except ModuleNotFoundError:
+            # MLflow might not be installed in test environment
+            pass
+
+    def test_finalize_with_all_mlflow_settings(self):
+        """Test finalize with all MLFlow settings configured."""
+        config = LoggerConfig(
+            mlflow_experiment="my_experiment",
+            mlflow_run_name="my_run",
+            mlflow_tracking_uri="http://localhost:5000",
+            mlflow_tags={"env": "test", "version": "1.0"},
+        )
+
+        try:
+            config.finalize()
+        except ModuleNotFoundError:
+            # MLflow might not be installed in test environment
+            pass
