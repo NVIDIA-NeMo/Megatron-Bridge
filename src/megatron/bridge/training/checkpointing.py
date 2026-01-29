@@ -1003,8 +1003,10 @@ def _generate_model_state_dict(
 
     if len(model) == 1:
         if ckpt_format == "torch_dist":
+            print('ckpt torch_dist')
             state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
         else:  # fsdp_dtensor and other formats
+            print('ckpt fsdp')
             state_dict["model"] = model[0].state_dict_for_save_checkpoint()
     else:
         for i in range(len(model)):
@@ -1166,19 +1168,28 @@ def _load_model_weights_from_checkpoint(
 
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
-    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
+    model_sd_kwargs = dict[str, dict | None](metadata=sharded_sd_metadata)
+    print('model_sd_kwargs before: ', model_sd_kwargs)
 
     # [ModelOpt]: Restore state
     restore_modelopt_state(model, state_dict)
 
     model = unwrap_model(model)
+    print('after restoring modelopt state:', model)
+    model_sd_kwargs['metadata'].pop('singleton_local_shards', None)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
+    print('model_sd_kwargs after: ', model_sd_kwargs)
+    # print(f'sharded_state_dict: {sharded_state_dict}, model_sd_kwargs: {model_sd_kwargs}')
+    
+    # Some checkpoints omit TE/Torch extra state; drop it before planning load.
+    delete_extra_state(sharded_state_dict)
 
     load_strategy = get_default_load_sharded_strategy(checkpoint_path)
     if fully_parallel_load:
         load_strategy = FullyParallelLoadStrategyWrapper(
             load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
         )
+    print(f'sharded_state_dict: {sharded_state_dict}, model_sd_kwargs: {model_sd_kwargs}, load_strategy: {load_strategy}' )
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
