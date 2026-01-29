@@ -228,8 +228,16 @@ def get_final_parallelism_settings(
         "etp": etp_size, "vp": vp_size if vp_size != -1 else None, "mbs": mbs, "gbs": gbs
     }
     
-    return {k: overrides[k] if overrides[k] is not None else defaults[k] for k in defaults}
-
+    # For all params except VP: if override is None, use default
+    # For VP: if override is explicitly -1 (not set), use default, but None is a valid override
+    result = {}
+    for k in defaults:
+        if k == "vp":
+            # VP special case: -1 means "not specified", None means "user wants None"
+            result[k] = overrides[k] if vp_size != -1 else defaults[k]
+        else:
+            result[k] = overrides[k] if overrides[k] is not None else defaults[k]
+    return result
 
 def main(
     use_recipes: bool,
