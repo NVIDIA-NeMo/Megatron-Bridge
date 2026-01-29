@@ -219,6 +219,7 @@ class FinetuningDatasetBuilder:
             is_test=is_test,
             pack_metadata_file_path=None if is_not_packing else pack_metadata_path,
             pad_cu_seqlens=False if is_not_packing else self._pad_cu_seqlens,
+            pad_seq_to_mult=1 if is_not_packing else self._pad_seq_to_mult,
             **kwargs,
         )
 
