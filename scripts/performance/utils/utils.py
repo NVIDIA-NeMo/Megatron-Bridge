@@ -62,6 +62,9 @@ class WorkloadBaseConfig:
     moe_a2a_overlap: Optional[bool] = False
     peft: Optional[str] = None
 
+    # Pipeline parallelism layout
+    pp_layout: Optional[str] = None
+
     @property
     def sequence_parallel(self) -> bool:
         """Get the sequence parallel flag."""
