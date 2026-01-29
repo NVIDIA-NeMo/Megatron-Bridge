@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from torch import int_repr
 
@@ -26,13 +26,13 @@ class EnergonProvider(DatasetProvider):
     """Energon Provider."""
 
     path: str
-    image_processor: Optional[Any] = None
+    image_processor: Any | None = None
     seq_length: int
     micro_batch_size: int
     global_batch_size: int
     num_workers: int_repr
     dataloader_type: str = "external"
-    task_encoder: Optional[Any] = None
+    task_encoder: Any | None = None
 
     def build_datasets(self, context: DatasetBuildContext):
         dataset = EnergonMultiModalDataModule(

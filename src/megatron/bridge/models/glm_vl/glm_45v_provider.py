@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import List
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from transformers.models.glm4v.configuration_glm4v import Glm4vVisionConfig
@@ -34,7 +33,7 @@ class GLM45VModelProvider(GLM45AirModelProvider106B):
     # the vision embeddings are going to be inserted into the language embeddings.
     scatter_embedding_sequence_parallel: bool = False
     position_embedding_type: str = "mrope"
-    mrope_section: List[int] = field(default_factory=lambda: [8, 12, 12])
+    mrope_section: list[int] = field(default_factory=lambda: [8, 12, 12])
 
     # Vision configuration
     vision_config: Glm4vVisionConfig = field(default_factory=Glm4vVisionConfig)

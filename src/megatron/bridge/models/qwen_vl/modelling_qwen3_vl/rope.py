@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import List, Optional
-
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from torch import Tensor
@@ -28,8 +26,8 @@ class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
     def forward(
         self,
         position_ids: torch.Tensor,
-        mrope_section: List[int],
-        packed_seq_params: Optional[PackedSeqParams] = None,
+        mrope_section: list[int],
+        packed_seq_params: PackedSeqParams | None = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
@@ -68,8 +66,8 @@ class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
     def forward(
         self,
         position_ids: torch.Tensor,
-        mrope_section: List[int] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
+        mrope_section: list[int] = None,
+        packed_seq_params: PackedSeqParams | None = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass for non-MoE Qwen3-VL RoPE.

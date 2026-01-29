@@ -20,7 +20,7 @@ conversation-style examples consumable by VLM processors.
 import json
 import random
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from datasets import concatenate_datasets, load_dataset
 
@@ -30,7 +30,7 @@ from megatron.bridge.utils.common_utils import resolve_path
 
 def make_rdr_dataset(
     path_or_dataset: str = "quintend/rdr-items", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the RDR dataset for image-to-text fine-tuning.
 
     Returns a list of examples with a "conversation" field that includes an image and text.
@@ -59,7 +59,7 @@ def make_rdr_dataset(
 
 def make_cord_v2_dataset(
     path_or_dataset: str = "naver-clova-ix/cord-v2", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the CORD-V2 dataset for image-to-text fine-tuning."""
     dataset = load_dataset(path_or_dataset, split=split)
 
@@ -92,7 +92,7 @@ def make_cord_v2_dataset(
 
 def make_medpix_dataset(
     path_or_dataset: str = "mmoukouba/MedPix-VQA", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the MedPix dataset for image-to-text fine-tuning."""
     dataset = load_dataset(path_or_dataset, split=split)
 
@@ -118,7 +118,7 @@ def make_raven_dataset(
     subset: str = "raven",
     split: str = "train",
     **kwargs,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the Raven subset from the Cauldron dataset.
 
     This subset follows the IDEFICS-style layout where each sample contains:
@@ -153,7 +153,7 @@ def make_raven_dataset(
         if user_prompt is None or assistant_answer is None:
             return None
 
-        user_content: List[Dict[str, Any]] = [{"type": "image", "image": img} for img in images]
+        user_content: list[dict[str, Any]] = [{"type": "image", "image": img} for img in images]
         user_content.append({"type": "text", "text": user_prompt})
 
         assistant_content = [{"type": "text", "text": assistant_answer}]
@@ -173,9 +173,9 @@ def make_raven_dataset(
 def make_llava_video_178k_dataset(
     video_root_path: str,
     path_or_dataset: str = "lmms-lab/LLaVA-Video-178K",
-    subsets: str | List[str] = "0_30_s_nextqa",
+    subsets: str | list[str] = "0_30_s_nextqa",
     split: str = "open_ended",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess a subset of the *LLaVA-Video-178K* dataset.
 
     Each row contains:
@@ -231,7 +231,7 @@ def make_llava_video_178k_dataset(
         if video in (None, "") or not convs:
             return None
 
-        conversation: List[Dict[str, Any]] = []
+        conversation: list[dict[str, Any]] = []
 
         first_human_handled = False
         for turn in convs:
@@ -240,7 +240,7 @@ def make_llava_video_178k_dataset(
             if not value:
                 continue
             if role == "human":
-                content: List[Dict[str, Any]] = []
+                content: list[dict[str, Any]] = []
                 if not first_human_handled:
                     abs_path = resolve_path(Path(video_root_path) / video)
                     content.append({"type": "video", "path": str(abs_path)})
@@ -261,7 +261,7 @@ def make_llava_video_178k_dataset(
 
 def make_cv17_dataset(
     path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the CommonVoice 17 dataset for audio-to-text fine-tuning."""
     dataset = load_dataset(path_or_dataset, split=split)
     # Be robust to simple list-like datasets used in tests without `column_names` attr

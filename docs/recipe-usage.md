@@ -211,14 +211,13 @@ By default, plugins convert their configuration to Hydra-style CLI arguments whe
 
 ```python
 import nemo_run as run
-from typing import List
 from megatron.bridge.recipes.run_plugins import (
     PreemptionPlugin,
     PreemptionPluginScriptArgs,
 )
 
 # Define a custom converter for argparse-style arguments
-def argparse_preemption_converter(args: PreemptionPluginScriptArgs) -> List[str]:
+def argparse_preemption_converter(args: PreemptionPluginScriptArgs) -> list[str]:
     result = []
     if args.enable_exit_handler:
         result.append("--enable-exit-handler")

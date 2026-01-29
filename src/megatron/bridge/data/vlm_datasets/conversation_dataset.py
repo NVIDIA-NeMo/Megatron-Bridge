@@ -16,7 +16,8 @@
 Core dataset types for conversation-style VLM examples.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 import torch
 
@@ -37,10 +38,10 @@ class VLMConversationDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        base_examples: List[Dict[str, Any]],
+        base_examples: list[dict[str, Any]],
         target_length: int,
         processor: Any,
-        collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None,
+        collate_impl: Callable[[list, Any], dict[str, torch.Tensor]] | None = None,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
         self._base_examples = base_examples
@@ -50,7 +51,7 @@ class VLMConversationDataset(torch.utils.data.Dataset):
         collate_key = type(processor).__name__ if processor is not None else "default"
         selected_impl = collate_impl or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])  # type: ignore[index]
 
-        def _bound_collate(batch: list) -> Dict[str, torch.Tensor]:
+        def _bound_collate(batch: list) -> dict[str, torch.Tensor]:
             return selected_impl(batch, self._processor)  # type: ignore[call-arg]
 
         self.collate_fn = _bound_collate
@@ -58,7 +59,7 @@ class VLMConversationDataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         return self._length
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         if self._length == 0:
             raise IndexError("Empty dataset")
         base = self._base_examples[idx % len(self._base_examples)]

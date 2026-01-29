@@ -38,7 +38,8 @@ Examples:
 """
 
 import inspect
-from typing import Callable, Iterable, Protocol, TypeVar, Union, runtime_checkable
+from collections.abc import Callable, Iterable
+from typing import Protocol, TypeVar, runtime_checkable
 
 import torch.nn as nn
 
@@ -52,7 +53,7 @@ class HasBool(Protocol):
 
 _TModule = TypeVar("_TModule", bound=nn.Module)
 ModuleFunc = Callable[[nn.Module], nn.Module]
-ModulePredicate = Callable[[nn.Module], Union[bool, HasBool]]
+ModulePredicate = Callable[[nn.Module], bool | HasBool]
 
 
 def map(  # noqa: A001

@@ -14,7 +14,6 @@
 
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
@@ -35,17 +34,17 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     out_hidden_size: int = 2304
 
     apply_rotary_pos_emb_in_fp32: bool = False
-    deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+    deepstack_visual_indexes: list[int] = field(default_factory=lambda: [8, 16, 24])
     fp16_lm_cross_entropy: bool = False
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 10000
 
     # Multimodal rope section for [temporal, height, width] dimensions
-    mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+    mrope_section: list[int] = field(default_factory=lambda: [24, 20, 20])
     apply_rope_fusion: bool = False
 
     image_token_id: int = 151655
     video_token_id: int = 151656
     vision_start_token_id: int = 151652
-    hf_text_config: Optional[Qwen3VLTextConfig] = None
+    hf_text_config: Qwen3VLTextConfig | None = None

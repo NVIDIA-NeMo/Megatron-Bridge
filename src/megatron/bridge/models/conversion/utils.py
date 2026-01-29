@@ -16,7 +16,7 @@ import copy
 import functools
 import re
 import types
-from typing import Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 import torch
 from megatron.core.transformer.module import MegatronModule
@@ -58,10 +58,10 @@ def weights_verification_table(bridge, megatron_model) -> Table:
 
 
 def get_module_and_param_from_name(
-    models: MegatronModule | List[MegatronModule],
+    models: MegatronModule | list[MegatronModule],
     param_name: str,
-    vp_stage: Optional[int] = None,
-) -> Tuple[torch.nn.Module, torch.Tensor] | Tuple[torch.nn.Module, torch.Tensor, Tuple]:
+    vp_stage: int | None = None,
+) -> tuple[torch.nn.Module, torch.Tensor] | tuple[torch.nn.Module, torch.Tensor, tuple]:
     """
     Get parameter from specific VP stage, ensuring that parameter
     attributes are preserved. Supports both absolute and relative parameter names.
@@ -273,7 +273,7 @@ def get_causal_lm_class_name_via_auto_map(
     return None
 
 
-def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:
+def persistent_buffers(model: torch.nn.Module) -> Iterable[tuple[str, torch.Tensor]]:
     """Return an iterator over persistent module buffers, yielding both the name of the buffer as well as the buffer itself."""
 
     for mod_prefix, mod in model.named_modules():

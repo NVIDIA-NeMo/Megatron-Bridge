@@ -20,7 +20,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -110,7 +110,7 @@ def is_flaky_failure(log_file_path: str) -> bool:
     )
 
 
-def build_performance_config(args) -> Optional[Dict[str, Any]]:
+def build_performance_config(args) -> dict[str, Any] | None:
     """Build performance configuration from command-line arguments.
 
     Args:
@@ -133,7 +133,7 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     return config if config else None
 
 
-def ensure_logs_where_written(log_file_paths: List[str]):
+def ensure_logs_where_written(log_file_paths: list[str]):
     """Ensure logs were written to disk."""
     if len(log_file_paths) != 1:
         raise FileNotFoundError(
@@ -155,7 +155,7 @@ def maybe_increase_n_attempts_on_flaky_failure(
     max_retries: int,
     is_finished_experiment: bool,
     is_long_convergence_run: bool,
-    log_file_paths: List[str],
+    log_file_paths: list[str],
 ):
     """Maybe increase number of attempts."""
     if not is_finished_experiment and not is_long_convergence_run:
@@ -181,10 +181,10 @@ def main(
     enable_nsys: bool,
     pytorch_profiler: bool,
     moe_a2a_overlap: bool,
-    tp_size: Optional[int],
-    pp_size: Optional[int],
-    cp_size: Optional[int],
-    ep_size: Optional[int],
+    tp_size: int | None,
+    pp_size: int | None,
+    cp_size: int | None,
+    ep_size: int | None,
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -193,7 +193,7 @@ def main(
     profiling_stop_step: int,
     record_memory_history: bool,
     profiling_gpu_metrics: bool,
-    profiling_ranks: Optional[List[int]],
+    profiling_ranks: list[int] | None,
     nemo_home: str,
     account: str,
     partition: str,
@@ -201,17 +201,17 @@ def main(
     gpus_per_node: int,
     time_limit: str,
     container_image: str,
-    custom_mounts: List[str],
-    custom_env_vars: Dict[str, str],
-    custom_srun_args: List[str],
+    custom_mounts: list[str],
+    custom_env_vars: dict[str, str],
+    custom_srun_args: list[str],
     nccl_ub: bool,
-    pretrained_checkpoint: Optional[str],
+    pretrained_checkpoint: str | None,
     num_gpus: int,
     is_long_convergence_run: bool,
-    additional_slurm_params: Optional[Dict[str, Any]],
+    additional_slurm_params: dict[str, Any] | None,
     golden_values_path: str,
-    convergence_params: Dict[str, Any],
-    performance_params: Dict[str, Any],
+    convergence_params: dict[str, Any],
+    performance_params: dict[str, Any],
     max_retries: int,
     dgxc_base_url: str,
     dgxc_cluster: str,

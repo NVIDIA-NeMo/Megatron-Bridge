@@ -15,7 +15,7 @@
 import datetime
 import os
 import warnings
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import torch
 import torch.distributed
@@ -54,9 +54,9 @@ def initialize_megatron(
     cfg: ConfigContainer,
     allow_no_cuda: bool = False,
     skip_mpu_initialization: bool = False,
-    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    restart_store: Optional[torch.distributed.Store] = None,
+    get_embedding_ranks: Callable[[list[int], int | None], list[int]] | None = None,
+    get_position_embedding_ranks: Callable[[list[int], int | None], list[int]] | None = None,
+    restart_store: torch.distributed.Store | None = None,
 ) -> Callable[[], None] | ProcessGroupCollection | None:
     """Initialize Megatron core components and distributed setup.
 
@@ -135,10 +135,10 @@ def torch_dist_init(
     rng_config: RNGConfig,
     micro_batch_size: int,
     num_distributed_optimizer_instances: int,
-    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
-    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
+    get_embedding_ranks: Callable[[list[int], int | None], list[int]] | None,
+    get_position_embedding_ranks: Callable[[list[int], int | None], list[int]] | None,
     skip_mpu_initialization: bool,
-    restart_store: Optional[torch.distributed.Store] = None,
+    restart_store: torch.distributed.Store | None = None,
     use_inprocess_restart: bool = False,
 ) -> Callable[[], None] | ProcessGroupCollection | None:
     """Initialize torch.distributed and dependent components.
@@ -505,9 +505,9 @@ def _initialize_distributed(
     model_config: GPTModelProvider | T5ModelProvider,
     dist_config: DistributedInitConfig,
     num_distributed_optimizer_instances: int,
-    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
-    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
-    restart_store: Optional[torch.distributed.Store] = None,
+    get_embedding_ranks: Callable[[list[int], int | None], list[int]] | None,
+    get_position_embedding_ranks: Callable[[list[int], int | None], list[int]] | None,
+    restart_store: torch.distributed.Store | None = None,
     use_inprocess_restart: bool = False,
 ) -> ProcessGroupCollection:
     """Initialize torch.distributed and core model parallel."""

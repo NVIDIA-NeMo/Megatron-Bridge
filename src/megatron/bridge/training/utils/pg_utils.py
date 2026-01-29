@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_attr_wrapped_model
 
 
-def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> ProcessGroupCollection:
+def get_pg_collection(model: MegatronModule | list[MegatronModule]) -> ProcessGroupCollection:
     """Return the ProcessGroupCollection from a model or list of model chunks.
 
     This mirrors the style of utility accessors like `get_model_config`, but for

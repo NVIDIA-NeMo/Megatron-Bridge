@@ -18,7 +18,7 @@ import pathlib
 import re
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 try:
@@ -40,7 +40,7 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
-def get_metrics_from_logfiles(log_paths: List[str], metric: str):
+def get_metrics_from_logfiles(log_paths: list[str], metric: str):
     """
     Parse training log file and extract metrics.
 
@@ -119,11 +119,11 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
 def validate_convergence(
     current_values: "np.ndarray",
     golden_values: "np.ndarray",
-    steps: List[str],
+    steps: list[str],
     logger: logging.Logger,
     wandb_run: "wandb.Run",
-    config: Dict[str, Any] = None,
-) -> Dict[str, Any]:
+    config: dict[str, Any] = None,
+) -> dict[str, Any]:
     """
     Comprehensive loss curve convergence validation using multiple metrics.
 
@@ -304,11 +304,11 @@ def validate_convergence(
 def validate_performance(
     current_values: "np.ndarray",
     golden_values: "np.ndarray",
-    steps: List[str],
+    steps: list[str],
     logger: logging.Logger,
     wandb_run: "wandb.Run",
-    config: Dict[str, Any] = None,
-) -> Dict[str, Any]:
+    config: dict[str, Any] = None,
+) -> dict[str, Any]:
     """
     Validate performance metrics.
     """
@@ -380,7 +380,7 @@ def validate_performance(
     return results
 
 
-def write_golden_values_to_disk(current_values: Dict[str, Any], golden_values_path: str, wandb_run: "wandb.Run"):
+def write_golden_values_to_disk(current_values: dict[str, Any], golden_values_path: str, wandb_run: "wandb.Run"):
     """
     Write golden values to a file.
     """
@@ -401,13 +401,13 @@ def calc_convergence_and_performance(
     model_family_name: str,
     model_recipe_name: str,
     assets_dir: str,
-    log_paths: List[str],
+    log_paths: list[str],
     loss_metric: str,
     timing_metric: str,
     golden_values_path: str,
-    convergence_config: Dict[str, Any],
-    performance_config: Dict[str, Any],
-    wandb_run: Optional["wandb.Run"] = None,
+    convergence_config: dict[str, Any],
+    performance_config: dict[str, Any],
+    wandb_run: "wandb.Run" | None = None,
 ):
     """
     Calculate convergence metrics and validate against golden values.

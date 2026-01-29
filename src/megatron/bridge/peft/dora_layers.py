@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
@@ -51,7 +50,7 @@ class ParallelLinearDoRAAdapter(ParallelLinearAdapter):
         return self.weight_magnitude
 
     def sharded_state_dict(
-        self, prefix: str = "", sharded_offsets: tuple = (), metadata: Optional[dict] = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: dict | None = None
     ) -> ShardedStateDict:
         """
         Sharded state dict implementation for DoRA adapter.
@@ -60,7 +59,7 @@ class ParallelLinearDoRAAdapter(ParallelLinearAdapter):
         Args:
             prefix (str): Prefix for parameter names. Defaults to ''.
             sharded_offsets (tuple): Offsets for sharded parameters. Defaults to ().
-            metadata (Optional[dict]): Additional metadata. Defaults to None.
+            metadata (dict | None): Additional metadata. Defaults to None.
 
         Returns:
             ShardedStateDict: The sharded state dictionary.

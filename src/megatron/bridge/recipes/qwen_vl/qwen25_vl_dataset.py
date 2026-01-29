@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy
 import torch
@@ -70,7 +70,7 @@ class MockQwen25VLDataset(torch.utils.data.Dataset):
         array = self._rng.integers(low=0, high=256, size=(h, w, 3), dtype=numpy.uint8)
         return Image.fromarray(array, mode="RGB")
 
-    def _build_inputs(self) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def _build_inputs(self) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         # Build chat template with one image and a simple text prompt
         num_images = max(0, int(getattr(self.config, "num_images", 1)))
         content = [{"type": "image"} for _ in range(num_images)]
@@ -86,11 +86,11 @@ class MockQwen25VLDataset(torch.utils.data.Dataset):
         # The chat template will insert appropriate placeholders for the image token(s)
         text = self.config._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-        images: Optional[list[Image.Image]] = None
+        images: list[Image.Image] | None = None
         if num_images > 0:
             images = [self._generate_random_image() for _ in range(num_images)]
 
-        processor_kwargs: Dict[str, Any] = {
+        processor_kwargs: dict[str, Any] = {
             "text": [text],
             "padding": "max_length" if self.config.pad_to_max_length else True,
             "return_tensors": "pt",
@@ -116,8 +116,8 @@ class MockQwen25VLDataset(torch.utils.data.Dataset):
             pad_len = target_len - cur_len
             random_tail = torch.randint(low=0, high=int(vocab_size), size=(pad_len,), dtype=input_ids.dtype)
             input_ids = torch.cat([input_ids, random_tail], dim=0)
-        pixel_values_t: Optional[torch.Tensor] = None
-        image_grid_thw_t: Optional[torch.Tensor] = None
+        pixel_values_t: torch.Tensor | None = None
+        image_grid_thw_t: torch.Tensor | None = None
         if images is not None:
             # Ensure per-sample shapes without a leading batch dim
             pixel_values_t = inputs.pixel_values
@@ -128,7 +128,7 @@ class MockQwen25VLDataset(torch.utils.data.Dataset):
                 image_grid_thw_t = image_grid_thw_t.squeeze(0)
         return input_ids, pixel_values_t, image_grid_thw_t
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:  # noqa: ARG002 - idx unused randomness ok
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:  # noqa: ARG002 - idx unused randomness ok
         input_ids, pixel_values, image_grid_thw = self._build_inputs()
 
         # Ensure at least length 2 to form tokens/labels by shifting
@@ -162,7 +162,7 @@ class MockQwen25VLDataset(torch.utils.data.Dataset):
         tokens[tokens == pad_token_id] = 0
         labels[labels == pad_token_id] = 0
 
-        sample: Dict[str, torch.Tensor] = {
+        sample: dict[str, torch.Tensor] = {
             "tokens": tokens,
             "labels": labels,
             "attention_mask": attention_mask,
@@ -194,7 +194,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
     # Sample generation options
     prompt: str = "Describe this image."
     random_seed: int = 0
-    image_size: Tuple[int, int] = (256, 256)
+    image_size: tuple[int, int] = (256, 256)
     pad_to_max_length: bool = True
     create_attention_mask: bool = True
 
@@ -205,7 +205,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
     num_images: int = 1
 
     # HF AutoProcessor instance will be set during build
-    _processor: Optional[Any] = None
+    _processor: Any | None = None
 
     def build_datasets(self, context: DatasetBuildContext):
         """Create mock Qwen2.5-VL datasets for train/valid/test splits.
@@ -214,7 +214,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
             context: Provides sample counts and optional tokenizer.
 
         Returns:
-            Tuple[Optional[Dataset], Optional[Dataset], Optional[Dataset]]
+            tuple[Dataset | None, Dataset | None, Dataset | None]
         """
 
         from transformers import AutoProcessor
@@ -228,7 +228,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
             ),
         )
 
-        def _maybe_make(size: int) -> Optional[MockQwen25VLDataset]:
+        def _maybe_make(size: int) -> MockQwen25VLDataset | None:
             return MockQwen25VLDataset(size=size, config=self) if size and size > 0 else None
 
         train_ds = _maybe_make(context.train_samples)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping
+from collections.abc import Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -74,9 +74,9 @@ class DeepSeekV3Bridge(MegatronModelBridge):
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
-        converted_weights_dict: Dict[str, torch.Tensor],
+        converted_weights_dict: dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         Add rotary embedding inverse frequency parameter if needed but not present.
         This is needed for moonshotai related models (e.g., Moonlight-16B-A3B-Instruct).

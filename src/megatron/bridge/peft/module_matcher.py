@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from collections import defaultdict
+from collections.abc import Set
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
 
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from torch import nn
@@ -45,7 +45,7 @@ class ModuleMatcher:
     This class facilitates the application of LoRA to specific modules within the model architecture.
 
     Args:
-        target_modules (List[str], optional): A list of module names to apply LoRA to.
+        target_modules (list[str], optional): A list of module names to apply LoRA to.
             Defaults to all linear layers ['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2'].
                 - 'linear_qkv': Apply LoRA to the fused linear layer used for query, key, and value projections
                                 in self-attention.
@@ -57,15 +57,13 @@ class ModuleMatcher:
                 on the first two layers.
     """
 
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=lambda: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
     )
-    exclude_modules: List[str] = field(default_factory=list)
-    canonical_mapping: Dict[str, Set] = field(default_factory=lambda: defaultdict(set))
+    exclude_modules: list[str] = field(default_factory=list)
+    canonical_mapping: dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
 
-    def match(
-        self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
-    ) -> Optional[tuple[str, str]]:
+    def match(self, m: nn.Module, name: str | None = None, prefix: str | None = None) -> tuple[str, str] | None:
         """
         Determines whether a given module matches specified target patterns.
 
@@ -79,7 +77,7 @@ class ModuleMatcher:
             prefix (str, optional): A prefix to be used in constructing `full_name`.
 
         Returns:
-            Optional[Tuple[str, str]]: A tuple containing (matching_pattern, full_name) if a match
+            tuple[str, str] | None: A tuple containing (matching_pattern, full_name) if a match
                 is found; otherwise, `None`.
 
         Matching Logic:
