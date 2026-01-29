@@ -690,6 +690,11 @@ def train_step(
 
     # Update parameters.
     timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
+
+    # Set iteration for conditional optimizers
+    if hasattr(optimizer, 'set_iteration'):
+        optimizer.set_iteration(global_state.train_state.step)
+
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     # get max attention logit for logging and run clip_qk()
