@@ -59,10 +59,9 @@ def build_colocated_comm_config(
     """Build ColocatedCommConfig with default encoder-to-LLM topology."""
     from megatron.core.models.mimo.config.base_configs import ColocatedCommConfig
 
-    module_to_grid_map = {name: grid for name, grid in grids.items()}
     topology = _default_topology(mimo_parallelism_config)
     return ColocatedCommConfig(
-        module_to_grid_map=module_to_grid_map,
+        module_to_grid_map=grids.copy(),
         topology=topology,
         dim_mapping={"b": 0, "s": 1, "h": 2},
     )
