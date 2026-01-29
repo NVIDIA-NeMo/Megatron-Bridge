@@ -17,10 +17,12 @@ from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
+import torch
 import torch.distributed as dist
 import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from modelopt.torch.quantization.utils import is_quantized
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -440,6 +442,21 @@ class AutoBridge(Generic[MegatronModelT]):
             dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
         )
 
+        model_instance = self._get_model_instance(model)
+        quant_tensors = None
+        if is_quantized(model_instance):
+            quant_tensors = {}
+
+            def _filter_quant(gen):
+                for name, tensor in gen:
+                    if "_quantizer." in name:
+                        quant_tensors[name] = tensor
+                        continue
+                    yield name, tensor
+
+            generator = _filter_quant(generator)
+
+
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
             hasattr(self.hf_pretrained, "state")
@@ -449,6 +466,15 @@ class AutoBridge(Generic[MegatronModelT]):
             self.hf_pretrained.state.source.save_generator(generator, path)
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+        
+        if quant_tensors:
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+            if rank == 0 and quant_tensors:
+                sidecar_path = Path(path) / "modelopt_weights.pt"
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(quant_tensors, sidecar_path)
+
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -553,6 +579,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # Load the state dict
         model = load_megatron_model(
             str(checkpoint_path),
+            model_type=kwargs.get("model_type", None),
             use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
             skip_temp_dist_context=skip_temp_dist_context,
             mp_overrides=mp_overrides,

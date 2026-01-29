@@ -148,10 +148,11 @@ def _megatron_local_name_to_global(
                 f".{param_type}{global_expert_number}",
             )
 
-        # Handle weight and bias parameters
-        if ".weight" in param_name:
+        # Handle weight and bias parameters with expert index suffix (e.g., .weight0, .weight1)
+        # Skip quantizer/amax parameters which are shared across experts and don't have expert indices
+        if re.search(r"\.weight\d+$", param_name):
             param_name = _update_expert_number(param_name, "weight")
-        elif ".bias" in param_name:
+        elif re.search(r"\.bias\d+$", param_name):
             param_name = _update_expert_number(param_name, "bias")
     return param_name
 
@@ -861,7 +862,24 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 mapping = mapping_registry.megatron_to_hf_lookup(global_name)
 
                 if not mapping:
-                    logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
+                    # Debug: show amax-related misses with more detail
+                    if "_amax" in global_name or "_quantizer" in global_name:
+                        # Try to find similar patterns for debugging
+                        import os
+                        if os.environ.get("DEBUG_QUANT_MAPPING", "0") == "1":
+                            # Show what patterns exist that might match
+                            similar = [m.megatron_param for m in mapping_registry.mappings 
+                                       if "_quantizer" in m.megatron_param and 
+                                       global_name.split(".")[-1] in m.megatron_param]
+                            if similar:
+                                logger.warning(f"WARNING: No mapping for quantizer param: {global_name}")
+                                logger.warning(f"         Similar patterns exist: {similar[:3]}")
+                            else:
+                                logger.warning(f"WARNING: No mapping for quantizer param: {global_name}")
+                        else:
+                            logger.warning(f"WARNING: No mapping found for quantizer param: {global_name}")
+                    else:
+                        logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
                     continue
 
                 # ensure hf weights exist

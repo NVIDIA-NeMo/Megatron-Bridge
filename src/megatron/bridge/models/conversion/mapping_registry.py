@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
 from typing import List, Optional
 
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
 
 
 class MegatronMappingRegistry:
@@ -92,6 +94,24 @@ class MegatronMappingRegistry:
         regex_pattern = regex_pattern.replace(r"\*", r"(\d+)")
 
         return regex_pattern
+    
+    def _add_quantization_mappings(self) -> None:
+        """Add quantization mappings for weight quantizers and input quantizers."""
+        original_mappings = list(self.mappings)
+        weight_quant_mappings = convert_to_amax_map(original_mappings, ".weight_quantizer._amax")
+        input_quant_mappings = convert_to_amax_map(original_mappings, ".input_quantizer._amax")
+        self.mappings.extend(weight_quant_mappings)
+        self.mappings.extend(input_quant_mappings)
+        
+        # Debug: print summary of quantization mappings if enabled
+        if os.environ.get("DEBUG_QUANT_MAPPING", "0") == "1":
+            print(f"[DEBUG] Added {len(weight_quant_mappings)} weight_quantizer amax mappings")
+            print(f"[DEBUG] Added {len(input_quant_mappings)} input_quantizer amax mappings")
+            for m in weight_quant_mappings[:5]:  # Show first 5 as sample
+                print(f"[DEBUG]   weight_quant pattern: {m.megatron_param}")
+            if len(weight_quant_mappings) > 5:
+                print(f"[DEBUG]   ... and {len(weight_quant_mappings) - 5} more")
+
 
     def __init__(self, *mappings: MegatronParamMapping):
         """
@@ -101,12 +121,18 @@ class MegatronMappingRegistry:
             *mappings: MegatronParamMapping objects
         """
         self.mappings = list(mappings)
+        if int(os.environ.get("ENABLE_BRIDGE_QUANT_MAPPING", "0")):
+            self._add_quantization_mappings()
 
         # Pre-compile patterns for efficiency
+        # NOTE: Must iterate over self.mappings (not 'mappings' argument) to include
+        # quantization mappings that were added by _add_quantization_mappings()
         self._compiled_patterns = []
         self._reverse_patterns = []  # For hf_param -> megatron lookups
 
-        for mapping in mappings:
+        debug_quant_mapping = os.environ.get("DEBUG_QUANT_MAPPING", "0") == "1"
+        
+        for mapping in self.mappings:
             # Compile source patterns
             if "*" in mapping.megatron_param:
                 # Convert glob pattern to regex with support for * and **
@@ -114,6 +140,14 @@ class MegatronMappingRegistry:
                 self._compiled_patterns.append((re.compile(f"^{pattern}$"), mapping))
             else:
                 self._compiled_patterns.append((None, mapping))
+        
+        # Debug: show all quantization patterns
+        if debug_quant_mapping:
+            quant_patterns = [m.megatron_param for m in self.mappings if "_quantizer" in m.megatron_param]
+            print(f"[DEBUG] Total compiled patterns: {len(self._compiled_patterns)}")
+            print(f"[DEBUG] Quantizer patterns ({len(quant_patterns)}):")
+            for p in quant_patterns:
+                print(f"[DEBUG]   {p}")
 
             # Compile destination patterns for reverse lookups
             if isinstance(mapping.hf_param, str):
@@ -156,6 +190,8 @@ class MegatronMappingRegistry:
             >>> if bridge:
             ...     print(f"Maps to: {bridge.hf_param}")  # Shows HF name for layer 5
         """
+        debug_quant_mapping = os.environ.get("DEBUG_QUANT_MAPPING", "0") == "1"
+        
         for pattern, mapping in self._compiled_patterns:
             if pattern is None:
                 # Direct match
@@ -167,6 +203,20 @@ class MegatronMappingRegistry:
                 if match:
                     # Return resolved mapping with wildcards replaced
                     return mapping.resolve(match.groups())
+        
+        # Debug: if looking for quantizer param, show what patterns we have
+        if debug_quant_mapping and ("_quantizer" in megatron_param_name or "_amax" in megatron_param_name):
+            print(f"[DEBUG] Failed to find mapping for: {megatron_param_name}")
+            # Show patterns that contain similar path components
+            param_parts = megatron_param_name.replace("_quantizer._amax", "").split(".")
+            if len(param_parts) > 2:
+                # Look for patterns with similar module path
+                key_part = ".".join(param_parts[-3:])  # e.g., "mixer.in_proj"
+                similar = [m.megatron_param for m in self.mappings 
+                           if "_quantizer" in m.megatron_param and key_part.replace(".weight", "") in m.megatron_param]
+                if similar:
+                    print(f"[DEBUG]   Similar patterns: {similar[:5]}")
+        
         return None
 
     def hf_to_megatron_lookup(self, hf_param_name: str) -> Optional[MegatronParamMapping]:
