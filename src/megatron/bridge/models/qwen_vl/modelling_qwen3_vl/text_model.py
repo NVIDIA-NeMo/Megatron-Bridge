@@ -24,6 +24,7 @@ import torch
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
@@ -59,6 +60,7 @@ class Qwen3VLGPTModel(GPTModel):
         seq_len_interpolation_factor: Optional[float] = None,
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -79,6 +81,7 @@ class Qwen3VLGPTModel(GPTModel):
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             mtp_block_spec=mtp_block_spec,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
 
         is_moe = (
@@ -102,6 +105,7 @@ class Qwen3VLGPTModel(GPTModel):
             pre_process=self.pre_process,
             post_process=self.post_process,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
 
     def forward(
