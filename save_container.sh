@@ -14,9 +14,10 @@ WORKDIR=$(pwd)
 MOUNTS="\
 /lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm"
 
-ORIGINAL_CONTAINER_NAME="nvcr.io#nvidia/nemo:25.11"
+# ORIGINAL_CONTAINER_NAME="nvcr.io#nvidia/nemo:25.11"
+ORIGINAL_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-TE-bumpup.sqsh"
 # With this weekend's build, [9.18.0.45], cudnn has deterministic f16 MLA support.
-NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.45.sqsh"
+NEW_CONTAINER_NAME="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-TE-bumpup-nvinspect.sqsh"
 
 
 srun -N1 \

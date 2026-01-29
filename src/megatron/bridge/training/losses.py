@@ -64,8 +64,17 @@ def masked_next_token_loss(
         loss_mask = output_tensor[1].view(-1).float()
     else:
         losses = output_tensor.view(-1).float()
+    
+    if torch.isnan(losses).any():
+        print(f"[DEBUG] Rank {torch.distributed.get_rank()}: losses contains NaN")
+    if torch.isnan(loss_mask).any():
+        print(f"[DEBUG] Rank {torch.distributed.get_rank()}: loss_mask contains NaN")
+
     loss_mask = loss_mask.view(-1).float()
     loss = torch.sum(losses * loss_mask)
+
+    if torch.isnan(loss):
+        print(f"[DEBUG] Rank {torch.distributed.get_rank()}: loss is NaN after sum")
 
     # Check individual rank losses are not NaN prior to DP all-reduce.
     rerun_state_machine = get_rerun_state_machine()

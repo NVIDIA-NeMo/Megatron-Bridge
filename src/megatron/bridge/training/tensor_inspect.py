@@ -15,10 +15,11 @@
 
 from typing import Any
 
+import torch
 from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.training.config import TensorInspectConfig
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import print_rank_0, warn_rank_0
 
 
 MISSING_NVINSPECT_MSG = "nvdlfw_inspect is not available. Please install it with `pip install nvdlfw-inspect`."
@@ -49,8 +50,9 @@ def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: Te
         return
 
     if not HAVE_NVINSPECT:
-        print_rank_0(MISSING_NVINSPECT_MSG)
-        raise ImportError(MISSING_NVINSPECT_MSG)
+        warn_rank_0(f"{MISSING_NVINSPECT_MSG} Disabling tensor_inspect.")
+        tensor_inspect_config.enabled = False
+        return
 
     try:
         nvinspect_api.initialize(
@@ -108,8 +110,9 @@ def finalize_tensor_inspect_post_model_initialization(
         return
 
     if not HAVE_NVINSPECT:
-        print_rank_0(MISSING_NVINSPECT_MSG)
-        raise ImportError(MISSING_NVINSPECT_MSG)
+        warn_rank_0(f"{MISSING_NVINSPECT_MSG} Disabling tensor_inspect.")
+        tensor_inspect_config.enabled = False
+        return
 
     try:
         from megatron.core.parallel_state import get_tensor_and_data_parallel_group
@@ -133,9 +136,12 @@ def tensor_inspect_step_if_enabled(tensor_inspect_config: TensorInspectConfig | 
 
     if tensor_inspect_config is None or not tensor_inspect_config.enabled:
         return
+    if torch.cuda.is_current_stream_capturing():
+        return
     if not HAVE_NVINSPECT:
-        print_rank_0(MISSING_NVINSPECT_MSG)
-        raise ImportError(MISSING_NVINSPECT_MSG)
+        warn_rank_0(f"{MISSING_NVINSPECT_MSG} Disabling tensor_inspect.")
+        tensor_inspect_config.enabled = False
+        return
     try:
         nvinspect_api.step()
     except Exception as e:

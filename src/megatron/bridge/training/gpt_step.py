@@ -178,6 +178,12 @@ def _forward_step_common(
             return schedule_plan, loss_mask
         else:
             output_tensor = model(**forward_args)
+            if isinstance(output_tensor, torch.Tensor) and torch.isnan(output_tensor).any():
+                print(f"[DEBUG] Rank {torch.distributed.get_rank()}: model(**forward_args) output contains NaN")
+            elif isinstance(output_tensor, (list, tuple)):
+                for i, t in enumerate(output_tensor):
+                    if isinstance(t, torch.Tensor) and torch.isnan(t).any():
+                        print(f"[DEBUG] Rank {torch.distributed.get_rank()}: model(**forward_args) output[{i}] contains NaN")
 
     return output_tensor, loss_mask
 
@@ -197,6 +203,11 @@ def forward_step(
         tuple containing the output tensor and the loss function
     """
     output, loss_mask = _forward_step_common(state, data_iterator, model, return_schedule_plan)
+
+    if isinstance(output, torch.Tensor) and torch.isnan(output).any():
+        print(f"[DEBUG] Rank {torch.distributed.get_rank()}: output from _forward_step_common contains NaN")
+    if isinstance(loss_mask, torch.Tensor) and torch.isnan(loss_mask).any():
+        print(f"[DEBUG] Rank {torch.distributed.get_rank()}: loss_mask from _forward_step_common contains NaN")
 
     loss_function = _create_loss_function(
         loss_mask,

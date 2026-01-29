@@ -1118,15 +1118,15 @@ class ConfigContainer(Container):
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
     dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
-    ft: Optional[FaultToleranceConfig] = None
-    straggler: Optional[StragglerDetectionConfig] = None
-    nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
+    ft: FaultToleranceConfig = field(default_factory=FaultToleranceConfig)
+    straggler: StragglerDetectionConfig = field(default_factory=StragglerDetectionConfig)
+    nvrx_straggler: NVRxStragglerDetectionConfig = field(default_factory=NVRxStragglerDetectionConfig)
     profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
-    tensor_inspect: TensorInspectConfig | None = None
-    inprocess_restart: Optional[InProcessRestartConfig] = None
+    tensor_inspect: TensorInspectConfig = field(default_factory=TensorInspectConfig)
+    inprocess_restart: InProcessRestartConfig = field(default_factory=InProcessRestartConfig)
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""

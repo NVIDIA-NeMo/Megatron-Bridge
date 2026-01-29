@@ -14,7 +14,7 @@ if [ "$GPU" = "h100" ]; then
     NUM_GPUS=8
     GPUS_PER_NODE=8
 elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
-    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-TE-bumpup-nvinspect.sqsh"
     ACCOUNT="coreai_dlalgo_llm"
     PARTITION="batch"
     NUM_GPUS=4
@@ -73,6 +73,20 @@ else
     export EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
 fi
 
+
+# Base commit for Megatron-LM changes
+BASE_COMMIT="0d8e0714cd29c01e164fe6de9f532182bdffa942"
+MEGATRON_DIR="3rdparty/Megatron-LM"
+
+# Dynamically construct mounts for changed files in Megatron-LM
+CUSTOM_MOUNTS=""
+if [ -d "$MEGATRON_DIR" ]; then
+    CHANGED_FILES=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD)
+    for f in $CHANGED_FILES; do
+        CUSTOM_MOUNTS="${CUSTOM_MOUNTS},$WORKDIR/$MEGATRON_DIR/$f:/opt/megatron-lm/$f"
+    done
+fi
+
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
@@ -82,7 +96,7 @@ python scripts/performance/setup_experiment.py \
     -ng $NUM_GPUS \
     -gn $GPUS_PER_NODE \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
@@ -95,4 +109,9 @@ python scripts/performance/setup_experiment.py \
     logger.log_memory_to_tensorboard=true \
     logger.throughput_window_size=1 \
     logger.tensorboard_log_interval=1 \
+    rerun_state_machine.check_for_nan_in_loss=true \
+    ddp.check_for_nan_in_grad=true \
+    tensor_inspect.enabled=true \
+    tensor_inspect.features="nan_check" \
+    model.cuda_graph_impl=none \
     $additional_args
