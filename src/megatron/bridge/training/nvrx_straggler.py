@@ -88,7 +88,7 @@ class NVRxStragglerDetectionManager:
         )
 
         self.initialized = True
-        self.logger.debug("NVRx straggler detection initialized successfully.")
+        self.logger.info(f"NVRx straggler detection enabled (report_interval={self.config.report_time_interval}s)")
 
     def wrap_train_step_function(self, train_step_func: Callable) -> Callable:
         """
