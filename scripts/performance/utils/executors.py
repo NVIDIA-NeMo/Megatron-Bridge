@@ -44,7 +44,7 @@ PERF_ENV_VARS = {
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
-    "HF_HUB_OFFLINE": "1",
+    "HF_HUB_OFFLINE": "0",
 }
 
 
@@ -86,7 +86,6 @@ def slurm_executor(
     srun_args = custom_srun_args.copy() + [
         "--mpi=pmix",
         "--no-container-mount-home",
-        "--container-writable",
     ]
 
     if log_dir is not None:
@@ -108,9 +107,7 @@ def slurm_executor(
         PERF_ENV_VARS["NEMO_HOME"] = nemo_home
         mounts.extend([f"{nemo_home}:{nemo_home}"])
     if hf_token is not None:
-        PERF_ENV_VARS["HF_TOKEN"] = hf_token
-        PERF_ENV_VARS["TRANSFORMERS_OFFLINE"] = "0"
-        PERF_ENV_VARS["HF_HUB_OFFLINE"] = "0"
+        PERF_ENV_VARS.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
 
     PERF_ENV_VARS.update(custom_env_vars)
     mounts.extend(custom_mounts)
