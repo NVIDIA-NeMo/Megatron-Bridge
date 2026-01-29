@@ -149,16 +149,16 @@ def pack_batch_sequences(
         valid_sequences.append(i)
 
     if len(valid_sequences) == 0:
-        # No valid sequences, return dummy packed batch
+        # No valid sequences, return empty packed batch
         logger.warning("No valid sequences found in batch, skipping packing")
         return (
-            tokens[:1],  # Return first sequence as-is
-            labels[:1],
-            loss_mask[:1],
+            tokens[:, :0],  # Empty tensor
+            labels[:, :0],
+            loss_mask[:, :0],
             attention_mask,
-            position_ids[:1],
-            torch.tensor([0, seq_len], dtype=torch.int32, device=device),
-            torch.tensor(seq_len, dtype=torch.int32, device=device),
+            position_ids[:, :0],
+            torch.tensor([0], dtype=torch.int32, device=device),  # Empty cu_seqlens
+            torch.tensor(0, dtype=torch.int32, device=device),
         )
 
     # Build cumulative sequence lengths
@@ -298,9 +298,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
 
                 # attention_mask if present
                 attn = batch.get("attention_mask")
-            if attn is not None:
-                attn = pad_or_truncate_attn_to_len(attn, target_len, seq_cap)
-                batch["attention_mask"] = attn  # type: ignore[assignment]
+                if attn is not None:
+                    attn = pad_or_truncate_attn_to_len(attn, target_len, seq_cap)
+                    batch["attention_mask"] = attn  # type: ignore[assignment]
 
     visual_inputs = batch.get("visual_inputs")
     cp_size = pg_collection.cp.size() if pg_collection is not None and pg_collection.cp is not None else 1
@@ -423,7 +423,7 @@ def forward_step(
             return schedule_plan, loss_function
         else:
             model_output = model(**forward_args)
-            # Handle tuple return: (output_tensor, sliced_loss_mask) from VLM models with CPI'm
+            # Handle tuple return: (output_tensor, sliced_loss_mask) from VLM models with CP
             if isinstance(model_output, tuple):
                 output_tensor, loss_mask = model_output
             else:

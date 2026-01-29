@@ -195,7 +195,7 @@ class Ministral3Model(MegatronModule):
         packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         """
         Forward pass combining HuggingFace vision encoder with Megatron language model.
 
@@ -210,7 +210,8 @@ class Ministral3Model(MegatronModule):
             loss_mask: Mask for loss computation.
 
         Returns:
-            Model output (logits or loss depending on mode).
+            tuple: (output_tensor, loss_mask) where output_tensor contains model output
+                   and loss_mask is the CP-sliced mask for consistent loss computation.
         """
         if self.pre_process:
             if inputs_embeds is None:

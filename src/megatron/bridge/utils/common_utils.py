@@ -319,6 +319,9 @@ def slice_batch_for_context_parallel(
     if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
         import transformer_engine_torch as tex
 
+        if inputs_embeds is None:
+            raise ValueError("inputs_embeds is required for THD CP slicing")
+
         cu_seqlens = packed_seq_params.cu_seqlens_q
         cu_seqlens_padded = (
             packed_seq_params.cu_seqlens_q_padded if packed_seq_params.cu_seqlens_q_padded is not None else cu_seqlens

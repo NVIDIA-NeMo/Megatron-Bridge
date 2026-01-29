@@ -121,10 +121,13 @@ class Gemma3VLModel(MegatronModule):
         packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         r"""
-        image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
-            The temporal, height and width of feature shape of each image in LLM.
+        Forward pass combining HuggingFace vision encoder with Megatron language model.
+
+        Returns:
+            tuple: (output_tensor, loss_mask) where output_tensor contains model output
+                   and loss_mask is the CP-sliced mask for consistent loss computation.
         """
         if self.pre_process:
             if inputs_embeds is None:

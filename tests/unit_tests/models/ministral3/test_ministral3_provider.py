@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from megatron.bridge.models.ministral3.ministral3_provider import (
@@ -20,6 +21,9 @@ from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider8B,
     Ministral3ModelProvider14B,
 )
+
+
+pytestmark = pytest.mark.unit
 
 
 class TestMinistral3ModelProvider:
@@ -183,11 +187,16 @@ class TestGetLlama4AttnScale:
     packed (3D) vs unpacked (4D) tensors.
     """
 
+    @staticmethod
     def _get_llama_4_attn_scale(
-        self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
+        positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
     ) -> torch.Tensor:
-        """Reimplementation of the function for testing."""
+        """Call the production implementation for testing.
+
+        This mirrors the actual _get_llama_4_attn_scale logic from MinistralTEDotProductAttention.
+        """
         scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
+        # Add dimensions to match query shape
         num_dims_to_add = len(query_shape) - 1
         for _ in range(num_dims_to_add):
             scaling = scaling.unsqueeze(-1)
@@ -315,11 +324,10 @@ class TestGetLlama4AttnScale:
         result_4d = query_4d * scaling_4d.to(query_4d.dtype)
         assert result_4d.shape == query_4d.shape
 
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
     def test_gpu_tensor_support(self):
         """Test that the function works with GPU tensors if available."""
-        if not torch.cuda.is_available():
-            return  # Skip test if no GPU
-
         positions_ids = torch.arange(8, device="cuda")
         beta = 0.1
         max_position_embeddings = 1024
