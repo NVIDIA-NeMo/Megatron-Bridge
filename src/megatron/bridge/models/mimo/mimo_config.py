@@ -60,9 +60,10 @@ class MimoParallelismConfig:
     
     Note: Phase 1 only supports heterogeneous deployment where each module
     can have different parallelism configurations and rank offsets.
+    
+    The LLM module must be named "llm" in module_parallelisms.
     """
 
-    llm_module_name: str
     module_parallelisms: dict[str, ModuleParallelismConfig]
     special_token_ids: dict[str, int] = field(default_factory=dict)
     # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
@@ -97,8 +98,11 @@ class MimoParallelismConfig:
 
     def finalize(self, world_size: Optional[int]) -> None:
         """Finalize parallelism config: compute data_parallel_size and validate."""
-        if self.llm_module_name not in self.module_parallelisms:
-            raise ValueError(f"LLM module '{self.llm_module_name}' not in module_parallelisms.")
+        if "llm" not in self.module_parallelisms:
+            raise ValueError(
+                f"LLM module 'llm' must be in module_parallelisms. "
+                f"Found modules: {list(self.module_parallelisms.keys())}"
+            )
 
         # In heterogeneous mode, data_parallel_size must be pre-set (not computed from world_size)
         for parallelism in self.module_parallelisms.values():

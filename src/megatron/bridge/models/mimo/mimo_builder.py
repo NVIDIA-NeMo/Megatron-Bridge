@@ -49,5 +49,6 @@ def build_hypercomm_grids(
 
 def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[str, List[str]]:
     """Infer a default multi-encoder -> LLM topology."""
-    llm = mimo_parallelism_config.llm_module_name
-    return {name: [llm] for name in mimo_parallelism_config.module_names if name != llm} | {llm: []}
+    return {
+        name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"
+    } | {"llm": []}

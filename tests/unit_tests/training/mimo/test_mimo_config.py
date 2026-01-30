@@ -27,15 +27,12 @@ def test_mimo_heterogeneous_rank_offset_overlap():
         "encoder": ModuleParallelismConfig(
             tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0
         ),
-        "language_module": ModuleParallelismConfig(
+        "llm": ModuleParallelismConfig(
             tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2
         ),
     }
     mimo_parallelism_config = MimoParallelismConfig(
-        llm_module_name="language_module",
         module_parallelisms=module_parallelisms,
     )
     with pytest.raises(ValueError, match="overlap"):
         mimo_parallelism_config.finalize(world_size=None)
-
-

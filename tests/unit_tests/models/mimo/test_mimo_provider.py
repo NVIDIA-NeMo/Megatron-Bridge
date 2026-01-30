@@ -10,7 +10,6 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.bridge.models.mimo import (
     MimoModelProvider,
     MimoModelInfra,
-    MimoStubModel,
 )
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
@@ -36,7 +35,6 @@ class TestMimoModelProvider:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         modality_spec = ModuleSpec(module=Mock, params={})
         mimo_parallelism_config = MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms={
                 "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
             },
@@ -141,7 +139,6 @@ class TestMimoModelProvider:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         
         mimo_parallelism_config = MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms={
                 "llm": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
@@ -185,7 +182,6 @@ class TestMimoModelProvider:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         
         mimo_parallelism_config = MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms={
                 "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
             },
@@ -222,7 +218,6 @@ class TestMimoModelProvider:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         
         mimo_parallelism_config = MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms={
                 "llm": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
@@ -256,50 +251,58 @@ class TestMimoModelProvider:
         assert "llm" in infra.module_to_grid_map
         assert "llm" in infra.pg_collections
     
+    @patch('torch.distributed.is_initialized')
+    @patch('torch.distributed.get_world_size')
     @patch('torch.distributed.get_rank')
     @patch('megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids')
-    @patch('megatron.bridge.models.mimo.mimo_provider._default_topology')
-    def test_non_participating_rank_gets_stub(
-        self, mock_topology, mock_build_grids, mock_get_rank
+    def test_non_participating_rank_raises_error(
+        self, mock_build_grids, mock_get_rank, mock_get_world_size, mock_is_initialized
     ):
-        """Test that non-participating ranks get MimoStubModel, not None."""
-        # Rank 10 doesn't participate
-        mock_get_rank.return_value = 10
+        """Test that non-participating ranks raise ValueError during finalize().
+        
+        This tests the gap scenario: world_size=12, but modules only cover
+        ranks 0-3 and 8-11, leaving ranks 4-7 as non-participating.
+        """
+        mock_is_initialized.return_value = True
+        mock_get_world_size.return_value = 12  # World has 12 ranks
+        mock_get_rank.return_value = 5  # Rank 5 is in the gap
         
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        # Create config with a gap: llm at 0-3, encoder at 8-11, gap at 4-7
         mimo_parallelism_config = MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms={
                 "llm": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     data_parallel_size=2,
-                    rank_offset=0,
+                    rank_offset=0,  # ranks 0-3
+                ),
+                "encoder": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    data_parallel_size=2,
+                    rank_offset=8,  # ranks 8-11
                 ),
             },
         )
         
-        # Mock grid (only ranks 0-3)
-        mock_grid = MagicMock()
-        mock_grid.rank_offset = 0
-        mock_grid.size = 4
-        mock_build_grids.return_value = {"llm": mock_grid}
-        mock_topology.return_value = {"llm": []}
+        # Mock grids with the gap (ranks 4-7 not covered)
+        llm_grid = MagicMock()
+        llm_grid.rank_offset = 0
+        llm_grid.size = 4  # ranks 0-3
+        
+        encoder_grid = MagicMock()
+        encoder_grid.rank_offset = 8
+        encoder_grid.size = 4  # ranks 8-11
+        
+        mock_build_grids.return_value = {"llm": llm_grid, "encoder": encoder_grid}
         
         provider = MimoModelProvider(
             language_model_spec=language_spec,
             mimo_parallelism_config=mimo_parallelism_config,
         )
         
-        model = provider.provide()
-        
-        # Should return stub model, not None
-        assert isinstance(model, MimoStubModel)
-        assert model is not None
-        
-        # Infra should show no participating modules
-        infra = provider.build_infra()
-        assert infra.participating_modules == []
-        assert infra.pg_collections["llm"] is None
+        # Should raise ValueError because ranks 4-7 don't participate
+        with pytest.raises(ValueError, match="do not participate in any MIMO module"):
+            provider.finalize()
     
     def test_inject_pg_collection_into_language_spec(self):
         """Test that pg_collection is injected into language specs."""
@@ -378,7 +381,6 @@ class TestMimoModelProvider:
         dino_spec = ModuleSpec(module=Mock, params={})
         
         mimo_parallelism_config = MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms={
                 "llm": ModuleParallelismConfig(
                     tensor_model_parallel_size=8, data_parallel_size=1
@@ -482,35 +484,4 @@ class TestMimoModelInfra:
         assert infra.pg_collections == pg_collections
         assert infra.participating_modules == participating
 
-
-class TestMimoStubModel:
-    """Test cases for MimoStubModel."""
-    
-    def test_stub_model_creation(self):
-        """Test stub model can be created."""
-        stub = MimoStubModel()
-        assert stub is not None
-    
-    def test_stub_model_forward_raises(self):
-        """Test stub model forward() raises RuntimeError."""
-        stub = MimoStubModel()
-        
-        with pytest.raises(RuntimeError, match="non-participating rank"):
-            stub.forward()
-    
-    def test_stub_model_has_no_parameters(self):
-        """Test stub model has minimal/no trainable parameters."""
-        stub = MimoStubModel()
-        
-        # Should have very few or no parameters
-        param_count = sum(p.numel() for p in stub.parameters())
-        # The minimal TransformerConfig may create some, but should be tiny
-        assert param_count == 0 or param_count < 100
-    
-    def test_stub_model_set_input_tensor(self):
-        """Test stub model has set_input_tensor for PP compatibility."""
-        stub = MimoStubModel()
-        
-        # Should not raise
-        stub.set_input_tensor(torch.tensor([1.0]))
 

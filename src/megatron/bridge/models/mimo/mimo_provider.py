@@ -25,7 +25,6 @@ from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -59,40 +58,6 @@ class MimoModelInfra:
     participating_modules: List[str]
 
 
-class MimoStubModel(MegatronModule):
-    """Stub model for non-participating ranks.
-    
-    This minimal model is returned on ranks that don't participate in any
-    MIMO module. It satisfies the MegatronModule interface required by the
-    training loop without allocating any parameters.
-    
-    The stub allows the training loop to proceed without special-case handling
-    for non-participating ranks (e.g., model.model_type = ... still works).
-    """
-    
-    def __init__(self):
-        # Create a minimal TransformerConfig for the parent class
-        config = TransformerConfig(
-            num_layers=1,
-            hidden_size=1,
-            num_attention_heads=1,
-        )
-        super().__init__(config=config)
-    
-    def forward(self, *args, **kwargs):
-        """Raise error if forward is called on non-participating rank."""
-        raise RuntimeError(
-            "MimoStubModel.forward() called on non-participating rank. "
-            "This rank should not be executing the forward pass."
-        )
-    
-    def set_input_tensor(self, input_tensor):
-        """No-op for pipeline parallel compatibility."""
-        pass
-
-
-
-
 @dataclass
 class MimoModelProvider(ModelProviderMixin[MimoModel]):
     """MIMO provider with heterogeneous parallelism support.
@@ -113,7 +78,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     
     Example:
         >>> mimo_parallelism_config = MimoParallelismConfig(
-        ...     llm_module_name="llm",
         ...     module_parallelisms={
         ...         "llm": ModuleParallelismConfig(tensor_model_parallel_size=8),
         ...         "clip_encoder": ModuleParallelismConfig(tensor_model_parallel_size=2),
@@ -160,9 +124,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         """Return LLM's tensor parallel size for compatibility with standard code paths."""
         if self.mimo_parallelism_config is None:
             return 1
-        llm_parallelism = self.mimo_parallelism_config.get_parallelism(
-            self.mimo_parallelism_config.llm_module_name
-        )
+        llm_parallelism = self.mimo_parallelism_config.get_parallelism("llm")
         return llm_parallelism.tensor_model_parallel_size
 
     @property
@@ -170,9 +132,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         """Return LLM's pipeline parallel size for compatibility with standard code paths."""
         if self.mimo_parallelism_config is None:
             return 1
-        llm_parallelism = self.mimo_parallelism_config.get_parallelism(
-            self.mimo_parallelism_config.llm_module_name
-        )
+        llm_parallelism = self.mimo_parallelism_config.get_parallelism("llm")
         return llm_parallelism.pipeline_model_parallel_size
 
     @property
@@ -180,9 +140,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         """Return LLM's context parallel size for compatibility with standard code paths."""
         if self.mimo_parallelism_config is None:
             return 1
-        llm_parallelism = self.mimo_parallelism_config.get_parallelism(
-            self.mimo_parallelism_config.llm_module_name
-        )
+        llm_parallelism = self.mimo_parallelism_config.get_parallelism("llm")
         return llm_parallelism.context_parallel_size
 
     def build_infra(self) -> MimoModelInfra:
@@ -303,26 +261,23 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             vp_stage: Unused for MIMO (accepted for API compatibility).
             
         Returns:
-            MimoModel instance. For non-participating ranks, returns a
-            MimoStubModel to maintain compatibility with the training loop.
+            MimoModel instance.
             
         Note:
             Device/dtype handling is done by provide_distributed_model(),
             consistent with other providers. This method returns a CPU model.
+            
+        Raises:
+            ValueError: If this rank doesn't participate in any module
+                (indicates invalid parallelism configuration).
         """
         # Build infrastructure
         infra = self.build_infra()
         
-        # Check rank participation
-        if self.mimo_parallelism_config and not infra.participating_modules:
-            # This rank doesn't participate in any module - return stub
-            return MimoStubModel()
-        
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
         if self.mimo_parallelism_config:
-            llm_name = self.mimo_parallelism_config.llm_module_name
-            llm_pg = infra.pg_collections.get(llm_name)
+            llm_pg = infra.pg_collections.get("llm")
             if llm_pg is not None:
                 language_spec = self._inject_pg_collection_into_language_spec(
                     language_spec, llm_pg
@@ -403,7 +358,11 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             mixed_precision_wrapper: Wrapper for mixed precision (e.g., Float16Module).
             
         Returns:
-            List containing the wrapped MimoModel (or MimoStubModel for non-participating ranks).
+            List containing the wrapped MimoModel.
+            
+        Raises:
+            ValueError: If this rank doesn't participate in any module
+                (indicates invalid parallelism configuration).
         """
         # Import here to avoid circular imports
         from megatron.core.transformer.module import Float16Module
@@ -431,15 +390,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             if result is not None:
                 model_list = result
         
-        # Handle non-participating ranks (stub model)
-        if isinstance(model_list[0], MimoStubModel):
-            # Stub model doesn't need device placement or DDP wrapping
-            if final_post_wrap_hook:
-                result = final_post_wrap_hook(model_list)
-                if result is not None:
-                    model_list = result
-            return model_list
-        
         # Move to device
         if not use_cpu_initialization and not init_model_with_meta_device:
             for m in model_list:
@@ -462,8 +412,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         if wrap_with_ddp and ddp_config is not None:
             # Get LLM's pg_collection for DDP (whole model uses LLM's parallelism for DDP)
             if self.mimo_parallelism_config:
-                llm_name = self.mimo_parallelism_config.llm_module_name
-                pg_collection = infra.pg_collections.get(llm_name)
+                pg_collection = infra.pg_collections.get("llm")
             else:
                 pg_collection = ProcessGroupCollection.use_mpu_process_groups()
             
@@ -582,7 +531,48 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         This validates the parallelism config and should be called before
         build_infra() or provide(). It is called automatically by
         provide_distributed_model().
+        
+        Raises:
+            ValueError: If any rank doesn't participate in at least one module.
+                This indicates the parallelism configuration doesn't cover all
+                ranks in the world.
         """
         if self.mimo_parallelism_config is not None:
             world_size = dist.get_world_size() if dist.is_initialized() else None
             self.mimo_parallelism_config.finalize(world_size)
+            
+            # Validate all ranks participate in at least one module
+            self._validate_all_ranks_participate(world_size)
+    
+    def _validate_all_ranks_participate(self, world_size: Optional[int]) -> None:
+        """Validate that all ranks participate in at least one module.
+        
+        Args:
+            world_size: Total number of ranks. If None, validation is skipped.
+            
+        Raises:
+            ValueError: If any rank doesn't participate in a module.
+        """
+        if world_size is None or self.mimo_parallelism_config is None:
+            return
+        
+        # Build grids to determine rank coverage
+        grids = build_hypercomm_grids(self.mimo_parallelism_config)
+        
+        # Collect all ranks that participate in at least one module
+        participating_ranks = set()
+        for module_name, grid in grids.items():
+            for rank in range(grid.rank_offset, grid.rank_offset + grid.size):
+                participating_ranks.add(rank)
+        
+        # Check for non-participating ranks
+        all_ranks = set(range(world_size))
+        non_participating_ranks = all_ranks - participating_ranks
+        
+        if non_participating_ranks:
+            raise ValueError(
+                f"Ranks {sorted(non_participating_ranks)} do not participate in any MIMO module. "
+                f"All {world_size} ranks must be assigned to at least one module. "
+                f"Adjust MimoParallelismConfig to cover all ranks, or reduce world_size to "
+                f"{len(participating_ranks)}."
+            )
