@@ -17,7 +17,7 @@
 # GLM-4.5V Full Supervised Fine-Tuning (SFT)
 #
 # GLM-4.5V is a large MoE model (106B parameters)
-# Recommended: TP=1, PP=2, EP=16 for full SFT (128 GPUs, 16 nodes)
+# Recommended: TP=1, PP=8, EP=16 for full SFT (128 GPUs, 16 nodes)
 # For smaller setups, use LoRA/DoRA instead (see slurm_peft.sh)
 #
 # Usage:

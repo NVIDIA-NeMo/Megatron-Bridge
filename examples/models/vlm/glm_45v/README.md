@@ -90,7 +90,7 @@ See the [inference.sh](inference.sh) script for commands to:
 - Run inference with exported Hugging Face checkpoints
 
 **Expected output:**
-```
+```text
 ...
 Generation step 46
 Generation step 47
@@ -120,7 +120,7 @@ Before training, ensure the following environment variables are set:
 3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
 4. `WANDB_API_KEY`: (optional) to enable WandB logging
 
-### Pretrain
+### Pretraining
 
 Pretraining is not verified for this model.
 
@@ -161,7 +161,7 @@ See [slurm_peft.sh](slurm_peft.sh) for the full Slurm job script.
 W&B report coming soon.
 
 
-**Note:** LoRA/DoRA significantly reduces memory requirements, allowing fo fewer GPUs. Expert parallelism (EP) is essential for efficient training of this MoE model.
+**Note:** LoRA/DoRA significantly reduces memory requirements, allowing for fewer GPUs. Expert parallelism (EP) is essential for efficient training of this MoE model.
 
 ## Evaluation
 
