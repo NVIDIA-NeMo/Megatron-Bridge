@@ -45,30 +45,34 @@ class Qwen25VLBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen25VLModelProvider:
         hf_config = hf_pretrained.config
+        text_config = hf_config.text_config
+
+        # Get the model dtype from text config
+        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
 
         provider = Qwen25VLModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
+            num_layers=text_config.num_hidden_layers,
+            hidden_size=text_config.hidden_size,
+            ffn_hidden_size=text_config.intermediate_size,
+            num_attention_heads=text_config.num_attention_heads,
+            num_query_groups=text_config.num_key_value_heads,
+            init_method_std=text_config.initializer_range,
+            layernorm_epsilon=text_config.rms_norm_eps,
             gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=self.rope_theta_from_hf(hf_config),
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
+            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
+            rotary_base=self.rope_theta_from_hf(text_config),
+            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
+            vocab_size=text_config.vocab_size,
+            seq_length=text_config.max_position_embeddings,
+            fp16=(model_dtype == torch.float16),
+            bf16=(model_dtype == torch.bfloat16),
+            params_dtype=model_dtype,
             generation_config=hf_pretrained.generation_config,
             add_qkv_bias=True,  # Qwen2 has bias in QKV projections
             vision_config=hf_config.vision_config,
             # VL-specific token IDs
-            bos_token_id=getattr(hf_config, "bos_token_id", 151643),
-            eos_token_id=getattr(hf_config, "eos_token_id", 151645),
+            bos_token_id=getattr(text_config, "bos_token_id", 151643),
+            eos_token_id=getattr(text_config, "eos_token_id", 151645),
             vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
             vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
             vision_token_id=getattr(hf_config, "vision_token_id", 151654),
