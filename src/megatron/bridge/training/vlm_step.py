@@ -121,8 +121,8 @@ def get_batch(
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
         cu_seqlens, cu_seqlens_argmin, max_seqlen, visual_inputs (container of optional modalities)
     """
-    is_first = is_pp_first_stage(pg_collection.pp)
-    is_last = is_pp_last_stage(pg_collection.pp)
+    is_first = True
+    is_last = True
 
     # All PP stages load from iterator to get input_ids and visual grid info
     # This allows each stage to compute MRoPE position_ids locally without broadcasting
@@ -142,7 +142,7 @@ def get_batch(
         batch[k] = v
 
     # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
-    if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+    if True:
         seq_len = cfg.model.seq_length
 
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
