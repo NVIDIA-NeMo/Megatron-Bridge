@@ -530,11 +530,13 @@ def _initialize_distributed(
             print("> initializing torch distributed ...", flush=True)
 
         # Manually set the device ids.
+        device_id = None
         if device_count > 0:
             if dist_config.external_gpu_device_mapping:
-                torch.cuda.set_device(0)
+                device_id = 0
             else:
-                torch.cuda.set_device(get_local_rank_preinit())
+                device_id = get_local_rank_preinit()
+            torch.cuda.set_device(device_id)
 
         # Set to non-default stream for cudagraph capturing.
         if model_config.cuda_graph_impl == "transformer_engine":
@@ -556,16 +558,22 @@ def _initialize_distributed(
             "timeout": datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
         }
 
+        # Pass device_id to init_process_group() for NCCL backend to avoid
+        # "Guessing device ID based on global rank" warning and potential hangs.
+        # See: https://pytorch.org/docs/stable/distributed.html#torch.distributed.init_process_group
+        if dist_config.distributed_backend == "nccl" and device_id is not None:
+            init_process_group_kwargs["device_id"] = torch.device("cuda", device_id)
+
         torch.distributed.init_process_group(**init_process_group_kwargs)
 
         # Force NCCL backend initialization if using in-process restart
         if use_inprocess_restart:
             force_nccl_backend_init(torch.cuda.current_device())
 
-        if dist_config.external_gpu_device_mapping:
-            torch.distributed.barrier(device_ids=[0])
+        if device_id is not None:
+            torch.distributed.barrier(device_ids=[device_id])
         else:
-            torch.distributed.barrier(device_ids=[get_local_rank_preinit()])
+            torch.distributed.barrier()
 
     # Set the tensor model-parallel, pipeline model-parallel, and
     # data-parallel communicators.
