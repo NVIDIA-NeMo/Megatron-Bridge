@@ -126,7 +126,7 @@ Pretraining is not verified for this model.
 
 ### Supervised Fine-Tuning (SFT)
 
-Full parameter fine-tuning requires 16 nodes (128 GPUs) with TP=1, PP=2, EP=16.
+Full parameter fine-tuning requires 16 nodes (128 GPUs) with TP=1, PP=8, EP=16.
 
 **Usage:**
 ```bash
@@ -144,7 +144,7 @@ W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-LoRA fine-tuning requires only 4 nodes (32 GPUs) with TP=1, PP=2, EP=4.
+LoRA fine-tuning requires only 4 nodes (32 GPUs) with TP=1, PP=8, EP=4.
 
 **Usage:**
 ```bash
@@ -160,14 +160,8 @@ See [slurm_peft.sh](slurm_peft.sh) for the full Slurm job script.
 
 W&B report coming soon.
 
-### Recommended Configurations
 
-| Model | Mode | TP | PP | EP | Global Batch Size | Learning Rate | Hardware |
-|-------|------|----|----|-----|-------------------|---------------|----------|
-| GLM-4.5V | Full SFT | 1 | 2 | 16 | 16-32 | 5e-6 | 128 GPUs (16 nodes) |
-| GLM-4.5V | LoRA/DoRA | 1 | 2 | 4 | 32-64 | 1e-4 | 32 GPUs (4 nodes) |
-
-**Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs. Expert parallelism (EP) is essential for efficient training of this MoE model.
+**Note:** LoRA/DoRA significantly reduces memory requirements, allowing fo fewer GPUs. Expert parallelism (EP) is essential for efficient training of this MoE model.
 
 ## Evaluation
 
