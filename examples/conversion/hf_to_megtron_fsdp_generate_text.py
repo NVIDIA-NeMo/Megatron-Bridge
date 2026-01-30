@@ -17,8 +17,7 @@
 Round-trip conversion between Hugging Face and Megatron FSDP.
 
 Usage examples:
-    python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_fsdp_roundtrip.py --hf-model-id Qwen/Qwen3-30B-A3B --tp 2 --cp 1 --ep 4
-    python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megtron_fsdp_generate_text.py --trust-remote-code --hf-model-id moonshotai/Moonlight-16B-A3B --ep 4 --tp 2 --cp 1
+    python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megtron_fsdp_generate_text.py --trust-remote-code --hf-model-id moonshotai/Moonlight-16B-A3B --ep 4
 """
 
 from __future__ import annotations

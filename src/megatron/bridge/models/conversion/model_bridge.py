@@ -477,7 +477,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
         if use_megatron_fsdp:
-            megatron_model = [megatron_model[0].module.module]
+            megatron_model = [
+                m.module.module if isinstance(m, FullyShardedDataParallel) else m for m in megatron_model
+            ]
         # [ModelOpt]: Hide extra parameters registered in Distillation mode
         with contextlib.ExitStack() as stack:
             if hasattr(megatron_model[0], "hide_teacher_model"):
@@ -674,7 +676,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
         if use_megatron_fsdp:
-            megatron_model = [megatron_model[0].module.module]
+            megatron_model = [
+                m.module.module if isinstance(m, FullyShardedDataParallel) else m for m in megatron_model
+            ]
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Example override file for Qwen3-VL-30B-A3B-Instruct
+# Example override file for Qwen3-VL-8B-Instruct
 
 mixed_precision: null
 
