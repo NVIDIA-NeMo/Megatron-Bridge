@@ -116,11 +116,11 @@ class NsysPlugin(Plugin):
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
-        
+
         # Set nsys_trace if provided, otherwise use nemo_run defaults
         if self.nsys_trace is not None:
             launcher.nsys_trace = self.nsys_trace
-        
+
         # Combine default extra args with user-provided extra args
         if self.nsys_extra_args is not None:
             # Get existing launcher extra args (nemo_run defaults)

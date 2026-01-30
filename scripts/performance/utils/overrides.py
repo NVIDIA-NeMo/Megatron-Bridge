@@ -167,7 +167,7 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
     if args.save_interval is not None:
         recipe.checkpoint.save_interval = args.save_interval
         logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
-        
+
         # Set save directory (use provided or default)
         if args.save_dir is not None:
             recipe.checkpoint.save = args.save_dir
@@ -175,7 +175,7 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
         else:
             recipe.checkpoint.save = "/nemo_run/checkpoints"
             logger.info("Checkpoint save directory defaulting to: /nemo_run/checkpoints")
-    
+
     # If only save_dir is provided without save_interval, still enable checkpointing
     elif args.save_dir is not None:
         recipe.checkpoint.save = args.save_dir
@@ -183,18 +183,18 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
         # Default save_interval to train_iters
         recipe.checkpoint.save_interval = recipe.train.train_iters
         logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
-    
+
     if args.load_dir is not None:
         recipe.checkpoint.load = args.load_dir
         logger.info(f"Checkpoint load directory set to: {args.load_dir}")
-    
+
     if args.most_recent_k is not None:
         recipe.checkpoint.most_recent_k = args.most_recent_k
         logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
-    
+
     if args.save_config_filepath is not None:
         recipe.logger.save_config_filepath = args.save_config_filepath
-    
+
     return recipe
 
 
