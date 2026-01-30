@@ -5,7 +5,7 @@ This section documents Vision Language Models supported by Megatron Bridge.
 ```{toctree}
 :hidden:
 
-gemma3-vl.md
+../../../../examples/models/vlm/gemma3_vl/README.md
 glm-45v.md
 ministral3.md
 nemotron-nano-v2-vl.md
