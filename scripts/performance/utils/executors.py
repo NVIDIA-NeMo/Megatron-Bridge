@@ -38,7 +38,7 @@ bash -c '{{ pre_cmds }} {{ command }}'
 
 PERF_ENV_VARS = {
     "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
-    "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
+    "TRANSFORMERS_OFFLINE": "1",  # Disable online downloads from HuggingFace
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
     "NVTE_NORM_FWD_USE_CUDNN": "1",

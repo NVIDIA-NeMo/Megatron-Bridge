@@ -129,12 +129,21 @@ def setup(
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
-    initialize_megatron(
+    # pg_collection is returned from initialize_megatron:
+    # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
+    # - When use_decentralized_pg=False: uses mpu's global parallel state
+    pg_collection = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         restart_store=restart_store,
     )
+
+    # Set CPU affinity for optimal host-device transfers when fine-grained activation offloading is enabled
+    if cfg.model.fine_grained_activation_offloading:
+        from megatron.core.pipeline_parallel.utils import set_ideal_affinity_for_current_gpu
+
+        set_ideal_affinity_for_current_gpu()
 
     timers = state.timers
 
@@ -157,9 +166,6 @@ def setup(
 
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
-
-    # Initialize process group collection once and pass through
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -217,6 +223,7 @@ def setup(
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        pg_collection=pg_collection,
     )
 
     cfg.model.timers = timers
@@ -226,6 +233,9 @@ def setup(
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
+        # Only pass pg_collection when use_decentralized_pg is True.
+        # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
+        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
         optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
     timers("model-and-optimizer-setup").stop()

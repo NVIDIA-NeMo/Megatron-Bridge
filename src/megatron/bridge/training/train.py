@@ -36,7 +36,8 @@ from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
-from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -184,13 +185,14 @@ def train(
 
     # Initialize NVRx straggler detection if enabled
     nvrx_straggler_manager = global_state.nvrx_straggler_manager
+    wrapped_train_step = train_step  # Default to original function
     if nvrx_straggler_manager is not None:
         try:
             # Initialize the straggler detector first
             nvrx_straggler_manager.initialize()
             # Wrap the train_step function for monitoring
-            # Note: The nvidia-resiliency-ext library will monitor the actual train_step calls
-            nvrx_straggler_manager.wrap_train_step_function(train_step)
+            # The wrapped function must be used instead of the original to collect profiling data
+            wrapped_train_step = nvrx_straggler_manager.wrap_train_step_function(train_step)
         except Exception as e:
             print_rank_0(f"Failed to initialize NVRx straggler detection: {e}")
             # Set to None to disable further checks
@@ -249,7 +251,10 @@ def train(
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
 
     # Wrap forward_backward_func for Full iteration CUDA graph
-    forward_backward_func = get_forward_backward_func()
+    forward_backward_func = get_forward_backward_func(
+        pp_size=pg_collection.pp.size(),
+        vp_size=config.model.virtual_pipeline_model_parallel_size,
+    )
     if config.model.cuda_graph_impl == "local" and "full_iteration" in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
@@ -335,7 +340,7 @@ def train(
             grad_norm,
             num_zeros_in_grad,
             log_max_attention_logit,
-        ) = train_step(
+        ) = wrapped_train_step(
             wrapped_forward_step_func,
             train_data_iterator,
             model,
@@ -651,13 +656,18 @@ def train_step(
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-            model,
-            seq_length=model_config.seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
-        )
+        if not cfg.dist.use_decentralized_pg:
+            adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+                model,
+                seq_length=model_config.seq_length,
+                micro_batch_size=train_config.micro_batch_size,
+                decoder_seq_length=model_config.seq_length,
+            )
+        else:
+            adjust_tensor_shapes_fn = None
 
+        # Forward pass.
+        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -668,6 +678,8 @@ def train_step(
             decoder_seq_length=seq_length,
             forward_only=False,
             adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            p2p_communicator=p2p_communicator,
+            pg_collection=pg_collection,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
@@ -710,7 +722,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if pg_collection.pp.rank() == pg_collection.pp.size() - 1:
+    if is_pp_last_stage(pg_collection.pp):
         # Average loss across microbatches.
         loss_reduced = {}
 

@@ -772,6 +772,7 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            low_memory_save=True,
         )
 
     @patch.object(AutoBridge, "save_megatron_model")
@@ -798,6 +799,7 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             hf_tokenizer_path="./local_model",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            low_memory_save=True,
         )
 
     def test_export_ckpt_basic(self):
@@ -875,10 +877,14 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
-            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
+            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path", low_memory_save=True)
 
             mock_save_megatron_model.assert_called_once_with(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path=None, hf_tokenizer_kwargs=None
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path=None,
+                low_memory_save=True,
+                hf_tokenizer_kwargs=None,
             )
 
     def test_save_megatron_model_with_tokenizer(self):
@@ -895,13 +901,17 @@ class TestAutoBridge:
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
             )
 
             mock_save_megatron_model.assert_called_once_with(
                 mock_megatron_model,
                 "./checkpoint_path",
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
                 hf_tokenizer_kwargs=None,
             )
 
