@@ -42,6 +42,30 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
+def get_llm_module_name(module_names: List[str]) -> str:
+    """Determine LLM module name by convention.
+    
+    Looks for module named 'llm' or 'language_model'.
+    Raises ValueError if not found.
+    
+    Args:
+        module_names: List of module names to search.
+        
+    Returns:
+        The LLM module name found in the list.
+        
+    Raises:
+        ValueError: If no LLM module name is found.
+    """
+    for name in ['llm', 'language_model']:
+        if name in module_names:
+            return name
+    raise ValueError(
+        f"Could not determine LLM module. Expected 'llm' or 'language_model' "
+        f"in module names: {module_names}"
+    )
+
+
 @dataclass
 class MimoModelInfra:
     """MIMO infrastructure metadata (separate from model).
@@ -55,11 +79,13 @@ class MimoModelInfra:
         pg_collections: Mapping of module names to ProcessGroupCollections.
             None for modules this rank doesn't participate in.
         participating_modules: List of module names this rank participates in.
+        llm_module_name: Name of the language model module (e.g., 'llm' or 'language_model').
     """
     module_to_grid_map: Dict[str, "HyperCommGrid"]
     topology: Dict[str, List[str]]
     pg_collections: Dict[str, Optional[ProcessGroupCollection]]
     participating_modules: List[str]
+    llm_module_name: str
 
 
 @dataclass
@@ -158,18 +184,25 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         validate the parallelism configuration.
         
         Returns:
-            MimoModelInfra containing grids, topology, pg_collections, and
-            the list of modules this rank participates in.
+            MimoModelInfra containing grids, topology, pg_collections,
+            the list of modules this rank participates in, and the LLM module name.
         """
         if self.mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.mimo_parallelism_config)
             pg_collections = self._get_pg_collections_from_grids(grids)
             topology = _default_topology(self.mimo_parallelism_config)
+            # Use config value if set, otherwise use convention-based discovery
+            llm_module_name = (
+                self.mimo_parallelism_config.llm_module_name
+                if self.mimo_parallelism_config.llm_module_name is not None
+                else get_llm_module_name(list(grids.keys()))
+            )
         else:
             # No parallelism - use global process groups
             grids = {}
             pg_collections = {}
             topology = {}
+            llm_module_name = "llm"  # Default name when no parallelism config
         
         participating_modules = [
             name for name, pg in pg_collections.items() if pg is not None
@@ -180,6 +213,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating_modules,
+            llm_module_name=llm_module_name,
         )
 
     def _get_pg_collections_from_grids(
