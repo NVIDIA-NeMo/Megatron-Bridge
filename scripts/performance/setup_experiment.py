@@ -463,24 +463,22 @@ def main(
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
 
-            if wandb_run:
-                is_testing_passed, error_msg = calc_convergence_and_performance(
-                    model_family_name=model_family_name,
-                    model_recipe_name=model_recipe_name,
-                    assets_dir=os.path.join(job_dir, exp_name),
-                    log_paths=log_paths,
-                    loss_metric="lm loss",
-                    timing_metric="elapsed time per iteration (ms)",
-                    golden_values_path=golden_values_path,
-                    convergence_config=convergence_params,
-                    performance_config=performance_params,
-                    wandb_run=wandb_run,
-                )
+            is_testing_passed, error_msg = calc_convergence_and_performance(
+                model_family_name=model_family_name,
+                model_recipe_name=model_recipe_name,
+                assets_dir=os.path.join(job_dir, exp_name),
+                log_paths=log_paths,
+                loss_metric="lm loss",
+                timing_metric="elapsed time per iteration (ms)",
+                golden_values_path=golden_values_path,
+                convergence_config=convergence_params,
+                performance_config=performance_params,
+                wandb_run=wandb_run,
+            )
 
+            if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
-            else:
-                is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
