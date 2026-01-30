@@ -24,7 +24,7 @@ import torch.distributed as dist
 from megatron.core.distributed.finalize_model_grads import finalize_model_grads as _finalize_model_grads
 from megatron.core.models.mimo import MimoModel
 
-from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra, get_llm_module_name
+from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
@@ -67,7 +67,7 @@ def get_module_to_grid_tuple(
             continue
             
         # Get the actual module from the model
-        if module_name == infra.llm_module_name:
+        if module_name == "llm":
             module = mimo_model.language_model
         elif hasattr(mimo_model, 'modality_submodules') and module_name in mimo_model.modality_submodules:
             module = mimo_model.modality_submodules[module_name]
@@ -100,7 +100,7 @@ def build_pg_collection_for_schedule(infra: MimoModelInfra):
         from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
         return MultiModuleProcessGroupCollection(
             module_pgs={k: v for k, v in infra.pg_collections.items() if v is not None},
-            language_model_module_name=infra.llm_module_name
+            language_model_module_name="llm"
         )
     except (ImportError, ValueError, TypeError) as e:
         # Fallback: list-based approach (reference implementation pattern)

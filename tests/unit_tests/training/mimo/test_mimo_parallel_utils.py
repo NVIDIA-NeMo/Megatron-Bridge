@@ -164,7 +164,6 @@ class TestBuildPgCollectionForSchedule:
             "encoder": mock_pg1,
             "llm": mock_pg2,
         }
-        mock_infra.llm_module_name = "llm"
         
         # This will likely fall back to list since import may fail in test env
         result = build_pg_collection_for_schedule(mock_infra)
@@ -183,7 +182,6 @@ class TestBuildPgCollectionForSchedule:
             "encoder": None,  # Non-participating module
             "llm": mock_pg,
         }
-        mock_infra.llm_module_name = "llm"
         
         result = build_pg_collection_for_schedule(mock_infra)
         
