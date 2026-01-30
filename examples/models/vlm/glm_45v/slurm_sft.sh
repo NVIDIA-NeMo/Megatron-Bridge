@@ -48,7 +48,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/GLM-4.5V
 MODEL_NAME=glm_45v
 DATASET_NAME=cord_v2
-SEQ_LENGTH=4096
+SEQ_LENGTH=8192
 TRAIN_ITERS=50
 GLOBAL_BATCH_SIZE=32
 MICRO_BATCH_SIZE=1
@@ -61,7 +61,7 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configuration
 TP=1
-PP=2
+PP=8
 EP=16
 
 # Container image (required)
@@ -76,10 +76,18 @@ CONTAINER_MOUNTS=""
 # Environment Setup
 # ==============================================================================
 
+# NCCL optimizations for large-scale training
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
-# Authentication tokens (uncomment and set your tokens)
+# UV cache on shared filesystem (recommended for multi-node setups)
+# Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
+# export UV_CACHE_DIR="/path/to/shared/uv_cache"
+
+# HuggingFace cache directory (recommended for shared filesystem)
+# export HF_HOME="/path/to/shared/HF_HOME"
+
+# Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
 # export WANDB_API_KEY="your_wandb_key_here"
 
@@ -123,7 +131,9 @@ CLI_OVERRIDES="
 "
 
 # Build command
-CMD="uv run python scripts/training/run_recipe.py"
+# Only local rank 0 on each node runs uv sync, then all ranks run with --no-sync
+CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
+CMD="$CMD uv run --no-sync python scripts/training/run_recipe.py"
 CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
 CMD="$CMD --step_func vlm_step"
 CMD="$CMD $CLI_OVERRIDES"
