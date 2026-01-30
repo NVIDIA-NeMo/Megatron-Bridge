@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
-logger = logging.getLogger(__name__)
+G_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass

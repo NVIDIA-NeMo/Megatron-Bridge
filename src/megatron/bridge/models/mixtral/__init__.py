@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.mixtral.mixtral_bridge import MixtralBridge  # noqa: F401
+from megatron.bridge.models.mixtral.mixtral_bridge import MixtralBridge
 from megatron.bridge.models.mixtral.mixtral_provider import MixtralModelProvider
 
 
 __all__ = [
-    "MixtralModelProvider",
     "MixtralBridge",
+    "MixtralModelProvider",
 ]

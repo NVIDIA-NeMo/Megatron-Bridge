@@ -49,9 +49,12 @@ HF_MIXTRAL_TOY_MODEL_CONFIG = {
 }
 
 
+@pytest.mark.integration
 class TestMixtralConversion:
     """
     Test Mixtral model conversion from local HuggingFace model with different parallelism configurations.
+
+    Requires: 2 GPUs for the conversion test (nproc_per_node=2).
     """
 
     @pytest.fixture(scope="class")
@@ -86,14 +89,12 @@ class TestMixtralConversion:
 
         # Download and save tokenizer from a reference model
         # Try to use Mixtral tokenizer if available, otherwise fall back to GPT2
+        from transformers import AutoTokenizer
+
         try:
-            from transformers import AutoTokenizer
-
             tokenizer = AutoTokenizer.from_pretrained("mistralai/Mixtral-8x7B-v0.1")
-        except Exception:
+        except (OSError, ValueError):
             # Fallback to a generic tokenizer
-            from transformers import AutoTokenizer
-
             tokenizer = AutoTokenizer.from_pretrained("gpt2")
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -196,6 +197,7 @@ class TestMixtralConversion:
         test_output_dir = tmp_path / f"mixtral_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
+        repo_root = Path(__file__).resolve().parents[4]
         cmd = [
             "python",
             "-m",
@@ -205,8 +207,10 @@ class TestMixtralConversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
+            "--data-file",
+            str(repo_root / ".coverage"),
+            "--source",
+            str(repo_root),
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
@@ -220,50 +224,48 @@ class TestMixtralConversion:
         ]
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+            result = subprocess.run(  # noqa: S603
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=repo_root,
+                check=True,
             )
+        except subprocess.CalledProcessError as exc:
+            print(f"STDOUT: {exc.stdout}")
+            print(f"STDERR: {exc.stderr}")
+            pytest.fail(f"Mixtral {test_name} conversion failed with return code {exc.returncode}")
 
-            # Check that the conversion completed successfully
-            if result.returncode != 0:
-                print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
-                assert False, f"Mixtral {test_name} conversion failed with return code {result.returncode}"
+        # Verify that the converted model was saved
+        # The output directory should be named after the last part of the model path
+        model_name = Path(mixtral_toy_model_path).name  # "mixtral_toy"
+        converted_model_dir = test_output_dir / model_name
+        assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
-            # Verify that the converted model was saved
-            # The output directory should be named after the last part of the model path
-            model_name = Path(mixtral_toy_model_path).name  # "mixtral_toy"
-            converted_model_dir = test_output_dir / model_name
-            assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
+        # Check that essential model files exist
+        config_file = converted_model_dir / "config.json"
+        assert config_file.exists(), f"config.json not found in converted model at {config_file}"
 
-            # Check that essential model files exist
-            config_file = converted_model_dir / "config.json"
-            assert config_file.exists(), f"config.json not found in converted model at {config_file}"
+        # Check for model weights file (could be either safetensors or pytorch_model.bin)
+        weights_file_safetensors = converted_model_dir / "model.safetensors"
+        weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
+        assert weights_file_safetensors.exists() or weights_file_pytorch.exists(), (
+            f"Model weights file not found in converted model at {converted_model_dir}"
+        )
 
-            # Check for model weights file (could be either safetensors or pytorch_model.bin)
-            weights_file_safetensors = converted_model_dir / "model.safetensors"
-            weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
-            assert weights_file_safetensors.exists() or weights_file_pytorch.exists(), (
-                f"Model weights file not found in converted model at {converted_model_dir}"
-            )
+        # Verify the config contains Mixtral-specific parameters
+        with open(config_file) as f:
+            saved_config = json.load(f)
 
-            # Verify the config contains Mixtral-specific parameters
-            with open(config_file) as f:
-                saved_config = json.load(f)
+        assert saved_config["model_type"] == "mixtral", "Model type should be mixtral"
+        assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
+        assert saved_config["intermediate_size"] == 2048, "Intermediate size should match toy config"
+        assert saved_config["num_attention_heads"] == 16, "Number of attention heads should match toy config"
+        assert saved_config["num_key_value_heads"] == 8, "Number of key-value heads should match toy config"
+        # Verify Mixtral-specific MoE parameters
+        assert saved_config["num_local_experts"] == 8, "Number of experts should match"
+        assert saved_config["num_experts_per_tok"] == 2, "Number of experts per token should match"
+        assert saved_config["router_aux_loss_coef"] == 0.01, "Router aux loss coefficient should match"
 
-            assert saved_config["model_type"] == "mixtral", "Model type should be mixtral"
-            assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
-            assert saved_config["intermediate_size"] == 2048, "Intermediate size should match toy config"
-            assert saved_config["num_attention_heads"] == 16, "Number of attention heads should match toy config"
-            assert saved_config["num_key_value_heads"] == 8, "Number of key-value heads should match toy config"
-            # Verify Mixtral-specific MoE parameters
-            assert saved_config["num_local_experts"] == 8, "Number of experts should match"
-            assert saved_config["num_experts_per_tok"] == 2, "Number of experts per token should match"
-            assert saved_config["router_aux_loss_coef"] == 0.01, "Router aux loss coefficient should match"
-
-            print(f"SUCCESS: Mixtral {test_name} conversion test completed successfully")
-            print(f"Converted model saved at: {converted_model_dir}")
-
-        except Exception as e:
-            print(f"Error during Mixtral {test_name} conversion test: {e}")
-            raise
+        print(f"SUCCESS: Mixtral {test_name} conversion test completed successfully")
+        print(f"Converted model saved at: {converted_model_dir}")

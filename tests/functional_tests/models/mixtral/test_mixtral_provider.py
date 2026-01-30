@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -25,12 +27,16 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
 }
 
 
+@pytest.mark.integration
 class TestMixtralModelProviderMapping:
     """Test that bridge provider configs are equivalent to predefined provider configs."""
 
     @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()))
     def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
         """Test that bridge converted provider config matches predefined provider config."""
+        if not os.getenv("RUN_LARGE_MODEL_TESTS"):
+            pytest.skip("Set RUN_LARGE_MODEL_TESTS=1 to run tests that download large model checkpoints.")
+
         # Create bridge from HF model
         bridge = AutoBridge.from_hf_pretrained(hf_model_id)
         converted_provider = bridge.to_megatron_provider(load_weights=False)

@@ -29,7 +29,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mixtral.mixtral_provider import MixtralModelProvider
 
 
-logger = logging.getLogger(__name__)
+G_LOGGER = logging.getLogger(__name__)
 
 
 @MegatronModelBridge.register_bridge(source=MixtralForCausalLM, target=GPTModel)

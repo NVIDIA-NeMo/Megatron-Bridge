@@ -265,7 +265,7 @@ class TestMixtralBridge:
         # Should default to False when attention_bias is not present
         assert result.add_qkv_bias is False
 
-    def test_mapping_registry_implementation(self, mock_pretrained_mixtral_8x7b):
+    def test_mapping_registry_implementation(self):
         """Test that mapping_registry returns a proper MegatronMappingRegistry."""
         bridge = MixtralBridge()
 
@@ -354,15 +354,15 @@ class TestAutoBridgeIntegration:
         config_8x7b = Mock()
         for key, value in mixtral_8x7b_config_dict.items():
             setattr(config_8x7b, key, value)
-        assert AutoBridge.supports(config_8x7b) == True
+        assert AutoBridge.supports(config_8x7b)
 
         # Test Mixtral 8x22B
         config_8x22b = Mock()
         for key, value in mixtral_8x22b_config_dict.items():
             setattr(config_8x22b, key, value)
-        assert AutoBridge.supports(config_8x22b) == True
+        assert AutoBridge.supports(config_8x22b)
 
         # Test non-causal LM architecture
         non_causal_config = Mock()
         non_causal_config.architectures = ["MixtralModel"]  # Not ForCausalLM
-        assert AutoBridge.supports(non_causal_config) == False
+        assert not AutoBridge.supports(non_causal_config)
