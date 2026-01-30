@@ -11,6 +11,7 @@ from megatron.bridge.models.mimo import (
     MimoModelProvider,
     MimoModelInfra,
 )
+from megatron.bridge.models.mimo.mimo_provider import get_llm_module_name
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
 
@@ -124,6 +125,7 @@ class TestMimoModelProvider:
         assert infra.topology == {}
         assert infra.pg_collections == {}
         assert infra.participating_modules == []
+        assert infra.llm_module_name == "llm"  # Default when no parallelism config
         
         # Should not build grids
         mock_build_grids.assert_not_called()
@@ -175,6 +177,7 @@ class TestMimoModelProvider:
         assert "llm" in infra.module_to_grid_map
         assert "llm" in infra.pg_collections
         assert "llm" in infra.participating_modules
+        assert infra.llm_module_name == "llm"  # From parallelism config
     
     @patch('torch.distributed.new_group')
     @patch('torch.distributed.get_process_group_ranks')
@@ -479,6 +482,38 @@ class TestMimoModelProvider:
         # Should not raise, should be a no-op
         provider.initialize_model_parallel(seed=42)
         provider.initialize_model_parallel()
+    
+    @patch('megatron.bridge.models.mimo.mimo_provider.Float16Module')
+    @patch('megatron.bridge.models.mimo.mimo_provider.get_model_config')
+    @patch('megatron.bridge.models.mimo.mimo_provider.MimoModel')
+    @patch('megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids')
+    @patch('torch.distributed.is_initialized')
+    def test_provide_distributed_model_sets_variable_seq_lengths(
+        self, mock_is_init, mock_build_grids, mock_mimo_model, mock_get_config, mock_float16
+    ):
+        """Test that provide_distributed_model sets variable_seq_lengths=True."""
+        mock_is_init.return_value = False
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            bf16=False,  # Disable to simplify test
+            fp16=False,
+        )
+        
+        mock_model_instance = MagicMock()
+        mock_model_instance.cuda = MagicMock(return_value=None)
+        mock_mimo_model.return_value = mock_model_instance
+        
+        mock_config = MagicMock()
+        mock_config.variable_seq_lengths = False  # Initial value
+        mock_get_config.return_value = mock_config
+        
+        # No parallelism config means no DDP wrapping needed
+        provider.provide_distributed_model(wrap_with_ddp=False)
+        
+        # Should have set variable_seq_lengths=True
+        assert mock_config.variable_seq_lengths is True
 
 
 class TestMimoModelInfra:
@@ -496,12 +531,44 @@ class TestMimoModelInfra:
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating,
+            llm_module_name="llm",
         )
         
         assert infra.module_to_grid_map == grids
         assert infra.topology == topology
         assert infra.pg_collections == pg_collections
         assert infra.participating_modules == participating
+        assert infra.llm_module_name == "llm"
+
+
+class TestGetLlmModuleName:
+    """Test cases for get_llm_module_name helper function."""
+    
+    def test_finds_llm(self):
+        """Test finding 'llm' in module names."""
+        module_names = ["encoder", "llm", "projector"]
+        assert get_llm_module_name(module_names) == "llm"
+    
+    def test_finds_language_model(self):
+        """Test finding 'language_model' in module names."""
+        module_names = ["encoder", "language_model", "projector"]
+        assert get_llm_module_name(module_names) == "language_model"
+    
+    def test_prefers_llm_over_language_model(self):
+        """Test 'llm' is preferred when both present."""
+        module_names = ["llm", "language_model"]
+        assert get_llm_module_name(module_names) == "llm"
+    
+    def test_raises_when_not_found(self):
+        """Test raises ValueError when no LLM module found."""
+        module_names = ["encoder", "projector"]
+        with pytest.raises(ValueError, match="Could not determine LLM module"):
+            get_llm_module_name(module_names)
+    
+    def test_empty_list_raises(self):
+        """Test raises ValueError for empty list."""
+        with pytest.raises(ValueError, match="Could not determine LLM module"):
+            get_llm_module_name([])
 
 
 class TestEmbeddingGroupHelpers:
