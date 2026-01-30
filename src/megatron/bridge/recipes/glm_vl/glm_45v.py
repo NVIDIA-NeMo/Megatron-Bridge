@@ -151,7 +151,7 @@ def glm_45v_finetune_config(**user_kwargs: Unpack[GLM45VCommonKwargs]) -> Config
     recommended_kwargs: GLM45VCommonKwargs = {
         "hf_path": "zai-org/GLM-4.5V",
         "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 8,
         "pipeline_dtype": torch.bfloat16,
         "expert_model_parallel_size": 16 if is_full_sft else 2,
         "peft": peft_value,
@@ -186,7 +186,7 @@ def _glm_45v_common(
     train_iters: int = 300000,
     global_batch_size: int = 32,
     micro_batch_size: int = 1,
-    seq_length: int = 4096,
+    seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
