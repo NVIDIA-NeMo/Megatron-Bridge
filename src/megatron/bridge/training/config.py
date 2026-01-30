@@ -1482,7 +1482,7 @@ class ConfigContainer(Container):
                 print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
                 self.model.gradient_accumulation_fusion = False
 
-            # PR 2239: reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
+            # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
             if self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
                 print_rank_0("reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP, setting to False")
                 self.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
