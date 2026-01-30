@@ -111,7 +111,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         inv_freq = getattr(self, "_deepseek_inv_freq", None)
         if inv_freq is None:
             rotary_dim = self.hf_config.qk_rope_head_dim
-            rotary_base = self.hf_config.rope_theta
+            rotary_base = self.rope_theta_from_hf(self.hf_config)
             inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
             self._deepseek_inv_freq = inv_freq
 

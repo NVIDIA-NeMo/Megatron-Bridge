@@ -138,7 +138,7 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
 
             if pixel_values is not None:
-                image_features = self.get_image_features(pixel_values)
+                image_features = self.get_image_features(pixel_values, return_dict=True).pooler_output
 
                 # TODO might need to check if input_ids is None
                 assert input_ids is not None

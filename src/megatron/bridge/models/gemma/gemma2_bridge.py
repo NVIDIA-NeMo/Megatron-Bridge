@@ -66,7 +66,7 @@ class Gemma2Bridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             num_query_groups=hf_config.num_key_value_heads,
             kv_channels=hf_config.head_dim,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(hf_config),
             query_pre_attn_scalar=hf_config.query_pre_attn_scalar,
             attn_logit_softcapping=hf_config.attn_logit_softcapping,
             final_logit_softcapping=hf_config.final_logit_softcapping,

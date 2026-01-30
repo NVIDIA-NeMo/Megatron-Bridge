@@ -49,6 +49,15 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf as _rope_local_base_freq_from_hf,
+)
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_scaling_factor_from_hf as _rope_scaling_factor_from_hf,
+)
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_theta_from_hf as _rope_theta_from_hf,
+)
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -232,6 +241,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         - ModelProviderTarget: The Megatron model provider type
         - MegatronModel: The Megatron model type
     """
+
+    rope_theta_from_hf = staticmethod(_rope_theta_from_hf)
+    rope_local_base_freq_from_hf = staticmethod(_rope_local_base_freq_from_hf)
+    rope_scaling_factor_from_hf = staticmethod(_rope_scaling_factor_from_hf)
 
     @abc.abstractmethod
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
