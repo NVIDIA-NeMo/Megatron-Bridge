@@ -75,8 +75,8 @@ def run_distill_recipe_test(
     4. No crashes occur during the process
 
     Args:
-        student_config_func: The student model's pretrain_config function
-        teacher_config_func: The teacher model's pretrain_config function
+        student_config_func: The student model's pretrain_config function (parameterless API)
+        teacher_config_func: The teacher model's pretrain_config function (parameterless API)
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
@@ -85,20 +85,22 @@ def run_distill_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
-    shared_base_dir = broadcast_path(tmp_path)
+    shared_base_dir = Path(broadcast_path(tmp_path))
 
     try:
-        # Load student config
-        config: ConfigContainer = student_config_func(
-            dir=str(shared_base_dir),
-            name=f"{recipe_name}_functional_test",
-            mock=True,
-            load_weights=True,
-        )
-        # Load teacher config
-        teacher_config = teacher_config_func(
-            dir=str(shared_base_dir), name=f"{recipe_name}_teacher_functional_test", mock=True
-        )
+        # Load student config - pretrain configs use parameterless API
+        config: ConfigContainer = student_config_func()
+        # Load teacher config - pretrain configs use parameterless API
+        teacher_config = teacher_config_func()
+
+        # Set up output directories after instantiation
+        run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
+        checkpoint_dir = run_output_dir / "checkpoints"
+        tensorboard_dir = run_output_dir / "tb_logs"
+        config.checkpoint.save = str(checkpoint_dir)
+        config.checkpoint.load = str(checkpoint_dir)
+        config.logger.tensorboard_dir = str(tensorboard_dir)
+
         # Combine into a distillation provider
         config.model = convert_to_distillation_provider(config.model, teacher_config.model)
 
