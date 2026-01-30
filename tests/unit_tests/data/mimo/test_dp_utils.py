@@ -44,7 +44,6 @@ def _make_mimo_cfg() -> MimoParallelismConfig:
         "llm": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=4),
     }
     return MimoParallelismConfig(
-        llm_module_name="llm",
         module_parallelisms=module_parallelisms,
     )
 

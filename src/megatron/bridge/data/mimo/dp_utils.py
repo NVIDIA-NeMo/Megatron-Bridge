@@ -55,7 +55,7 @@ def get_mimo_dp_info(
 
     if my_grid is None or my_module is None:
         # Rank doesn't participate in any module
-        return 0, 1, False, mimo_cfg.llm_module_name
+        return 0, 1, False, "llm"
 
     dp_rank = my_grid.get_pg(["dp"]).rank()
     dp_size = my_grid.get_pg(["dp"]).size()
@@ -64,7 +64,7 @@ def get_mimo_dp_info(
     pp_rank = pp_group.rank()
     pp_size = pp_group.size()
 
-    if my_module == mimo_cfg.llm_module_name:
+    if my_module == "llm":
         needs_data = (pp_rank == 0) or (pp_rank == pp_size - 1)
     else:
         needs_data = pp_rank == 0
