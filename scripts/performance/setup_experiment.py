@@ -194,6 +194,8 @@ def main(
     record_memory_history: bool,
     profiling_gpu_metrics: bool,
     profiling_ranks: Optional[List[int]],
+    nsys_trace: Optional[List[str]],
+    nsys_extra_args: Optional[List[str]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -342,6 +344,8 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
+                nsys_trace=args.nsys_trace,
+                nsys_extra_args=args.nsys_extra_args,
             )
         )
     if pytorch_profiler:
@@ -547,6 +551,8 @@ if __name__ == "__main__":
         record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         profiling_ranks=args.profiling_ranks,
+        nsys_trace=args.nsys_trace,
+        nsys_extra_args=args.nsys_extra_args,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
