@@ -41,13 +41,11 @@ def wrap_mimo_model_distributed(
     """
     from megatron.core.distributed import DistributedDataParallel
 
-    llm_name = mimo_parallelism_config.llm_module_name
-
     # Wrap language model if present and rank participates
     if mimo_model.language_model is not None:
-        llm_grid = grids.get(llm_name)
+        llm_grid = grids.get("llm")
         if llm_grid is not None and is_current_rank_in_grid(llm_grid):
-            llm_pg = pg_collections.get(llm_name)
+            llm_pg = pg_collections.get("llm")
             if llm_pg is not None:
                 mimo_model.language_model = DistributedDataParallel(
                     config=mimo_model.language_model.config,

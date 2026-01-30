@@ -110,7 +110,6 @@ class TestWrapMimoModelDistributed:
             for name, config in modules.items()
         }
         return MimoParallelismConfig(
-            llm_module_name="llm",
             module_parallelisms=module_parallelisms,
         )
 

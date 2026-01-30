@@ -42,30 +42,6 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
-def get_llm_module_name(module_names: List[str]) -> str:
-    """Determine LLM module name by convention.
-    
-    Looks for module named 'llm' or 'language_model'.
-    Raises ValueError if not found.
-    
-    Args:
-        module_names: List of module names to search.
-        
-    Returns:
-        The LLM module name found in the list.
-        
-    Raises:
-        ValueError: If no LLM module name is found.
-    """
-    for name in ['llm', 'language_model']:
-        if name in module_names:
-            return name
-    raise ValueError(
-        f"Could not determine LLM module. Expected 'llm' or 'language_model' "
-        f"in module names: {module_names}"
-    )
-
-
 @dataclass
 class MimoModelInfra:
     """MIMO infrastructure metadata (separate from model).
@@ -79,13 +55,11 @@ class MimoModelInfra:
         pg_collections: Mapping of module names to ProcessGroupCollections.
             None for modules this rank doesn't participate in.
         participating_modules: List of module names this rank participates in.
-        llm_module_name: Name of the language model module (e.g., 'llm' or 'language_model').
     """
     module_to_grid_map: Dict[str, "HyperCommGrid"]
     topology: Dict[str, List[str]]
     pg_collections: Dict[str, Optional[ProcessGroupCollection]]
     participating_modules: List[str]
-    llm_module_name: str
 
 
 @dataclass
@@ -184,25 +158,18 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         validate the parallelism configuration.
         
         Returns:
-            MimoModelInfra containing grids, topology, pg_collections,
-            the list of modules this rank participates in, and the LLM module name.
+            MimoModelInfra containing grids, topology, pg_collections, and
+            the list of modules this rank participates in.
         """
         if self.mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.mimo_parallelism_config)
             pg_collections = self._get_pg_collections_from_grids(grids)
             topology = _default_topology(self.mimo_parallelism_config)
-            # Use config value if set, otherwise use convention-based discovery
-            llm_module_name = (
-                self.mimo_parallelism_config.llm_module_name
-                if self.mimo_parallelism_config.llm_module_name is not None
-                else get_llm_module_name(list(grids.keys()))
-            )
         else:
             # No parallelism - use global process groups
             grids = {}
             pg_collections = {}
             topology = {}
-            llm_module_name = "llm"  # Default name when no parallelism config
         
         participating_modules = [
             name for name, pg in pg_collections.items() if pg is not None
@@ -213,7 +180,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             topology=topology,
             pg_collections=pg_collections,
             participating_modules=participating_modules,
-            llm_module_name=llm_module_name,
         )
 
     def _get_pg_collections_from_grids(
@@ -559,44 +525,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         Raises:
             ValueError: If any rank doesn't participate in at least one module.
                 This indicates the parallelism configuration doesn't cover all
-                ranks in the world.
+                ranks in the world (validated by MimoParallelismConfig.finalize()).
         """
         if self.mimo_parallelism_config is not None:
             world_size = dist.get_world_size() if dist.is_initialized() else None
             self.mimo_parallelism_config.finalize(world_size)
-            
-            # Validate all ranks participate in at least one module
-            self._validate_all_ranks_participate(world_size)
-    
-    def _validate_all_ranks_participate(self, world_size: Optional[int]) -> None:
-        """Validate that all ranks participate in at least one module.
-        
-        Args:
-            world_size: Total number of ranks. If None, validation is skipped.
-            
-        Raises:
-            ValueError: If any rank doesn't participate in a module.
-        """
-        if world_size is None or self.mimo_parallelism_config is None:
-            return
-        
-        # Build grids to determine rank coverage
-        grids = build_hypercomm_grids(self.mimo_parallelism_config)
-        
-        # Collect all ranks that participate in at least one module
-        participating_ranks = set()
-        for module_name, grid in grids.items():
-            for rank in range(grid.rank_offset, grid.rank_offset + grid.size):
-                participating_ranks.add(rank)
-        
-        # Check for non-participating ranks
-        all_ranks = set(range(world_size))
-        non_participating_ranks = all_ranks - participating_ranks
-        
-        if non_participating_ranks:
-            raise ValueError(
-                f"Ranks {sorted(non_participating_ranks)} do not participate in any MIMO module. "
-                f"All {world_size} ranks must be assigned to at least one module. "
-                f"Adjust MimoParallelismConfig to cover all ranks, or reduce world_size to "
-                f"{len(participating_ranks)}."
-            )
