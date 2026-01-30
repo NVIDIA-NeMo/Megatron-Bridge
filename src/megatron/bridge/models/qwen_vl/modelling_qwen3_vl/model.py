@@ -251,8 +251,10 @@ class Qwen3VLModel(MegatronModule):
                 vision_data = torch.cat(v_datas, dim=0) if v_datas else None
                 vision_grid_thw = torch.cat(v_thws, dim=0) if v_thws else None
                 video_start_index = image_mask.sum().item()
-                assert video_start_index > 0
-
+                if image_grid_thw is not None:
+                    assert video_start_index > 0
+                else:
+                    assert video_start_index == 0
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
                 vision_embeds, deepstack_feature_lists = self.vision_model(
