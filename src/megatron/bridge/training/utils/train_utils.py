@@ -37,7 +37,13 @@ from megatron.bridge.training.utils.flop_utils import num_floating_point_operati
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_rank_safe,
+    get_world_size_safe,
+    is_last_rank,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 if TYPE_CHECKING:
@@ -464,7 +470,7 @@ def training_log(
             timers.write_to_mlflow(timers_to_log, mlflow_logger, iteration, normalizer=total_iterations, reset=True)
 
     if config.profiling:
-        if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
+        if config.profiling.record_memory_history and (is_last_rank() or torch.distributed.get_backend() == "fake"):
             assert config.logger.tensorboard_dir is not None, (
                 "Tensorboard directory must be set when profiling memory history"
             )

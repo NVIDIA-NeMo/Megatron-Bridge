@@ -556,6 +556,13 @@ def _initialize_distributed(
             "timeout": datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
         }
 
+        # Use fake process group for memory profiling without actual distributed communication
+        if dist_config.fake_process_group:
+            from torch.testing._internal.distributed.fake_pg import FakeStore
+
+            init_process_group_kwargs["backend"] = "fake"
+            init_process_group_kwargs["store"] = FakeStore()
+
         torch.distributed.init_process_group(**init_process_group_kwargs)
 
         # Force NCCL backend initialization if using in-process restart
