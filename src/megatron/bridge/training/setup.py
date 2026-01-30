@@ -139,6 +139,12 @@ def setup(
         restart_store=restart_store,
     )
 
+    # Set CPU affinity for optimal host-device transfers when fine-grained activation offloading is enabled
+    if cfg.model.fine_grained_activation_offloading:
+        from megatron.core.pipeline_parallel.utils import set_ideal_affinity_for_current_gpu
+
+        set_ideal_affinity_for_current_gpu()
+
     timers = state.timers
 
     if cfg.logger.log_progress:

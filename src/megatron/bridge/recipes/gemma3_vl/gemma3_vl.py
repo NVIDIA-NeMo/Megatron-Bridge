@@ -234,9 +234,12 @@ def _gemma3_vl_common(
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
+    model_cfg.cp_comm_type = "a2a"
 
     # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
     effective_lr = finetune_lr if finetune_lr is not None else lr
+    if min_lr > effective_lr:
+        min_lr = effective_lr * 0.1
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
@@ -248,7 +251,7 @@ def _gemma3_vl_common(
     peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
-    _dataset_choice = dataset_type or "mock"
+    _dataset_choice = dataset_type or "hf"
     _processor_model = tokenizer_model or hf_path
 
     if _dataset_choice == "mock":
