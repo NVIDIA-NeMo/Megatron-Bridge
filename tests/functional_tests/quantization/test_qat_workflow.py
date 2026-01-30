@@ -158,7 +158,7 @@ class TestQATWorkflow:
             hf_model_id,
             "model.gradient_accumulation_fusion=False",
             f"model.seq_length={test_seq_length}",
-            f"+dataset.seq_length={test_seq_length}", # explicitly set same seq_len for model and dataset
+            f"+dataset.seq_length={test_seq_length}",  # explicitly set same seq_len for model and dataset
             f"checkpoint.pretrained_checkpoint={quantized_checkpoint_path}",
             f"checkpoint.save={checkpoint_save_dir}",
             f"checkpoint.save_interval={save_interval}",
