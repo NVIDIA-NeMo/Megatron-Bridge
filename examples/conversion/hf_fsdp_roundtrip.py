@@ -28,9 +28,9 @@ import os
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from rich.console import Console
+from rich.table import Table
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.conversion import weights_verification_table
 from megatron.bridge.models.decorators import torchrun_main
 
 
@@ -83,7 +83,7 @@ def main(
     ep: int = 1,
     trust_remote_code: bool = False,
 ) -> None:
-    """Perform round-trip conversion between HuggingFace and Megatron-FSDP models."""
+    """Load HuggingFace weights to Megatron-FSDP model."""
     model_name = hf_model_id.split("/")[-1]
     save_path = os.path.join(output_dir, model_name) if output_dir else model_name
 
@@ -91,7 +91,7 @@ def main(
         hf_model_id, trust_remote_code=trust_remote_code, torch_dtype=torch.bfloat16
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=False)
+    model_provider = bridge.to_megatron_provider(load_weights=True)
     _configure_model_provider(model_provider, tp=tp, cp=cp, ep=ep)
 
     ddp_config = DistributedDataParallelConfig(
@@ -109,12 +109,35 @@ def main(
         data_parallel_random_init=False,
     )
 
-    bridge.load_hf_weights(megatron_model)
-    table = weights_verification_table(bridge, megatron_model)
+    """Export Megatron-FSDP model to HuggingFace format and verify the weights"""
+    table = Table(title="Hugging Face Weights Verification")
+    table.add_column("Weight Name", style="cyan")
+    table.add_column("Shape")
+    table.add_column("DType")
+    table.add_column("Device")
+    table.add_column("Matches Original", justify="center")
+
+    for name, param in bridge.export_hf_weights(megatron_model, show_progress=True):
+        original_param = bridge.hf_pretrained.state[name]
+        param_for_comparison = param.to(dtype=original_param.dtype) if param.dtype != original_param.dtype else param
+        table.add_row(
+            name,
+            str(tuple(param.shape)),
+            str(param.dtype).replace("torch.", ""),
+            str(param.device),
+            (
+                f"{param_for_comparison.shape} != {original_param.shape}"
+                if param_for_comparison.shape != original_param.shape
+                else (
+                    "✅" if torch.allclose(param_for_comparison, original_param.to(param.device), atol=1e-6) else "❌"
+                )
+            ),
+        )
     if _is_rank_zero():
         console.print(table)
     _maybe_barrier()
 
+    """Save Megatron-FSDP model to HuggingFace format"""
     if _is_rank_zero():
         console.print(f"Saving HF-ckpt in {save_path}...")
     bridge.save_hf_pretrained(megatron_model, save_path)

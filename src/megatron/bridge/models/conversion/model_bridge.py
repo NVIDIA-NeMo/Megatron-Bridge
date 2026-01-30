@@ -504,6 +504,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 # Assert that param_weight is not None for HF->Megatron tasks
                 assert task.param_weight is not None, "param_weight is required for HF->Megatron conversion"
                 if isinstance(task.param_weight, DTensor):
+                    assert parallel_state.get_tensor_model_parallel_world_size() == 1, (
+                        "Megatron FSDP conversion currently do not support tensor parallel"
+                    )
                     converted_weights = converted_weights.reshape(-1)[task.param_weight.megatron_fsdp_slice]
                     task.param_weight._local_tensor.reshape(-1).copy_(converted_weights)
                     continue
@@ -690,6 +693,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
+                assert parallel_state.get_tensor_model_parallel_world_size() == 1, (
+                    "Megatron FSDP conversion currently do not support tensor parallel"
+                )
                 full_dtensor = gather_uneven_dtensor_to_full_tensor(task.param_weight)
                 megatron_weights = full_dtensor.to_local()
             else:
