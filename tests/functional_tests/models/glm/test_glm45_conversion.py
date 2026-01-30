@@ -60,6 +60,31 @@ HF_GLM45_TOY_MODEL_CONFIG = {
 }
 
 
+def _get_num_experts(moe_experts) -> int | None:
+    """Best-effort expert count across transformers versions."""
+    if moe_experts is None:
+        return None
+
+    for attr in ("num_experts", "n_routed_experts", "num_local_experts"):
+        value = getattr(moe_experts, attr, None)
+        if isinstance(value, int):
+            return value
+
+    for attr in ("experts", "local_experts"):
+        nested = getattr(moe_experts, attr, None)
+        if nested is None:
+            continue
+        try:
+            return len(nested)
+        except TypeError:
+            pass
+
+    try:
+        return len(moe_experts)
+    except TypeError:
+        return None
+
+
 class TestGLM45Conversion:
     """
     Test GLM 4.5 MoE model conversion from local HuggingFace model with different parallelism configurations.
@@ -194,7 +219,8 @@ class TestGLM45Conversion:
             assert hasattr(second_layer, "mlp")
             # GLM 4.5 MoE structure check (may vary based on implementation)
             if hasattr(second_layer.mlp, "experts"):
-                assert len(second_layer.mlp.experts) == 8  # n_routed_experts
+                num_experts = _get_num_experts(second_layer.mlp.experts)
+                assert num_experts == 8  # n_routed_experts
 
             print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")
