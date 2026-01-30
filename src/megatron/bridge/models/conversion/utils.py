@@ -159,7 +159,7 @@ def get_module_and_param_from_name(
     raise ValueError(f"Parameter '{param_name}' not found in model at VP stage {vp_stage}")
 
 
-def remove_non_pickleables(obj, max_depth: int = 2, current_depth: int = 0):
+def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     """Remove non-pickleable objects from a configuration object recursively.
 
     This utility function identifies and removes objects that cannot be pickled for
@@ -168,7 +168,7 @@ def remove_non_pickleables(obj, max_depth: int = 2, current_depth: int = 0):
 
     Args:
         obj: The object to clean
-        max_depth: Maximum recursion depth (default: 2)
+        max_depth: Maximum recursion depth (default: 3)
         current_depth: Current recursion depth (internal use)
 
     Returns:
@@ -182,6 +182,16 @@ def remove_non_pickleables(obj, max_depth: int = 2, current_depth: int = 0):
     # Handle None
     if obj is None:
         return obj
+
+    # Explicitly drop process group objects without importing their classes directly.
+    cls = obj if isinstance(obj, type) else type(obj)
+    cls_module = getattr(cls, "__module__", "")
+    cls_name = getattr(cls, "__qualname__", getattr(cls, "__name__", ""))
+    if (cls_module, cls_name) in {
+        ("megatron.core.process_groups_config", "ProcessGroupCollection"),
+        ("torch._C._distributed_c10d", "ProcessGroup"),
+    }:
+        return None
 
     # Check if object is a problematic callable
     if callable(obj):

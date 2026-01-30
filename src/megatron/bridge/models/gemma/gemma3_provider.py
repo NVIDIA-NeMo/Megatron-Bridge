@@ -252,6 +252,7 @@ class Gemma3SelfAttention(SelfAttention):
         rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
+        rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
         attention_bias: Optional[Tensor] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
@@ -366,11 +367,34 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
             **kwargs,
         )
 
+    def forward(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+        cp_group: torch.distributed.ProcessGroup | None = None,
+    ) -> Tensor:
+        """Get global and local rope embedding.
+
+        Note: Caching is bypassed when cp_group is provided since ProcessGroup is unhashable.
+        """
+        # ProcessGroup is unhashable, so bypass caching when cp_group is provided
+        if cp_group is not None:
+            rope_global = super().forward(max_seq_len, offset, packed_seq, cp_group)
+            rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, cp_group)
+            return rope_local, rope_global
+        return self._forward_cached(max_seq_len, offset, packed_seq)
+
     @lru_cache(maxsize=32)
-    def forward(self, max_seq_len: int, offset: int = 0, packed_seq: bool = False) -> Tensor:
-        """Get global and local rope embedding"""
-        rope_global = super().forward(max_seq_len, offset, packed_seq)
-        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq)
+    def _forward_cached(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+    ) -> Tensor:
+        """Cached forward for hashable parameters only."""
+        rope_global = super().forward(max_seq_len, offset, packed_seq, None)
+        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, None)
         return rope_local, rope_global
 
 

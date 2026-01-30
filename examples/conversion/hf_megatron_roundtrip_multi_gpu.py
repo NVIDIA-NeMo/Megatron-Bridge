@@ -33,8 +33,13 @@ The process is as follows:
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-torchrun --nproc_per_node 1 examples/conversion/hf_megatron_roundtrip_multi_gpu.py
-torchrun --nproc_per_node 1 examples/conversion/hf_megatron_roundtrip_multi_gpu.py --megatron-save-path ./megatron_checkpoint
+    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B
+
+    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B \
+       --megatron-save-path ./megatron_checkpoint
+
+    uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id Qwen/Qwen3-30B-A3B --tp 1 --pp 8
 """
 
 import argparse
@@ -47,6 +52,7 @@ from rich.table import Table
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
@@ -63,6 +69,8 @@ def main(
     etp: int = 1,
     megatron_save_path: str | None = None,
     megatron_load_path: str | None = None,
+    trust_remote_code: bool | None = None,
+    strict: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -76,13 +84,21 @@ def main(
     else:
         save_path = model_name
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_model_id,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=trust_remote_code,
+            hf_path=hf_model_id,
+        ),
+        torch_dtype=torch.bfloat16,
+    )
 
     if megatron_load_path:
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.params_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
 
@@ -97,6 +113,7 @@ def main(
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
                 "pipeline_dtype": torch.bfloat16,
+                "params_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -107,6 +124,7 @@ def main(
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.params_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
 
@@ -133,12 +151,14 @@ def main(
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
+    all_match = True
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             match = torch.allclose(
                 param, original_param.to(param.device), atol=1e-1
             )  # Increased tolerance for bfloat16
+            all_match = all_match and match
             table.add_row(
                 name,
                 str(tuple(param.shape)),
@@ -151,13 +171,16 @@ def main(
         console.print(table)
         console.print(f"Saving HF-ckpt in {save_path}...")
 
-    bridge.save_hf_pretrained(megatron_model, save_path)
+    bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
 
     # Save in Megatron format if path is provided
     if megatron_save_path:
         if is_rank_0:
             console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
         bridge.save_megatron_model(megatron_model, megatron_save_path)
+
+    if not all_match:
+        raise ValueError("Weight mismatch detected")
 
 
 if __name__ == "__main__":
@@ -188,6 +211,8 @@ if __name__ == "__main__":
         default=None,
         help="Path to load the model in Megatron checkpoint format. If provided, model will not start from HF checkpoint.",
     )
+    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
+    parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
     args = parser.parse_args()
     main(
         args.hf_model_id,
@@ -198,6 +223,7 @@ if __name__ == "__main__":
         args.etp,
         args.megatron_save_path,
         args.megatron_load_path,
+        args.trust_remote_code,
     )
 
     if torch.distributed.is_initialized():

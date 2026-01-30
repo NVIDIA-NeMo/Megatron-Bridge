@@ -107,6 +107,10 @@ class TestSupervisedFinetuning:
         pretrained_checkpoint=None,
     ):
         """Create training configuration with customizable parameters."""
+        # Keep warmup strictly below total iterations to avoid scheduler assertion.
+        warmup_iters = 2 if train_iters >= 10 else 1
+        if train_iters is not None:
+            warmup_iters = min(warmup_iters, max(train_iters - 1, 0))
         return ConfigContainer(
             model=Llama3ModelProvider145M(seq_length=seq_length),
             train=TrainingConfig(
@@ -135,7 +139,7 @@ class TestSupervisedFinetuning:
                 end_weight_decay=0.033,
                 weight_decay_incr_style="constant",
                 lr_decay_style="cosine",
-                lr_warmup_iters=2 if train_iters >= 10 else 1,
+                lr_warmup_iters=warmup_iters,
                 lr_warmup_init=0.0,
                 lr_decay_iters=train_iters,
                 override_opt_param_scheduler=True,
@@ -153,7 +157,7 @@ class TestSupervisedFinetuning:
                 reset_attention_mask=False,
                 reset_position_ids=False,
                 eod_mask_loss=False,
-                sequence_length=seq_length,
+                seq_length=seq_length,
                 num_dataset_builder_threads=1,
                 data_sharding=True,
                 dataloader_type="single",

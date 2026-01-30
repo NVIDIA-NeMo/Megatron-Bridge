@@ -68,7 +68,7 @@ def create_simple_test_config():
         scheduler=SchedulerConfig(),
         dataset=MockGPTDatasetConfig(
             random_seed=1234,
-            sequence_length=512,
+            seq_length=512,
             reset_position_ids=False,
             reset_attention_mask=False,
             eod_mask_loss=False,
@@ -143,20 +143,22 @@ class TestDataLoaders:
             ([data_path], None),
         ]
 
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
-    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
-    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
-    def test_build_train_valid_test_data_loaders(
-        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
-    ):
-        mock_get_data_parallel_rank.return_value = 0
-        mock_get_data_parallel_world_size.return_value = 1
+    def test_build_train_valid_test_data_loaders(self, mock_broadcast, mock_get_rank, mock_get_world_size):
+        mock_get_rank.return_value = 0
+        mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
+        dp_group = object()
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
-            cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
         )
 
         mock_broadcast.assert_called_once_with(mock.ANY, 0)
@@ -167,21 +169,25 @@ class TestDataLoaders:
         assert valid_dataloader is not None
         assert test_dataloader is not None
 
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
-    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
-    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
     def test_build_train_valid_test_data_loaders_eval_iters_0(
-        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
+        self, mock_broadcast, mock_get_rank, mock_get_world_size
     ):
-        mock_get_data_parallel_rank.return_value = 0
-        mock_get_data_parallel_world_size.return_value = 1
+        mock_get_rank.return_value = 0
+        mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
         cfg.train.eval_iters = 0
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
+        dp_group = object()
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
-            cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
         )
 
         mock_broadcast.assert_called_once_with(mock.ANY, 0)
@@ -231,15 +237,13 @@ class TestSampleBasedDataLoaders:
         assert valid_samples == expected_valid_samples
         assert test_samples == expected_test_samples
 
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
-    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
-    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
-    def test_build_data_loaders_sample_based(
-        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
-    ):
+    def test_build_data_loaders_sample_based(self, mock_broadcast, mock_get_rank, mock_get_world_size):
         """Test data loader building with sample-based training."""
-        mock_get_data_parallel_rank.return_value = 0
-        mock_get_data_parallel_world_size.return_value = 1
+        mock_get_rank.return_value = 0
+        mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
         cfg.train.train_samples = 10000  # Sample-based training
@@ -263,9 +267,14 @@ class TestSampleBasedDataLoaders:
 
         dataset_provider = get_dataset_provider(cfg.dataset)
 
+        dp_group = object()
+
         # Should build data loaders successfully
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
-            cfg=cfg, train_state=train_state, build_train_valid_test_datasets_provider=dataset_provider
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
         )
 
         # Verify data loaders were created
