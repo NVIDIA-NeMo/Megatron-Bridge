@@ -136,7 +136,9 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
 
 
 def build_train_valid_test_datasets(
-    cfg: ConfigContainer, build_train_valid_test_datasets_provider: Callable
+    cfg: ConfigContainer,
+    build_train_valid_test_datasets_provider: Callable,
+    train_state: TrainState,
 ) -> tuple[Any, Any, Any]:
     """Build train, validation, and test datasets using a provider function.
 
@@ -153,7 +155,7 @@ def build_train_valid_test_datasets(
     print_rank_0("    train:      {}".format(train_valid_test_num_samples[0]))
     print_rank_0("    validation: {}".format(train_valid_test_num_samples[1]))
     print_rank_0("    test:       {}".format(train_valid_test_num_samples[2]))
-    return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset)
+    return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset, train_state=train_state)
 
 
 def build_train_valid_test_data_loaders(
@@ -182,7 +184,9 @@ def build_train_valid_test_data_loaders(
     # Construct the data pipeline
     # Build datasets.
     train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
-        cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
+        cfg=cfg,
+        build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
+        train_state=train_state,
     )
 
     exit_signal = cfg.train.exit_signal
