@@ -33,6 +33,11 @@ from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+from megatron.bridge.training.utils.padding_utils import (
+    pad_or_truncate_2d_to_len,
+    pad_or_truncate_attn_to_len,
+    pad_or_truncate_pos_to_len,
+)
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
@@ -185,14 +190,24 @@ def get_batch(
         # slice batch along sequence dimension for context parallelism
         batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
 
+    # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
+    # (PP expects static shapes for inputs on first stage and labels/loss on last stage).
+    if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+        seq_len = cfg.model.seq_length
+        batch["tokens"] = pad_or_truncate_2d_to_len(batch.get("tokens"), seq_len, seq_len, pad_value=0)  # type: ignore[assignment]
+        batch["labels"] = pad_or_truncate_2d_to_len(batch.get("labels"), seq_len, seq_len, pad_value=-100)  # type: ignore[assignment]
+        batch["loss_mask"] = pad_or_truncate_2d_to_len(batch.get("loss_mask"), seq_len, seq_len, pad_value=0)  # type: ignore[assignment]
+        batch["position_ids"] = pad_or_truncate_pos_to_len(batch.get("position_ids"), seq_len, seq_len)  # type: ignore[assignment]
+        if batch.get("attention_mask") is not None:
+            batch["attention_mask"] = pad_or_truncate_attn_to_len(batch.get("attention_mask"), seq_len, seq_len)  # type: ignore[assignment]
+
     return (
-        batch["tokens"],
-        batch["labels"],
-        batch["loss_mask"],
-        batch.get(
-            "attention_mask"
-        ),  # Attention_mask is optional for pre-training as a casual mask is generated automatically.
-        batch["position_ids"],
+        batch.get("tokens"),
+        batch.get("labels"),
+        batch.get("loss_mask"),
+        # Attention_mask is optional for pre-training as a casual mask is generated automatically.
+        batch.get("attention_mask"),
+        batch.get("position_ids"),
         batch.get("cu_seqlens"),
         batch.get("cu_seqlens_argmin"),
         batch.get("max_seqlen"),
