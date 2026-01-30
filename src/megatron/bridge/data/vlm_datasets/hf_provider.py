@@ -31,6 +31,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_raven_dataset,
     make_rdr_dataset,
 )
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
@@ -45,7 +46,7 @@ class HFDatasetConversationProvider(DatasetProvider):
     """
 
     # Required to match model.seq_length (enforced by ConfigContainer.validate)
-    sequence_length: int
+    seq_length: int
 
     # HF processor/model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
     hf_processor_path: str
@@ -65,6 +66,9 @@ class HFDatasetConversationProvider(DatasetProvider):
 
     # DataloaderConfig fields are inherited (num_workers, dataloader_type, etc.)
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
+
+    # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
+    pack_sequences_in_batch: bool = False
 
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         registry: Dict[str, Callable[..., List[Dict[str, Any]]]] = {
@@ -113,7 +117,13 @@ class HFDatasetConversationProvider(DatasetProvider):
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
         # Bind processor for the requested model
-        processor = AutoProcessor.from_pretrained(self.hf_processor_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(
+            self.hf_processor_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=self.trust_remote_code,
+                hf_path=self.hf_processor_path,
+            ),
+        )
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)
         valid_ds = self._build_split_dataset("validation", context.valid_samples, processor)

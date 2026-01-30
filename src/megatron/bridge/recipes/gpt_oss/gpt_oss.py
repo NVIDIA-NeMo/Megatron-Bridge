@@ -133,10 +133,10 @@ def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> Co
     """Return a pre-training config for GPT-OSS 20B variant."""
     recommended: GPTOSSCommonKwargs = {
         "hf_path": "openai/gpt-oss-20b",
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 2,
-        "sequence_parallel": False,
+        "expert_model_parallel_size": 4,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
@@ -147,10 +147,10 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
     """Return a pre-training config for GPT-OSS 120B variant."""
     recommended: GPTOSSCommonKwargs = {
         "hf_path": "openai/gpt-oss-120b",
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 8,
-        "sequence_parallel": False,
+        "expert_model_parallel_size": 16,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
@@ -231,6 +231,9 @@ def _gpt_oss_common(
     if account_for_loss_in_pipeline_split:
         model_cfg.account_for_loss_in_pipeline_split = True
     model_cfg.cp_comm_type = cp_comm_type
+    if context_parallel_size > 1:
+        model_cfg.calculate_per_token_loss = True
+        model_cfg.cp_comm_type = "a2a"  # only a2a cp is supported for sink attention.
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -255,7 +258,7 @@ def _gpt_oss_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -286,7 +289,7 @@ def _gpt_oss_common(
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
-            average_in_collective=True,
+            average_in_collective=context_parallel_size == 1,
             use_distributed_optimizer=True,
             use_megatron_fsdp=use_megatron_fsdp,
         ),
@@ -343,8 +346,8 @@ def gpt_oss_120b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) ->
     """Return a finetuning config for GPT-OSS 120B variant.
 
     Default configuration: 2 nodes, 16 GPUs total
-    - LoRA/DoRA: TP=1, PP=4, EP=8, LR=1e-4
-    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
+    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=1e-4
+    - Full SFT: TP=1, PP=4, EP=8, lower LR (5e-6)
     """
     peft_value = user_kwargs.get("peft", "lora")
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
@@ -384,7 +387,7 @@ def _gpt_oss_finetune_common(
     micro_batch_size: int = 1,
     seq_length: int = 2048,
     eval_interval: int = 50,
-    save_interval: int = 50,
+    save_interval: int = 250,
     # Optimizer
     finetune_lr: float = 1e-4,
     min_lr: float = 0.0,
@@ -406,8 +409,6 @@ def _gpt_oss_finetune_common(
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    assert not packed_sequence, "Packed sequence is not supported for GPT-OSS finetuning"
-
     # Create model config
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
@@ -419,6 +420,9 @@ def _gpt_oss_finetune_common(
     model_cfg.expert_model_parallel_size = expert_model_parallel_size
     model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
+    if context_parallel_size > 1:
+        model_cfg.calculate_per_token_loss = True
+        model_cfg.cp_comm_type = "a2a"  # only a2a cp is supported for sink attention.
 
     # Optimizer and LR scheduler
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -448,6 +452,8 @@ def _gpt_oss_finetune_common(
         tokenizer_model=hf_path,
     )
 
+    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
+
     return ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -460,7 +466,7 @@ def _gpt_oss_finetune_common(
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
         ddp=DistributedDataParallelConfig(check_for_nan_in_grad=True, use_megatron_fsdp=use_megatron_fsdp),
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

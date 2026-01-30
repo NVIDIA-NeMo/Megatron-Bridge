@@ -323,7 +323,7 @@ def _qwen3_moe_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -556,8 +556,13 @@ def _qwen3_moe_finetune_common(
         min_lr=min_lr,
     )
 
+    pad_seq_to_mult = (
+        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
+    )
     # Dataset configuration (SQuAD by default)
-    dataset_config = default_squad_config(seq_length=seq_length, packed_sequence=packed_sequence)
+    dataset_config = default_squad_config(
+        seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+    )
 
     # W&B logger configuration
     logger_config = LoggerConfig(

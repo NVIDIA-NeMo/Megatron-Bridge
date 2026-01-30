@@ -26,7 +26,7 @@ Megatron Bridge offers model providers that directly map to NeMo 2.0 model confi
 ### Supported Model Families
 
 Megatron Bridge supports the following model families with preset providers:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaProvider`
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
@@ -156,7 +156,7 @@ def create_config():
         # Data configuration
         dataset=GPTDatasetConfig(
             blend=["/path/to/data_text_document"],
-            sequence_length=8192,
+            seq_length=8192,
         ),
         # Checkpointing and logging  
         checkpoint=CheckpointConfig(
@@ -419,7 +419,7 @@ def llama3_8b_config(
         ),
         dataset=GPTDatasetConfig(
             blend=[data_path],
-            sequence_length=seq_length,
+            seq_length=seq_length,
         ),
         optimizer=OptimizerConfig(
             optimizer="adam",
@@ -567,7 +567,7 @@ from megatron.bridge.training.config import GPTDatasetConfig, TrainingConfig
 # Single dataset
 dataset_config = GPTDatasetConfig(
     blend=["/path/to/train_data_text_document"],
-    sequence_length=4096,
+    seq_length=4096,
     split="949,50,1",
 )
 train_config = TrainingConfig(
@@ -582,7 +582,7 @@ dataset_config = GPTDatasetConfig(
         "/path/to/dataset2_text_document",
     ],
     blend_weights=[0.3, 0.7],  # Explicit weights (not zipped with paths)
-    sequence_length=4096,
+    seq_length=4096,
     split="949,50,1",
 )
 ```
@@ -1300,7 +1300,7 @@ config = ConfigContainer(
     ),
     dataset=GPTDatasetConfig(
         blend=["/path/to/train_data_text_document"],
-        sequence_length=4096,
+        seq_length=4096,
         split="949,50,1",
     ),
     optimizer=OptimizerConfig(optimizer="adam", lr=3e-4),

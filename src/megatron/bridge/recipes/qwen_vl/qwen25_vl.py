@@ -275,12 +275,12 @@ def _qwen25_vl_common(
     peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
-    _dataset_choice = dataset_type or "mock"
+    _dataset_choice = dataset_type or "hf"
     _processor_model = tokenizer_model or hf_path
 
     if _dataset_choice == "mock":
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             prompt="Describe this image.",
             num_workers=1,
@@ -293,7 +293,7 @@ def _qwen25_vl_common(
         )
     elif _dataset_choice == "preloaded":
         dataset_cfg = PreloadedVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
             valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,
@@ -307,7 +307,7 @@ def _qwen25_vl_common(
         )
     elif _dataset_choice == "hf":
         dataset_cfg = HFDatasetConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             maker_name="make_cord_v2_dataset",
             num_workers=2,

@@ -13,10 +13,13 @@
 # limitations under the License.
 
 import copy
+import importlib
+import logging
 import os
 import warnings
 from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
+from functools import lru_cache
 from typing import Any, Optional, Type, TypeVar
 
 import yaml
@@ -27,7 +30,116 @@ from megatron.bridge.utils.instantiate_utils import InstantiationMode, instantia
 from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T", bound="_ConfigContainerBase")
+
+
+def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Apply backward compatibility transformations to run config.
+
+    This function handles dataclass config fields that should not be passed to
+    the constructor when loading older checkpoints. It automatically detects
+    init=False fields by inspecting the target class.
+
+    The entire config is sanitized recursively to handle init=False fields in any part of the configuration hierarchy.
+
+    Args:
+        config_dict: The full run configuration dictionary.
+
+    Returns:
+        The config dictionary with backward compatibility fixes applied.
+    """
+    return _sanitize_dataclass_config(config_dict)
+
+
+def _sanitize_dataclass_config(config: dict[str, Any], _visited: set | None = None) -> dict[str, Any]:
+    """Remove init=False fields from a dataclass config dict for backward compatibility.
+
+    This function automatically detects fields with init=False by inspecting the
+    target class specified in the config's _target_ field. This handles cases where
+    older checkpoints serialized computed fields that should not be passed to __init__.
+
+    The function recursively processes nested dicts that may also be dataclass configs.
+
+    Args:
+        config: A configuration dictionary, potentially with a _target_ field.
+        _visited: Internal set to track visited objects and prevent infinite recursion.
+
+    Returns:
+        The sanitized configuration with init=False fields removed.
+    """
+    if not isinstance(config, dict):
+        return config
+
+    if _visited is None:
+        _visited = set()
+    config_id = id(config)
+    if config_id in _visited:
+        return config
+    _visited.add(config_id)
+
+    target = config.get("_target_")
+    init_false_fields: frozenset[str] = frozenset()
+
+    if isinstance(target, str):
+        target_class = _resolve_target_class(target)
+        if target_class is not None:
+            init_false_fields = _get_init_false_fields(target_class)
+
+    # Process all values, filtering init=False fields and recursing into nested dicts
+    sanitized = {}
+    for key, value in config.items():
+        if key in init_false_fields:
+            if target_class is not None:
+                logger.debug(
+                    f"Removing init=False field '{key}' from {target_class.__name__} config for backward compatibility"
+                )
+            continue
+
+        # Recursively sanitize nested dicts (which may be nested dataclass configs)
+        if isinstance(value, dict):
+            value = _sanitize_dataclass_config(value, _visited)
+        elif isinstance(value, list):
+            value = [_sanitize_dataclass_config(item, _visited) if isinstance(item, dict) else item for item in value]
+
+        sanitized[key] = value
+
+    return sanitized
+
+
+@lru_cache(maxsize=128)
+def _get_init_false_fields(target_class: type) -> frozenset[str]:
+    """Get the set of field names with init=False for a dataclass.
+
+    Args:
+        target_class: A dataclass type to inspect.
+
+    Returns:
+        A frozenset of field names that have init=False.
+    """
+    if not is_dataclass(target_class):
+        return frozenset()
+
+    return frozenset(f.name for f in dataclass_fields(target_class) if not f.init)
+
+
+def _resolve_target_class(target: str) -> type | None:
+    """Resolve a _target_ string to a class.
+
+    Args:
+        target: A fully qualified class path (e.g., "module.submodule.ClassName").
+
+    Returns:
+        The resolved class, or None if resolution fails.
+    """
+    try:
+        module_path, class_name = target.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name, None)
+    except (ValueError, ImportError, AttributeError) as e:
+        logger.warning(f"Could not resolve target '{target}': {e}")
+        return None
 
 
 @dataclass(kw_only=True)
@@ -64,6 +176,10 @@ class _ConfigContainerBase:
         config_dict = copy.deepcopy(config_dict)
 
         assert "_target_" in config_dict
+
+        # Apply backward compatibility: remove init=False fields that may have been
+        # serialized by older versions (these are computed in __post_init__)
+        config_dict = _sanitize_dataclass_config(config_dict)
 
         # Check for extra keys in strict mode
         expected_fields = {f.name for f in dataclass_fields(cls) if not f.name.startswith("_")}
@@ -146,7 +262,8 @@ class _ConfigContainerBase:
 
         Handles:
         - ConfigContainer instances (using to_dict)
-        - Regular dataclasses (using asdict)
+        - Classes which implement a to_cfg_dict method
+        - Regular dataclasses (converting each non-private field)
         - Lists and tuples (converting each element)
         - Dictionaries (converting each value)
         - Other types (kept as-is)
@@ -159,6 +276,9 @@ class _ConfigContainerBase:
         """
         if isinstance(value, _ConfigContainerBase):
             return value.to_dict()
+        elif hasattr(value, "to_cfg_dict"):
+            # Allow non-Container classes to implement own custom method
+            return value.to_cfg_dict()
         elif is_dataclass(value) and not isinstance(value, type):
             # Handle regular dataclasses
             result = {}

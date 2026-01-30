@@ -365,7 +365,7 @@ def _qwen2_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -663,8 +663,10 @@ def _qwen2_finetune_common(
     # PEFT config
     peft_config = default_peft_config(peft) if not is_full_sft else None
 
+    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
+
     # Dataset config
-    dataset_config = default_squad_config(seq_length, packed_sequence)
+    dataset_config = default_squad_config(seq_length, packed_sequence, pad_seq_to_mult)
 
     # Logger
     logger_cfg = LoggerConfig(

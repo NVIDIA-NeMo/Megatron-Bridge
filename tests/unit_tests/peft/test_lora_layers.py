@@ -21,6 +21,7 @@ functionality for Parameter-Efficient Fine-Tuning.
 
 import os
 from copy import deepcopy
+from types import SimpleNamespace
 
 import megatron.core.parallel_state as parallel_state
 import pytest
@@ -29,8 +30,15 @@ import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
 
-from megatron.bridge.peft.lora import TELinearAdapter
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TEFusedLoRALinear, patch_linear_module
+from megatron.bridge.peft.lora import LoRA, TELinearAdapter
+from megatron.bridge.peft.lora_layers import (
+    LinearAdapter,
+    LoRALinear,
+    LoRATopKRouter,
+    TEFusedLoRALinear,
+    patch_linear_module,
+)
+from megatron.bridge.peft.utils import AdapterAttributes
 
 
 class MockLinearWithTupleReturn(nn.Module):
@@ -138,16 +146,16 @@ class TestLinearAdapter:
         assert torch.equal(adapter.bias, original_linear.bias)
 
         # Check LoRA components exist
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert hasattr(adapter, "dropout")
         assert hasattr(adapter, "scale")
 
         # Check dimensions
-        assert adapter.lora_a.in_features == 10
-        assert adapter.lora_a.out_features == 8
-        assert adapter.lora_b.in_features == 8
-        assert adapter.lora_b.out_features == 5
+        assert adapter.linear_in.in_features == 10
+        assert adapter.linear_in.out_features == 8
+        assert adapter.linear_out.in_features == 8
+        assert adapter.linear_out.out_features == 5
 
         # Check scale
         assert adapter.scale == 16 / 8  # alpha / dim
@@ -159,19 +167,19 @@ class TestLinearAdapter:
         assert torch.equal(adapter.weight, original_linear_no_bias.weight)
         assert adapter.bias is None
 
-    def test_linear_adapter_lora_b_initialized_to_zero(self, original_linear):
+    def test_linear_adapter_linear_out_initialized_to_zero(self, original_linear):
         """Test that LoRA B matrix is initialized to zero."""
         adapter = LinearAdapter(original_linear)
 
-        assert torch.allclose(adapter.lora_b.weight, torch.zeros_like(adapter.lora_b.weight))
+        assert torch.allclose(adapter.linear_out.weight, torch.zeros_like(adapter.linear_out.weight))
 
     @pytest.mark.parametrize("lora_A_init_method", ["xavier", "uniform"])
-    def test_linear_adapter_lora_a_initialization(self, original_linear, lora_A_init_method):
+    def test_linear_adapter_linear_in_initialization(self, original_linear, lora_A_init_method):
         """Test LoRA A matrix initialization methods."""
         adapter = LinearAdapter(original_linear, lora_A_init_method=lora_A_init_method)
 
         # Should not be all zeros
-        assert not torch.allclose(adapter.lora_a.weight, torch.zeros_like(adapter.lora_a.weight))
+        assert not torch.allclose(adapter.linear_in.weight, torch.zeros_like(adapter.linear_in.weight))
 
     def test_linear_adapter_freezes_original_weights(self, original_linear):
         """Test that original weights are frozen."""
@@ -185,8 +193,8 @@ class TestLinearAdapter:
         """Test that LoRA weights are trainable."""
         adapter = LinearAdapter(original_linear)
 
-        assert adapter.lora_a.weight.requires_grad
-        assert adapter.lora_b.weight.requires_grad
+        assert adapter.linear_in.weight.requires_grad
+        assert adapter.linear_out.weight.requires_grad
 
     @pytest.mark.parametrize("dropout_position", ["pre", "post"])
     def test_linear_adapter_dropout_position(self, original_linear, dropout_position):
@@ -235,7 +243,7 @@ class TestLinearAdapter:
         for key, val in adapter.state_dict().items():
             if key in state_init:
                 continue
-            assert key in ["lora_a.weight", "lora_b.weight"]
+            assert key in ["linear_in.weight", "linear_out.weight"]
 
     def test_linear_adapter_zero_output_initially(self, original_linear):
         """Test that adapter produces zero output initially (LoRA B is zero)."""
@@ -252,7 +260,7 @@ class TestLinearAdapter:
             adapter_output = adapter(x)
 
         # Initially, LoRA should add approximately zero
-        # (not exactly zero due to random initialization of lora_a, but very small)
+        # (not exactly zero due to random initialization of linear_in, but very small)
         lora_contribution = adapter_output - original_output
         assert torch.allclose(lora_contribution, torch.zeros_like(lora_contribution), atol=1e-2)
 
@@ -279,7 +287,7 @@ class TestPatchLinearModule:
         for key, val in patched_linear.state_dict().items():
             if key in state_init:
                 continue
-            assert key in ["lora_a.weight", "lora_b.weight"]
+            assert key in ["linear_in.weight", "linear_out.weight"]
 
     def test_patch_linear_module_attributes(self):
         """Test that patched module has required LoRA attributes."""
@@ -287,7 +295,7 @@ class TestPatchLinearModule:
         patched_linear = patch_linear_module(linear)
 
         state_dict = patched_linear.state_dict()
-        for key in ["lora_a", "lora_b"]:
+        for key in ["linear_in", "linear_out"]:
             assert hasattr(patched_linear, key), f"Expected {key} to be in module"
             assert f"{key}.weight" in state_dict, f"Expected {key} to be in state dict"
             assert getattr(patched_linear, key).weight.requires_grad == True, f"Expected {key} to require_grad"
@@ -310,8 +318,8 @@ class TestPatchLinearModule:
         assert patched_linear is te_linear
 
         # Check LoRA attributes exist
-        assert hasattr(patched_linear, "lora_a")
-        assert hasattr(patched_linear, "lora_b")
+        assert hasattr(patched_linear, "linear_in")
+        assert hasattr(patched_linear, "linear_out")
 
     def test_patch_linear_module_unsupported_type(self):
         """Test error with unsupported module type."""
@@ -328,8 +336,8 @@ class TestPatchLinearModule:
 
         assert patched_linear.dim == dim
         assert patched_linear.scale == alpha / dim
-        assert patched_linear.lora_a.out_features == dim
-        assert patched_linear.lora_b.in_features == dim
+        assert patched_linear.linear_in.out_features == dim
+        assert patched_linear.linear_out.in_features == dim
 
 
 class TestTEFusedLoRALinear:
@@ -369,13 +377,19 @@ class TestTEFusedLoRALinear:
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
 
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield
@@ -578,15 +592,15 @@ class TestTELinearAdapter:
         adapter = TELinearAdapter(te_linear, dim=8, alpha=16)
 
         # Check that it's properly initialized
-        assert hasattr(adapter, "lora_a")
-        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "linear_in")
+        assert hasattr(adapter, "linear_out")
         assert adapter.scale == 16 / 8
 
         # Check dimensions
-        assert adapter.lora_a.in_features == 10
-        assert adapter.lora_a.out_features == 8
-        assert adapter.lora_b.in_features == 8
-        assert adapter.lora_b.out_features == 5
+        assert adapter.linear_in.in_features == 10
+        assert adapter.linear_in.out_features == 8
+        assert adapter.linear_out.in_features == 8
+        assert adapter.linear_out.out_features == 5
 
     def test_te_linear_adapter_forward(self, te_linear):
         """Test TELinearAdapter forward pass."""
@@ -615,8 +629,8 @@ class TestLoRAUtilities:
         linear = nn.Linear(10, 5)
         adapter = LinearAdapter(linear, lora_dtype=torch.float16)
 
-        assert adapter.lora_a.weight.dtype == torch.float16
-        assert adapter.lora_b.weight.dtype == torch.float16
+        assert adapter.linear_in.weight.dtype == torch.float16
+        assert adapter.linear_out.weight.dtype == torch.float16
 
     def test_linear_adapter_different_dropout_values(self):
         """Test LinearAdapter with different dropout values."""
@@ -645,15 +659,15 @@ class TestLoRAUtilities:
 
         # Manually set LoRA weights for predictable output
         with torch.no_grad():
-            nn.init.constant_(adapter.lora_a.weight, 0.1)
-            nn.init.constant_(adapter.lora_b.weight, 0.1)
+            nn.init.constant_(adapter.linear_in.weight, 0.1)
+            nn.init.constant_(adapter.linear_out.weight, 0.1)
 
         x = torch.ones(1, 10)
 
-        # Expected: original + lora_scale * lora_b(lora_a(x))
+        # Expected: original + lora_scale * linear_out(linear_in(x))
         # original = x @ linear.weight.T = 1*10 @ 1_{5,10}.T = 10 * ones(1,5)
-        # lora_a(x) = x @ lora_a.weight.T = 1*10 @ 0.1_{2,10}.T = 1.0 * ones(1,2)
-        # lora_b(lora_a(x)) = 1.0 @ 0.1_{5,2}.T = 0.2 * ones(1,5)
+        # linear_in(x) = x @ linear_in.weight.T = 1*10 @ 0.1_{2,10}.T = 1.0 * ones(1,2)
+        # linear_out(linear_in(x)) = 1.0 @ 0.1_{5,2}.T = 0.2 * ones(1,5)
         # lora_scale = alpha/dim = 4/2 = 2
         # final = 10 + 2 * 0.2 = 10.4
 
@@ -661,3 +675,180 @@ class TestLoRAUtilities:
         expected = torch.full((1, 5), 10.4)
 
         assert torch.allclose(output, expected, atol=1e-6)
+
+
+class DummyRouter(nn.Module):
+    def __init__(self, hidden_size: int = 4, num_experts: int = 3) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(num_experts, hidden_size))
+        self.expert_bias = torch.zeros(num_experts)
+        self.config = SimpleNamespace(
+            moe_router_force_load_balancing=False,
+            sequence_parallel=False,
+        )
+
+    def _maintain_float32_expert_bias(self) -> None:
+        if isinstance(self.expert_bias, torch.Tensor):
+            self.expert_bias = self.expert_bias.float()
+
+    def apply_input_jitter(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+    def gating(self, x: torch.Tensor) -> torch.Tensor:
+        return x @ self.weight.t()
+
+    def routing(self, logits: torch.Tensor):
+        return logits, logits > 0
+
+
+class RouterModel(nn.Module):
+    def __init__(self, router_cls: type[DummyRouter]) -> None:
+        super().__init__()
+        self.mlp = nn.Module()
+        self.mlp.router = router_cls()
+
+
+class TestLoRATopKRouter:
+    """Test LoRA router wrapper behavior."""
+
+    def test_forward_adds_adapter_delta(self) -> None:
+        hidden_size = 5
+        num_experts = 4
+        router = DummyRouter(hidden_size=hidden_size, num_experts=num_experts)
+        adapter = nn.Linear(hidden_size, num_experts, bias=False)
+        wrapper = LoRATopKRouter(router, adapter)
+
+        x = torch.randn(2, hidden_size)
+        expected_logits = router.gating(x) + adapter(x)
+
+        logits, routing_map = wrapper(x)
+
+        assert torch.allclose(logits, expected_logits)
+        assert routing_map.shape == expected_logits.shape
+
+    def test_forward_skips_adapter_when_disabled(self) -> None:
+        hidden_size = 6
+        num_experts = 2
+        router = DummyRouter(hidden_size=hidden_size, num_experts=num_experts)
+        adapter = nn.Linear(hidden_size, num_experts, bias=False)
+        wrapper = LoRATopKRouter(router, adapter)
+        wrapper.disable_adapter_layers()
+
+        x = torch.randn(2, hidden_size)
+        expected_logits = router.gating(x)
+
+        logits, routing_map = wrapper(x)
+
+        assert torch.allclose(logits, expected_logits)
+        assert routing_map.shape == expected_logits.shape
+
+    def test_forward_applies_force_load_balancing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import lora_layers as lora_layers_module
+
+        hidden_size = 4
+        num_experts = 3
+        router = DummyRouter(hidden_size=hidden_size, num_experts=num_experts)
+        router.config.moe_router_force_load_balancing = True
+        adapter = nn.Linear(hidden_size, num_experts, bias=False)
+        wrapper = LoRATopKRouter(router, adapter)
+
+        x = torch.randn(2, hidden_size)
+        expected_logits = router.gating(x) + adapter(x)
+
+        def fake_random_logits(logits: torch.Tensor) -> torch.Tensor:
+            return logits + 1.0
+
+        monkeypatch.setattr(lora_layers_module, "apply_random_logits", fake_random_logits, raising=True)
+
+        logits, _ = wrapper(x)
+
+        assert torch.allclose(logits, expected_logits + 1.0)
+
+    def test_lora_wraps_router_with_lora_topk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import lora as lora_module
+
+        class DummyTopKRouter(DummyRouter):
+            pass
+
+        def fake_adapter(in_features, out_features, *args, **kwargs):
+            return nn.Linear(in_features, out_features, bias=False)
+
+        def fake_attrs(*args, **kwargs):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=4,
+                out_features=3,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=False,
+            )
+
+        monkeypatch.setattr(lora_module, "TopKRouter", DummyTopKRouter, raising=True)
+        monkeypatch.setattr(lora_module, "ParallelLinearAdapter", fake_adapter, raising=True)
+        monkeypatch.setattr(lora_module, "get_adapter_attributes_from_linear", fake_attrs, raising=True)
+
+        model = RouterModel(DummyTopKRouter)
+        lora = LoRA(target_modules=["router"])
+        transformed = lora(model, training=True)
+
+        assert isinstance(transformed.mlp.router, LoRATopKRouter)
+
+
+class TestLoRATopKRouterAdapters:
+    def test_get_adapter_attributes_topkrouter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import utils as peft_utils
+
+        class DummyTopKRouter(DummyRouter):
+            pass
+
+        router = DummyTopKRouter(hidden_size=7, num_experts=5)
+        router.config.sequence_parallel = True
+        router.parallel_mode = "test"
+
+        monkeypatch.setattr(peft_utils, "TopKRouter", DummyTopKRouter, raising=True)
+        monkeypatch.setattr(
+            peft_utils.parallel_state,
+            "get_tensor_model_parallel_world_size",
+            lambda: 1,
+            raising=True,
+        )
+
+        attrs = peft_utils.get_adapter_attributes_from_linear(router)
+
+        assert attrs.input_is_parallel is False
+        assert attrs.in_features == router.weight.shape[1]
+        assert attrs.out_features == router.weight.shape[0]
+        assert attrs.disable_tensor_parallel_comm is False
+        assert attrs.disable_sequence_parallel_comm is True
+        assert attrs.base_linear_is_parallel is False
+
+
+class TestCanonicalLoRATopKRouter:
+    def test_canonical_lora_wraps_router_with_lora_topk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from megatron.bridge.peft import canonical_lora as canonical_module
+
+        class DummyTopKRouter(DummyRouter):
+            pass
+
+        def fake_adapter(in_features, out_features, *args, **kwargs):
+            return nn.Linear(in_features, out_features, bias=False)
+
+        def fake_attrs(*args, **kwargs):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=4,
+                out_features=3,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=False,
+            )
+
+        monkeypatch.setattr(canonical_module, "TopKRouter", DummyTopKRouter, raising=True)
+        monkeypatch.setattr(canonical_module, "ParallelLinearAdapter", fake_adapter, raising=True)
+        monkeypatch.setattr(canonical_module, "get_adapter_attributes_from_linear", fake_attrs, raising=True)
+
+        model = RouterModel(DummyTopKRouter)
+        lora = canonical_module.CanonicalLoRA(target_modules=["router"])
+        transformed = lora(model, training=True)
+
+        assert isinstance(transformed.mlp.router, LoRATopKRouter)

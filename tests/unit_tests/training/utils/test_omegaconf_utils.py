@@ -17,6 +17,8 @@
 
 import dataclasses
 import functools
+from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytest
@@ -34,6 +36,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
+    process_config_with_overrides,
 )
 
 
@@ -170,6 +173,37 @@ class TestIsOmegaconfProblematic:
         assert _is_omegaconf_problematic(TestClass.instance_method)  # unbound method
         assert _is_omegaconf_problematic(TestClass.class_method)  # bound class method
         assert _is_omegaconf_problematic(TestClass.static_method)  # function object
+
+    def test_arbitrary_objects_problematic(self):
+        """Test that arbitrary objects (not dataclasses/primitives) are problematic."""
+
+        class ArbitraryObj:
+            pass
+
+        # Arbitrary object instance should be problematic now
+        obj = ArbitraryObj()
+        assert _is_omegaconf_problematic(obj)
+
+    def test_allowed_special_types(self):
+        """Test that Path, Enum, and torch.dtype instances are allowed."""
+
+        class MyEnum(Enum):
+            A = 1
+
+        # Path instance
+        assert not _is_omegaconf_problematic(Path("/tmp"))
+
+        # Enum member
+        assert not _is_omegaconf_problematic(MyEnum.A)
+
+        # torch.dtype
+        assert not _is_omegaconf_problematic(torch.float32)
+
+    def test_dataclass_instance_allowed(self):
+        """Test that dataclass instances are allowed."""
+        # Dataclass instance
+        config = SimpleConfig()
+        assert not _is_omegaconf_problematic(config)
 
 
 class TestDataclassToOmegaconfDict:
@@ -553,6 +587,170 @@ class TestApplyOverridesWithPreservation:
         # Check that overrides were applied and callables restored
         assert config.name == "preserved_test"
         assert config.activation_func == original_func
+
+
+class TestProcessConfigWithOverrides:
+    """Test process_config_with_overrides function."""
+
+    def test_no_overrides(self):
+        """Test processing config without any overrides."""
+        config = NestedConfig()
+        original_func = config.with_callable.activation_func
+
+        result = process_config_with_overrides(config)
+
+        # Config should be unchanged
+        assert result.simple.name == "test"
+        assert result.simple.value == 42
+        assert result.with_callable.activation_func == original_func
+
+    def test_with_cli_overrides(self):
+        """Test processing config with CLI overrides."""
+        config = NestedConfig()
+        original_func = config.with_callable.activation_func
+
+        result = process_config_with_overrides(
+            config,
+            cli_overrides=["simple.name=cli_updated", "simple.value=999"],
+        )
+
+        assert result.simple.name == "cli_updated"
+        assert result.simple.value == 999
+        assert result.with_callable.activation_func == original_func
+
+    def test_with_config_filepath(self, tmp_path):
+        """Test processing config with YAML config file."""
+        config = NestedConfig()
+        original_func = config.with_callable.activation_func
+
+        # Create a temp YAML config file
+        config_file = tmp_path / "test_config.yaml"
+        config_file.write_text(
+            """
+simple:
+  name: yaml_updated
+  value: 500
+with_callable:
+  name: yaml_callable
+"""
+        )
+
+        result = process_config_with_overrides(
+            config,
+            config_filepath=str(config_file),
+        )
+
+        assert result.simple.name == "yaml_updated"
+        assert result.simple.value == 500
+        assert result.with_callable.name == "yaml_callable"
+        assert result.with_callable.activation_func == original_func
+
+    def test_with_config_file_and_cli_overrides(self, tmp_path):
+        """Test processing config with both YAML file and CLI overrides (CLI wins)."""
+        config = NestedConfig()
+        original_func = config.with_callable.activation_func
+
+        # Create a temp YAML config file
+        config_file = tmp_path / "test_config.yaml"
+        config_file.write_text(
+            """
+simple:
+  name: yaml_name
+  value: 100
+"""
+        )
+
+        result = process_config_with_overrides(
+            config,
+            config_filepath=str(config_file),
+            cli_overrides=["simple.name=cli_wins", "simple.value=999"],
+        )
+
+        # CLI overrides should win over YAML
+        assert result.simple.name == "cli_wins"
+        assert result.simple.value == 999
+        assert result.with_callable.activation_func == original_func
+
+    def test_config_file_not_found(self):
+        """Test that FileNotFoundError is raised for missing config file."""
+        config = SimpleConfig()
+
+        with pytest.raises(FileNotFoundError, match="Config file not found"):
+            process_config_with_overrides(
+                config,
+                config_filepath="/nonexistent/path/config.yaml",
+            )
+
+    def test_invalid_cli_overrides(self):
+        """Test that OverridesError is raised for invalid CLI overrides."""
+        config = SimpleConfig()
+
+        with pytest.raises(OverridesError):
+            process_config_with_overrides(
+                config,
+                cli_overrides=["invalid override syntax"],
+            )
+
+    def test_callable_preservation(self):
+        """Test that callable fields are preserved through the entire process."""
+        config = ConfigWithCallable()
+        original_func = config.activation_func
+
+        result = process_config_with_overrides(
+            config,
+            cli_overrides=["name=updated", "dtype=torch.float16"],
+        )
+
+        # Callable should be preserved
+        assert result.activation_func == original_func
+        # Other fields should be updated
+        assert result.name == "updated"
+        assert result.dtype == torch.float16
+
+    def test_returns_same_config_object(self):
+        """Test that the function returns the same config object (mutated in place)."""
+        config = SimpleConfig()
+
+        result = process_config_with_overrides(
+            config,
+            cli_overrides=["name=updated"],
+        )
+
+        # Should return the same object
+        assert result is config
+        assert config.name == "updated"
+
+    def test_empty_cli_overrides_list(self):
+        """Test processing with empty CLI overrides list."""
+        config = SimpleConfig()
+
+        result = process_config_with_overrides(
+            config,
+            cli_overrides=[],
+        )
+
+        # Config should be unchanged
+        assert result.name == "test"
+        assert result.value == 42
+
+    def test_none_handling_preserved(self):
+        """Test that None values are preserved through processing."""
+        config = ConfigWithOptionalFields()
+        original_func = config.activation_func
+
+        result = process_config_with_overrides(
+            config,
+            cli_overrides=["name=updated", "value=100"],
+        )
+
+        # None values should be preserved
+        assert result.optional_str is None
+        assert result.optional_int is None
+        # Overrides should be applied
+        assert result.name == "updated"
+        assert result.value == 100
+        # Callable should be preserved
+        assert result.activation_func == original_func
 
 
 class TestParseHydraOverrides:

@@ -50,6 +50,7 @@ training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
 training/distillation.md
+training/callbacks.md
 ```
 
 ```{toctree}
@@ -60,4 +61,25 @@ adding-new-models.md
 bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
+```
+
+```{toctree}
+:caption: Releases
+:hidden:
+
+releases/software-versions.md
+releases/changelog.md
+releases/known-issues.md
+```
+
+```{toctree}
+:caption: Directory Readme Files
+:hidden:
+
+README.md
+models/README.md
+models/llm/README.md
+models/vlm/README.md
+releases/README.md
+training/README.md
 ```
