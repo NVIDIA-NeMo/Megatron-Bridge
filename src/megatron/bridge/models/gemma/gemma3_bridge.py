@@ -63,7 +63,7 @@ class Gemma3ModelBridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             vocab_size=hf_config.vocab_size,
             softmax_scale=1.0 / math.sqrt(hf_config.query_pre_attn_scalar),
-            rope_scaling_factor=hf_config.rope_scaling["factor"] if hf_config.rope_scaling else 1.0,
+            rope_scaling_factor=self.rope_scaling_factor_from_hf(hf_config, default=1.0),
             fp16=(self.dtype_from_hf(hf_vl_config, default=torch.float32) == torch.float16),  # TODO confirm
             bf16=(self.dtype_from_hf(hf_vl_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_vl_config, default=torch.float32),

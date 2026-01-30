@@ -60,7 +60,7 @@ class Gemma3VLBridge(MegatronModelBridge):
             layernorm_epsilon=text_config.rms_norm_eps,
             vocab_size=text_config.vocab_size,
             softmax_scale=1.0 / math.sqrt(text_config.query_pre_attn_scalar),
-            rope_scaling_factor=text_config.rope_scaling["factor"] if text_config.rope_scaling else 1.0,
+            rope_scaling_factor=self.rope_scaling_factor_from_hf(text_config, default=1.0),
             # Vision configuration
             vision_config=vision_config,
             mm_tokens_per_image=hf_config.mm_tokens_per_image,
