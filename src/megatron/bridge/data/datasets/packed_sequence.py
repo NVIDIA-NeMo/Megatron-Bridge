@@ -15,6 +15,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -212,6 +213,22 @@ class PackedSequenceSpecs:
     If less than or equal to 0, sequence packing is disabled. Defaults to -1.
     Note: This arg is distinct from `seq_length` because `seq_length` specifies the maximum length
     of the original sequence (i.e. the length to truncate long sequences in the input data).
+    """
+
+    avg_sequences_per_bin: Optional[float] = None
+    """
+    Average number of sequences packed into each bin.
+
+    This value is critical for accurate TFLOP/s calculation because attention
+    FLOPs scale quadratically per sequence, not per total tokens. For example:
+    - 4 sequences of 1024 tokens packed into 4096 -> attention FLOPs ~ 4 * 1024^2
+    - Treating as single 4096 sequence -> attention FLOPs ~ 4096^2 (4x overestimate)
+
+    If not specified, this will be estimated as:
+        packed_sequence_size / seq_length
+
+    For accurate metrics, set this based on your dataset's packing statistics.
+    Future versions may track this automatically during packing.
     """
 
     tokenizer_model_name: str = None
