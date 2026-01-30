@@ -28,7 +28,7 @@ from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
 )
-from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -1448,6 +1448,13 @@ class ConfigContainer(Container):
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
         _validate_fine_grained_activation_offloading(self)
+
+        # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
+        if self.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in self.model.cuda_graph_scope:
+            assert not self.rerun_state_machine.check_for_nan_in_loss, (
+                "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
+                "Set rerun_state_machine.check_for_nan_in_loss=False."
+            )
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
