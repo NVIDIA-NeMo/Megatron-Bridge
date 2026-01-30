@@ -53,7 +53,11 @@ def disable_hf_cache():
     """Disable HF cache for the dataset tests."""
     hf_home = os.environ["HF_HOME"]
     hub_offline = os.environ["HF_HUB_OFFLINE"]
-    del os.environ["HF_HOME"]
+    shutil.copytree(
+        f"{hf_home}/hub/datasets--google--boolq", "/tmp/hf_home/hub/datasets--google--boolq", dirs_exist_ok=True
+    )
+    shutil.copytree(f"{hf_home}/datasets/google___boolq", "/tmp/hf_home/datasets/google___boolq", dirs_exist_ok=True)
+    os.environ["HF_HOME"] = "/tmp/hf_home"
     del os.environ["HF_HUB_OFFLINE"]
     reload(huggingface_hub.constants)
     reload(datasets.config)
