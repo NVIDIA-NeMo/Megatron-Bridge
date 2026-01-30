@@ -268,6 +268,14 @@ class PerfEnvPlugin(Plugin):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         del_cudnn_ln = True
+
+        # Keep cuDNN LayerNorm for MoE models with MXFP8 or BF16 for better performance
+        is_moe_model = (
+            model_family_name in ["deepseek", "gpt_oss"]
+            or model_recipe_name in ["qwen3_235b_a22b", "qwen3_30b_a3b"]
+        )
+        if is_moe_model and compute_dtype in ["fp8_mx", "bf16"]:
+            del_cudnn_ln = False
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
