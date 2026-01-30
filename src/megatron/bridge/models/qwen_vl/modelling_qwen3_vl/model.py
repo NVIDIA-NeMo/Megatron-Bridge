@@ -19,7 +19,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-
+from megatron.core.utils import nvtx_range_pop, nvtx_range_push
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
@@ -319,8 +319,7 @@ class Qwen3VLModel(MegatronModule):
         # position ids is computed within the model
         position_ids = None
 
-        torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
-
+        nvtx_range_push(suffix="forward_pre_process")
         cp_size = self.pg_collection.cp.size()
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -448,7 +447,9 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
+        nvtx_range_pop(suffix="forward_pre_process")
 
+        nvtx_range_push(suffix="forward_language_module")
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
         if self.config.sequence_parallel or cp_size > 1:
@@ -492,10 +493,6 @@ class Qwen3VLModel(MegatronModule):
                 )
                 attention_mask = None
                 self.language_model.rotary_pos_emb.is_thd_format = True
-
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
-
         output = self.language_model(
             input_ids=None,
             position_ids=position_ids,  # None in encoder
@@ -509,6 +506,6 @@ class Qwen3VLModel(MegatronModule):
             **(extra_block_kwargs or {}),
             **kwargs,
         )
-        torch.cuda.nvtx.range_pop()
+        nvtx_range_pop(suffix="forward_language_module")
 
         return output
