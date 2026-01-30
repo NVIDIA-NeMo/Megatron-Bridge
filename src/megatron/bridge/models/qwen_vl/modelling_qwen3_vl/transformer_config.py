@@ -102,4 +102,6 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.pipeline_model_parallel_layout = None
     config.account_for_embedding_in_pipeline_split = None
     config.account_for_loss_in_pipeline_split = None
+    # encoder does not support apply_rope_fusion currently. 
+    config.apply_rope_fusion = False
     return config
