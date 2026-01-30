@@ -176,6 +176,11 @@ class Qwen3VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
         self.pg_collection = get_pg_collection(self)
+        # In order to support language model cuda graph,
+        # we need to set the decoder, rotary_pos_emb, and position_embedding_type
+        self.decoder = self.language_model.decoder
+        self.rotary_pos_emb = self.language_model.rotary_pos_emb
+        self.position_embedding_type = self.language_model.position_embedding_type
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
