@@ -1053,9 +1053,9 @@ class TestConfigContainerValidation:
         sched_cfg = create_test_scheduler_config()
         dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
         # Create optimizer config with reuse_grad_buf_for_mxfp8_param_ag=True
-        # Also need fp8_param_gather=True since that's required for reuse_grad_buf
-        optimizer_cfg = create_test_optimizer_config(reuse_grad_buf_for_mxfp8_param_ag=True, fp8_param_gather=True)
+        optimizer_cfg = create_test_optimizer_config(reuse_grad_buf_for_mxfp8_param_ag=True)
         # Create ddp config with reuse_grad_buf_for_mxfp8_param_ag=True
+        # fp8_param_gather=True is required for reuse_grad_buf in DDP config validation
         ddp_cfg = create_test_ddp_config(
             use_megatron_fsdp=True, reuse_grad_buf_for_mxfp8_param_ag=True, fp8_param_gather=True
         )
