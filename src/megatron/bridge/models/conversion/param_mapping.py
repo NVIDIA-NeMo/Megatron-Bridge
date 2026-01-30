@@ -817,6 +817,14 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
                 )
                 hf_weights = hf_weights.to(target_param.dtype)
 
+            actual_dim0_size = hf_weights.shape[0]
+            expect_dim0_size = target_param.shape[0] * self.tp_size
+            if actual_dim0_size != expect_dim0_size:
+                assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
+                    f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
+                )
+                hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
+
             # For bias (1D), we still split along dim 0
             # For weight (2D), we split along dim 0 (output dimension)
             full_size = hf_weights.shape[0]
@@ -861,6 +869,11 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
+
+
+def _pad_right_dim0(x: torch.Tensor, pad_size: int) -> torch.Tensor:
+    padder = torch.zeros((pad_size, *x.shape[1:]), dtype=x.dtype, device=x.device)
+    return torch.cat([x, padder], dim=0)
 
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
