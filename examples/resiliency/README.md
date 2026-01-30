@@ -11,6 +11,8 @@ Examples demonstrating Megatron-Bridge resiliency features powered by [nvidia-re
 
 - [NeMo Framework Docker container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo)
 - 2+ GPUs for distributed examples
+- HuggingFace token with Llama access (set `HF_TOKEN` env var)
+  - Accept license at https://huggingface.co/meta-llama/Llama-3.2-1B
 
 ## Examples
 
@@ -19,7 +21,7 @@ Examples demonstrating Megatron-Bridge resiliency features powered by [nvidia-re
 Detects slow-performing GPUs during training using NVRx straggler detection.
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/resiliency/straggler_detection/basic_straggler_detection.py
+uv run python -m torch.distributed.run --nproc_per_node=2 examples/resiliency/straggler_detection/straggler_detection_example.py
 ```
 
 Or use the launch script:
@@ -42,4 +44,4 @@ To test fault recovery with simulated failures:
 ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
 ```
 
-Note: Fault simulation requires careful timing - the fault must trigger after a checkpoint is saved but before training completes. See `simulate_fault.py` for details.
+Note: Fault simulation requires careful timing - the fault must trigger after a checkpoint is saved but before training completes. See the `--simulate-fault` option in `fault_tolerance_example.py` for details.

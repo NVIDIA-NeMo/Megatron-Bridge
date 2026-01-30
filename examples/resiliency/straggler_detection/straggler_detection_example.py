@@ -14,21 +14,27 @@
 # limitations under the License.
 
 """
-Basic NVRx Straggler Detection Example
+NVRx Straggler Detection Example
 
-This example demonstrates how to enable straggler detection during training
-using the nvidia-resiliency-ext package. Straggler detection monitors GPU
-performance across ranks and identifies underperforming GPUs.
+Demonstrates straggler detection during training using nvidia-resiliency-ext.
+Straggler detection monitors GPU performance across ranks and identifies
+underperforming GPUs.
+
+Prerequisites:
+    - HuggingFace token with access to Llama models (set HF_TOKEN env var)
+    - Accept Llama license at https://huggingface.co/meta-llama/Llama-3.2-1B
 
 Usage:
-    uv run python -m torch.distributed.run --nproc_per_node=2 examples/resiliency/straggler_detection/basic_straggler_detection.py
+    uv run python -m torch.distributed.run --nproc_per_node=2 \\
+        examples/resiliency/straggler_detection/straggler_detection_example.py
 
     # With more GPUs
-    uv run python -m torch.distributed.run --nproc_per_node=8 examples/resiliency/straggler_detection/basic_straggler_detection.py
+    uv run python -m torch.distributed.run --nproc_per_node=8 \\
+        examples/resiliency/straggler_detection/straggler_detection_example.py
 
     # Customize training iterations
-    uv run python -m torch.distributed.run --nproc_per_node=2 examples/resiliency/straggler_detection/basic_straggler_detection.py \
-        --train-iters 200
+    uv run python -m torch.distributed.run --nproc_per_node=2 \\
+        examples/resiliency/straggler_detection/straggler_detection_example.py --train-iters 200
 
 Documentation:
     - Megatron-Bridge: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/resiliency.html
@@ -37,11 +43,10 @@ Documentation:
 
 import argparse
 import logging
-from dataclasses import dataclass
 
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.models import AutoBridge
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -59,38 +64,33 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 
-@dataclass
-class TinyLlama3Config(Llama3ModelProvider):
-    """Tiny Llama3 model (~145M params) for fast example execution."""
-
-    rotary_base: int = 500_000
-    num_layers: int = 4
-    hidden_size: int = 768
-    ffn_hidden_size: int = 2688
-    num_attention_heads: int = 16
-    vocab_size: int | None = None
+# Default model - smallest Llama 3.2 for fast examples
+DEFAULT_MODEL = "meta-llama/Llama-3.2-1B"
 
 
-def create_config(train_iters: int = 100, report_interval: float = 5.0) -> ConfigContainer:
+def create_config(
+    model_id: str = DEFAULT_MODEL,
+    train_iters: int = 100,
+    report_interval: float = 5.0,
+) -> ConfigContainer:
     """Create training configuration with straggler detection enabled.
 
     Args:
+        model_id: HuggingFace model ID to load.
         train_iters: Number of training iterations.
         report_interval: How often (in seconds) to generate straggler reports.
     """
-    seq_length = 2048
+    seq_length = 512  # Short sequence for fast examples
 
-    model_config = TinyLlama3Config(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        attention_softmax_in_fp32=True,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
-        seq_length=seq_length,
-        make_vocab_size_divisible_by=128,
-    )
+    # Load model configuration from HuggingFace
+    bridge = AutoBridge.from_hf_pretrained(model_id, torch_dtype=torch.bfloat16)
+    model_config = bridge.to_megatron_provider()
+    model_config.tensor_model_parallel_size = 1
+    model_config.pipeline_model_parallel_size = 1
+    model_config.context_parallel_size = 1
+    model_config.sequence_parallel = False
+    model_config.bf16 = True
+    model_config.seq_length = seq_length
 
     train_config = TrainingConfig(
         train_iters=train_iters,
@@ -168,7 +168,7 @@ def create_config(train_iters: int = 100, report_interval: float = 5.0) -> Confi
         scheduler=scheduler_config,
         dataset=dataset_config,
         logger=LoggerConfig(log_interval=10, tensorboard_dir=None),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=10000),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_config.padded_vocab_size),
         checkpoint=CheckpointConfig(save=None, load=None, save_interval=None),
         rng=RNGConfig(seed=1234),
         ddp=ddp_config,
@@ -179,6 +179,7 @@ def create_config(train_iters: int = 100, report_interval: float = 5.0) -> Confi
 def main() -> None:
     """Run straggler detection example with configurable parameters."""
     parser = argparse.ArgumentParser(description="NVRx Straggler Detection Example")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="HuggingFace model ID")
     parser.add_argument("--train-iters", type=int, default=100, help="Number of training iterations")
     parser.add_argument("--report-interval", type=float, default=5.0, help="Straggler report interval in seconds")
     args = parser.parse_args()
@@ -186,7 +187,11 @@ def main() -> None:
     # Configure logging to show straggler detection output
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
-    config = create_config(train_iters=args.train_iters, report_interval=args.report_interval)
+    config = create_config(
+        model_id=args.model,
+        train_iters=args.train_iters,
+        report_interval=args.report_interval,
+    )
     pretrain(config=config, forward_step_func=forward_step)
 
 

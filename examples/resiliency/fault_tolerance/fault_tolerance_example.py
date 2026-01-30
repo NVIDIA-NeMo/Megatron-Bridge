@@ -14,14 +14,31 @@
 # limitations under the License.
 
 """
-Basic Fault Tolerance Example
+Fault Tolerance Example
 
-This example demonstrates how to enable fault tolerance during training
-using the nvidia-resiliency-ext package. Fault tolerance monitors training
-progress through sections (setup, step, checkpointing) and enables automatic
-restart on hang detection.
+Demonstrates fault tolerance during training using nvidia-resiliency-ext.
+Fault tolerance monitors training progress through sections (setup, step,
+checkpointing) and enables automatic restart on hang detection.
+
+Prerequisites:
+    - HuggingFace token with access to Llama models (set HF_TOKEN env var)
+    - Accept Llama license at https://huggingface.co/meta-llama/Llama-3.2-1B
 
 IMPORTANT: This script must be run with ft_launcher, not torch.distributed.run.
+
+Fault Simulation Mode (--simulate-fault):
+    Demonstrates fault recovery by killing a rank after a delay.
+
+    Timing requirements for successful recovery:
+        checkpoint_time < fault_delay < total_training_time
+
+    Where:
+        - checkpoint_time: Wall-clock time to reach and finalize the first checkpoint
+        - fault_delay: Seconds before fault injection (--fault-delay)
+        - total_training_time: Wall-clock time for all training iterations
+
+    If fault_delay < checkpoint_time: Job restarts from iteration 0 indefinitely
+    If fault_delay > total_training_time: Training completes before fault triggers
 
 Usage:
     uv run ft_launcher \\
@@ -29,10 +46,15 @@ Usage:
         --nnodes=1 --nproc-per-node=2 \\
         --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \\
         --ft-param-rank_out_of_section_timeout=300 \\
-        examples/resiliency/fault_tolerance/basic_fault_tolerance.py
+        examples/resiliency/fault_tolerance/fault_tolerance_example.py
+
+    # With fault simulation:
+    uv run ft_launcher ... --max-restarts=3 \\
+        examples/resiliency/fault_tolerance/fault_tolerance_example.py --simulate-fault
 
     # Or use the launch script:
     ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh
+    ./examples/resiliency/fault_tolerance/run_fault_tolerance.sh --simulate-fault
 
 Documentation:
     - Megatron-Bridge: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/resiliency.html
@@ -42,11 +64,10 @@ Documentation:
 import argparse
 import logging
 import os
-from dataclasses import dataclass
 
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.models import AutoBridge
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -64,43 +85,43 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 
-@dataclass
-class TinyLlama3Config(Llama3ModelProvider):
-    """Tiny Llama3 model (~145M params) for fast example execution."""
-
-    rotary_base: int = 500_000
-    num_layers: int = 4
-    hidden_size: int = 768
-    ffn_hidden_size: int = 2688
-    num_attention_heads: int = 16
-    vocab_size: int | None = None
+# Default model - smallest Llama 3.2 for fast examples
+DEFAULT_MODEL = "meta-llama/Llama-3.2-1B"
 
 
 def create_config(
     checkpoint_dir: str,
+    model_id: str = DEFAULT_MODEL,
     train_iters: int = 50,
-    calc_timeouts: bool = True,
+    save_interval: int = 25,
+    simulate_fault: bool = False,
+    fault_type: str = "rank_killed",
+    fault_rank: int = 1,
+    fault_delay: float = 60.0,
 ) -> ConfigContainer:
     """Create training configuration with fault tolerance enabled.
 
     Args:
         checkpoint_dir: Directory for checkpoints (required for FT state persistence).
+        model_id: HuggingFace model ID to load.
         train_iters: Number of training iterations.
-        calc_timeouts: Whether to calculate and update FT timeouts based on observed times.
+        save_interval: Checkpoint save interval.
+        simulate_fault: Whether to simulate a fault for testing recovery.
+        fault_type: Type of fault to simulate ("rank_killed", "rank_hung", "random").
+        fault_rank: Which rank to fail (use -1 for random selection).
+        fault_delay: Seconds to wait before injecting the fault.
     """
-    seq_length = 2048
+    seq_length = 512  # Short sequence for fast examples
 
-    model_config = TinyLlama3Config(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        attention_softmax_in_fp32=True,
-        pipeline_dtype=torch.bfloat16,
-        bf16=True,
-        seq_length=seq_length,
-        make_vocab_size_divisible_by=128,
-    )
+    # Load model configuration from HuggingFace
+    bridge = AutoBridge.from_hf_pretrained(model_id, torch_dtype=torch.bfloat16)
+    model_config = bridge.to_megatron_provider()
+    model_config.tensor_model_parallel_size = 1
+    model_config.pipeline_model_parallel_size = 1
+    model_config.context_parallel_size = 1
+    model_config.sequence_parallel = False
+    model_config.bf16 = True
+    model_config.seq_length = seq_length
 
     train_config = TrainingConfig(
         train_iters=train_iters,
@@ -157,20 +178,26 @@ def create_config(
         use_distributed_optimizer=True,
     )
 
-    # Checkpoint configuration (required for fault tolerance)
     checkpoint_config = CheckpointConfig(
         save=checkpoint_dir,
         load=checkpoint_dir,
-        save_interval=25,  # Save every 25 iterations
+        save_interval=save_interval,
         ckpt_format="torch_dist",
-        async_save=True,  # Async checkpoints for better performance
+        async_save=True,
     )
 
     # Fault Tolerance Configuration
     # See: https://nvidia.github.io/nvidia-resiliency-ext/
+    # When simulating faults, disable timeout calculation since we want to
+    # demonstrate recovery behavior, not timeout learning.
     ft_config = FaultToleranceConfig(
         enable_ft_package=True,
-        calc_ft_timeouts=calc_timeouts,  # Learn optimal timeouts from observed intervals
+        calc_ft_timeouts=not simulate_fault,
+        # Fault simulation settings (only used when simulate_fault=True)
+        simulate_fault=simulate_fault,
+        simulated_fault_type=fault_type,
+        simulated_fault_rank=fault_rank if fault_rank >= 0 else None,
+        simulated_fault_base_delay=fault_delay,
     )
 
     return ConfigContainer(
@@ -180,7 +207,7 @@ def create_config(
         scheduler=scheduler_config,
         dataset=dataset_config,
         logger=LoggerConfig(log_interval=10, tensorboard_dir=None),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=10000),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_config.padded_vocab_size),
         checkpoint=checkpoint_config,
         rng=RNGConfig(seed=1234),
         ddp=ddp_config,
@@ -191,29 +218,64 @@ def create_config(
 def main() -> None:
     """Run fault tolerance example with configurable parameters."""
     parser = argparse.ArgumentParser(description="Fault Tolerance Example")
-    parser.add_argument("--train-iters", type=int, default=50, help="Number of training iterations")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="HuggingFace model ID")
+    parser.add_argument("--train-iters", type=int, default=None, help="Number of training iterations")
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
         default="/tmp/megatron_bridge_ft_example",
         help="Checkpoint directory (must be shared across all ranks)",
     )
+
+    # Fault simulation options
     parser.add_argument(
-        "--no-calc-timeouts",
+        "--simulate-fault",
         action="store_true",
-        help="Disable automatic timeout calculation",
+        help="Enable fault simulation to test recovery",
+    )
+    parser.add_argument(
+        "--fault-type",
+        type=str,
+        default="rank_killed",
+        choices=["rank_killed", "rank_hung", "random"],
+        help="Type of fault to simulate",
+    )
+    parser.add_argument(
+        "--fault-rank",
+        type=int,
+        default=1,
+        help="Rank to fail (-1 for random)",
+    )
+    parser.add_argument(
+        "--fault-delay",
+        type=float,
+        default=60.0,
+        help="Seconds before fault injection (must be after first checkpoint)",
     )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
+
+    # Set defaults based on mode
+    if args.train_iters is None:
+        # Fault simulation needs more iterations so training outlasts the fault delay
+        args.train_iters = 2000 if args.simulate_fault else 50
+
+    # Checkpoint less frequently for longer runs
+    save_interval = 200 if args.simulate_fault else 25
 
     # Ensure checkpoint directory exists (all ranks use the same path)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     config = create_config(
         checkpoint_dir=args.checkpoint_dir,
+        model_id=args.model,
         train_iters=args.train_iters,
-        calc_timeouts=not args.no_calc_timeouts,
+        save_interval=save_interval,
+        simulate_fault=args.simulate_fault,
+        fault_type=args.fault_type,
+        fault_rank=args.fault_rank,
+        fault_delay=args.fault_delay,
     )
     pretrain(config=config, forward_step_func=forward_step)
 

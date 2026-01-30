@@ -108,11 +108,10 @@ if [ "$SIMULATE_FAULT" = true ]; then
 fi
 echo ""
 
+SCRIPT="${SCRIPT_DIR}/fault_tolerance_example.py"
 if [ "$SIMULATE_FAULT" = true ]; then
-    SCRIPT="${SCRIPT_DIR}/simulate_fault.py"
-    SCRIPT_ARGS="--train-iters ${TRAIN_ITERS} --fault-delay ${FAULT_DELAY}"
+    SCRIPT_ARGS="--train-iters ${TRAIN_ITERS} --simulate-fault --fault-delay ${FAULT_DELAY}"
 else
-    SCRIPT="${SCRIPT_DIR}/basic_fault_tolerance.py"
     SCRIPT_ARGS="--train-iters ${TRAIN_ITERS}"
 fi
 

@@ -60,6 +60,6 @@ echo ""
 uv run python -m torch.distributed.run \
     --nproc_per_node="${NPROC_PER_NODE}" \
     --nnodes=1 \
-    "${SCRIPT_DIR}/basic_straggler_detection.py" \
+    "${SCRIPT_DIR}/straggler_detection_example.py" \
     --train-iters "${TRAIN_ITERS}" \
     --report-interval "${REPORT_INTERVAL}"
