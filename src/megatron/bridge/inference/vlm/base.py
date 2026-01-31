@@ -131,6 +131,8 @@ def setup_inference_wrapper(
         wrapper_cls = QwenVLInferenceWrapper
         if isinstance(config, Qwen25VLModelProvider):
             hidden_size = config.hidden_size
+            # Expose decoder for MCore Infernce Engine compatibility (used by get_mamba_inference_state_config_from_model)
+            mcore_model.module.decoder = mcore_model.module.language_model.decoder
         else:
             hidden_size = config.language_transformer_config.hidden_size
     else:
