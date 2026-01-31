@@ -91,6 +91,8 @@ def qwen3_600m_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -175,6 +177,8 @@ def qwen3_1p7b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -259,6 +263,8 @@ def qwen3_4b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -343,6 +349,8 @@ def qwen3_8b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -427,6 +435,8 @@ def qwen3_14b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -514,6 +524,8 @@ def qwen3_32b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -609,6 +621,8 @@ def qwen3_600m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -699,6 +713,8 @@ def qwen3_1p7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -789,6 +805,8 @@ def qwen3_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -879,6 +897,8 @@ def qwen3_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -969,6 +989,8 @@ def qwen3_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
@@ -1062,6 +1084,8 @@ def qwen3_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
     # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
     # cfg.mixed_precision.fp8 = None  # not enabled by default
     # cfg.mixed_precision.fp8_param_gather = False  # default
