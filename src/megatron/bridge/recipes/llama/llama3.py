@@ -428,6 +428,7 @@ def _llama3_common(
     hf_path: str,
     dir: str | None = None,
     name: str = "default",
+    load_weights: bool = False,
     # Dataset configuration
     data_paths: list[str] | None = None,
     data_args_path: str | None = None,
@@ -511,7 +512,7 @@ def _llama3_common(
     )
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg = bridge.to_megatron_provider(load_weights=load_weights)
     model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
     model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
     model_cfg.pipeline_dtype = pipeline_dtype
@@ -990,6 +991,10 @@ def _llama3_finetune_common(
         tokenizer_model=hf_path,
     )
     ddp_cfg = DistributedDataParallelConfig(check_for_nan_in_grad=True)
+    pad_seq_to_mult = (
+        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
+    )
+
     return ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -1005,7 +1010,7 @@ def _llama3_finetune_common(
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
         ddp=ddp_cfg,
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(

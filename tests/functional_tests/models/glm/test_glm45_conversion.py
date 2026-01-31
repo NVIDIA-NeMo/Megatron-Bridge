@@ -94,6 +94,9 @@ class TestGLM45Conversion:
         model = Glm4MoeForCausalLM(config)
 
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
+        for k, v in model.named_buffers():
+            if "e_score_correction_bias" in k:
+                v.data = v.data.to(torch.float32)
 
         # Debug: Check model dtype before saving
         for name, param in model.named_parameters():

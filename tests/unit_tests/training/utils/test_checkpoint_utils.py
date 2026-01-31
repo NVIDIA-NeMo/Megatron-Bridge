@@ -249,6 +249,31 @@ class TestCheckpointUtils:
             with pytest.raises(RuntimeError, match="Unable to load config file"):
                 read_run_config("invalid.yaml")
 
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0)
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False)
+    def test_read_run_config_sanitizes_runtime_only_targets(self, mock_is_initialized, mock_get_rank):
+        """Run config should drop runtime-only objects such as timers."""
+        raw_config = {
+            "model": {
+                "timers": {"_target_": "megatron.core.timers.Timers"},
+                "keep": {"_target_": "some.other.Component", "value": 1},
+                "nested": [
+                    {"timers": {"_target_": "megatron.core.timers.Timers"}},
+                    {"other": {"_target_": "another.Component", "value": 2}},
+                ],
+            },
+            "tokenizer": {"type": "sentencepiece"},
+        }
+        config_yaml = yaml.dump(raw_config)
+
+        with patch("builtins.open", mock_open(read_data=config_yaml)):
+            result = read_run_config("config_with_timers.yaml")
+
+        assert result["model"]["timers"] is None
+        assert result["model"]["nested"][0]["timers"] is None
+        assert result["model"]["keep"]["_target_"] == "some.other.Component"
+        assert result["model"]["nested"][1]["other"]["_target_"] == "another.Component"
+
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
     @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
     @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")

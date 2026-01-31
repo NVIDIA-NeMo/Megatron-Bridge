@@ -85,7 +85,7 @@ Example usage for full parameter finetuning using the
 [Raven dataset](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron/viewer/raven):
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint <megatron model path> \
 dataset.maker_name=make_raven_dataset \
@@ -95,7 +95,7 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
 Note:
-- The config file `examples/recipes/nemotron_vl/conf/nemotron_nano_v2_vl_override_example.yaml` contains a list of arguments 
+- The config file `examples/models/vlm/nemotron_vl/conf/nemotron_nano_v2_vl_override_example.yaml` contains a list of arguments 
   that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command. 
 - To change the dataset, you only need to change `dataset.maker_name`. See the dataset section below for details.
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint. 
@@ -110,7 +110,7 @@ settings out of the box in the example script:
    distribution is substantially different from pretrained.)
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
@@ -126,7 +126,7 @@ model.freeze_vision_projection=False
 2. Apply LoRA to all linear layers in attention and MLP modules of the vision model, vision projection, and the language model.
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
@@ -169,7 +169,7 @@ Megatron Bridge supports various vision-language dataset examples which can be u
 
 Note on video training example:
 - We provide a video config yaml file instead of the default config yaml file that overwrites a few commands. Please
-  pass in `--config-file "examples/recipes/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml"`.
+  pass in `--config-file "examples/models/vlm/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml"`.
 - The LLaVA video dataset requires manual download beforehand. Please place the downloaded and extracted video files
   in a folder `VIDEO_ROOT` and pass it in to the maker with `dataset.maker_kwargs={"video_root_path":$VIDEO_ROOT}`. 
   In the nextqa subset example, `VIDEO_ROOT` should look like
@@ -186,10 +186,10 @@ Note on video training example:
 
 Full video training example command:
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
---config-file "examples/recipes/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml" \
+--config-file "examples/models/vlm/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml" \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name> \

@@ -16,6 +16,7 @@
 from typing import Optional
 
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
 
 
 def split_deepstack_embs(
@@ -79,6 +80,7 @@ def get_rope_index(
     image_grid_thw: Optional[torch.LongTensor] = None,
     video_grid_thw: Optional[torch.LongTensor] = None,
     attention_mask: Optional[torch.Tensor] = None,
+    packed_seq_params: Optional[PackedSeqParams] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
 
@@ -86,6 +88,21 @@ def get_rope_index(
     if video_grid_thw is not None:
         video_grid_thw = torch.repeat_interleave(video_grid_thw, video_grid_thw[:, 0], dim=0)
         video_grid_thw[:, 0] = 1
+
+    if packed_seq_params is not None and attention_mask is None and input_ids is not None:
+        # Build an attention mask from packed sequence metadata when one is not provided.
+        # cu_seqlens_q entries are cumulative lengths; their diffs give per-sample lengths.
+        cu_seqlens = packed_seq_params.cu_seqlens_q
+        if cu_seqlens is not None and cu_seqlens.numel() >= 2:
+            seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+            attention_mask = torch.zeros_like(input_ids, dtype=input_ids.dtype)
+            max_len = attention_mask.shape[1]
+            for i, seq_len in enumerate(seq_lens.tolist()):
+                valid = min(int(seq_len), max_len)
+                attention_mask[i, :valid] = 1
+        else:
+            # Fallback to a dense mask if packed metadata is missing.
+            attention_mask = torch.ones_like(input_ids)
 
     mrope_position_deltas = []
     if input_ids is not None and (image_grid_thw is not None or video_grid_thw is not None):

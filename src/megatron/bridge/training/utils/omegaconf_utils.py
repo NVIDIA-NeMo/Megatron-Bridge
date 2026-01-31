@@ -19,7 +19,9 @@ import dataclasses
 import functools
 import inspect
 import logging
-from typing import Any, Dict, Tuple, TypeVar
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, TypeVar
 
 import torch
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
@@ -94,7 +96,65 @@ def apply_overrides(
     logger.debug("Configuration updated with overrides and excluded fields preserved")
 
 
-def parse_hydra_overrides(cfg: DictConfig, overrides: list[str]) -> DictConfig:
+def process_config_with_overrides(
+    config: DataclassInstance,
+    config_filepath: str | None = None,
+    cli_overrides: list[str] | None = None,
+) -> DataclassInstance:
+    """Process a configuration object with optional YAML file and CLI overrides.
+
+    This function provides a unified way to:
+    1. Convert the config to OmegaConf while preserving callable fields
+    2. Merge an optional YAML configuration file
+    3. Apply optional CLI overrides using Hydra syntax
+    4. Apply the final configuration back to the original object
+
+    Args:
+        config: The dataclass configuration instance to process
+        config_filepath: Optional path to a YAML config file to merge
+        cli_overrides: Optional list of Hydra-style CLI override strings
+
+    Returns:
+        The modified configuration object with all overrides applied
+
+    Raises:
+        FileNotFoundError: If the specified config_filepath does not exist
+        OverridesError: If there's an error parsing CLI overrides
+
+    Example:
+        >>> config = load_recipe("llama3_8b")
+        >>> config = process_config_with_overrides(
+        ...     config,
+        ...     config_filepath="my_config.yaml",
+        ...     cli_overrides=["model_config.hidden_size=4096", "training_config.lr=1e-4"]
+        ... )
+    """
+    # Convert config to OmegaConf, tracking excluded callable fields
+    omega_conf, excluded_fields = create_omegaconf_dict_config(config)
+
+    # Merge YAML config file if provided
+    if config_filepath:
+        config_filepath = Path(config_filepath)
+        if not config_filepath.exists():
+            raise FileNotFoundError(f"Config file not found: {config_filepath}")
+
+        yaml_conf = OmegaConf.load(config_filepath)
+        omega_conf = OmegaConf.merge(omega_conf, yaml_conf)
+        logger.debug(f"Merged configuration from {config_filepath}")
+
+    # Apply CLI overrides if provided
+    if cli_overrides:
+        omega_conf = parse_hydra_overrides(omega_conf, cli_overrides)
+        logger.debug(f"Applied {len(cli_overrides)} CLI overrides")
+
+    # Convert back to dict and apply to original config object
+    final_config_dict = OmegaConf.to_container(omega_conf, resolve=True)
+    apply_overrides(config, final_config_dict, excluded_fields)
+
+    return config
+
+
+def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
     """Parse and apply Hydra overrides to an OmegaConf config.
 
     This function uses Hydra's override parser to support advanced override syntax
@@ -138,7 +198,7 @@ def _is_omegaconf_problematic(val: Any) -> bool:
     Returns:
         True if the value is a problematic callable, False otherwise
     """
-    if not callable(val):
+    if val is None:
         return False
 
     # Allow classes/types
@@ -146,11 +206,19 @@ def _is_omegaconf_problematic(val: Any) -> bool:
         return False
 
     # Block function objects, methods, partial functions, etc.
-    return (
+    if callable(val) or (
         hasattr(val, "__call__")
-        and not isinstance(val, type)
         and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
-    )
+    ):
+        return True
+
+    # Block arbitrary objects that are not dataclasses or safe primitives
+    if not isinstance(
+        val, (int, float, bool, str, list, tuple, dict, Path, Enum, torch.dtype)
+    ) and not dataclasses.is_dataclass(val):
+        return True
+
+    return False
 
 
 def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:

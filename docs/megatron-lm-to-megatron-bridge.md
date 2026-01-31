@@ -7,7 +7,7 @@ Megatron Bridge is Python-first: configure models, data, and training via typed 
 Run your example training entrypoint and override config keys directly:
 
 ```bash
-python examples/recipes/llama/pretrain_llama3_8b.py \
+python examples/models/llama/pretrain_llama3_8b.py \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \
   model.num_layers=32 model.hidden_size=4096 model.num_attention_heads=32 \
@@ -281,7 +281,7 @@ Additional distributed/optimizer overlap settings:
 | --- | --- | --- |
 | `--error-injection-rate` | `rerun_state_machine.error_injection_rate` | Frequency of injected validation perturbations. |
 | `--error-injection-type` | `rerun_state_machine.error_injection_type` | Kind of injection (correct/transient/persistent). |
-| `--rerun-mode` | `rerun_state_machine.rerun_mode` | Disabled/validate_results/report_stats. |
+| `--rerun-mode` | `rerun_state_machine.rerun_mode` | Disabled/validate_results/report_determinism_stats. |
 
 ### Data / Tokenizer args
 

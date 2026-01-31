@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 
 from megatron.bridge.models.nemotronh import (
-    NemotronNano9Bv2Provider,
-    NemotronNano12Bv2Provider,
+    NemotronNanoModelProvider9Bv2,
+    NemotronNanoModelProvider12Bv2,
 )
 from megatron.bridge.recipes.nemotronh import (
     nemotron_nano_9b_v2_pretrain_config,
@@ -39,7 +39,7 @@ class TestNemotronNano9Bv2:
         config = nemotron_nano_9b_v2_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronNano9Bv2Provider)
+        assert isinstance(config.model, NemotronNanoModelProvider9Bv2)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 2
@@ -111,7 +111,7 @@ class TestNemotronNano12Bv2:
         config = nemotron_nano_12b_v2_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronNano12Bv2Provider)
+        assert isinstance(config.model, NemotronNanoModelProvider12Bv2)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 4
@@ -156,8 +156,8 @@ class TestNemotronNanoV2Common:
     @pytest.mark.parametrize(
         "recipe_fn,provider_cls",
         [
-            (nemotron_nano_9b_v2_pretrain_config, NemotronNano9Bv2Provider),
-            (nemotron_nano_12b_v2_pretrain_config, NemotronNano12Bv2Provider),
+            (nemotron_nano_9b_v2_pretrain_config, NemotronNanoModelProvider9Bv2),
+            (nemotron_nano_12b_v2_pretrain_config, NemotronNanoModelProvider12Bv2),
         ],
     )
     def test_config_container_structure(self, recipe_fn, provider_cls):

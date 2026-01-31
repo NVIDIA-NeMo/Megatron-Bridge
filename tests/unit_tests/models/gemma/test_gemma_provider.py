@@ -56,9 +56,10 @@ class TestGemmaModelProvider:
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_backend == AttnBackend.flash
 
-    @patch("megatron.bridge.models.gemma.gemma_provider.parallel_state")
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_vp_first_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.modules.extend_instance")
-    def test_gemma_model_provider_provide_with_embedding_scaling(self, mock_extend_instance, mock_parallel_state):
+    def test_gemma_model_provider_provide_with_embedding_scaling(self, mock_extend_instance, *_):
         """Test that provide method applies embedding scaling when appropriate."""
         # Mock the parent provide method
         mock_model = Mock()
@@ -70,20 +71,14 @@ class TestGemmaModelProvider:
             num_attention_heads=8,
         )
 
-        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            # Test case: First pipeline stage
-            mock_parallel_state.is_pipeline_first_stage.return_value = True
+        # Attach minimal pg_collection required by provider
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
+        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
 
             # Verify that parent provide was called
             assert result == mock_model
-
-            # Verify that is_pipeline_first_stage was called with correct parameters
-            mock_parallel_state.is_pipeline_first_stage.assert_called_once_with(
-                ignore_virtual=False,
-                vp_stage=0,
-            )
 
             # Verify that extend_instance was called with embedding scaling mixin
             mock_extend_instance.assert_called_once()
@@ -91,9 +86,10 @@ class TestGemmaModelProvider:
             assert args[0] == mock_model.embedding  # First arg should be the embedding
             # Second arg should be the EmbeddingScalingMixin class
 
-    @patch("megatron.bridge.models.gemma.gemma_provider.parallel_state")
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_vp_first_stage", return_value=False)
     @patch("megatron.bridge.models.gemma.modules.extend_instance")
-    def test_gemma_model_provider_provide_no_embedding_scaling(self, mock_extend_instance, mock_parallel_state):
+    def test_gemma_model_provider_provide_no_embedding_scaling(self, mock_extend_instance, *_):
         """Test that provide method doesn't apply embedding scaling when not first stage."""
         mock_model = Mock()
         mock_model.embedding = Mock()
@@ -104,27 +100,21 @@ class TestGemmaModelProvider:
             num_attention_heads=8,
         )
 
-        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            # Test case: Not first pipeline stage
-            mock_parallel_state.is_pipeline_first_stage.return_value = False
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
+        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=1)
 
             # Verify that parent provide was called
             assert result == mock_model
 
-            # Verify that is_pipeline_first_stage was called with correct parameters
-            mock_parallel_state.is_pipeline_first_stage.assert_called_once_with(
-                ignore_virtual=False,
-                vp_stage=1,
-            )
-
             # Verify that extend_instance was NOT called
             mock_extend_instance.assert_not_called()
 
-    @patch("megatron.bridge.models.gemma.gemma_provider.parallel_state")
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_vp_first_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.modules.extend_instance")
-    def test_gemma_model_provider_provide_virtual_pipeline_none(self, mock_extend_instance, mock_parallel_state):
+    def test_gemma_model_provider_provide_virtual_pipeline_none(self, mock_extend_instance, *_):
         """Test provide method when vp_stage is None (no virtual pipeline)."""
         mock_model = Mock()
         mock_model.embedding = Mock()
@@ -135,17 +125,10 @@ class TestGemmaModelProvider:
             num_attention_heads=8,
         )
 
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            # Test case: No virtual pipeline (vp_stage=None)
-            mock_parallel_state.is_pipeline_first_stage.return_value = True
-
             _ = provider.provide(vp_stage=None)
-
-            # Verify that is_pipeline_first_stage was called with vp_stage=None
-            mock_parallel_state.is_pipeline_first_stage.assert_called_once_with(
-                ignore_virtual=False,
-                vp_stage=None,
-            )
 
             # Verify that extend_instance was called since it's first stage
             mock_extend_instance.assert_called_once()

@@ -15,6 +15,7 @@
 import torch
 from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
@@ -59,6 +60,7 @@ class Qwen3VLModel(MegatronModule):
         post_process: bool = True,
         add_encoder: bool = True,
         add_decoder: bool = True,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -77,6 +79,21 @@ class Qwen3VLModel(MegatronModule):
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
+        # process groups
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+        assert hasattr(self.pg_collection, "embd"), (
+            "pg_collection must have a embd. In previous version, it used default "
+            "`parallel_state.default_embedding_ranks` to create the process group."
+            "If you are using the default process group, please use"
+            "`parallel_state.get_embedding_group()` "
+            "If you don't need embd_group, you need to explicitly set it to None."
+        )
+        self.embd_group = pg_collection.embd
+        self.vp_stage = None
+        self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
         if self.pre_process:
             # Initialize vision model with random weights from config
@@ -101,12 +118,16 @@ class Qwen3VLModel(MegatronModule):
             fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
+            pg_collection=pg_collection,
         )
-        assert len(vision_transformer_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), (
-            "the deepstack_visual_embeds should on the first pp-stage",
-            f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
-            f" {len(self.language_model.decoder.layers)} language model layers",
-        )
+        if pre_process:
+            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
+                self.language_model.decoder.layers
+            ), (
+                "the deepstack_visual_embeds should on the first pp-stage of language model",
+                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f" {len(self.language_model.decoder.layers)} language model layers",
+            )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
@@ -218,6 +239,7 @@ class Qwen3VLModel(MegatronModule):
         # position ids is computed within the model
         position_ids = None
 
+        torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
         if self.pre_process:
             if image_grid_thw is not None:
                 image_mask = image_input_mask
@@ -277,6 +299,7 @@ class Qwen3VLModel(MegatronModule):
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
                 attention_mask=attention_mask,
+                packed_seq_params=packed_seq_params,
             )
 
         visual_pos_masks = image_mask
@@ -288,7 +311,8 @@ class Qwen3VLModel(MegatronModule):
                 tp_size=mpu.get_tensor_model_parallel_world_size(),
                 tp_rank=mpu.get_tensor_model_parallel_rank(),
             )
-
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
         output = self.language_model(
             input_ids=None,
             position_ids=position_ids,  # None in encoder
@@ -301,5 +325,6 @@ class Qwen3VLModel(MegatronModule):
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),
         )
+        torch.cuda.nvtx.range_pop()
 
         return output

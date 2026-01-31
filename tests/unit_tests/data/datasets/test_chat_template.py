@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, create_sft_dataset
+from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_sft_dataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 
 
@@ -130,8 +131,9 @@ class TestChatPreprocess:
         """Test chat preprocessing when template lacks generation keyword."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
-        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
+        mock_tokenizer.legacy = False
 
         # Chat template without generation keyword
         mock_hf_tokenizer.chat_template = "{{ messages }}"
@@ -150,8 +152,9 @@ class TestChatPreprocess:
         """Test that EOS token is added if missing."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
-        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 999
+        mock_tokenizer.legacy = False
 
         mock_hf_tokenizer.chat_template = "{{ messages }}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
@@ -476,6 +479,7 @@ class TestTokenizerSpaceSensitive:
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model="gpt2",
+            legacy_tokenizer=True,
         )
 
         tokenizer = build_tokenizer(config)
@@ -497,6 +501,7 @@ class TestTokenizerSpaceSensitive:
         config = TokenizerConfig(
             tokenizer_type="SentencePieceTokenizer",
             tokenizer_model="tokenizer.model",
+            legacy_tokenizer=True,
         )
 
         tokenizer = build_tokenizer(config)
@@ -932,8 +937,9 @@ class TestContextAnswerSplit:
         """Test that context/answer are split correctly based on mask."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
-        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
+        mock_tokenizer.legacy = False
 
         # Mask with 0s (context) and 1s (answer)
         mock_hf_tokenizer.chat_template = "{% generation %}"  # Has generation keyword
@@ -999,24 +1005,41 @@ class TestLegacyPreprocessReturnsLossMask:
         assert "mask=mask" not in source or "loss_mask" in source
 
 
+def _create_minimal_packed_dataset(tokenizer_eos_id: int = 0):
+    """Utility helper to instantiate GPTSFTPackedDataset without touching disk."""
+    dataset = GPTSFTPackedDataset.__new__(GPTSFTPackedDataset)
+    dataset.pad_to_max_length = False
+    dataset.max_seq_length = 32
+    dataset.pad_seq_length_to_mult = 1
+    dataset._pad_seq_to_mult = 2  # Used in collate_fn for cu_seqlens_unpadded check (must be > 1 to compute)
+    dataset.ceil_to_power_2 = False
+    dataset.tokenizer = SimpleNamespace(eos_id=tokenizer_eos_id)
+    dataset.answer_only_loss = False
+    dataset.return_cu_seqlen = True
+    dataset.pad_cu_seqlens = False
+    dataset.pack_metadata = []
+    return dataset
+
+
 class TestEOSIndexFixInPackedDataset:
     """Test EOS index fix for cu_seqlens_unpadded calculation."""
 
     def test_eos_index_logic_uses_shape_check(self):
-        """Test that EOS index logic uses shape[0] > 1 check (not .any())."""
-        # Verify the code uses the correct logic from NeMo PR #14437
-        import inspect
+        """Ensure cu_seqlens_unpadded handles sequences with <2 EOS tokens."""
+        dataset = _create_minimal_packed_dataset()
+        batch = [
+            {
+                "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.ones(5, dtype=np.int64),
+            }
+        ]
 
-        from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+        processed = dataset.collate_fn(batch)
+        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
 
-        # Get the collate_fn source code
-        source = inspect.getsource(GPTSFTPackedDataset.collate_fn)
-
-        # Verify it uses eos_idx[0][1] (second EOS) and shape[0] > 1
-        assert "eos_idx[0][1]" in source
-        assert "shape[0] > 1" in source
-        # Should NOT use eos_idx[0][0] or .any()
-        assert "eos_idx[0][0]" not in source
+        # Expect a single non-EOS token tracked without indexing errors.
+        assert cu_unpadded == [0, 1]
 
 
 class TestPackedChatDatasetIntegration:
@@ -1153,20 +1176,24 @@ class TestCuSeqlensUnpaddedCalculation:
     """Test cu_seqlens_unpadded calculation with EOS fix."""
 
     def test_cu_seqlens_unpadded_calculation_uses_correct_eos(self):
-        """Test that cu_seqlens_unpadded calculation uses correct EOS logic."""
-        # Code inspection test to verify the fix from NeMo PR #14437
-        import inspect
+        """Ensure cu_seqlens_unpadded honors the tokenizer's EOS id."""
+        dataset = _create_minimal_packed_dataset(tokenizer_eos_id=999)
+        batch = [
+            {
+                "input_ids": np.array(
+                    [5, 999, 999, 999, 1, 3, 999, 999, 999, 4],
+                    dtype=np.int64,
+                ),
+                "seq_boundaries": [0, 5, 10],
+                "loss_mask": np.ones(10, dtype=np.int64),
+            }
+        ]
 
-        from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+        processed = dataset.collate_fn(batch)
+        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
 
-        # Get the collate_fn source
-        source = inspect.getsource(GPTSFTPackedDataset.collate_fn)
-
-        # Should calculate seqlen_unpadded using second EOS
-        assert "seqlen_unpadded" in source
-        assert "eos_idx[0][1]" in source  # Uses second EOS
-        # The calculation should be: eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1
-        assert ".shape[0] > 1" in source
+        # Each non-EOS token contributes exactly once despite EOS padding.
+        assert cu_unpadded == [0, 1, 2]
 
 
 class TestBackwardCompatibilityLossMask:

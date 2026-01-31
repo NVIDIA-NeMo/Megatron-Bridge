@@ -1,43 +1,225 @@
 # Llama 3
 
-[Meta’s Llama](https://www.llama.com/models/llama-3/) builds on the general transformer decoder framework with some key additions such as pre-normalization, SwiGLU activations, and Rotary Positional Embeddings (RoPE). More information is available in the companion paper [“Llama: Open and Efficient Foundation Language Models”](https://arxiv.org/abs/2302.13971). With a wide variety of model sizes - Llama has options for every inference budget.
+[Meta's Llama](https://www.llama.com/models/llama-3/) builds on the general transformer decoder framework with some key additions such as pre-normalization, SwiGLU activations, and Rotary Positional Embeddings (RoPE). More information is available in the companion paper ["Llama: Open and Efficient Foundation Language Models"](https://arxiv.org/abs/2302.13971). With a wide variety of model sizes - Llama has options for every inference budget.
 
 Llama family models are supported via the Bridge system with auto-detected configuration and weight mapping.
+
+## Available Models
+
+Megatron Bridge supports the following Llama model variants:
+
+- **Llama 3.2**: 1B, 3B
+- **Llama 3**: 8B, 70B (with 8K, 16K, 64K, 128K context variants)
+- **Llama 3.1**: 8B, 70B, 405B (with 128K context length)
+
+All models support both pretraining and finetuning with full parameter updates or PEFT methods (LoRA, DoRA).
+
+## Model Architecture Features
+
+- **Pre-normalization**: RMSNorm before each transformer sub-layer for training stability
+- **SwiGLU Activation**: Gated linear units in the feedforward network
+- **Rotary Positional Embeddings (RoPE)**: Relative position encoding via rotation matrices
+- **Grouped Query Attention (GQA)**: Memory-efficient attention mechanism (70B+ models)
+- **Extended Context**: Native support for long sequences up to 128K tokens (Llama 3.1)
 
 ## Conversion with 🤗 Hugging Face
 
 ### Load HF → Megatron
+
 ```python
 from megatron.bridge import AutoBridge
 
 # Example: Llama 3.1 8B
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B")
 provider = bridge.to_megatron_provider()
 
-# Configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 8
+# Optionally configure parallelism before instantiating the model
+provider.tensor_model_parallel_size = 2
 provider.pipeline_model_parallel_size = 1
 
 model = provider.provide_distributed_model(wrap_with_ddp=False)
 ```
 
+### Import Checkpoint from HF
+
+```bash
+python examples/conversion/convert_checkpoints.py import \
+  --hf-model meta-llama/Meta-Llama-3.1-8B \
+  --megatron-path /checkpoints/llama31_8b_megatron
+```
+
 ### Export Megatron → HF
+
 ```python
-# Convert from a Megatron checkpoint directory to HF format
+from megatron.bridge import AutoBridge
+
+# Load the bridge from HF model ID
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B")
+
+# Export a trained/finetuned Megatron checkpoint to HF format
 bridge.export_ckpt(
-    megatron_path="/results/llama3_8b/checkpoints/iter_00002000",
-    hf_path="./llama-hf-export",
+    megatron_path="/results/llama31_8b/checkpoints/iter_0000500",
+    hf_path="/exports/llama31_8b_hf",
 )
 ```
 
-## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
-- Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
+### Run Inference on Converted Checkpoint
 
-## Pretrain recipes
-- See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.llama3.md)
+```bash
+python examples/conversion/hf_to_megatron_generate_text.py \
+  --hf_model_path meta-llama/Meta-Llama-3.1-8B \
+  --megatron_model_path /checkpoints/llama31_8b_megatron \
+  --prompt "What is artificial intelligence?" \
+  --max_new_tokens 100 \
+  --tp 2
+```
 
-## Related docs
+For more details, see [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
+
+## Recipes
+
+See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.llama3.md)
+
+### Available Recipes
+
+- **Pretrain recipes**:
+  - `llama32_1b_pretrain_config`, `llama32_3b_pretrain_config`: Llama 3.2 (1B, 3B)
+  - `llama3_8b_pretrain_config`: Llama 3 8B with 8K context
+  - `llama3_8b_16k_pretrain_config`, `llama3_8b_64k_pretrain_config`, `llama3_8b_128k_pretrain_config`: Llama 3 8B with extended context (16K/64K/128K)
+  - `llama3_8b_low_precision_pretrain_config`: Llama 3 8B with low precision (FP8/MXFP8/NVFP4)
+  - `llama3_70b_pretrain_config`, `llama3_70b_16k_pretrain_config`, `llama3_70b_64k_pretrain_config`: Llama 3 70B (8K/16K/64K context)
+  - `llama31_8b_pretrain_config`, `llama31_70b_pretrain_config`, `llama31_405b_pretrain_config`: Llama 3.1 (8B/70B/405B, 128K context)
+
+- **Finetune recipes**:
+  - `llama32_1b_finetune_config`, `llama32_3b_finetune_config`: Llama 3.2 with PEFT support
+  - `llama3_8b_finetune_config`, `llama31_8b_finetune_config`: Llama 3/3.1 8B with PEFT support
+  - `llama3_70b_finetune_config`, `llama31_70b_finetune_config`: Llama 3/3.1 70B with PEFT support
+  - `llama31_405b_finetune_config`: Llama 3.1 405B with PEFT support
+
+### Parallelism Configurations
+
+#### Llama 3.2 (1B, 3B)
+| Model | Mode | TP | PP | Total GPUs | Use Case |
+|-------|------|----|----|------------|----------|
+| **1B / 3B** | Pretrain | 1 | 1 | 8 | Pre-training (single node) |
+| **1B / 3B** | Full SFT | 1 | 1 | 8 | Full supervised finetuning |
+| **1B / 3B** | LoRA/DoRA | 1 | 1 | 8 | PEFT finetuning |
+
+#### Llama 3 / 3.1 (8B)
+| Model | Mode | TP | PP | CP | Total GPUs | Use Case |
+|-------|------|----|----|----|-----------:|----------|
+| **8B** | Pretrain | 1 | 1 | 2 | 16 | Pre-training |
+| **8B** | Full SFT | 2 | 1 | 1 | 16 | Full supervised finetuning |
+| **8B** | LoRA/DoRA | 1 | 1 | 1 | 8 | PEFT finetuning (single node) |
+
+#### Llama 3 / 3.1 (70B)
+| Model | Mode | TP | PP | VP | CP | Total GPUs | Use Case |
+|-------|------|----|----|----|----|------------|----------|
+| **70B** | Pretrain | 4 | 4 | 5 | 2 | 64 | Pre-training |
+| **70B** | Full SFT | 8 | 4 | - | 1 | 256 | Full supervised finetuning (32 nodes) |
+| **70B** | LoRA/DoRA | 8 | 1 | - | 1 | 8 | PEFT finetuning (single node!) |
+
+#### Llama 3.1 (405B)
+| Model | Mode | TP | PP | VP | CP | Total GPUs | Use Case |
+|-------|------|----|----|----|----|------------|----------|
+| **405B** | Pretrain | 8 | 8 | 2 | 4 | 512 | Pre-training (64 nodes) |
+| **405B** | Full SFT | 8 | 16 | - | 1 | 2048 | Full supervised finetuning (256 nodes) |
+| **405B** | LoRA/DoRA | 4 | 8 | 8 | 1 | 256 | PEFT finetuning (32 nodes) |
+
+**Key Features**:
+- **Context Parallelism**: Enabled for long context training (16K/64K/128K variants)
+- **Sequence Parallel**: Enabled by default for larger models (70B+) for memory efficiency
+- **Low Precision Training**: FP8, MXFP8, NVFP4 options available for 8B model
+- **Virtual Pipeline**: VP parallelism for 70B and 405B models
+
+### Pre-training Example
+
+```python
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
+
+config = llama3_8b_pretrain_config(
+    name="llama3_8b_pretrain",
+    data_paths=["/path/to/dataset.nvjsonl"],
+    dir="/results/llama3_8b",
+    train_iters=500_000,
+    global_batch_size=512,
+    seq_length=8192,
+    # Uses TP=1, PP=1, CP=2 (16 GPUs) automatically
+)
+```
+
+### Finetuning Examples
+
+**Before finetuning**, ensure these environment variables are set:
+- `SAVE_DIR`: checkpoint and log saving directory
+- `HF_TOKEN`: to download models from HF Hub (if required)
+- `HF_HOME`: (optional) to avoid re-downloading models and datasets
+- `WANDB_API_KEY`: (optional) to enable WandB logging
+
+#### Full Finetuning (Llama 3 8B)
+
+```python
+from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+
+cfg = llama3_8b_finetune_config(
+    name="llama3_8b_full_sft",
+    pretrained_checkpoint="/results/llama3_8b/checkpoints/iter_0500000",
+    peft=None,  # Full supervised finetuning
+    train_iters=1000,
+    global_batch_size=64,
+    finetune_lr=5e-6,
+    # Uses TP=2, PP=1 (16 GPUs) automatically
+)
+```
+
+#### LoRA Finetuning
+
+```python
+from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+
+cfg = llama3_8b_finetune_config(
+    name="llama3_8b_lora",
+    pretrained_checkpoint="/results/llama3_8b/checkpoints/iter_0500000",
+    peft="lora",  # or "dora" for DoRA
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=1e-4,
+    # Uses TP=1, PP=1 (8 GPUs) automatically
+)
+```
+
+#### LoRA Finetuning
+
+```python
+from megatron.bridge.recipes.llama import llama3_70b_finetune_config
+
+cfg = llama3_70b_finetune_config(
+    name="llama3_70b_lora",
+    pretrained_checkpoint="/results/llama3_70b/checkpoints/iter_0500000",
+    peft="lora",
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=1e-4,
+    # Uses TP=8, PP=1 (8 GPUs) automatically
+)
+```
+
+## Hugging Face Model Cards & References
+
+### Hugging Face Model Cards
+- Llama 3.2 1B: https://huggingface.co/meta-llama/Llama-3.2-1B
+- Llama 3.2 3B: https://huggingface.co/meta-llama/Llama-3.2-3B
+- Llama 3 8B: https://huggingface.co/meta-llama/Meta-Llama-3-8B
+- Llama 3 70B: https://huggingface.co/meta-llama/Meta-Llama-3-70B
+- Llama 3.1 8B: https://huggingface.co/meta-llama/Meta-Llama-3.1-8B
+- Llama 3.1 70B: https://huggingface.co/meta-llama/Meta-Llama-3.1-70B
+- Llama 3.1 405B: https://huggingface.co/meta-llama/Meta-Llama-3.1-405B
+
+### Technical Papers
+- Llama: Open and Efficient Foundation Language Models: [arXiv:2302.13971](https://arxiv.org/abs/2302.13971)
+- The Llama 3 Herd of Models: [arXiv:2407.21783](https://arxiv.org/abs/2407.21783)
+
+## Related Docs
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)

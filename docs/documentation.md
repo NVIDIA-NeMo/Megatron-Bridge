@@ -14,6 +14,13 @@ uv run --only-group docs sphinx-build . _build/html
 * The resulting HTML files are generated in a `_build/html` folder that is created under the project `docs/` folder.
 * The generated python API docs are placed in `apidocs` under the `docs/` folder.
 
+```{NOTE}
+If you encounter the error "Failed to generate package metadata for megatron-core @ directory+3rdparty/Megatron-LM,"
+run the command to install the necessary submodules:
+
+`git submodule update --init --recursive`
+```
+
 ## Live Building
 
 When writing documentation, it can be helpful to serve the documentation and have it update live while you edit.
@@ -26,7 +33,6 @@ uv run --only-group docs sphinx-autobuild . _build/html --port 12345 --host 0.0.
 ```
 
 Open a web browser and go to `http://${HOST_WHERE_SPHINX_COMMAND_RUN}:12345` to view the output.
-
 
 ## Write Tests in Python Docstrings
 
@@ -68,9 +74,7 @@ uv run --only-group docs sphinx-build -b doctest . _build/doctest
 
 The three files below control the version switcher. Before you attempt to publish a new version of the documentation, update these files in the docs/ folder to match the latest version numbers.
 
-
 The ``version`` and ``release`` variables with your GitHub releases when publishing new versions of documentation.
-
 
 ```{danger}
 Latest should only be ``version`` and ``release`` variables in the main branch.
@@ -81,7 +85,6 @@ Latest should only be ``version`` and ``release`` variables in the main branch.
 This JSON file defines the versions displayed in the switcher drop down. When adding a new version to the JSON, please make sure the ``version`` and ``url`` contain same version as your release.
 
 Example:
-
 
 ```{code-block} json
 :caption: Example: versions1.json 
@@ -123,8 +126,6 @@ This JSON file tells the version switcher that documentation matches the selecte
     "version": "#.#.#"
 }
 ```
-
-
 
 ## conf.py
 

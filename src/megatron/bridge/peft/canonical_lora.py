@@ -14,15 +14,16 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.transformer.moe.router import TopKRouter
 from torch import nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, LoRATopKRouter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -71,19 +72,71 @@ class LoRALinearSplitQKV(AdapterWrapper):
     class to provide a specific implementation of the forward method.
     """
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def _interleave_qkv(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        """Interleave QKV outputs to match Megatron's packed ordering."""
+
+        config = self.to_wrap.config
+        head_num = getattr(config, "num_attention_heads", None)
+        num_query_groups = getattr(config, "num_query_groups", None)
+        head_size = getattr(config, "kv_channels", None)
+
+        if head_size is None:
+            hidden_size = getattr(config, "hidden_size", None)
+            if head_num is not None and hidden_size is not None:
+                head_size = hidden_size // head_num
+            elif num_query_groups:
+                if key.size(-1) % num_query_groups != 0:
+                    raise ValueError("Key projection size must be divisible by num_query_groups.")
+                head_size = key.size(-1) // num_query_groups
+            elif head_num is not None:
+                if query.size(-1) % head_num != 0:
+                    raise ValueError("Query projection size must be divisible by num_attention_heads.")
+                head_size = query.size(-1) // head_num
+            else:
+                raise ValueError(
+                    "Cannot infer head size without kv_channels or hidden_size/num_attention_heads or num_query_groups."
+                )
+
+        if head_num is None:
+            if query.size(-1) % head_size != 0:
+                raise ValueError("Query projection size must be divisible by head_size.")
+            head_num = query.size(-1) // head_size
+
+        if not num_query_groups:
+            if key.size(-1) % head_size != 0:
+                raise ValueError("Key projection size must be divisible by head_size.")
+            num_query_groups = key.size(-1) // head_size
+
+        if head_num % num_query_groups != 0:
+            raise ValueError("num_attention_heads must be divisible by num_query_groups.")
+
+        heads_per_group = head_num // num_query_groups
+
+        leading_shape = query.shape[:-1]
+        query = query.reshape(-1, head_num, head_size)
+        key = key.reshape(-1, num_query_groups, head_size)
+        value = value.reshape(-1, num_query_groups, head_size)
+
+        qkv_chunks = []
+        for i in range(num_query_groups):
+            q_group = query[:, i * heads_per_group : (i + 1) * heads_per_group, :]
+            k_group = key[:, i : i + 1, :]
+            v_group = value[:, i : i + 1, :]
+            qkv_chunks.extend([q_group, k_group, v_group])
+
+        qkv = torch.cat(qkv_chunks, dim=1)
+        return qkv.reshape(*leading_shape, -1)
+
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
-        linear_output, bias, layernorm_output = self.base_linear_forward(x)
+        linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         query = self.adapter.adapter_q(layernorm_output)
         key = self.adapter.adapter_k(layernorm_output)
         value = self.adapter.adapter_v(layernorm_output)
 
-        query_4d = query.reshape(query.shape[0], query.shape[1], -1, self.to_wrap.config.kv_channels)
-        key_4d = key.reshape(key.shape[0], key.shape[1], -1, self.to_wrap.config.kv_channels)
-        value_4d = value.reshape(value.shape[0], value.shape[1], -1, self.to_wrap.config.kv_channels)
-
-        qkv_4d = torch.cat([query_4d, key_4d, value_4d], dim=2)
-        adapter_output = qkv_4d.reshape(qkv_4d.shape[0], qkv_4d.shape[1], -1)
+        adapter_output = self._interleave_qkv(query, key, value)
 
         return linear_output + adapter_output, bias
 
@@ -97,12 +150,14 @@ class LoRALinearSplitFC1UpGate(AdapterWrapper):
     class to provide a specific implementation of the forward method.
     """
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         # pylint: disable=C0115,C0116
-        linear_output, bias, layernorm_output = self.base_linear_forward(x)
+        linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if not self._adapter_enabled:
+            return linear_output, bias
         adapter_output_gate = self.adapter.adapter_gate(layernorm_output)
         adapter_output_up = self.adapter.adapter_up(layernorm_output)
-        adapter_output = torch.cat([adapter_output_gate, adapter_output_up], dim=2)
+        adapter_output = torch.cat([adapter_output_gate, adapter_output_up], dim=-1)
         return linear_output + adapter_output, bias
 
 
@@ -188,15 +243,15 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 "use ['linear_fc1_up', 'linear_fc1_gate'] with Canonical LoRA"
             )
 
-            if "linear_q" in target:
+            if target.endswith("linear_q"):
                 self.canonical_mapping[target.replace("linear_q", "linear_qkv")].add("linear_q")
-            elif "linear_k" in target:
+            elif target.endswith("linear_k"):
                 self.canonical_mapping[target.replace("linear_k", "linear_qkv")].add("linear_k")
-            elif "linear_v" in target:
+            elif target.endswith("linear_v"):
                 self.canonical_mapping[target.replace("linear_v", "linear_qkv")].add("linear_v")
-            elif "linear_fc1_up" in target:
+            elif target.endswith("linear_fc1_up"):
                 self.canonical_mapping[target.replace("linear_fc1_up", "linear_fc1")].add("linear_fc1_up")
-            elif "linear_fc1_gate" in target:
+            elif target.endswith("linear_fc1_gate"):
                 self.canonical_mapping[target.replace("linear_fc1_gate", "linear_fc1")].add("linear_fc1_gate")
             else:
                 self.canonical_mapping[target].add(target)
@@ -215,7 +270,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         """
 
         # Skip already transformed modules
-        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate)):
+        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
@@ -226,9 +281,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(m, is_expert=is_expert)
-            )
+            attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 
             adapter_kwargs = dict(
                 dim=self.dim,
@@ -238,41 +291,45 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
                 gather_output=False,
-                input_is_parallel=input_is_parallel,
+                input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert,
-                disable_sequence_parallel_comm=disable_sp_comm,
-                base_linear_is_parallel=base_linear_is_parallel,
+                disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
+                disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
-            if name in ["linear_proj", "linear_fc2"]:
-                adapter = ParallelLinearAdapter(in_features, out_features, **adapter_kwargs)
-                logger.info(f"Adding lora to: {full_name}")
-                return LoRALinear(m, adapter)
 
             canonical_submodules = self.canonical_mapping[match]
             logger.info(f"Adding lora to: {full_name} ({canonical_submodules})")
             if name == "linear_qkv":
                 adapter_q, adapter_k, adapter_v = None, None, None
                 kv_out_features = m.config.kv_channels * m.config.num_query_groups
+                q_out_features = m.config.kv_channels * m.config.num_attention_heads
                 if "linear_q" in canonical_submodules:
-                    adapter_q = ParallelLinearAdapter(in_features, in_features, **adapter_kwargs)
+                    adapter_q = ParallelLinearAdapter(attrs.in_features, q_out_features, **adapter_kwargs)
                 if "linear_k" in canonical_submodules:
-                    adapter_k = ParallelLinearAdapter(in_features, kv_out_features, **adapter_kwargs)
+                    adapter_k = ParallelLinearAdapter(attrs.in_features, kv_out_features, **adapter_kwargs)
                 if "linear_v" in canonical_submodules:
-                    adapter_v = ParallelLinearAdapter(in_features, kv_out_features, **adapter_kwargs)
+                    adapter_v = ParallelLinearAdapter(attrs.in_features, kv_out_features, **adapter_kwargs)
                 adapters = ModuleDict({"adapter_q": adapter_q, "adapter_k": adapter_k, "adapter_v": adapter_v})
                 return LoRALinearSplitQKV(m, adapters)
 
             if name == "linear_fc1":
                 adapter_up, adapter_gate = None, None
                 if "linear_fc1_up" in canonical_submodules:
-                    adapter_up = ParallelLinearAdapter(in_features, out_features // 2, **adapter_kwargs)
+                    adapter_up = ParallelLinearAdapter(attrs.in_features, attrs.out_features // 2, **adapter_kwargs)
                 if "linear_fc1_gate" in canonical_submodules:
-                    adapter_gate = ParallelLinearAdapter(in_features, out_features // 2, **adapter_kwargs)
+                    adapter_gate = ParallelLinearAdapter(attrs.in_features, attrs.out_features // 2, **adapter_kwargs)
                 adapters = ModuleDict({"adapter_up": adapter_up, "adapter_gate": adapter_gate})
                 return LoRALinearSplitFC1UpGate(m, adapters)
+
+            adapter = ParallelLinearAdapter(attrs.in_features, attrs.out_features, **adapter_kwargs)
+            logger.info(f"Adding lora to: {full_name}")
+            if isinstance(m, TopKRouter):
+                return LoRATopKRouter(m, adapter)
+            return LoRALinear(m, adapter)
 
         return m

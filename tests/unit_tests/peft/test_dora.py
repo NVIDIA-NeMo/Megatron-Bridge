@@ -32,6 +32,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.peft.utils import AdapterAttributes
 from tests.unit_tests.peft.test_utils import MockModelParallelConfig
 
 
@@ -137,13 +138,14 @@ class TestDoRA:
         mock_gather.return_value = torch.randn(512, 32)
 
         # Set up mocks
-        mock_get_attributes.return_value = (
-            False,
-            512,
-            256,
-            True,
-            True,
-        )  # input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel
+        mock_get_attributes.return_value = AdapterAttributes(
+            input_is_parallel=False,
+            in_features=512,
+            out_features=256,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=True,
+        )
 
         # Create test module with config
         test_module = nn.Linear(512, 256)
@@ -211,7 +213,14 @@ class TestDoRA:
 
         mock_gather.side_effect = mock_gather_func
 
-        mock_get_attributes.return_value = (True, 256, 128, False, True)
+        mock_get_attributes.return_value = AdapterAttributes(
+            input_is_parallel=True,
+            in_features=256,
+            out_features=128,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=False,
+            base_linear_is_parallel=True,
+        )
 
         test_module = nn.Linear(256, 128)
         test_module.config = MockModelParallelConfig()
@@ -258,7 +267,14 @@ class TestDoRA:
 
         # Mock get_adapter_attributes_from_linear to return appropriate values
         def mock_get_attributes_func(module):
-            return (False, module.in_features, module.out_features, False, True)
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=not module.config.sequence_parallel,
+                base_linear_is_parallel=True,
+            )
 
         mock_get_attributes.side_effect = mock_get_attributes_func
 
@@ -306,7 +322,14 @@ class TestDoRA:
 
         # Mock get_adapter_attributes_from_linear to return appropriate values
         def mock_get_attributes_func(module):
-            return (False, module.in_features, module.out_features, False, True)
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=not module.config.sequence_parallel,
+                base_linear_is_parallel=True,
+            )
 
         mock_get_attributes.side_effect = mock_get_attributes_func
 
@@ -352,7 +375,15 @@ class TestDoRA:
 
         # Should match with wildcard
         with patch(
-            "megatron.bridge.peft.dora.get_adapter_attributes_from_linear", return_value=(False, 10, 10, False, True)
+            "megatron.bridge.peft.dora.get_adapter_attributes_from_linear",
+            return_value=AdapterAttributes(
+                input_is_parallel=False,
+                in_features=10,
+                out_features=10,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=False,
+                base_linear_is_parallel=True,
+            ),
         ):
             with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(10)):
                 result = dora.transform(test_module, name="linear_qkv", prefix="layer.0.attention")
@@ -376,7 +407,14 @@ class TestDoRA:
 
         # Mock all the necessary functions for DoRA transform
         with patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 256, False, True)
+            mock_get_attrs.return_value = AdapterAttributes(
+                input_is_parallel=False,
+                in_features=512,
+                out_features=256,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
 
             with patch("megatron.bridge.peft.utils.ColumnParallelLinear") as mock_col_linear:
                 # Create mocks for the adapters that will be created
@@ -416,7 +454,14 @@ class TestDoRA:
         with patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
 
             def mock_get_attributes_func(module):
-                return (False, module.in_features, module.out_features, False, True)
+                return AdapterAttributes(
+                    input_is_parallel=False,
+                    in_features=module.in_features,
+                    out_features=module.out_features,
+                    disable_tensor_parallel_comm=False,
+                    disable_sequence_parallel_comm=not module.config.sequence_parallel,
+                    base_linear_is_parallel=True,
+                )
 
             mock_get_attrs.side_effect = mock_get_attributes_func
 
@@ -498,13 +543,19 @@ class TestDoRAMegatronIntegration:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield
@@ -565,6 +616,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get the model with DoRA applied via hook
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
@@ -600,6 +654,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get base model first to count original parameters
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         base_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         base_model = [chunk.cuda() for chunk in base_model]
 
@@ -622,6 +679,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get DoRA-adapted model using hook
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
@@ -649,6 +709,9 @@ class TestDoRAMegatronIntegration:
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
         model_provider.finalize()
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         first_transform = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         first_transform = [chunk.cuda() for chunk in first_transform]
@@ -711,6 +774,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get DoRA-adapted model using hook
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
@@ -781,6 +847,9 @@ class TestDoRAMegatronIntegration:
             model_provider.finalize()
 
             # Get adapted model using hook
+            from megatron.core.process_groups_config import ProcessGroupCollection
+
+            model_provider._pg_collection = ProcessGroupCollection.use_mpu_process_groups()
             adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
             adapted_model = [chunk.cuda() for chunk in adapted_model]
 
