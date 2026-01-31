@@ -447,7 +447,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 DeepEP is a communication library optimized for Mixture-of-Experts (MoE) all-to-all operations. When using DeepEP for cross-node Expert Parallelism (EP), there are several common issues related to network transport and GPU-NIC affinity that can significantly impact performance.
 
-> Note: DeepEP is best optimized for NVL8 systems such as the B200 or H200. For GB200 NVL72 rack-scale systems, where 72 GPUs are interconnected within the same NVLINK domain, we recommend using [HybridEP](https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep) instead of DeepEP. HybridEP is maintained by NVIDIA, which is specifically optimized for NVL72 rack scale systems. It is also integrated into the Megatron-core [fused all-to-all module](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.transformer.moe.fused_a2a.html) as an alternative backend under the `flex` token dispatcher.
+> Note: DeepEP is best optimized for NVL8 systems such as the DGX-B200 NVL8 or DGX-H200 NVL8. For GB200 NVL72 rack-scale systems, where 72 GPUs are interconnected within the same NVLINK domain, we recommend using [HybridEP](https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep) instead of DeepEP. HybridEP is maintained by NVIDIA, which is specifically optimized for NVL72 rack scale systems. It is also integrated into the Megatron-core [fused all-to-all module](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.transformer.moe.fused_a2a.html) as an alternative backend under the `flex` token dispatcher.
 >
 > Learn more about GB200 MoE training best practices [here](https://github.com/NVIDIA/Megatron-LM/blob/dev/docs/discussions/deepseek-v3-gb200-optimization/deepseek-v3-gb200-reproduce-guide.md).
 
@@ -473,7 +473,7 @@ DeepEP is a communication library optimized for Mixture-of-Experts (MoE) all-to-
 
 A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Interface Card) affinity, where multiple GPUs compete for bandwidth on a single NIC. As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution to this issue by supporting an environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU to NIC mappings so that each GPU is automaticaly binded to the optimal NIC for max DeepEP throughput. 
 
-With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NIC by running `ibstat`. In our example, we found the following for one of the RoCEv2 B200 cluster.
+With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NIC by running `ibstat`. In our example, we found the following for one of the RoCEv2 DGX-B200 cluster.
 ```
 > ibstat | grep ^CA
 CA 'rocep145s0'
@@ -499,25 +499,35 @@ export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0
 
 In this section, we provide a refernce dockerfile that shows how to build NVSHMEM 3.5 and the customized DeepEP into your container environment. 
 
-Note that the following example is provided for B200 NVL8 systems, but similar ideas apply to Hopper generation as well, just change the docker file accordingly. For example, we just need to change the compile target for SM90. 
+Note that the following example is provided for DGX-B200 NVL8 systems, but similar ideas apply to Hopper generation as well, just change the docker file accordingly. For example, we just need to change the compile target for SM90. 
 
 Key points:
 
 - NVSHMEM source: https://github.com/NVIDIA/nvshmem/tree/v3.5.19-1
 - DeepEP branch that we cherry-picked with all the fixes above: https://github.com/zhongbozhu/DeepEP/tree/nvshmem_deepep_gcp 
-- Checkout the rest of the dockerfile from here: https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/dockers/B200.Dockerfile 
+- Example training container template for DGX-B200: https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/dockers/B200.Dockerfile 
 
 **Dockerfile**
 ```bash
+FROM nvcr.io/nvidia/pytorch:25.11-py3 as base
+
+# Other dependencie you may want
+...
+
+# Dependency of IBGDA
+RUN ln -s /usr/lib/x86_64-linux-gnu/libmlx5.so.1 /usr/lib/x86_64-linux-gnu/libmlx5.so
+
+# Clone DeepEP customized version 
 WORKDIR /home/dpsk_a2a
 RUN git clone https://github.com/zhongbozhu/DeepEP.git ./deepep
 RUN cd ./deepep && git checkout nvshmem_deepep_gcp && cd /home/dpsk_a2a
 
-# Use https://github.com/NVIDIA/nvshmem
+# Clone NVSHMEM 3.5 https://github.com/NVIDIA/nvshmem
 RUN git clone --branch v3.5.19-1 https://github.com/NVIDIA/nvshmem.git ./deepep-nvshmem
 RUN cd ./deepep-nvshmem && git checkout v3.5.19-1 && cd /home/dpsk_a2a
 
-# build nvshmem from source, you can also download the pre-built binary 
+# Build nvshmem from source
+# You can also download the pre-built binary, and skip the following 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         clang \
@@ -566,7 +576,7 @@ RUN pip install --no-build-isolation .
 
 ```
 
-DeepEP provided `test_internode.py` to test and benchmark cross node EP communication. In our experiment, when using 4 nodes of B200, ie. EP32, the achieved thoughput of cross EP is more than 50GB/s. We provide example SLURM script for running such test of DeepEP below. 
+DeepEP provided `test_internode.py` to test and benchmark cross node EP communication. In our experiment, when using 4 nodes of DGX-B200, ie. EP32, the achieved thoughput of cross EP is more than 50GB/s. We provide example SLURM script for running such test of DeepEP below. 
 
 ```bash
 srun --account=<your_account> -N 4 -p batch --time 30 \
