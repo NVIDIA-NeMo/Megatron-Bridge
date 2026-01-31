@@ -471,6 +471,27 @@ A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Inter
 
 As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution to this issue by supporting an environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU to NIC mappings so that each GPU is automaticaly binded to the optimal NIC for max DeepEP throughput. 
 
+With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NIC by running `ibstat`. In our example, we found the following for one of the RoCEv2 B200 cluster.
+```
+> ibstat | grep ^CA
+CA 'rocep145s0'
+CA 'rocep146s0'
+CA 'rocep152s0'
+CA 'rocep153s0'
+CA 'rocep198s0'
+CA 'rocep199s0'
+CA 'rocep205s0'
+CA 'rocep206s0'
+```
+
+Use the following environment variables to map GPUs to NICs. `0:rocep145s0:1` is formatted as `<CUDA_device_id>:<NIC_name>:<port>. 
+```bash
+export NVSHMEM_ENABLE_NIC_PE_MAPPING=1
+export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0:1,3:rocep153s0:1,4:rocep198s0:1,5:rocep199s0:1,6:rocep205s0:1,7:rocep206s0:1"
+```
+
+
+
 
 ### 3. Build DeepEP
 
