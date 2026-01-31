@@ -222,7 +222,7 @@ class TestLlamaNemotronSpecificProviders:
         assert provider.ffn_hidden_size == 14336
         assert provider.kv_channels == 128
         assert provider.seq_length == 131072
-        assert provider.scale_factor == 8.0
+        assert provider.rope_scaling_factor == 8.0
         assert provider.gated_linear_unit is True
 
     def test_70b_config(self):
@@ -237,7 +237,7 @@ class TestLlamaNemotronSpecificProviders:
         assert provider.ffn_hidden_size == 28672
         assert provider.kv_channels == 128
         assert provider.seq_length == 131072
-        assert provider.scale_factor == 8.0
+        assert provider.rope_scaling_factor == 8.0
 
     def test_super_49b_config(self):
         """Test Llama3.3-Nemotron-Super-49B provider configuration."""
