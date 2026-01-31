@@ -447,6 +447,10 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 DeepEP is a communication library optimized for Mixture-of-Experts (MoE) all-to-all operations. When using DeepEP for cross-node Expert Parallelism (EP), there are several common issues related to network transport and GPU-NIC affinity that can significantly impact performance.
 
+> Note: DeepEP is best optimized for NVL8 systems such as the B200 or H200. For GB200 NVL72 rack-scale systems, where 72 GPUs are interconnected within the same NVLINK domain, we recommend using [HybridEP](https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep) instead of DeepEP. HybridEP is maintained by NVIDIA, which is specifically optimized for NVL72 rack scale systems. It is also integrated into the Megatron-core [fused all-to-all module](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.transformer.moe.fused_a2a.html) as an alternative backend under the `flex` token dispatcher.
+>
+> Learn more about GB200 MoE training best practices [here](https://github.com/NVIDIA/Megatron-LM/blob/dev/docs/discussions/deepseek-v3-gb200-optimization/deepseek-v3-gb200-reproduce-guide.md).
+
 ### 1. Why is my DeepEP not working
 
 1. What is IBGDA and why it is a problem
@@ -467,9 +471,7 @@ DeepEP is a communication library optimized for Mixture-of-Experts (MoE) all-to-
 
 ### 2. GPU-NIC Affinity and Bandwidth Contention
 
-A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Interface Card) affinity, where multiple GPUs compete for bandwidth on a single NIC instead of each GPU using its nearest NIC.
-
-As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution to this issue by supporting an environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU to NIC mappings so that each GPU is automaticaly binded to the optimal NIC for max DeepEP throughput. 
+A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Interface Card) affinity, where multiple GPUs compete for bandwidth on a single NIC. As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution to this issue by supporting an environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU to NIC mappings so that each GPU is automaticaly binded to the optimal NIC for max DeepEP throughput. 
 
 With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NIC by running `ibstat`. In our example, we found the following for one of the RoCEv2 B200 cluster.
 ```
@@ -484,7 +486,7 @@ CA 'rocep205s0'
 CA 'rocep206s0'
 ```
 
-Use the following environment variables to map GPUs to NICs. `0:rocep145s0:1` is formatted as `<CUDA_device_id>:<NIC_name>:<port>. 
+Use the following environment variables to map GPUs to NICs. Note that `0:rocep145s0:1` is formatted as `<CUDA_device_id>:<NIC_name>:<port> so that each GPU will only be mapped to one dedicated NIC. 
 ```bash
 export NVSHMEM_ENABLE_NIC_PE_MAPPING=1
 export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0:1,3:rocep153s0:1,4:rocep198s0:1,5:rocep199s0:1,6:rocep205s0:1,7:rocep206s0:1"
@@ -496,6 +498,8 @@ export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0
 ### 3. Build DeepEP
 
 In this section, we provide a refernce dockerfile that shows how to build NVSHMEM 3.5 and the customized DeepEP into your container environment. 
+
+Note that the following example is provided for B200 NVL8 systems, but similar ideas apply to Hopper generation as well, just change the docker file accordingly. For example, we just need to change the compile target for SM90. 
 
 Key points:
 
