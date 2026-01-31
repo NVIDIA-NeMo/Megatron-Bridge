@@ -13,27 +13,27 @@
 # limitations under the License.
 
 import torch
-from megatron.core import InferenceParams, mpu, tensor_parallel
+from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
+
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
-    split_deepstack_embs,
-    reorganize_inputs,
-    qwen3vl_cp_split,
-    split_data_cp_rank,
     AllGatherVisionEmbeddings,
     collapse_thw,
     get_vision_cp_data,
+    qwen3vl_cp_split,
+    reorganize_inputs,
+    split_data_cp_rank,
+    split_deepstack_embs,
 )
 from megatron.bridge.training.utils.packed_seq_utils import preprocess_packed_seqs
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
@@ -72,6 +72,7 @@ class Qwen3VLModel(MegatronModule):
         post_process: bool = True,
         add_encoder: bool = True,
         add_decoder: bool = True,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -95,6 +96,21 @@ class Qwen3VLModel(MegatronModule):
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
+        # process groups
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+        assert hasattr(self.pg_collection, "embd"), (
+            "pg_collection must have a embd. In previous version, it used default "
+            "`parallel_state.default_embedding_ranks` to create the process group."
+            "If you are using the default process group, please use"
+            "`parallel_state.get_embedding_group()` "
+            "If you don't need embd_group, you need to explicitly set it to None."
+        )
+        self.embd_group = pg_collection.embd
+        self.vp_stage = None
+        self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
         # These attributes are needed to check if the vision model should be frozen.
         self.freeze_vision_model = False
@@ -102,10 +118,11 @@ class Qwen3VLModel(MegatronModule):
         if self.pre_process:
             if not language_transformer_config.use_hf_vision_model:
                 # use megatron vision model
-                from .vision_model import Qwen3VLVisionModel
                 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
                     get_vision_model_config,
                 )
+
+                from .vision_model import Qwen3VLVisionModel
 
                 megatron_vision_transformer_config = get_vision_model_config(vision_transformer_config)
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
@@ -122,6 +139,7 @@ class Qwen3VLModel(MegatronModule):
             else:
                 # use hf vision model
                 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
+
                 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
                 # Initialize vision model with random weights from config
@@ -147,6 +165,7 @@ class Qwen3VLModel(MegatronModule):
             fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
+            pg_collection=pg_collection,
         )
         if pre_process:
             assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
@@ -241,9 +260,8 @@ class Qwen3VLModel(MegatronModule):
             for module in modules:
                 for param in module.parameters():
                     param.requires_grad = False
-        
-        self.freeze_vision_model = freeze_vision_model
 
+        self.freeze_vision_model = freeze_vision_model
 
     def forward(
         self,
@@ -300,7 +318,9 @@ class Qwen3VLModel(MegatronModule):
 
         cp_size = self.pg_collection.cp.size()
         if cp_size > 1 and not self.freeze_vision_model:
-            raise RuntimeError("When cp_size > 1, the vision model should be frozen. Otherwise, the gradient will be wrong.")
+            raise RuntimeError(
+                "When cp_size > 1, the vision model should be frozen. Otherwise, the gradient will be wrong."
+            )
 
         if self.pre_process:
             # can reorganize_inputs at dataset

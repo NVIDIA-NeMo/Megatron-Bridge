@@ -18,13 +18,18 @@ import signal
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
-from megatron.core.transformer.enums import AttnBackend
+from megatron.core.optimizer import (
+    ParamGroupOverride,
+    ParamKey,
+)
+from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
+from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -191,6 +196,11 @@ class DistributedInitConfig:
     disable_jit_fuser: bool = False
     """Disable the JIT fuser."""
 
+    use_decentralized_pg: bool = False
+    """Use ProcessGroupCollection passed through functions instead of relying on mcore's
+    global parallel state (mpu) variables. When True, parallel groups are obtained from
+    the pg_collection object rather than the global megatron.core.parallel_state module."""
+
 
 @dataclass
 class RerunStateMachineConfig:
@@ -212,6 +222,10 @@ class RerunStateMachineConfig:
 
     check_for_spiky_loss: bool = False
     """Check for spiky loss."""
+
+    spiky_loss_factor: float = 10.0
+    """Factor for detecting spiky loss. A loss is considered spiky if it exceeds
+    this multiple of the max observed loss over the sample window."""
 
 
 @dataclass(kw_only=True)
@@ -256,6 +270,81 @@ class DatasetBuildContext:
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+
+
+@dataclass(frozen=True)
+class OptimizerConfigOverrideProviderContext:
+    """Context for providing config overrides."""
+
+    scheduler_config: "SchedulerConfig"
+    optimizer_config: OptimizerConfig
+    model: Union[MegatronModule, list[MegatronModule]]
+
+
+@dataclass
+class OptimizerConfigOverrideProvider:
+    """Abstract base class for providing config overrides."""
+
+    def build_config_overrides(
+        self, context: OptimizerConfigOverrideProviderContext
+    ) -> dict[ParamKey, ParamGroupOverride] | None:
+        """Build config overrides for weight decay based on scheduler configuration.
+
+        This function creates parameter-specific overrides for weight decay behavior.
+        By default, weight decay is skipped for bias parameters and 1D parameters.
+        For Qwen3-Next models, weight decay is applied to q_layernorm and k_layernorm.
+
+        Args:
+            context: OptimizerConfigOverrideProviderContext which packages the scheduler
+                configuration, optimizer configuration, and model.
+
+        Returns:
+            Dictionary of ParamKey to ParamGroupOverride for the optimizer
+        """
+        model = context.model
+        scheduler_config = context.scheduler_config
+        optimizer_config = context.optimizer_config
+
+        config_overrides: dict[ParamKey, ParamGroupOverride] = {}
+
+        # Collect param names that should skip weight decay
+        # NOTE: this can be simplified once https://github.com/NVIDIA/Megatron-LM/pull/2753
+        #  is merged into dev. Then we can re-use megatron's apply_wd_to_qk_layernorm option
+        #  and call megatron.core.optimizer.get_standard_config_overrides(optimizer_config)
+        #  directly for standard settings, replacing the custom logic below for qwen3-next.
+        no_wd_names: list[str] = []
+        is_qwen3_next = scheduler_config.no_weight_decay_cond_type == "qwen3_next"
+
+        model_list = model if isinstance(model, list) else [model]
+        for model_chunk in model_list:
+            for name, param in model_chunk.named_parameters():
+                # Skip weight decay for bias parameters
+                if name.endswith(".bias"):
+                    no_wd_names.append(name)
+                    continue
+
+                # Skip weight decay for 1D parameters
+                if len(param.shape) == 1:
+                    if is_qwen3_next:
+                        # Qwen3-Next: apply weight decay to qk layernorm (don't add to skip list)
+                        if "q_layernorm" in name or "k_layernorm" in name:
+                            continue
+                    no_wd_names.append(name)
+
+        # Create a single ParamKey with all names that should skip weight decay
+        if no_wd_names:
+            no_wd_key = ParamKey(name=tuple(no_wd_names))
+            config_overrides[no_wd_key] = ParamGroupOverride(wd_mult=0.0)
+
+        # Now handle decoupled LR:
+        if optimizer_config.decoupled_lr is not None:
+            decoupled_lr_config: ParamGroupOverride = {"max_lr": optimizer_config.decoupled_lr}
+            decoupled_param_key = ParamKey(attr="is_embedding_or_output_parameter")
+            if optimizer_config.decoupled_min_lr is not None:
+                decoupled_lr_config["min_lr"] = optimizer_config.decoupled_min_lr
+            config_overrides[decoupled_param_key] = decoupled_lr_config
+
+        return config_overrides if config_overrides else None
 
 
 @dataclass
@@ -367,6 +456,40 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
+
+
+@dataclass
+class GPTFIMDatasetConfig(GPTDatasetConfig):
+    """Configuration object forGPT FIM datasets"""
+
+    def __init__(
+        self,
+        fim_rate: float = None,
+        fim_spm_rate: float = None,
+        fim_extra_tokens: Dict = None,
+        fim_split_sample: Optional[str] = None,
+        fim_fragment_rate: Optional[float] = None,
+        fim_no_prefix: Optional[str] = None,
+        **kwargs,
+    ):
+        """
+        Args:
+            fim_rate: float: probability to convert a training sample into a FIM format.
+            fim_spm_rate (float): probability that the a FIM sample uses the SPM format over the PSM format.
+            fim_extra_tokens (Dict): should consist of prefix, middle, suffix, PAD, and EOD tokens.
+            fim_split_sample (str): string around which to split the sample for FIM.
+            fim_fragment_rate (float): rate of FIM on each fragment when split_sample is not None.
+            fim_no_prefix (str): do not apply FIM to fragments that start with this prefix.
+        """
+        self.fim_data = True
+        self.fim_rate = fim_rate
+        self.fim_spm_rate = fim_spm_rate
+        self.fim_extra_tokens = fim_extra_tokens
+        self.fim_split_sample = fim_split_sample
+        self.fim_fragment_rate = fim_fragment_rate
+        self.fim_no_prefix = fim_no_prefix
+
+        super().__init__(**kwargs)
 
 
 @dataclass
@@ -885,6 +1008,18 @@ class LoggerConfig:
     wandb_entity: Optional[str] = None
     """The wandb entity name."""
 
+    mlflow_experiment: Optional[str] = None
+    """The MLFlow experiment name."""
+
+    mlflow_run_name: Optional[str] = None
+    """The MLFlow run name."""
+
+    mlflow_tracking_uri: Optional[str] = None
+    """Optional MLFlow tracking URI."""
+
+    mlflow_tags: Optional[dict[str, str]] = None
+    """Optional tags to apply to the MLFlow run."""
+
     logging_level: int = logging.INFO
     """Set default logging level"""
 
@@ -902,6 +1037,31 @@ class LoggerConfig:
 
     save_config_filepath: Optional[str] = None
     """If set, save the task configuration (ConfigContainer) to this file."""
+
+    def finalize(self) -> None:
+        """Validate logger settings and optional MLFlow dependency."""
+        if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
+            raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
+
+        using_mlflow = any(
+            [
+                self.mlflow_experiment,
+                self.mlflow_run_name,
+                self.mlflow_tracking_uri,
+                self.mlflow_tags,
+            ]
+        )
+
+        if using_mlflow:
+            try:
+                import importlib
+
+                importlib.import_module("mlflow")
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "MLFlow logging is configured, but the 'mlflow' package is not installed. "
+                    "Install it via pip install mlflow or uv add mlflow"
+                ) from exc
 
 
 @dataclass(kw_only=True)
@@ -1163,6 +1323,9 @@ class ConfigContainer(Container):
     train: TrainingConfig
     model: GPTModelProvider | T5ModelProvider | MambaModelProvider
     optimizer: OptimizerConfig
+    optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
+        default_factory=OptimizerConfigOverrideProvider
+    )
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
     dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
@@ -1249,6 +1412,7 @@ class ConfigContainer(Container):
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
+        self.logger.finalize()
         self.train.finalize()
         self.scheduler.finalize()
         self.checkpoint.finalize()
@@ -1283,6 +1447,14 @@ class ConfigContainer(Container):
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
+        _validate_fine_grained_activation_offloading(self)
+
+        # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
+        if self.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in self.model.cuda_graph_scope:
+            assert not self.rerun_state_machine.check_for_nan_in_loss, (
+                "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
+                "Set rerun_state_machine.check_for_nan_in_loss=False."
+            )
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1305,13 +1477,17 @@ class ConfigContainer(Container):
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
 
-            if self.optimizer.use_precision_aware_optimizer:
-                self.ddp.preserve_fp32_weights = False
-
             # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
             if self.model.gradient_accumulation_fusion:
                 print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
                 self.model.gradient_accumulation_fusion = False
+
+            # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
+            if self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
+                print_rank_0("reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP, setting to False")
+                self.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+            if self.optimizer.reuse_grad_buf_for_mxfp8_param_ag:
+                self.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
@@ -1342,6 +1518,13 @@ class ConfigContainer(Container):
                 self.tensor_inspect.init_training_step = int(self.checkpoint.ckpt_step)
 
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
+
+        # Gloo process groups are not supported when using decentralized process groups (NCCL only).
+        if self.dist.use_decentralized_pg:
+            assert not self.dist.use_gloo_process_groups, (
+                "Gloo process groups are not supported when use_decentralized_pg=True. "
+                "Decentralized process groups only support NCCL backend."
+            )
 
         # Make sure all functionality that requires Gloo process groups is disabled.
         if not self.dist.use_gloo_process_groups:
@@ -1575,4 +1758,40 @@ def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
                 "optimizer.bf16 and optimizer.fp16 must both be False when "
                 "model is using fp32 precision (model.bf16=False, model.fp16=False) and "
                 "use_precision_aware_optimizer=True."
+            )
+
+
+def _validate_fine_grained_activation_offloading(config: ConfigContainer) -> None:
+    """Validate fine-grained activation offloading configuration.
+
+    This function ensures that fine-grained activation offloading is only enabled
+    with compatible configurations (transformer_engine implementation) and that
+    necessary environment variables are set for newer TE versions.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        ValueError: If fine-grained activation offloading is enabled with incompatible settings.
+    """
+    from megatron.core.utils import is_te_min_version
+
+    model_cfg = config.model
+
+    if not model_cfg.fine_grained_activation_offloading:
+        return
+
+    # Fine-grained activation offloading requires transformer_engine implementation
+    if model_cfg.transformer_impl != "transformer_engine":
+        raise ValueError(
+            "Fine-grained activation offloading is only supported with transformer_engine implementation. "
+            f"Current transformer_impl: {model_cfg.transformer_impl}"
+        )
+
+    # For TE >= 2.10.0, NVTE_CPU_OFFLOAD_V1 must be set to avoid offloading weights
+    if is_te_min_version("2.10.0"):
+        if os.getenv("NVTE_CPU_OFFLOAD_V1", "0") != "1":
+            raise ValueError(
+                "For fine-grained activation offloading with TE >= 2.10.0, "
+                "NVTE_CPU_OFFLOAD_V1 environment variable should be set to 1 to avoid offloading weights."
             )

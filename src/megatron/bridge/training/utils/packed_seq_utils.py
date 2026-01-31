@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
-import torch
 import math
+
+import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 
@@ -45,29 +46,42 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     cu_seqlens_unpadded_argmin = batch.get("cu_seqlens_unpadded_argmin")
 
     if cu_seqlens_argmin is not None:
-        cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
-    else:
+        argmin_idx = cu_seqlens_argmin.item()
+        assert argmin_idx == 0 or cu_seqlens_padded[argmin_idx] == -1  # cu_seqlens padding is -1
+        cu_seqlens_padded = cu_seqlens_padded[:argmin_idx]
+    elif torch.min(cu_seqlens_padded) == -1:
         cu_seqlens_padded = cu_seqlens_padded[: torch.argmin(cu_seqlens_padded)]
 
     if cu_seqlens_unpadded is not None:
         if cu_seqlens_unpadded_argmin is not None:
-            cu_seqlens_unpadded = cu_seqlens_unpadded[: cu_seqlens_unpadded_argmin.item()]
-        else:
+            argmin_idx = cu_seqlens_unpadded_argmin.item()
+            assert argmin_idx == 0 or cu_seqlens_unpadded[argmin_idx] == -1  # cu_seqlens padding is -1
+            cu_seqlens_unpadded = cu_seqlens_unpadded[:argmin_idx]
+        elif torch.min(cu_seqlens_unpadded) == -1:
             cu_seqlens_unpadded = cu_seqlens_unpadded[: torch.argmin(cu_seqlens_unpadded)]
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
 
-    # When unpadded lengths are available, use them for q/kv and keep padded
-    # offsets for kernels that support padded variants.
-    return PackedSeqParams(
-        cu_seqlens_q=cu_seqlens_unpadded if cu_seqlens_unpadded is not None else cu_seqlens_padded,
-        cu_seqlens_kv=cu_seqlens_unpadded if cu_seqlens_unpadded is not None else cu_seqlens_padded,
-        cu_seqlens_q_padded=cu_seqlens_padded,
-        cu_seqlens_kv_padded=cu_seqlens_padded,
-        max_seqlen_q=max_seqlen,
-        max_seqlen_kv=max_seqlen,
-        qkv_format="thd",
-    )
+    # When cu_seqlens_unpadded is present (pad_seq_to_mult > 1), pass both unpadded and padded
+    # for proper THD CP support. Otherwise, just use cu_seqlens_padded to avoid slower TE kernel.
+    if cu_seqlens_unpadded is not None:
+        return PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_unpadded,
+            cu_seqlens_kv=cu_seqlens_unpadded,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+            qkv_format="thd",
+        )
+    else:
+        return PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_padded,
+            cu_seqlens_kv=cu_seqlens_padded,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+            qkv_format="thd",
+        )
 
 
 # Copied from verl/verl/models/mcore/util.py
