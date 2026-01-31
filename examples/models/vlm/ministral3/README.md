@@ -39,15 +39,18 @@ Generation step 49
 ======== GENERATED TEXT OUTPUT ========
 Image: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png
 Prompt: Describe this image.
-Generated: <bos><bos><start_of_turn>user
+Generated: <s><s>[SYSTEM_PROMPT]You are Ministral-3-3B-Instruct-2512, a Large Language Model (LLM) created by Mistral AI, a French startup headquartered in Paris.
+You power an AI assistant called Le Chat.
+Your knowledge base was last updated on 2023-10-01.
+The current date is {today}.
 ...
-Describe this image.<end_of_turn>
-<start_of_turn>model
-Here's a description of the image you sent, breaking down the technical specifications of the H100 SXM and H100 NVL server cards:
+[IMG_END]Describe this image.[/INST]The image presents a comparison table of technical specifications between two NVIDIA GPUs: the **H100 SXM** and the **H100 NVL**.
 
-**Overall:**
-
-The image is a table comparing the technical specifications of two
+### **FPU Performance (Floating-Point Operations Per Second)**
+- **FP64**:
+  - H100 SXM: 34 teraFLOPS
+  - H100 NVL: 30 teraFLOPS
+- **FP64 Tensor
 =======================================
 ```
 
