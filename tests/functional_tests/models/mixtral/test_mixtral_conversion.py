@@ -224,7 +224,7 @@ class TestMixtralConversion:
         ]
 
         try:
-            result = subprocess.run(  # noqa: S603
+            subprocess.run(  # noqa: S603
                 cmd,
                 capture_output=True,
                 text=True,
