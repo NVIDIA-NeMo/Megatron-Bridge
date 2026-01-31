@@ -52,6 +52,21 @@ class NemotronHBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronHModelProvider:
         hf_config = hf_pretrained.config
 
+        configs = {}
+        # MoE configurations
+        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
+            configs.update(
+                {
+                    "num_moe_experts": hf_config.n_routed_experts,
+                    "moe_ffn_hidden_size": hf_config.moe_intermediate_size,
+                    "moe_shared_expert_intermediate_size": hf_config.moe_shared_expert_intermediate_size,
+                    "moe_router_topk": hf_config.num_experts_per_tok,
+                    "moe_router_num_groups": hf_config.n_group,
+                    "moe_router_group_topk": hf_config.topk_group,
+                    "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
+                }
+            )
+
         return NemotronHModelProvider(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
@@ -78,6 +93,7 @@ class NemotronHBridge(MegatronModelBridge):
             mamba_num_groups=hf_config.n_groups,
             mamba_state_dim=hf_config.ssm_state_size,
             add_qkv_bias=hf_config.attention_bias,
+            **configs,
         )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -91,14 +107,27 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
             "decoder.final_norm.weight": "backbone.norm_f.weight",
+            # Fused TE layer norm weights (when using TELayerNormColumnParallelLinear)
             # if the megatron key does not exist for a given layer it will be ignored,
             # so only one of these will be used per layer
             "decoder.layers.*.mixer.in_proj.layer_norm_weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "backbone.layers.*.norm.weight",
+            # Separate Norm layer weights (when using Norm for quantization)
+            # These are used when quantization spec uses Norm instead of TENorm
+            "decoder.layers.*.norm.weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.input_layernorm.weight": "backbone.layers.*.norm.weight",
             # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
             "embedding.word_embeddings.weight": "backbone.embeddings.weight",
             "output_layer.weight": "lm_head.weight",
+            # MoE layers
+            "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
+            "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
+            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
         }
 
         mapping_list = []

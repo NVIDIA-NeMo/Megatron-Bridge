@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from megatron.core.activations import squared_relu
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.utils.common_utils import get_rank_safe
@@ -42,6 +43,17 @@ class NemotronHModelProvider(MambaModelProvider):
     attention_softmax_in_fp32: bool = False
     first_last_layers_bf16: bool = True
     is_hybrid_model: bool = True
+
+    # MoE
+    moe_aux_loss_coeff: float = 0.0001
+    moe_router_score_function: str = "sigmoid"
+    moe_router_enable_expert_bias: bool = True
+    moe_router_load_balancing_type: str = "seq_aux_loss"
+    moe_router_dtype: str = "fp32"
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
+    moe_shared_expert_overlap: bool = True
 
 
 @dataclass
@@ -102,6 +114,8 @@ class NemotronHModelProvider56B(NemotronHModelProvider):
     ffn_hidden_size: int = 32768
     num_attention_heads: int = 64
 
+    attention_backend: AttnBackend = AttnBackend.auto
+
 
 @dataclass
 class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
@@ -133,6 +147,30 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
     seq_length: int = 131072
+
+
+@dataclass
+class Nemotron3NanoProvider(NemotronHModelProvider):
+    """Configuration for a 3B parameter Nemotron 3 Nano model."""
+
+    seq_length: int = 262144
+    num_query_groups: int = 2
+    hybrid_override_pattern: str = "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+    num_layers: int = 52
+    hidden_size: int = 2688
+    mamba_num_heads: int = 64
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 1856
+    num_attention_heads: int = 32
+    mamba_head_dim: int = 64
+    num_moe_experts: int = 128
+    moe_ffn_hidden_size: int = 1856
+    moe_shared_expert_intermediate_size: int = 3712  # 1856 * 2 shared expert
+    moe_router_topk: int = 6
+    moe_router_topk_scaling_factor: float = 2.5
+    moe_router_num_groups: int = 1
+    moe_router_group_topk: int = 1
 
 
 # -----------------------------------------------------------------------------

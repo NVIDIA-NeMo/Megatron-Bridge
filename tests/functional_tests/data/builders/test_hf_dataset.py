@@ -13,8 +13,11 @@
 # limitations under the License.
 
 import os
+from importlib import reload
 from pathlib import PosixPath
 
+import datasets
+import huggingface_hub
 import pytest
 from datasets import load_dataset
 
@@ -45,14 +48,30 @@ def get_tokenizer(ensure_test_data):
     return tokenizer
 
 
+@pytest.fixture(scope="module", autouse=True)
+def disable_hf_cache():
+    """Disable HF cache for the dataset tests."""
+    hf_home = os.environ["HF_HOME"]
+    hub_offline = os.environ["HF_HUB_OFFLINE"]
+    del os.environ["HF_HOME"]
+    del os.environ["HF_HUB_OFFLINE"]
+    reload(huggingface_hub.constants)
+    reload(datasets.config)
+    yield
+    os.environ["HF_HOME"] = hf_home
+    os.environ["HF_HUB_OFFLINE"] = hub_offline
+    reload(huggingface_hub.constants)
+    reload(datasets.config)
+
+
 class TestDataHFDataset:
     def test_preprocess_and_split_data_split_val_from_train(self, ensure_test_data):
         path = f"{ensure_test_data}/datasets/hf"
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         preprocess_and_split_data(
-            dset=load_dataset("boolq"),
-            dataset_name="boolq",
+            dset=load_dataset("google/boolq"),
+            dataset_name="google/boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
             tokenizer=get_tokenizer(ensure_test_data),
@@ -71,8 +90,8 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         preprocess_and_split_data(
-            dset=load_dataset("boolq"),
-            dataset_name="boolq",
+            dset=load_dataset("google/boolq"),
+            dataset_name="google/boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
             tokenizer=get_tokenizer(ensure_test_data),
@@ -93,7 +112,7 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         builder = HFDatasetBuilder(
-            dataset_name="boolq",
+            dataset_name="google/boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
             tokenizer=get_tokenizer(ensure_test_data),
@@ -111,7 +130,7 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         builder = HFDatasetBuilder(
-            dataset_name="boolq",
+            dataset_name="google/boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
             tokenizer=get_tokenizer(ensure_test_data),
@@ -128,8 +147,8 @@ class TestDataHFDataset:
         os.makedirs(path, exist_ok=True)
         path = PosixPath(path)
         builder = HFDatasetBuilder(
-            dataset_dict=load_dataset("boolq"),
-            dataset_name="boolq",
+            dataset_dict=load_dataset("google/boolq"),
+            dataset_name="google/boolq",
             dataset_root=path,
             process_example_fn=process_example_fn,
             tokenizer=get_tokenizer(ensure_test_data),

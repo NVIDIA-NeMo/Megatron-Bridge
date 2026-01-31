@@ -160,7 +160,7 @@ class TestQwen3NextBridge:
         assert result.linear_value_head_dim == mock_qwen3_next_config.linear_value_head_dim
         assert result.linear_num_key_heads == mock_qwen3_next_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_next_config.linear_num_value_heads
-        assert result.linear_attention_type == "gated_delta_net"
+        assert result.experimental_attention_variant == "gated_delta_net"
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_next, mock_qwen3_next_config):
         """Test MLP configuration mapping."""
@@ -214,7 +214,7 @@ class TestQwen3NextBridge:
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
         # Check MTP configuration
-        assert result.mtp_num_layers == 0
+        assert not result.mtp_num_layers
 
     def test_provider_bridge_dtype_handling(self, qwen3_next_80b_a3b_config_dict):
         """Test dtype handling in provider_bridge."""

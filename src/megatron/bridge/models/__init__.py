@@ -64,6 +64,10 @@ from megatron.bridge.models.glm import (
     GLM45ModelProvider355B,
     GLMMoEModelProvider,
 )
+from megatron.bridge.models.glm_vl import (
+    GLM45VBridge,
+    GLM45VModelProvider,
+)
 from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
     GPTOSSProvider,
@@ -101,23 +105,14 @@ from megatron.bridge.models.llama_nemotron import (
     LlamaNemotronBridge,
     LlamaNemotronHeterogeneousProvider,
 )
-from megatron.bridge.models.mamba.mamba_provider import (
-    MambaModelProvider,
-    MambaModelProvider1P3B,
-    MambaModelProvider2P7B,
-    MambaModelProvider130M,
-    MambaModelProvider370M,
-    MambaModelProvider780M,
-    MambaProvider,
-    MambaProvider1_3B,
-    MambaProvider2_7B,
-    MambaProvider130M,
-    MambaProvider370M,
-    MambaProvider780M,
-    NVIDIAMambaHybridModelProvider8B,
-    NVIDIAMambaHybridProvider8B,
-    NVIDIAMambaModelProvider8B,
-    NVIDIAMambaProvider8B,
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.ministral3 import (
+    Ministral3Bridge,
+    Ministral3Model,
+    Ministral3ModelProvider,
+    Ministral3ModelProvider3B,
+    Ministral3ModelProvider8B,
+    Ministral3ModelProvider14B,
 )
 from megatron.bridge.models.mistral import (
     MistralModelProvider,
@@ -139,6 +134,7 @@ from megatron.bridge.models.nemotron_vl import (
     NemotronVLModel,
 )
 from megatron.bridge.models.nemotronh.nemotron_h_provider import (
+    Nemotron3NanoProvider,
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
@@ -225,6 +221,8 @@ __all__ = [
     "GLM45ModelProvider355B",
     "GLM45AirModelProvider106B",
     "GLM45Bridge",
+    "GLM45VBridge",
+    "GLM45VModelProvider",
     "GPTModelProvider",
     "GPTOSSBridge",
     "GPTOSSProvider",
@@ -258,6 +256,13 @@ __all__ = [
     "Llama33NemotronSuper49BProvider",
     "MistralModelProvider",
     "MistralSmall3ModelProvider24B",
+    # Ministral 3 Models
+    "Ministral3Bridge",
+    "Ministral3Model",
+    "Ministral3ModelProvider",
+    "Ministral3ModelProvider3B",
+    "Ministral3ModelProvider8B",
+    "Ministral3ModelProvider14B",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "Qwen2ModelProvider",
@@ -305,22 +310,8 @@ __all__ = [
     "NemotronHModel56BProvider",
     "NemotronNano9Bv2Provider",
     "NemotronNano12Bv2Provider",
+    "Nemotron3NanoProvider",
     "MambaModelProvider",
-    "MambaModelProvider1P3B",
-    "MambaModelProvider2P7B",
-    "MambaModelProvider130M",
-    "MambaModelProvider370M",
-    "MambaModelProvider780M",
-    "NVIDIAMambaHybridModelProvider8B",
-    "NVIDIAMambaModelProvider8B",
-    "MambaProvider",
-    "MambaProvider1_3B",
-    "MambaProvider2_7B",
-    "MambaProvider130M",
-    "MambaProvider370M",
-    "MambaProvider780M",
-    "NVIDIAMambaHybridProvider8B",
-    "NVIDIAMambaProvider8B",
     # Nemotron Models
     "NemotronBridge",
     "NemotronModelProvider",
