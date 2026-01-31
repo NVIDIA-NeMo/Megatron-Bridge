@@ -447,33 +447,33 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 DeepEP is a communication library optimized for Mixture-of-Experts (MoE) all-to-all operations. When using DeepEP for cross-node Expert Parallelism (EP), there are several common issues related to network transport and GPU-NIC affinity that can significantly impact performance.
 
-> Note: DeepEP is best optimized for NVL8 systems such as the DGX-B200 NVL8 or DGX-H200 NVL8. For GB200 NVL72 rack-scale systems, where 72 GPUs are interconnected within the same NVLINK domain, we recommend using [HybridEP](https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep) instead of DeepEP. HybridEP is maintained by NVIDIA, which is specifically optimized for NVL72 rack scale systems. It is also integrated into the Megatron-core [fused all-to-all module](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.transformer.moe.fused_a2a.html) as an alternative backend under the `flex` token dispatcher.
+> Note: DeepEP is best optimized for NVL8 systems such as the DGX-B200 NVL8 or DGX-H200 NVL8. For GB200 NVL72 rack-scale systems, where 72 GPUs are interconnected within the same NVLINK domain, we recommend using [HybridEP](https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep) instead of DeepEP. HybridEP is maintained by NVIDIA and is specifically optimized for NVL72 rack scale systems. It is also integrated into the Megatron-core [fused all-to-all module](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.transformer.moe.fused_a2a.html) as an alternative backend under the `flex` token dispatcher.
 >
 > Learn more about GB200 MoE training best practices [here](https://github.com/NVIDIA/Megatron-LM/blob/dev/docs/discussions/deepseek-v3-gb200-optimization/deepseek-v3-gb200-reproduce-guide.md).
 
 ### 1. Why is my DeepEP not working
 
-1. What is IBGDA and why it is a problem
+1. What is IBGDA and why is it a problem
 
-   DeepEP achieves optimal cross-node communication performance using InfiniBand GPU Direct Async (IBGDA), which is supported by ConnextX NICs in both InfiniBand and RoCEv2 modes. However, IBGDA is not always enabled by default—it often requires cluster administrators to actively configure the system and enable GPU Direct RDMA support in the InfiniBand (or RoCEv2) fabric. If this configuration step is skipped or unsupported in the cluster environment, IBGDA may be unavailable, which can prevent DeepEP inter-node EP capability from functioning. 
+   DeepEP achieves optimal cross-node communication performance using InfiniBand GPU Direct Async (IBGDA), which is supported by ConnectX NICs in both InfiniBand and RoCEv2 modes. However, IBGDA is not always enabled by default—it often requires cluster administrators to actively configure the system and enable GPU Direct RDMA support in the InfiniBand (or RoCEv2) fabric. If this configuration step is skipped or unsupported in the cluster environment, IBGDA may be unavailable, which can prevent DeepEP inter-node EP capability from functioning.
 
 1. Network Transport: IBGDA vs. IBRC
 
    > 1. IBGDA (InfiniBand GPU Direct Async) requires cluster administrators to enable GPU Direct RDMA and configure the InfiniBand subsystem. Many clusters do not have IBGDA enabled by default.
-   > 2. The official DeepEP main branch has removed support for IBRC (InfiniBand Reliable Connection), which previously served as a fallback mechanism. With IBRC, a CPU proxy thread will assit in the process the EP communication, which might have performance degreation comapred to IBGDA, but we find such performance degredation doesn't overshadow the benefit of enabling wideEP in production training. 
+   > 2. The official DeepEP main branch has removed support for IBRC (InfiniBand Reliable Connection), which previously served as a fallback mechanism. With IBRC, a CPU proxy thread will assist in processing the EP communication, which might have performance degradation compared to IBGDA, but we find such performance degradation doesn't overshadow the benefit of enabling wideEP in production training.
 
 2. Solution: NVSHMEM 3.5 with Automatic Transport Fallback
 
    > 1. NVSHMEM 3.5 introduces improved auto-fallback support for cross-node communication under various network configurations. It can automatically select the best available transport (IBGDA, IBRC, or other supported mechanisms) based on cluster capabilities.
    > 2. To benefit from NVSHMEM’s auto-fallback in DeepEP:
-   >    - Download the [official NVSHMEM 3.5.19-1 release](https://github.com/NVIDIA/nvshmem/releases/tag/v3.5.19-1). You can also choose to compile it from source in your container environment, we provide such examples later in this guide. 
+   >    - Download the [official NVSHMEM 3.5.19-1 release](https://github.com/NVIDIA/nvshmem/releases/tag/v3.5.19-1). You can also choose to compile it from source in your container environment; we provide such examples later in this guide.
    >    - Switch to the [DeepEP branch with native NVSHMEM API integration](https://github.com/seth-howell/DeepEP/tree/nvshmem_native_apis). This branch enables automatic use of NVSHMEM’s fallback mechanisms without requiring any manual code modifications.
 
 ### 2. GPU-NIC Affinity and Bandwidth Contention
 
-A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Interface Card) affinity, where multiple GPUs compete for bandwidth on a single NIC. As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution to this issue by supporting an environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU to NIC mappings so that each GPU is automaticaly binded to the optimal NIC for max DeepEP throughput. 
+A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Interface Card) affinity, where multiple GPUs compete for bandwidth on a single NIC. As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution by supporting the environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU-to-NIC mappings so that each GPU is automatically bound to the optimal NIC for maximum DeepEP throughput.
 
-With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NIC by running `ibstat`. In our example, we found the following for one of the RoCEv2 DGX-B200 cluster.
+With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NICs by running `ibstat`. In our example, we found the following for one RoCEv2 DGX-B200 cluster:
 ```
 > ibstat | grep ^CA
 CA 'rocep145s0'
@@ -486,25 +486,22 @@ CA 'rocep205s0'
 CA 'rocep206s0'
 ```
 
-Use the following environment variables to map GPUs to NICs. Note that `0:rocep145s0:1` is formatted as `<CUDA_device_id>:<NIC_name>:<port> so that each GPU will only be mapped to one dedicated NIC. 
+Use the following environment variables to map GPUs to NICs. Note that `0:rocep145s0:1` is formatted as `<CUDA_device_id>:<NIC_name>:<port>` so that each GPU will only be mapped to one dedicated NIC.
 ```bash
 export NVSHMEM_ENABLE_NIC_PE_MAPPING=1
 export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0:1,3:rocep153s0:1,4:rocep198s0:1,5:rocep199s0:1,6:rocep205s0:1,7:rocep206s0:1"
 ```
 
-
-
-
 ### 3. Build DeepEP
 
-In this section, we provide a refernce dockerfile that shows how to build NVSHMEM 3.5 and the customized DeepEP into your container environment. 
+In this section, we provide a reference Dockerfile that shows how to build NVSHMEM 3.5 and the customized DeepEP into your container environment.
 
-Note that the following example is provided for DGX-B200 NVL8 systems, but similar ideas apply to Hopper generation as well, just change the docker file accordingly. For example, we just need to change the compile target for SM90. 
+Note that the following example is provided for DGX-B200 NVL8 systems, but similar ideas apply to Hopper generation as well—just change the Dockerfile accordingly. For example, you just need to change the compile target for SM90.
 
 Key points:
 
 - NVSHMEM source: https://github.com/NVIDIA/nvshmem/tree/v3.5.19-1
-- DeepEP branch that we cherry-picked with all the fixes above: https://github.com/zhongbozhu/DeepEP/tree/nvshmem_deepep_gcp 
+- DeepEP branch that we cherry-picked with all the fixes above: https://github.com/zhongbozhu/DeepEP/tree/nvshmem_deepep_gcp
 - Example training container template for DGX-B200: https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/dockers/B200.Dockerfile 
 
 **Dockerfile**
