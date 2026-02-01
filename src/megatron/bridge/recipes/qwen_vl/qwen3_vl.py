@@ -28,7 +28,7 @@ from megatron.bridge.data.vlm_datasets import (
 )
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config as _default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -426,7 +426,7 @@ def _qwen3_vl_common(
     )
 
     # PEFT config
-    peft_config = default_peft_config(peft)
+    peft_config = _default_peft_config(peft)
 
     # Determine dataset selection strategy.
     _processor_model = tokenizer_model or hf_path
