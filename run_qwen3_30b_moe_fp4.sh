@@ -1,0 +1,130 @@
+#!/bin/bash
+# Usage:
+#   Normal run: ./run_qwen3_30b_moe_fp4.sh
+#   Deterministic mode: DETERMINISTIC=true ./run_qwen3_30b_moe_fp4.sh
+#   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash ./run_qwen3_30b_moe_fp4.sh
+#   Run on GB200: GPU=gb200 ./run_qwen3_30b_moe_fp4.sh
+set -euo pipefail
+source ../../secrets.sh
+
+GPU=${GPU:-"gb200"}
+
+# NVFP4 is only supported on Blackwell architecture (GB200, B200, GB300)
+if [ "$GPU" = "h100" ]; then
+    echo "ERROR: NVFP4 precision is only supported on Blackwell architecture GPUs (GB200, B200, GB300)"
+    echo "H100 (Hopper architecture) does not support NVFP4"
+    echo "Please use GPU=gb200 or GPU=b200"
+    exit 1
+elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-TE-bumpup.sqsh"
+    ACCOUNT="coreai_dlalgo_llm"
+    PARTITION="batch"
+    NUM_GPUS=16
+    GPUS_PER_NODE=4
+    # FP4 memory optimization
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    # Megatron Core requires NCCL_GRAPH_REGISTER=0 to be explicitly set to prevent illegal memory access when CUDA graphs are also active.
+    export NCCL_GRAPH_REGISTER=0
+    if [ "$GPU" = "gb200" ]; then
+        # These env vars help if the hardware detection isn't working on GB200
+        export NVLINK_DOMAIN_SIZE=72
+        export USE_MNNVL=1
+    fi
+    PRECISION="nvfp4"
+else
+    echo "Invalid GPU: $GPU"
+    echo "NVFP4 is only supported on: gb200, b200"
+    exit 1
+fi
+# Get current directory to mount
+WORKDIR=$(pwd)
+
+# Base commit for Megatron-LM changes
+BASE_COMMIT="0d8e0714cd29c01e164fe6de9f532182bdffa942"
+MEGATRON_DIR="3rdparty/Megatron-LM"
+
+# Dynamically construct mounts for changed files in Megatron-LM
+CUSTOM_MOUNTS=""
+if [ -d "$MEGATRON_DIR" ]; then
+    CHANGED_FILES=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD)
+    for f in $CHANGED_FILES; do
+        CUSTOM_MOUNTS="${CUSTOM_MOUNTS},$WORKDIR/$MEGATRON_DIR/$f:/opt/megatron-lm/$f"
+    done
+fi
+
+export DETERMINISTIC=${DETERMINISTIC:-false}
+export BACKEND=${BACKEND:-fused}  # Allow Flash Attention in deterministic mode
+export RECOMPUTE_ARGS=""
+
+export NVTE_DEBUG=1   # disables/enables debugging
+export NVTE_DEBUG_LEVEL=2
+
+if [ "$BACKEND" = "flash" ]; then
+    export NVTE_FUSED_ATTN=0
+    export NVTE_UNFUSED_ATTN=0
+    export NVTE_FLASH_ATTN=1
+    export additional_args="model.attention_backend=flash"
+elif [ "$BACKEND" = "fused" ]; then
+    export NVTE_FUSED_ATTN=1
+    export NVTE_UNFUSED_ATTN=0
+    export NVTE_FLASH_ATTN=0
+    export additional_args="model.attention_backend=fused"
+elif [ "$BACKEND" = "local" ]; then
+    export NVTE_FUSED_ATTN=0
+    export NVTE_UNFUSED_ATTN=0
+    export NVTE_FLASH_ATTN=0
+    export additional_args="model.attention_backend=local"
+else
+    echo "Invalid backend: $BACKEND"
+    exit 1
+fi
+
+if { [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; } && [ "$BACKEND" = "fused" ]; then
+    # use cudnn 9.18.0.76 for deterministic fused attention support
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11-cudnn9.18.0.76.sqsh"
+    export CUDNN_HOME=/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge/cudnn_lib/9.18.0.76/cudnn/
+    export LD_LIBRARY_PATH='$CUDNN_HOME/lib64:$LD_LIBRARY_PATH'
+fi
+
+# AssertionError: Modules must not have hooks registered at the time they are passed. However, registering hooks on modules after passing them through make_graphed_callables is allowed.
+# export additional_args="${additional_args} model.cuda_graph_impl=none"
+
+if [ "$DETERMINISTIC" = true ]; then
+    # Deterministic mode environment variables (all required)
+    export NCCL_ALGO="Ring"
+    export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
+    export CUBLAS_WORKSPACE_CONFIG=:4096:8
+    # Disable CUDA graphs in deterministic mode - hooks conflict with make_graphed_callables
+    export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
+    export EXP_NAME="deterministic-${BACKEND}-${PRECISION}-${GPU}"
+else
+    export EXP_NAME="non-deterministic-${BACKEND}-${PRECISION}-${GPU}"
+fi
+
+python scripts/performance/setup_experiment.py \
+    --account $ACCOUNT \
+    --partition $PARTITION \
+    --gpu $GPU \
+    --time_limit "01:00:00" \
+    -m qwen3 \
+    -s 30b_a3b \
+    -ng $NUM_GPUS \
+    -gn $GPUS_PER_NODE \
+    -c $PRECISION \
+    --container_image $CONTAINER \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
+    -hf $HF_TOKEN \
+    -wdk $WANDB_API_KEY \
+    -wdp "mbridge-dev-zhiyul" \
+    -wdj "qwen3-30b-moe-fp4-nemo-25.11-${EXP_NAME}" \
+    --task pretrain \
+    -gb 32 \
+    -mb 2 \
+    logger.tensorboard_dir=/nemo_run/tensorboard \
+    logger.log_interval=1 \
+    logger.log_throughput=true \
+    logger.log_throughput_to_tensorboard=true \
+    logger.log_memory_to_tensorboard=true \
+    logger.throughput_window_size=1 \
+    logger.tensorboard_log_interval=1 \
+    $additional_args
