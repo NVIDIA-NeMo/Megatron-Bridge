@@ -7,7 +7,7 @@ Ministral 3 models support multimodal tasks including image captioning, visual q
 Ministral family models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
 ```{important}
-Please upgrade to `transformers` v5 and upgrade `mistral-common` in order to use the Ministral 3 models.
+Please update `transformers` version to 5.0.0rc0 in order to use the Ministral 3 models.
 ```
 
 ## Available Models
