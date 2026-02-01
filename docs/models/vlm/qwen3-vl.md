@@ -96,7 +96,7 @@ torchrun --nproc-per-node=1 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen3_vl_8b_finetune_config \
 --dataset-type hf \
-+peft=lora \
+--peft lora \
 checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
@@ -106,13 +106,13 @@ torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen3_vl_30b_a3b_finetune_config \
 --dataset-type hf \
-+peft=lora \
+--peft lora \
 checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
 **DoRA Training:**
 ```bash
-+peft=dora
+--peft dora
 ```
 
 ## Hugging Face Model Cards
