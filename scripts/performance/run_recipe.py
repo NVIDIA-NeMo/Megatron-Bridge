@@ -171,7 +171,7 @@ def set_user_overrides(config, args):
     if args.max_steps > 100:
         config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
-    config.model.cross_entropy_fusion_impl = None
+    config.model.cross_entropy_fusion_impl = False
 
     return config
 
