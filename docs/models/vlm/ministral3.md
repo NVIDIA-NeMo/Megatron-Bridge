@@ -99,7 +99,7 @@ Before training, ensure the following environment variables are set:
 ### Full Finetuning
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/ministral3/finetune_ministral3_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/ministral3/finetune_ministral3_vl.py \
 --pretrained-checkpoint /models/ministral3-3b \
 --dataset-type hf \
 train.global_batch_size=32 \
@@ -124,7 +124,7 @@ config = ministral3_3b_finetune_config(
 ### Parameter-Efficient Finetuning (PEFT) with LoRA
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/ministral3/finetune_ministral3_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/ministral3/finetune_ministral3_vl.py \
 --pretrained-checkpoint /models/ministral3-3b \
 --peft-scheme lora \
 --dataset-type hf \
@@ -142,7 +142,7 @@ You can also combine PEFT with freeze options:
 
 Example with freeze options:
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/ministral3/finetune_ministral3_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/ministral3/finetune_ministral3_vl.py \
 --pretrained-checkpoint /models/ministral3-3b \
 --peft-scheme lora \
 --freeze-vision-model \
@@ -199,7 +199,7 @@ To change the dataset, specify `dataset.maker_name=<maker_name>` in your command
 ## Examples
 - Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
 - Generate with VLM (HF→Megatron): [examples/conversion/hf_to_megatron_generate_vlm.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_vlm.py)
-- Finetuning script: [examples/recipes/ministral3/finetune_ministral3_vl.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/ministral3/finetune_ministral3_vl.py)
+- Finetuning script: [examples/models/vlm/ministral3/finetune_ministral3_vl.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/ministral3/finetune_ministral3_vl.py)
 
 ## Hugging Face Model Cards
 

@@ -30,6 +30,7 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
@@ -47,6 +48,8 @@ def evaluate(
     config: ConfigContainer,
     verbose: bool = False,
     non_loss_data_func: Optional[Callable] = None,
+    callback_manager: CallbackManager | None = None,
+    is_test: bool = False,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -59,6 +62,9 @@ def evaluate(
         config (ConfigContainer): Configuration container (potentially redundant).
         verbose (bool, optional): Whether to print evaluation progress. Defaults to False.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
+        is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
+            Controls which callback events are fired (on_test_* vs on_eval_*).
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -66,6 +72,9 @@ def evaluate(
             - collected_non_loss_data: Data collected by non_loss_data_func.
             - timelimit_hit: Boolean indicating if the time limit was reached.
     """
+    # Determine callback event names based on whether this is test or eval
+    step_start_event = "on_test_step_start" if is_test else "on_eval_step_start"
+    step_end_event = "on_test_step_end" if is_test else "on_eval_step_end"
     # Prepare forward_step_func (check signature and inject state if needed)
     # This is done once to prevent creating new partial objects every eval iteration
     wrapped_forward_step = prepare_forward_step_func(forward_step_func, state)
@@ -143,6 +152,17 @@ def evaluate(
             config.timers = None
             fault_tolerance.on_eval_step_start(state)
             p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
+            if should_fire(callback_manager, step_start_event):
+                callback_manager.fire(
+                    step_start_event,
+                    CallbackContext(
+                        state=state,
+                        model=model,
+                        user_state=callback_manager.user_state,
+                    ),
+                )
+
             loss_dicts = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
@@ -155,6 +175,17 @@ def evaluate(
                 pg_collection=pg_collection,
             )
             fault_tolerance.on_eval_step_end(state)
+
+            if should_fire(callback_manager, step_end_event):
+                callback_manager.fire(
+                    step_end_event,
+                    CallbackContext(
+                        state=state,
+                        model=model,
+                        user_state=callback_manager.user_state,
+                    ),
+                )
+
             config.timers = state.timers
 
             # Empty unused memory
@@ -255,6 +286,8 @@ def evaluate_and_print_results(
     write_to_tensorboard: bool = True,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
+    callback_manager: CallbackManager | None = None,
+    is_test: bool = False,
 ) -> None:
     """Helper function to evaluate and dump results on screen.
 
@@ -269,7 +302,14 @@ def evaluate_and_print_results(
         write_to_tensorboard (bool, optional): Whether to write results to TensorBoard. Defaults to True.
         process_non_loss_data_func (Optional[Callable], optional): Function to process non-loss data. Defaults to None.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
+        is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
+            Controls which callback events are fired (on_test_* vs on_eval_*).
     """
+    # Determine callback event names based on whether this is test or eval
+    start_event = "on_test_start" if is_test else "on_eval_start"
+    end_event = "on_test_end" if is_test else "on_eval_end"
+
     if write_to_tensorboard:
         writer = state.tensorboard_logger
     else:
@@ -277,8 +317,27 @@ def evaluate_and_print_results(
 
     wandb_writer = state.wandb_logger
 
+    if should_fire(callback_manager, start_event):
+        callback_manager.fire(
+            start_event,
+            CallbackContext(
+                state=state,
+                model=model,
+                user_state=callback_manager.user_state,
+            ),
+        )
+
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
-        state, forward_step_func, data_iterator, model, process_non_loss_data_func, config, verbose, non_loss_data_func
+        state,
+        forward_step_func,
+        data_iterator,
+        model,
+        process_non_loss_data_func,
+        config,
+        verbose,
+        non_loss_data_func,
+        callback_manager=callback_manager,
+        is_test=is_test,
     )
 
     # Timelimit hit during evaluation
@@ -314,3 +373,14 @@ def evaluate_and_print_results(
     print_rank_last("-" * length)
     print_rank_last(string)
     print_rank_last("-" * length)
+
+    if should_fire(callback_manager, end_event):
+        callback_manager.fire(
+            end_event,
+            CallbackContext(
+                state=state,
+                model=model,
+                user_state=callback_manager.user_state,
+                total_loss_dict=total_loss_dict,
+            ),
+        )

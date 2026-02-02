@@ -51,6 +51,7 @@ training/peft.md
 training/packed-sequences.md
 training/multi-token-prediction.md
 training/distillation.md
+training/callbacks.md
 ```
 
 ```{toctree}
