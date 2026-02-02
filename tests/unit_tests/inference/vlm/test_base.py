@@ -240,6 +240,12 @@ class TestSetupInferenceWrapper:
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
         mock_model.config.hidden_size = 1024
 
+        # Setup mock structure for _expose_decoder_from_language_model
+        mock_decoder = MagicMock()
+        mock_model.module = MagicMock()
+        mock_model.module.language_model = MagicMock()
+        mock_model.module.language_model.decoder = mock_decoder
+
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
         mock_wrapper_cls.assert_called_once()
