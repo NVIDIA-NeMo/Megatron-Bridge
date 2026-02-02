@@ -89,6 +89,7 @@ jobs:
 
       - name: Switch to release branch
         run: |
+          git fetch origin ${{ needs.code-freeze.outputs.release-branch }}
           git checkout ${{ needs.code-freeze.outputs.release-branch }}
 
       - name: Cherry-pick docs-versions commit
