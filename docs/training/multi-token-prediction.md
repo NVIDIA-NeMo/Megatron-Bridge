@@ -77,10 +77,10 @@ config = qwen3_30b_a3b_pretrain(
         ],
 )
 # Optionally set cache dir
-config.dataset.path_to_cache = "/path/to/cacahe
+config.dataset.path_to_cache = "/path/to/cache"
 # MTP Configuration
-config.mtp_num_layers = 1,
-config.mtp_loss_scaling_factor = 0.1,
+config.mtp_num_layers = 1
+config.mtp_loss_scaling_factor = 0.1
 
 pretrain(config)
 ```
