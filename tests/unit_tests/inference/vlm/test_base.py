@@ -236,15 +236,16 @@ class TestSetupInferenceWrapper:
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen25(self, mock_wrapper_cls, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockModel:
+            pass
+
+        mock_model = MockModel()
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
         mock_model.config.hidden_size = 1024
-
-        # Setup mock structure for _expose_decoder_from_language_model
-        mock_decoder = MagicMock()
-        mock_model.module = MagicMock()
-        mock_model.module.language_model = MagicMock()
-        mock_model.module.language_model.decoder = mock_decoder
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
@@ -257,10 +258,17 @@ class TestSetupInferenceWrapper:
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen3(self, mock_wrapper_cls, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockModel:
+            pass
+
+        mock_model = MockModel()
         mock_model.config = MagicMock(spec=Qwen3VLModelProvider)
         mock_model.config.language_transformer_config = MagicMock()
         mock_model.config.language_transformer_config.hidden_size = 2048
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
@@ -272,8 +280,15 @@ class TestSetupInferenceWrapper:
         assert inference_config.hidden_size == 2048
 
     def test_setup_inference_wrapper_invalid(self, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockModel:
+            pass
+
+        mock_model = MockModel()
         mock_model.config = MagicMock()  # Not Qwen config
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         with pytest.raises(ValueError):
             setup_inference_wrapper(mock_model, mock_tokenizer)
