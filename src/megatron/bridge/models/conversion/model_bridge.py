@@ -18,6 +18,7 @@ import fnmatch
 import itertools
 import logging
 import re
+import math
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -1229,7 +1230,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     scale_tensor = None
                     if local_weights is not None and hasattr(local_weights, fp8_scale_inv_attr):
                         scale_tensor = getattr(local_weights, fp8_scale_inv_attr)
-
+                        scale_tensor = self._trim_blockwise_fp8_scale_inv_padding(local_weights, scale_tensor)
                     # Note:
                     # Do NOT reuse the same mapping instance as the base weight task.
                     # We clone via `resolve(())` which returns a new mapping instance
@@ -1275,6 +1276,26 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             )
 
         return tasks
+
+    def _trim_blockwise_fp8_scale_inv_padding(
+        self,
+        local_weights: Optional[torch.Tensor],
+        scale_tensor: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        # This function is used to trim the padding in the scales for blockwise FP8 parameters.
+        # The GEMM for 2D blocks required padding in the scales.
+        quantizer = getattr(local_weights, "_quantizer", None)
+        block_len = getattr(quantizer, "block_len", None)
+        is_2d_scaled = getattr(local_weights, "_is_2D_scaled", None)
+        if block_len is None or not is_2d_scaled:
+            logger.warning(f"WARNING: block_len or not is_2d_scaled")
+            return scale_tensor
+
+        q_k = local_weights.shape[-1]
+        expected_k_tiles = math.ceil(q_k / block_len)
+        if scale_tensor.shape[1] == expected_k_tiles:
+            return scale_tensor
+        return scale_tensor[:, :expected_k_tiles].contiguous()
 
     @classmethod
     def register_bridge(
