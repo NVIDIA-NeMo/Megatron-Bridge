@@ -55,7 +55,7 @@ Before training, ensure the following environment variables are set:
 Example usage for full parameter finetuning:
 
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen3_vl_8b_finetune_config \
 --dataset-type hf \
@@ -69,7 +69,7 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 
 For MoE models with expert parallelism:
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \
+torchrun --nproc-per-node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen3_vl_30b_a3b_finetune_config \
 --dataset-type hf \
@@ -84,7 +84,7 @@ Note:
   - `qwen3_vl_8b_finetune_config` - for 8B dense model
   - `qwen3_vl_30b_a3b_finetune_config` - for 30B MoE model
 - For dataset formats and additional information, refer to the [Qwen2.5-VL documentation]
-- See the full script with examples at [`examples/recipes/qwen_vl/finetune_qwen_vl.py`](../../../examples/recipes/qwen_vl/finetune_qwen_vl.py)
+- See the full script with examples at [`examples/models/vlm/qwen_vl/finetune_qwen_vl.py`](../../../examples/models/vlm/qwen_vl/finetune_qwen_vl.py)
 
 ## Hugging Face Model Cards
 - Qwen3-VL-8B: `https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct`

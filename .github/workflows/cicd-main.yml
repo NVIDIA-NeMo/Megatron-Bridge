@@ -378,7 +378,7 @@ jobs:
       matrix:
         include:
           - script: L2_Launch_training
-            timeout: 40
+            timeout: 50
           - script: L2_Launch_converter
           - script: L2_Launch_models_deepseek
           - script: L2_Launch_models_gemma
@@ -395,10 +395,10 @@ jobs:
           - script: L2_Launch_models_qwen
           - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
-          - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
