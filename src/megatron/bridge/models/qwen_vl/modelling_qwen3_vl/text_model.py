@@ -24,6 +24,7 @@ import torch
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
@@ -59,6 +60,7 @@ class Qwen3VLGPTModel(GPTModel):
         seq_len_interpolation_factor: Optional[float] = None,
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -79,6 +81,7 @@ class Qwen3VLGPTModel(GPTModel):
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             mtp_block_spec=mtp_block_spec,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
 
         is_moe = (
@@ -102,6 +105,7 @@ class Qwen3VLGPTModel(GPTModel):
             pre_process=self.pre_process,
             post_process=self.post_process,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
 
     def forward(
@@ -137,13 +141,24 @@ class Qwen3VLGPTModel(GPTModel):
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
 
-        decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = self._preprocess(
+        # `_preprocess` can optionally return an extra fused cos/sin buffer (for
+        # flash decode). Match the upstream GPTModel handling to avoid unpack
+        # errors when six values are returned.
+        preproc_output = self._preprocess(
             input_ids=input_ids,
             position_ids=position_ids,
             decoder_input=decoder_input,
             inference_context=inference_context,
             packed_seq_params=packed_seq_params,
         )
+
+        (
+            decoder_input,
+            rotary_pos_emb,
+            rotary_pos_cos,
+            rotary_pos_sin,
+            sequence_len_offset,
+        ) = preproc_output[:5]
 
         # Run decoder.
         hidden_states = self.decoder(
@@ -153,6 +168,8 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_pos_emb=rotary_pos_emb,
             rotary_pos_cos=rotary_pos_cos,
             rotary_pos_sin=rotary_pos_sin,
+            # Qwen3 VL blocks do not currently consume fused cos/sin; pass along
+            # the standard components only.
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
             visual_pos_masks=visual_pos_masks,

@@ -63,9 +63,12 @@ class TestGemma2ModelProvider:
         assert provider.attn_logit_softcapping == 50.0
         assert provider.final_logit_softcapping == 30.0
 
-    @patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state")
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_last_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_last_stage", return_value=False)
     @patch("megatron.bridge.models.gemma.gemma2_provider.extend_instance")
-    def test_gemma2_provider_provide_with_embedding_scaling(self, mock_extend_instance, mock_parallel_state):
+    def test_gemma2_provider_provide_with_embedding_scaling(self, mock_extend_instance, *_):
         """Test that provide method applies embedding scaling when appropriate."""
         # Mock the parent provide method
         mock_model = Mock()
@@ -77,30 +80,25 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
-        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            # Mock both pipeline stages
-            mock_parallel_state.is_pipeline_first_stage.return_value = True
-            mock_parallel_state.is_pipeline_last_stage.return_value = False
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
+        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
 
             # Verify that parent provide was called
             assert result == mock_model
-
-            # Verify that is_pipeline_first_stage was called with correct parameters
-            mock_parallel_state.is_pipeline_first_stage.assert_called_once_with(
-                ignore_virtual=False,
-                vp_stage=0,
-            )
 
             # Verify that extend_instance was called for embedding scaling
             assert mock_extend_instance.call_count == 1
             args = mock_extend_instance.call_args_list[0][0]
             assert args[0] == mock_model.embedding
 
-    @patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state")
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_last_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.gemma2_provider.extend_instance")
-    def test_gemma2_provider_provide_with_output_layer_scaling(self, mock_extend_instance, mock_parallel_state):
+    def test_gemma2_provider_provide_with_output_layer_scaling(self, mock_extend_instance, *_):
         """Test that provide method applies output layer modifications when appropriate."""
         # Mock the parent provide method
         mock_model = Mock()
@@ -113,30 +111,26 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
-        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            # Mock both pipeline stages
-            mock_parallel_state.is_pipeline_first_stage.return_value = False
-            mock_parallel_state.is_pipeline_last_stage.return_value = True
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
-            result = provider.provide(vp_stage=1)
+        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
+            # Use vp_stage=0 to satisfy vp_size None assertion in helpers
+            result = provider.provide(vp_stage=0)
 
             # Verify that parent provide was called
             assert result == mock_model
-
-            # Verify that is_pipeline_last_stage was called with correct parameters
-            mock_parallel_state.is_pipeline_last_stage.assert_called_once_with(
-                ignore_virtual=False,
-                vp_stage=1,
-            )
 
             # Verify that extend_instance was called for output layer modifications
             assert mock_extend_instance.call_count == 1
             args = mock_extend_instance.call_args_list[0][0]
             assert args[0] == mock_model.output_layer
 
-    @patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state")
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_last_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.gemma2_provider.extend_instance")
-    def test_gemma2_provider_provide_both_stages(self, mock_extend_instance, mock_parallel_state):
+    def test_gemma2_provider_provide_both_stages(self, mock_extend_instance, *_):
         """Test provide method when model is both first and last stage."""
         mock_model = Mock()
         mock_model.embedding = Mock()
@@ -148,19 +142,13 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
-        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            # Mock both pipeline stages as True (single stage setup)
-            mock_parallel_state.is_pipeline_first_stage.return_value = True
-            mock_parallel_state.is_pipeline_last_stage.return_value = True
+        provider._pg_collection = type("PG", (), {"pp": object()})()
 
+        with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
 
             # Verify that parent provide was called
             assert result == mock_model
-
-            # Both should be called
-            mock_parallel_state.is_pipeline_first_stage.assert_called_once()
-            mock_parallel_state.is_pipeline_last_stage.assert_called_once()
 
             # Verify that extend_instance was called twice (embedding + output layer)
             assert mock_extend_instance.call_count == 2

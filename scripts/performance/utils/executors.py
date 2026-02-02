@@ -38,7 +38,7 @@ bash -c '{{ pre_cmds }} {{ command }}'
 
 PERF_ENV_VARS = {
     "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
-    "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
+    "TRANSFORMERS_OFFLINE": "1",  # Disable online downloads from HuggingFace
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
     "NVTE_NORM_FWD_USE_CUDNN": "1",
@@ -125,6 +125,8 @@ def slurm_executor(
 
     numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
+    if gpu.lower() in ["b300"]:
+        numa_cmd += " -C $((SLURM_LOCALID * 16)),$((SLURM_LOCALID * 16 + 1))"
     custom_bash_cmds.append(numa_cmd)
 
     launcher = SlurmTemplate(
@@ -168,7 +170,7 @@ def dgxc_executor(
     num_gpus_per_node: int,
     wandb_key: str = None,
     hf_token: str = None,
-    custom_env_vars: List[str] = None,
+    custom_env_vars: Dict[str, str] = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):

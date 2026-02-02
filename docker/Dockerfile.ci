@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvcr.io/nvidia/pytorch:25.09-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
+FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -32,6 +33,7 @@ COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatro
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
+ARG UV_CACHE_PRUNE_ARGS
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -44,4 +46,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups; \
     fi && \
-    uv cache prune
+    uv cache prune ${UV_CACHE_PRUNE_ARGS}
+
+COPY . /opt/Megatron-Bridge

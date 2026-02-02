@@ -60,6 +60,7 @@ The {py:class}`bridge.data.datasets.packed_sequence.PackedSequenceSpecs` class p
 | `packed_train_data_path` | `str` | `None` | Custom path for packed training dataset file (`.npy` format). |
 | `packed_val_data_path` | `str` | `None` | Custom path for packed validation dataset file (`.npy` format). |
 | `packed_metadata_path` | `str` | `None` | Custom path for packing metadata file (`.jsonl` format). |
+| `pad_seq_to_mult` | `int \| None` | `None` | Pad each sample to a multiple of this value when generating packed datasets (e.g., set to `2 * context_parallel_size` for THD CP). |
 | `pad_cu_seqlens` | `bool` | `False` | Whether to pad `cu_seqlens` to constant size, required for CUDA graphs. |
 
 ### Batch Size Considerations
