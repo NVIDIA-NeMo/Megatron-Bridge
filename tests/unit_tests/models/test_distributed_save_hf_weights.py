@@ -109,7 +109,11 @@ class TestAutoBridgeDistributedSave(unittest.TestCase):
             torch.cuda.synchronize()
             before_save = time.time()
             bridge.save_hf_pretrained(
-                model, str(output_path), distributed_save=distributed_save, save_every_n_ranks=save_every_n_ranks
+                model,
+                str(output_path),
+                merge_adapter_weights=True,
+                distributed_save=distributed_save,
+                save_every_n_ranks=save_every_n_ranks,
             )
             torch.distributed.barrier()
             torch.cuda.synchronize()
