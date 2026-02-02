@@ -116,8 +116,18 @@ class NsysPlugin(Plugin):
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
-        launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
-        launcher.nsys_extra_args = self.nsys_extra_args or launcher.nsys_extra_args
+
+        # Set nsys_trace if provided, otherwise use nemo_run defaults
+        if self.nsys_trace is not None:
+            launcher.nsys_trace = self.nsys_trace
+
+        # Combine default extra args with user-provided extra args
+        if self.nsys_extra_args is not None:
+            # Get existing launcher extra args (nemo_run defaults)
+            existing_extra_args = launcher.nsys_extra_args or []
+            # Combine user args with existing args (user args first for precedence)
+            launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
+            logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -250,7 +260,7 @@ class PerfEnvPlugin(Plugin):
     ):
         """Set model-specific environment variables"""
         if (
-            model_family_name in ["llama31"]
+            model_family_name in ["llama"]
             and model_recipe_name in ["llama31_405b"]
             and train_task == "pretrain"
             and gpu in ["gb200"]
@@ -259,16 +269,16 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         del_cudnn_ln = True
         if gpu in ["h100"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
-            if model_family_name == "llama3" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_family_name == "llama31" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
+            if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
@@ -445,6 +455,10 @@ class PerfEnvPlugin(Plugin):
             self.compute_dtype,
             self.train_task,
         )
+
+        # Set NVFP4-specific environment variables
+        if self.compute_dtype == "nvfp4":
+            executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
 
 
 @dataclass
