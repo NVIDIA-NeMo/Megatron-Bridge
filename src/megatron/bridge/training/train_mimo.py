@@ -27,6 +27,9 @@ import torch.distributed as dist
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
+from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.mimo_checkpointing import MimoOptimizerWrapper
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
     get_module_to_grid_tuple,
@@ -153,7 +156,6 @@ def train_mimo(
     global_state: GlobalState,
     mimo_infra: "MimoModelInfra",
     multimodule_communicator: "MultiModulePipelineCommunicator",
-    checkpointing_context: Optional[dict] = None,
 ) -> None:
     """Main MIMO training loop.
     
@@ -163,14 +165,13 @@ def train_mimo(
     - Uses zero_grad_buffer_for_multimodule() for gradient clearing
     - Supports per-module optimizers
     
-    Note: Stub ranks are disallowed - validated at setup time.
-    
     Reuses from existing Bridge training:
     - GlobalState for timers, config, train_state
     - training_log() for metrics reporting
-    - handle_profiling_step() AND handle_profiling_stop() for full profiler lifecycle
-    - num_floating_point_operations() for throughput calculations
-    - prepare_forward_step_func() for GlobalState injection into forward_step
+    - handle_profiling_step() and handle_profiling_stop() for profiler lifecycle
+    - save_checkpoint() with MimoOptimizerWrapper for MIMO checkpointing
+    - evaluate_and_print_results() for validation with multimodule support
+    - maybe_finalize_async_save() for async checkpoint finalization
     
     Args:
         forward_step_func: Forward step function.
@@ -182,7 +183,6 @@ def train_mimo(
         global_state: GlobalState containing timers, config, train_state.
         mimo_infra: MimoModelInfra with grids, topology, pg_collections.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
-        checkpointing_context: Checkpointing context (optional, for Phase 5).
     """
     timers = global_state.timers
     train_state = global_state.train_state
@@ -235,6 +235,12 @@ def train_mimo(
     history_wct = []
     report_memory_flag = True
     
+    # TODO: Revisit when MIMO optimizer is implemented.
+    # MimoOptimizerWrapper aggregates per-module optimizer states for checkpointing.
+    # Currently uses first scheduler only - may need MimoSchedulerWrapper for consistency.
+    optimizer_wrapper = MimoOptimizerWrapper(optimizers)
+    first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
+    
     logger.info(f"Rank {dist.get_rank()}: Starting MIMO training loop")
     
     # Main training loop
@@ -277,9 +283,9 @@ def train_mimo(
         # Get learning rate from first scheduler
         learning_rate = None
         if schedulers:
-            first_scheduler = next(iter(schedulers.values()))
-            if first_scheduler is not None:
-                learning_rate = first_scheduler.get_lr()
+            sched = next(iter(schedulers.values()))
+            if sched is not None:
+                learning_rate = sched.get_lr()
         
         # Get loss scale from first optimizer
         loss_scale = 1.0
@@ -296,8 +302,8 @@ def train_mimo(
             decoupled_learning_rate=None,
             loss_scale=loss_scale,
             report_memory_flag=report_memory_flag,
-            skipped_iter=0,  # TODO: Track skipped iterations
-            grad_norm=None,  # TODO: Extract from optimizer step
+            skipped_iter=0,
+            grad_norm=None,
             params_norm=None,
             num_zeros_in_grad=None,
             config=cfg,
@@ -306,11 +312,59 @@ def train_mimo(
             model=[model],
         )
         
-        # TODO: Add checkpointing logic (Phase 5)
-        # TODO: Add evaluation logic
+        # Evaluation at specified intervals
+        if (
+            train_config.eval_interval is not None
+            and train_state.step % train_config.eval_interval == 0
+            and valid_data_iterator is not None
+        ):
+            timers("evaluate", log_level=0).start(barrier=True)
+            evaluate_and_print_results(
+                state=global_state,
+                prefix=f"iteration {train_state.step}",
+                forward_step_func=forward_step_func,
+                data_iterator=valid_data_iterator,
+                model=[model],
+                config=cfg,
+                verbose=False,
+                write_to_tensorboard=True,
+                p2p_communicator=multimodule_communicator,
+                pg_collection=multimodule_pg_collection,
+            )
+            timers("evaluate").stop()
+        
+        # Checkpointing at specified intervals
+        if (
+            cfg.checkpoint.save_interval is not None
+            and train_state.step % cfg.checkpoint.save_interval == 0
+        ):
+            timers("save-checkpoint", log_level=0).start(barrier=True)
+            save_checkpoint(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer_wrapper,
+                opt_param_scheduler=first_scheduler,
+                num_floating_point_operations_so_far=0,  # TODO: Add proper FLOPs tracking
+            )
+            timers("save-checkpoint").stop()
+        
+        # Finalize any pending async saves (non-blocking during training)
+        maybe_finalize_async_save(
+            global_state=global_state,
+            ckpt_cfg=cfg.checkpoint,
+            blocking=False,
+        )
     
     # Stop profiling
     handle_profiling_stop(global_state)
+    
+    # Finalize any remaining async saves before exit
+    maybe_finalize_async_save(
+        global_state=global_state,
+        ckpt_cfg=cfg.checkpoint,
+        blocking=True,
+        terminate=True,
+    )
     
     timers("interval-time").stop()
     

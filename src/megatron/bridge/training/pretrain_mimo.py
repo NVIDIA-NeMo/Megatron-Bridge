@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
 
 import torch.distributed as dist
 
@@ -56,7 +56,7 @@ class MimoSetupOutput:
     """
     model: "MimoModel"
     mimo_infra: "MimoModelInfra"
-    multimodule_pg_collection: any
+    multimodule_pg_collection: Any
     multimodule_communicator: MultiModulePipelineCommunicator
     module_to_grid_tuple: List
     train_data_iterator: Iterator
@@ -192,10 +192,7 @@ def pretrain_mimo(
     Steps:
     1. Call setup_mimo() to get model, infra, communicators
     2. Build optimizers and schedulers
-    3. Configure gradient functions (no_sync_func, finalize_model_grads_func)
-    4. Call train_mimo() with all components
-    
-    Note: Checkpointing and evaluation are deferred to Phase 5.
+    3. Call train_mimo() with all components
     
     Args:
         cfg: ConfigContainer with training configuration.
@@ -240,7 +237,6 @@ def pretrain_mimo(
         global_state=setup_output.global_state,
         mimo_infra=setup_output.mimo_infra,
         multimodule_communicator=setup_output.multimodule_communicator,
-        checkpointing_context=None,  # Deferred to Phase 5
     )
     
     logger.info("MIMO pretraining completed")

@@ -14,7 +14,7 @@
 
 import math
 import time
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import torch
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
@@ -22,9 +22,14 @@ from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
+
+# TODO: Pending PR 3129
+from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
+from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -46,6 +51,12 @@ def evaluate(
     config: ConfigContainer,
     verbose: bool = False,
     non_loss_data_func: Optional[Callable] = None,
+    p2p_communicator: Optional[
+        Union[P2PCommunicator, "MultiModulePipelineCommunicator"]
+    ] = None,
+    pg_collection: Optional[
+        Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]
+    ] = None,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -58,6 +69,12 @@ def evaluate(
         config (ConfigContainer): Configuration container (potentially redundant).
         verbose (bool, optional): Whether to print evaluation progress. Defaults to False.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        p2p_communicator (Optional[Union[P2PCommunicator, MultiModulePipelineCommunicator]], optional):
+            Custom communicator for pipeline parallelism. If None, creates a default P2PCommunicator.
+            For MIMO models, pass a MultiModulePipelineCommunicator. Defaults to None.
+        pg_collection (Optional[Union[ProcessGroupCollection, MultiModuleProcessGroupCollection]], optional):
+            Custom process group collection. If None, extracts from model via get_pg_collection().
+            For MIMO models, pass a MultiModuleProcessGroupCollection. Defaults to None.
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -77,7 +94,9 @@ def evaluate(
         model_module.eval()
 
     # Retrieve process group collection and model config from the model
-    pg_collection = get_pg_collection(model)
+    # Use injected pg_collection if provided, otherwise extract from model
+    if pg_collection is None:
+        pg_collection = get_pg_collection(model)
     model_config = get_model_config(model[0])
 
     # Disable result validation during evaluation
@@ -91,11 +110,23 @@ def evaluate(
     eval_batch_size = state.cfg.train.global_batch_size
     eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
 
+    # Determine if this is a multimodule evaluation (MIMO)
+    is_multimodule = isinstance(pg_collection, MultiModuleProcessGroupCollection) or isinstance(
+        p2p_communicator, MultiModulePipelineCommunicator
+    )
+
     with torch.no_grad():
         if verbose:
             print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
 
-        if state.cfg.model.cuda_graph_impl == "local" and "full_iteration" in state.cfg.model.cuda_graph_scope:
+        if is_multimodule:
+            # For multimodule, use forward_backward_pipelining_without_interleaving directly
+            # CUDA graphs not yet supported for multimodule
+            from megatron.core.pipeline_parallel.schedules import (
+                forward_backward_pipelining_without_interleaving,
+            )
+            forward_backward_func = forward_backward_pipelining_without_interleaving
+        elif state.cfg.model.cuda_graph_impl == "local" and "full_iteration" in state.cfg.model.cuda_graph_scope:
             forward_backward_func = FullCudaGraphWrapper(
                 get_forward_backward_func(
                     pp_size=pg_collection.pp.size(),
@@ -138,7 +169,12 @@ def evaluate(
             # Don't care about timing during evaluation
             config.timers = None
             fault_tolerance.on_eval_step_start(state)
-            p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
+            # Use injected communicator or create default P2PCommunicator
+            eval_p2p_communicator = p2p_communicator
+            if eval_p2p_communicator is None:
+                eval_p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
             loss_dicts = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
@@ -147,7 +183,7 @@ def evaluate(
                 seq_length=seq_length,
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
-                p2p_communicator=p2p_communicator,
+                p2p_communicator=eval_p2p_communicator,
                 pg_collection=pg_collection,
             )
             fault_tolerance.on_eval_step_end(state)
@@ -157,8 +193,21 @@ def evaluate(
             if state.cfg.train.empty_unused_memory_level >= 1:
                 torch.cuda.empty_cache()
 
-            if is_pp_last_stage(pg_collection.pp):
+            # Check if this is the last pipeline stage
+            # For multimodule, use communicator property; for single module, use pg_collection.pp
+            if is_multimodule:
+                is_last_stage = eval_p2p_communicator.is_pp_last_stage
+            else:
+                is_last_stage = is_pp_last_stage(pg_collection.pp)
+
+            if is_last_stage:
                 # Reduce across processes.
+                # For multimodule, get dp_cp from the language model's pg_collection
+                if is_multimodule:
+                    dp_cp_group = pg_collection.get_language_model_collection().dp_cp
+                else:
+                    dp_cp_group = pg_collection.dp_cp
+
                 for key in loss_dicts[0].keys():
                     if key not in total_loss_dict:
                         total_loss_dict[key] = torch.tensor([0.0, 0.0], dtype=torch.float).cuda()
@@ -166,7 +215,7 @@ def evaluate(
 
                     if val[0].numel() == 2:
                         val = torch.vstack(val).sum(dim=0)
-                        torch.distributed.all_reduce(val, group=pg_collection.dp_cp)
+                        torch.distributed.all_reduce(val, group=dp_cp_group)
                         total_loss_dict[key] += val
                     elif val[0].numel() == 1:
                         val = torch.cat(val).sum()
@@ -210,7 +259,11 @@ def evaluate(
                     data_iterator=non_loss_microbatch_iterator,
                 )
 
-            p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+            # Use injected communicator or create default P2PCommunicator
+            non_loss_p2p_communicator = p2p_communicator
+            if non_loss_p2p_communicator is None:
+                non_loss_p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+
             collected_non_loss_data = forward_backward_func(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=non_loss_data_iterator,
@@ -220,7 +273,7 @@ def evaluate(
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
                 collect_non_loss_data=True,
-                p2p_communicator=p2p_communicator,
+                p2p_communicator=non_loss_p2p_communicator,
                 pg_collection=pg_collection,
             )
 
@@ -251,6 +304,12 @@ def evaluate_and_print_results(
     write_to_tensorboard: bool = True,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
+    p2p_communicator: Optional[
+        Union[P2PCommunicator, "MultiModulePipelineCommunicator"]
+    ] = None,
+    pg_collection: Optional[
+        Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]
+    ] = None,
 ) -> None:
     """Helper function to evaluate and dump results on screen.
 
@@ -265,6 +324,10 @@ def evaluate_and_print_results(
         write_to_tensorboard (bool, optional): Whether to write results to TensorBoard. Defaults to True.
         process_non_loss_data_func (Optional[Callable], optional): Function to process non-loss data. Defaults to None.
         non_loss_data_func (Optional[Callable], optional): Function to compute non-loss data. Defaults to None.
+        p2p_communicator (Optional[Union[P2PCommunicator, MultiModulePipelineCommunicator]], optional):
+            Custom communicator for pipeline parallelism. Passed to evaluate(). Defaults to None.
+        pg_collection (Optional[Union[ProcessGroupCollection, MultiModuleProcessGroupCollection]], optional):
+            Custom process group collection. Passed to evaluate(). Defaults to None.
     """
     if write_to_tensorboard:
         writer = state.tensorboard_logger
@@ -274,7 +337,16 @@ def evaluate_and_print_results(
     wandb_writer = state.wandb_logger
 
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
-        state, forward_step_func, data_iterator, model, process_non_loss_data_func, config, verbose, non_loss_data_func
+        state,
+        forward_step_func,
+        data_iterator,
+        model,
+        process_non_loss_data_func,
+        config,
+        verbose,
+        non_loss_data_func,
+        p2p_communicator=p2p_communicator,
+        pg_collection=pg_collection,
     )
 
     # Timelimit hit during evaluation
