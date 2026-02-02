@@ -218,25 +218,25 @@ This is normal. Only the last pipeline stage builds MTP layers.
 
 ### Code Examples
 
-- **DeepSeek-V3 Recipe**: [`src/megatron/bridge/recipes/deepseek/deepseek_v3.py`](/Users/chcui/PycharmProjects/Megatron-Bridge/src/megatron/bridge/recipes/deepseek/deepseek_v3.py)
+- **DeepSeek-V3 Recipe**: [`src/megatron/bridge/recipes/deepseek/deepseek_v3.py`](../../src/megatron/bridge/recipes/deepseek/deepseek_v3.py)
   - Example of MTP with large-scale MoE model
   - Predefined pipeline layouts for PP + MTP
 
-- **Qwen3-Next Recipe**: [`src/megatron/bridge/recipes/qwen/qwen3_next.py`](/Users/chcui/PycharmProjects/Megatron-Bridge/src/megatron/bridge/recipes/qwen/qwen3_next.py)
+- **Qwen3-Next Recipe**: [`src/megatron/bridge/recipes/qwen/qwen3_next.py`](../../src/megatron/bridge/recipes/qwen/qwen3_next.py)
   - Clean example of MTP configuration for dense models
   - Good starting point for custom recipes
 
-- **MTP Core Implementation**: [`3rdparty/Megatron-LM/megatron/core/transformer/multi_token_prediction.py`](/Users/chcui/PycharmProjects/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/transformer/multi_token_prediction.py)
+- **MTP Core Implementation**: [`3rdparty/Megatron-LM/megatron/core/transformer/multi_token_prediction.py`](../../3rdparty/Megatron-LM/megatron/core/transformer/multi_token_prediction.py)
   - Low-level MTP layer implementation
   - Loss computation and logging helpers
 
 ### Documentation
 
-- **Megatron Core MTP API Guide**: [`3rdparty/Megatron-LM/docs/source/api-guide/multi_token_prediction.md`](/Users/chcui/PycharmProjects/Megatron-Bridge/3rdparty/Megatron-LM/docs/source/api-guide/multi_token_prediction.md)
+- **Megatron Core MTP API Guide**: [`3rdparty/Megatron-LM/docs/source/api-guide/multi_token_prediction.md`](../../3rdparty/Megatron-LM/docs/source/api-guide/multi_token_prediction.md)
   - Detailed API documentation
   - Implementation notes and design decisions
 
-- **Pipeline Parallelism Guide**: [`docs/parallelisms.md`](/Users/chcui/PycharmProjects/Megatron-Bridge/docs/parallelisms.md)
+- **Pipeline Parallelism Guide**: [`docs/parallelisms.md`](../parallelisms.md)
   - Understanding pipeline parallelism layouts
   - Best practices for PP configuration
 
@@ -259,7 +259,7 @@ This is normal. Only the last pipeline stage builds MTP layers.
 
 If you encounter issues not covered in this guide:
 
-1. Check the [Megatron-Bridge GitHub Issues](https://github.com/NVIDIA/Megatron-Bridge/issues)
+1. Check the [Megatron-Bridge GitHub Issues](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues)
 2. Review the [Megatron-LM Discussions](https://github.com/NVIDIA/Megatron-LM/discussions)
 
 When reporting issues, include:
