@@ -253,6 +253,7 @@ def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> Co
 
     return recipe
 
+
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
     _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
