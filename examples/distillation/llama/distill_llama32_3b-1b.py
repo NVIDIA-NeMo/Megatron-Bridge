@@ -80,7 +80,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 # Define paths relative to this script's location
-# Assumes this script (distill_llama32_3b-1b.py) is in Megatron-Bridge/examples/recipes/llama/
+# Assumes this script (distill_llama32_3b-1b.py) is in Megatron-Bridge/examples/distillation/llama/
 # and the config is in a 'conf' subdirectory.
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "llama32_3b-1b_distill_override_example.yaml"

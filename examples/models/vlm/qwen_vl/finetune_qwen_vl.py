@@ -43,27 +43,27 @@ Examples:
 
     Finetune using the imported checkpoint:
         Qwen2.5-VL 3B:
-            $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen25_vl_3b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25vl3b
 
         Qwen2.5-VL 7B:
-            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen25_vl_7b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25_vl_7b
 
         Qwen3-VL 8B (dense):
-            $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_8b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_8b
 
         Qwen3-VL 30B (MoE):
-            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_30b_a3b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_30b_a3b
 
         Qwen3-VL 235B (MoE):
-            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/vlm/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_235b_a22b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_235b_a22b
 
