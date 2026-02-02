@@ -63,36 +63,29 @@ where:
 
 ### Minimal Configuration Example
 
-Here's a minimal example using the Qwen3-Next recipe with MTP enabled:
+Here's a minimal example using the Qwen3 30B-A3B recipe with MTP enabled:
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_next_80b_a3b_pretrain_config
+from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain
 from megatron.bridge.training.pretrain import pretrain
 
-config = qwen3_next_80b_a3b_pretrain_config(
+config = qwen3_30b_a3b_pretrain(
     name="qwen3_next_mtp_test",
-    data_paths=["/path/to/data.nvjsonl"],
-
-    # MTP Configuration
-    mtp_num_layers=1,
-    mtp_loss_scaling_factor=0.1,
+    data_paths=[
+            f"/path/to/dclm/preprocessed/dclm_{i:02d}_text_document"
+            for i in range(1, 11)
+        ],
 )
+# Optionally set cache dir
+config.dataset.path_to_cache = "/path/to/cacahe
+# MTP Configuration
+config.mtp_num_layers = 1,
+config.mtp_loss_scaling_factor = 0.1,
 
 pretrain(config)
 ```
+Follow the [DCLM Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm) to prepare the training data 
 
-### Command-Line Launch Example
-
-You can also launch training using the `run_recipe.py` script with command-line arguments:
-
-```bash
-torchrun --nproc-per-node=8 scripts/training/run_recipe.py \
-    --recipe qwen3_next_80b_a3b_pretrain_config \
-    --name qwen3_next_mtp \
-    --data_paths /path/to/data.nvjsonl \
-    --mtp_num_layers 1 \
-    --mtp_loss_scaling_factor 0.1
-```
 
 ## MTP with Pipeline Parallelism
 
@@ -106,20 +99,6 @@ MTP layers take approximately the same training time as a regular transformer la
 - **Reduce layers in other PP ranks** to balance computation time across stages
 - Example: For a 60-layer model with PP=4 and `mtp_num_layers=1`, you might use splits like `[15, 30, 45, 60]` instead of `[15, 30, 46, 60]` to account for MTP overhead in the last stage
 
-### Verifying MTP Placement
-
-During training, you'll see log messages confirming MTP placement:
-
-```
-[Rank 15] Building model pipeline stage 16/16
-[Rank 15] Building Multi-Token Prediction layers: 1 depth(s)
-```
-
-On other pipeline stages, you'll see (this is expected):
-
-```
-[Rank 5] MTP layers not found on this PP rank (expected on last stage only)
-```
 
 ## Parallelism Support
 
@@ -140,29 +119,24 @@ MTP is compatible with all major parallelism strategies in Megatron-Bridge:
 During training, you'll see losses for each MTP depth logged separately:
 
 ```
-iteration:     100/100000 | consumed samples:        51200 | elapsed time per iteration (ms): 1247.3
-loss: 3.245 | mtp_1 loss: 3.512 | learning rate: 1.500E-04 | grad norm: 0.847
-```
-
-For models with `mtp_num_layers=2`:
-
-```
-iteration:     100/100000 | consumed samples:        51200 | elapsed time per iteration (ms): 1389.7
-loss: 3.245 | mtp_1 loss: 3.512 | mtp_2 loss: 3.689 | learning rate: 1.500E-04 | grad norm: 0.847
+iteration      100/  300000 | consumed samples:         3200 | elapsed time per iteration (ms): 3738.6 | learning rate: 6.000000E-05 | global batch size:    32 | lm loss: 7.968678E+00 | load_balancing_loss: 1.329517E+00 | mtp_1 loss: 7.925096E+00 | loss scale: 1.0 | grad norm: 1.040 | number of skipped iterations:   0 | number of nan iterations:   0 |
 ```
 
 ### Interpreting Loss Values
 
+![MTP Loss Curves](../images/mtp_loss.png)
+
+The figure above shows typical training curves for MTP-enabled training:
+- **Left**: MTP auxiliary loss (`mtp_1 loss`) tracking the first additional token prediction
+- **Right**: Main language model loss (`lm loss`) for standard next-token prediction
+
 **Expected Patterns:**
 
-- **MTP losses are higher than main loss**: Predicting tokens further in the future is harder
-  - Main loss: 3.245
-  - MTP 1 loss: 3.512 (+0.267)
-  - MTP 2 loss: 3.689 (+0.444)
+- **MTP losses are higher than main loss**: Predicting tokens further in the future is inherently harder. In the example above, `mtp_1 loss` (~4.3) is higher than `lm loss` (~3.9) at 3500 iterations.
 
-- **All losses decrease over training**: Both main and MTP losses should trend downward
+- **All losses decrease over training**: Both main and MTP losses should trend downward, as shown in the curves above.
 
-- **Loss gap remains relatively stable**: The difference between main and MTP losses should not grow significantly
+- **Loss gap remains relatively stable**: The difference between main and MTP losses should not grow significantly over training.
 
 **Red Flags:**
 
@@ -170,35 +144,21 @@ loss: 3.245 | mtp_1 loss: 3.512 | mtp_2 loss: 3.689 | learning rate: 1.500E-04 |
 - **Diverging losses**: If MTP losses increase while main loss decreases, reduce `mtp_loss_scaling_factor`
 - **Widening gap**: If MTP losses fall behind by > 1.0, increase `mtp_loss_scaling_factor`
 
-### TensorBoard Visualization
+**MTP vs Non-MTP Comparison:**
+
+![MTP Loss Comparison](../images/mtp_loss_comparison.png)
+
+The figure above compares `lm loss` between MTP-enabled (blue) and non-MTP (red) training runs on Qwen3-30B-A3B. The curves do not differ significantly in the first few thousand iterations. Notably, the MTP-enabled run shows smoother behavior around iterations 1000 and 2300, where the non-MTP run exhibits more pronounced spikes.
+
+### TensorBoard/WandB Visualization
 
 MTP losses are automatically logged to TensorBoard and/or WandB. Look for:
 
-- `train/loss` - Main next-token prediction loss
-- `train/mtp_1_loss` - First auxiliary prediction loss
-- `train/mtp_2_loss` - Second auxiliary prediction loss (if `mtp_num_layers=2`)
-- `train/total_loss` - Combined loss (main + weighted MTP average)
+- `lm loss` - Main next-token prediction loss
+- `mtp_1 loss` - First auxiliary prediction loss
+- `mtp_2 loss` - Second auxiliary prediction loss (if `mtp_num_layers=2`)
 
-
-## Training Curves & Expected Results
-
-**[NOTE: Training curves will be added after running experiments]**
-## TODO
-This section will include visual comparisons of:
-
-- MTP enabled vs. disabled training runs
-- Main loss, MTP 1 loss, and MTP 2 loss trajectories over iterations
-- Convergence behavior differences
-
-### Expected Patterns
-
-**Loss Curves:**
-
-- MTP losses are typically higher than main loss (predicting future tokens is harder)
-- All losses should decrease over training
-- The gap between main loss and MTP losses generally remains stable
-
-**Training Characteristics:**
+### Training Characteristics
 
 - MTP adds computational overhead due to additional forward passes
 - Memory usage increases proportionally to `mtp_num_layers`
