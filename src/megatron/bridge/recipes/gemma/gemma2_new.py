@@ -28,7 +28,6 @@ Model variants:
 from typing import Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
@@ -157,15 +156,13 @@ def gemma2_2b_sft_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
 
-    # DDP config - SFT uses distributed optimizer with overlaps
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=False,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
-        average_in_collective=True,
-        use_distributed_optimizer=True,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = True
 
     # RNG seed
     cfg.rng.seed = 5678
@@ -268,15 +265,13 @@ def gemma2_9b_sft_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
 
-    # DDP config - SFT uses distributed optimizer with overlaps
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=False,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
-        average_in_collective=True,
-        use_distributed_optimizer=True,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = True
 
     # RNG seed
     cfg.rng.seed = 5678
@@ -379,15 +374,13 @@ def gemma2_27b_sft_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
 
-    # DDP config - SFT uses distributed optimizer with overlaps
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=False,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
-        average_in_collective=True,
-        use_distributed_optimizer=True,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = True
 
     # RNG seed
     cfg.rng.seed = 5678
@@ -506,14 +499,11 @@ def gemma2_2b_peft_config(
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - PEFT uses different settings (no distributed optimizer)
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=True,
-        overlap_grad_reduce=False,
-        overlap_param_gather=False,
-        average_in_collective=False,
-        use_distributed_optimizer=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
 
     # RNG seed
     cfg.rng.seed = 5678
@@ -627,14 +617,11 @@ def gemma2_9b_peft_config(
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - PEFT uses different settings (no distributed optimizer)
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=True,
-        overlap_grad_reduce=False,
-        overlap_param_gather=False,
-        average_in_collective=False,
-        use_distributed_optimizer=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
 
     # RNG seed
     cfg.rng.seed = 5678
@@ -748,14 +735,11 @@ def gemma2_27b_peft_config(
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - PEFT uses different settings (no distributed optimizer)
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=True,
-        overlap_grad_reduce=False,
-        overlap_param_gather=False,
-        average_in_collective=False,
-        use_distributed_optimizer=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
 
     # RNG seed
     cfg.rng.seed = 5678

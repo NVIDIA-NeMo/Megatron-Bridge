@@ -32,7 +32,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
-from megatron.bridge.training.config import ConfigContainer, DistributedDataParallelConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
 # =============================================================================
@@ -145,10 +145,13 @@ def gpt_oss_20b_sft_config() -> ConfigContainer:
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - GPT-OSS only sets check_for_nan_in_grad
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        use_megatron_fsdp=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
@@ -264,10 +267,13 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - GPT-OSS only sets check_for_nan_in_grad
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        use_megatron_fsdp=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
@@ -397,10 +403,13 @@ def gpt_oss_20b_peft_config(
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - GPT-OSS only sets check_for_nan_in_grad
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        use_megatron_fsdp=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
@@ -525,10 +534,13 @@ def gpt_oss_120b_peft_config(
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config - GPT-OSS only sets check_for_nan_in_grad
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        use_megatron_fsdp=False,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False

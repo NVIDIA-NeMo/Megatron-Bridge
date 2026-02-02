@@ -31,7 +31,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
-from megatron.bridge.training.config import ConfigContainer, DistributedDataParallelConfig
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
@@ -153,14 +153,11 @@ def gemma3_1b_sft_config() -> ConfigContainer:
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=True,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
-        average_in_collective=True,
-        use_distributed_optimizer=True,
-    )
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = True
 
     # RNG seed
     cfg.rng.seed = 5678
@@ -287,14 +284,11 @@ def gemma3_1b_peft_config(
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=True,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
-        average_in_collective=True,
-        use_distributed_optimizer=True,
-    )
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = True
 
     # RNG seed
     cfg.rng.seed = 5678

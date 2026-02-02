@@ -29,7 +29,6 @@ Model variants:
 from typing import Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
@@ -158,16 +157,13 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     cfg.checkpoint.fully_parallel_save = True
 
     # DDP config
-    cfg.ddp = DistributedDataParallelConfig(
-        check_for_nan_in_grad=True,
-        grad_reduce_in_fp32=True,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
-        average_in_collective=True,
-        data_parallel_sharding_strategy="optim_grads_params",
-        use_distributed_optimizer=True,
-        use_megatron_fsdp=False,
-    )
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.use_megatron_fsdp = False
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
