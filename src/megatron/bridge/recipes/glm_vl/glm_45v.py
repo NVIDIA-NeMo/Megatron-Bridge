@@ -264,7 +264,7 @@ def _glm_45v_common(
     peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
-    _dataset_choice = dataset_type or "mock"
+    _dataset_choice = dataset_type or "hf"
     _processor_model = tokenizer_model or hf_path
 
     if _dataset_choice == "mock":

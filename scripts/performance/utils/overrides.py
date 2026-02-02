@@ -43,11 +43,12 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
 
+    # Checkpoint save is disabled by default for performance benchmarks
+    # Users can enable it via command-line arguments
     recipe.checkpoint.save = None
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
-    recipe.logger.save_config_filepath = "/nemo_run/configs/ConfigContainer.yaml"
 
     recipe.ddp.check_for_nan_in_grad = False
     recipe.ddp.check_for_large_grads = False
@@ -160,6 +161,43 @@ def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: boo
     return recipe
 
 
+def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+    """Set checkpoint save/load configuration."""
+    # When save_interval is provided, enable checkpointing
+    if args.save_interval is not None:
+        recipe.checkpoint.save_interval = args.save_interval
+        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
+
+        # Set save directory (use provided or default)
+        if args.save_dir is not None:
+            recipe.checkpoint.save = args.save_dir
+            logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        else:
+            recipe.checkpoint.save = "/nemo_run/checkpoints"
+            logger.info("Checkpoint save directory defaulting to: /nemo_run/checkpoints")
+
+    # If only save_dir is provided without save_interval, still enable checkpointing
+    elif args.save_dir is not None:
+        recipe.checkpoint.save = args.save_dir
+        logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        # Default save_interval to train_iters
+        recipe.checkpoint.save_interval = recipe.train.train_iters
+        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
+
+    if args.load_dir is not None:
+        recipe.checkpoint.load = args.load_dir
+        logger.info(f"Checkpoint load directory set to: {args.load_dir}")
+
+    if args.most_recent_k is not None:
+        recipe.checkpoint.most_recent_k = args.most_recent_k
+        logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
+
+    if args.save_config_filepath is not None:
+        recipe.logger.save_config_filepath = args.save_config_filepath
+
+    return recipe
+
+
 def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig) -> ConfigContainer:
     """Set workload base configs."""
     cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
@@ -239,6 +277,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_exp_name = args.wandb_experiment_name
         recipe.logger.wandb_entity = args.wandb_entity_name
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
+
+    recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
     if args.tensor_model_parallel_size is not None:
@@ -248,6 +289,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
+    # VP special case: -1 means "not specified, use default config", but None is a valid user override
     if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
@@ -260,6 +302,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.train.micro_batch_size = args.micro_batch_size
     if args.pretrained_checkpoint is not None:
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+
+    # Handle checkpoint configuration
+    _set_checkpoint_overrides(recipe, args)
+
     if args.tokenizer_type == "NullTokenizer":
         recipe.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
     elif args.tokenizer_type == "HuggingFaceTokenizer":
@@ -275,7 +321,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         )
     # Create dataset configuration based on type
     if args.data == "mock":
-        recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+        if args.domain == "llm":
+            # Override the dataset configuration for LLM models.
+            # For vlm models, use the default dataset configuration in model recipe,
+            # becuase preprocess of dataset is different for each vlm model.
+            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -287,25 +337,53 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=False
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=False,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or recipe.model.seq_length, packed=True
+            dataset_root=args.dataset_root,
+            seq_length=args.seq_length or recipe.model.seq_length,
+            packed=True,
+            pad_seq_to_mult=pad_seq_to_mult,
         )
+        if recipe.model.cuda_graph_impl != "none":
+            recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+        recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+    if args.hidden_size is not None:
+        recipe.model.hidden_size = args.hidden_size
+    if args.num_layers is not None or args.first_k_dense_replace is not None:
+        if args.first_k_dense_replace is not None:
+            num_dense_layers = args.first_k_dense_replace
+        else:
+            num_dense_layers = recipe.model.moe_layer_freq.count(0)
+        if args.num_layers is not None:
+            recipe.model.num_layers = args.num_layers
+        recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
+    if args.pipeline_model_parallel_layout is not None:
+        recipe.model.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
     # Reconfigure the DeepSeek-V3 pipeline model parallel layout
     # if the user has provided a custom PP and VP sizes
     model_recipe_name = args.model_recipe_name
     pp_size = args.pipeline_model_parallel_size
     vp_size = args.virtual_pipeline_model_parallel_size
-    if model_recipe_name == "deepseek_v3_pretrain_config" and pp_size is not None and vp_size != -1:
-        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, (pp_size, vp_size))
+    pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+    if model_recipe_name == "deepseek_v3" and (
+        pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
+    ):
+        set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
@@ -322,9 +400,12 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
+    config_variant: str = "v1",
 ) -> ConfigContainer:
     """Set the post overrides."""
-    workload_base_config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task)
+    workload_base_config = get_workload_base_config(
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+    )
 
     if compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
@@ -336,7 +417,8 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
+    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
         if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
             recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True

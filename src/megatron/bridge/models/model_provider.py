@@ -40,6 +40,13 @@ from megatron.core.distributed import (
     TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
@@ -117,6 +124,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -144,6 +152,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 this will override all hooks registered via `register_post_wrap_hook`.
             mixed_precision_wrapper: A module wrapper (e.g., `Float16Module`) applied when fp16/bf16
                 is enabled. If None, no mixed precision wrapper is applied.
+            pg_collection: Optional pre-initialized ProcessGroupCollection. If provided, skips
+                model parallel initialization and uses the provided collection directly.
+                This is used when `use_decentralized_pg=True` in the distributed config.
 
         Returns:
             A list containing the wrapped model instance.
@@ -159,9 +170,15 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
-        if not parallel_state.is_initialized():
-            print("Model parallel not initialized, initializing...")
-            self.initialize_model_parallel(seed=0)
+        # If pg_collection is provided (e.g., from use_decentralized_pg=True),
+        # use it directly. Otherwise, initialize model parallel state and get pg_collection from MPU.
+        if pg_collection is None:
+            if not parallel_state.is_initialized():
+                print("Model parallel not initialized, initializing...")
+                self.initialize_model_parallel(seed=0)
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        # Providers (GPT, Mamba, Gemma, etc.) expect pg_collection on self for PP/TP role checks.
+        setattr(self, "_pg_collection", pg_collection)
 
         # Convert list of hooks to a single composed callable
         if isinstance(pre_wrap_hook, list):
@@ -191,6 +208,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
+            pg_collection=pg_collection,
         )
 
         if final_post_wrap_hook:
@@ -475,6 +493,8 @@ def get_model(
     ]
     | None = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -521,9 +541,9 @@ def get_model(
     if init_model_with_meta_device:
         model_provider.init_model_with_meta_device = True
         with torch.device("meta"):
-            model = _create_model(model_provider, model_type)
+            model = _create_model(model_provider, model_type, pg_collection=pg_collection)
     else:
-        model = _create_model(model_provider, model_type)
+        model = _create_model(model_provider, model_type, pg_collection=pg_collection)
 
     if pre_wrap_hook:
         if isinstance(pre_wrap_hook, list):
@@ -547,7 +567,7 @@ def get_model(
         for param in model_module.parameters():
             tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
 
-    _print_num_params(model)
+    _print_num_params(model, pg_collection=pg_collection)
 
     model_config = get_model_config(model[0])
 
@@ -565,6 +585,12 @@ def get_model(
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
         model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
 
+        # Maintain expert bias in float32 wrapped in Float16Module
+        for model_module in model:
+            for submodule in model_module.modules():
+                if hasattr(submodule, "_maintain_float32_expert_bias"):
+                    submodule._maintain_float32_expert_bias()
+
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
 
@@ -576,6 +602,7 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            pg_collection=pg_collection,
         )
 
     return model
@@ -584,6 +611,7 @@ def get_model(
 def _create_model(
     model_provider: ModelProviderMixin,
     model_type: ModelType,
+    pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
     """Create model instances with appropriate pipeline parallel configuration.
 
@@ -598,18 +626,16 @@ def _create_model(
     Returns:
         list: List of model instances. Multiple instances for VPP, otherwise single
     """
-
-    if (
-        parallel_state.get_pipeline_model_parallel_world_size() > 1
-        and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
-    ):
+    vp_size = getattr(model_provider, "virtual_pipeline_model_parallel_size", None)
+    pp_group = pg_collection.pp
+    if (pp_group.size() > 1) and (vp_size is not None):
         assert model_type != ModelType.encoder_and_decoder, (
             "Interleaved schedule not supported for model with both encoder and decoder"
         )
         model = []
-        for i in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
-            pre_process = parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=i)
-            post_process = parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=i)
+        for i in range(vp_size):
+            pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
+            post_process = is_vp_last_stage(vp_stage=i, vp_size=vp_size) and is_pp_last_stage(pp_group)
             this_model = model_provider.provide(
                 pre_process=pre_process,
                 post_process=post_process,
@@ -618,15 +644,10 @@ def _create_model(
             this_model.model_type = model_type
             model.append(this_model)
     else:
-        pre_process = parallel_state.is_pipeline_first_stage()
-        post_process = parallel_state.is_pipeline_last_stage()
+        pre_process = is_pp_first_stage(pp_group)
+        post_process = is_pp_last_stage(pp_group)
         if model_type == ModelType.encoder_and_decoder:
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-                rank = parallel_state.get_pipeline_model_parallel_rank()
-                first_decoder_rank = parallel_state.get_pipeline_model_parallel_decoder_start()
-                world_size = parallel_state.get_pipeline_model_parallel_world_size()
-                pre_process = rank == 0 or rank == first_decoder_rank
-                post_process = (rank == (first_decoder_rank - 1)) or (rank == (world_size - 1))
+            # Deprecated in upstream; simplify to first/last stage semantics
             model = model_provider.provide()
         else:
             model = model_provider.provide(
@@ -656,6 +677,8 @@ def _ddp_wrap(
     overlap_param_gather_with_optimizer_step: bool,
     use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
     """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
 
@@ -693,6 +716,7 @@ def _ddp_wrap(
                 # Turn off bucketing for model_chunk 2 onwards, since communication for these
                 # model chunks is overlapped with compute anyway.
                 disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
+                pg_collection=pg_collection,
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
@@ -707,7 +731,7 @@ def _ddp_wrap(
     return model
 
 
-def _print_num_params(model: list[MegatronModule]) -> None:
+def _print_num_params(model: list[MegatronModule], pg_collection: ProcessGroupCollection) -> None:
     """Print the number of parameters in the model on rank 0.
 
     Only prints on data parallel rank 0 to avoid duplicate output.
@@ -716,11 +740,11 @@ def _print_num_params(model: list[MegatronModule]) -> None:
     Args:
         model: List of model modules to count parameters from
     """
-    if parallel_state.get_data_parallel_rank() == 0 and parallel_state.get_context_parallel_rank() == 0:
+    if (pg_collection.dp.rank() == 0) and (pg_collection.cp.rank() == 0):
         print(
             " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
-                parallel_state.get_tensor_model_parallel_rank(),
-                parallel_state.get_pipeline_model_parallel_rank(),
+                pg_collection.tp.rank(),
+                pg_collection.pp.rank(),
                 sum([sum([p.nelement() for p in model_module.parameters()]) for model_module in model]),
             ),
             flush=True,
