@@ -41,7 +41,7 @@ GLM-4.5V combines efficient sparse MoE language modeling with multimodal capabil
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [GLM-4.5V Examples](../../../examples/models/vlm/glm_45v/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [GLM-4.5V Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/glm_45v/README.md).
 
 ## Hugging Face Model Cards
 

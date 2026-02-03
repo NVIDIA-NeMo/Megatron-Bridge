@@ -46,7 +46,7 @@ Gemma 3 VL builds on the Gemma 3 architecture with additional multimodal capabil
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Gemma 3 VL Examples](../../../examples/models/vlm/gemma3_vl/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Gemma 3 VL Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/gemma3_vl/README.md).
 
 ## Hugging Face Model Cards
 
