@@ -6,6 +6,9 @@ for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
 MEGATRON_CHECKPOINT=$1
 NUM_REPLICAS=$2
 NUM_GPUS=$3
+TP=$4
+PP=$5
+CP=$6
 python \
   /opt/Export-Deploy/scripts/deploy/nlp/deploy_ray_inframework.py \
   --megatron_checkpoint "$MEGATRON_CHECKPOINT" \
@@ -14,6 +17,6 @@ python \
   --port 8000 \
   --num_gpus "$NUM_GPUS" \
   --num_replicas "$NUM_REPLICAS" \
-  --tensor_model_parallel_size 1 \
-  --pipeline_model_parallel_size 1 \
-  --context_parallel_size 1 
+  --tensor_model_parallel_size "$TP" \
+  --pipeline_model_parallel_size "$PP" \
+  --context_parallel_size "$CP" 
