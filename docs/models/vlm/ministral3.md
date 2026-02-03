@@ -1,4 +1,4 @@
-# Ministral 3 - Vision Language Model
+# Ministral 3
 
 [Mistral AI's Ministral 3](https://huggingface.co/collections/mistralai/ministral-3) is a family of edge-optimized vision-language models designed for deployment across various hardware configurations. The Ministral 3 architecture combines a powerful language model with a vision encoder for multimodal understanding.
 
@@ -49,82 +49,38 @@ Ministral 3 combines efficient language modeling with multimodal capabilities:
 - **Multimodal Projector**: Projects vision features to language model space
 - **Flexible Image Handling**: Supports variable resolution images and multiple images per conversation
 
-## Workspace Configuration
-
-All scripts use a `WORKSPACE` environment variable to define the base directory for checkpoints and results. By default, this is set to `/workspace`. You can override it:
-
-```bash
-export WORKSPACE=/your/custom/path
-```
-
-Directory structure:
-- `${WORKSPACE}/models/` - Converted checkpoints
-- `${WORKSPACE}/results/` - Training outputs and experiment results
-
-## Checkpoint Conversion
+## Conversion with 🤗 Hugging Face
 
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
 python examples/conversion/convert_checkpoints.py import \
-  --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
-  --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16
+--hf-model mistralai/Ministral-3-3B-Base-2512 \
+--megatron-path /models/ministral3-3b
 ```
 
 ### Export Megatron → HF
 ```bash
 python examples/conversion/convert_checkpoints.py export \
-  --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
-  --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
-  --hf-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16-hf-export
+--hf-model mistralai/Ministral-3-3B-Base-2512 \
+--megatron-path /results/ministral3_3b/checkpoints/iter_0001000 \
+--hf-path ./ministral3-hf-export
 ```
-
-## Inference
 
 ### Run Inference on Converted Checkpoint
 
 ```bash
 python examples/conversion/hf_to_megatron_generate_vlm.py \
-  --hf_model_path mistralai/Ministral-3-3B-Instruct-2512-BF16 \
-  --megatron_model_path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
-  --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
-  --prompt "Describe this image." \
-  --max_new_tokens 100
+--hf_model_path mistralai/Ministral-3-3B-Base-2512 \
+--megatron_model_path /models/ministral3-3b \
+--image_path <example image path> \
+--prompt "Describe this image." \
+--max_new_tokens 100
 ```
 
 Note:
 - `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward.
 - You can also use image URLs: `--image_path="https://example.com/image.jpg"`
-
-See the [inference.sh](inference.sh) script for commands to:
-- Run inference with Hugging Face checkpoints
-- Run inference with imported Megatron checkpoints
-- Run inference with exported Hugging Face checkpoints
-
-**Expected output:**
-```
-...
-Generation step 46
-Generation step 47
-Generation step 48
-Generation step 49
-======== GENERATED TEXT OUTPUT ========
-Image: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png
-Prompt: Describe this image.
-Generated: <s><s>[SYSTEM_PROMPT]You are Ministral-3-3B-Instruct-2512, a Large Language Model (LLM) created by Mistral AI, a French startup headquartered in Paris.
-You power an AI assistant called Le Chat.
-Your knowledge base was last updated on 2023-10-01.
-The current date is {today}.
-...
-[IMG_END]Describe this image.[/INST]The image presents a comparison table of technical specifications between two NVIDIA GPUs: the **H100 SXM** and the **H100 NVL**.
-
-### **FPU Performance (Floating-Point Operations Per Second)**
-- **FP64**:
-  - H100 SXM: 34 teraFLOPS
-  - H100 NVL: 30 teraFLOPS
-- **FP64 Tensor
-=======================================
-```
 
 ## Finetune Recipes
 
@@ -140,21 +96,82 @@ Before training, ensure the following environment variables are set:
 3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
 4. `WANDB_API_KEY`: (optional) to enable WandB logging
 
-### Pretrain
+### Full Finetuning
 
-Pretraining is not verified for this model.
+```bash
+torchrun --nproc-per-node=8 examples/models/vlm/ministral3/finetune_ministral3_vl.py \
+--pretrained-checkpoint /models/ministral3-3b \
+--dataset-type hf \
+train.global_batch_size=32 \
+train.train_iters=1000
+```
 
-### Supervised Fine-Tuning (SFT)
+Or programmatically:
+```python
+from megatron.bridge.recipes.ministral3 import ministral3_3b_finetune_config
 
-See the [sft.sh](sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
+# Full finetuning
+config = ministral3_3b_finetune_config(
+    name="ministral3_3b_full_finetune",
+    pretrained_checkpoint="/models/ministral3-3b",
+    dataset_type="hf",
+    peft=None,
+    train_iters=1000,
+    global_batch_size=32,
+)
+```
 
-W&B report coming soon.
+### Parameter-Efficient Finetuning (PEFT) with LoRA
 
-### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
+```bash
+torchrun --nproc-per-node=8 examples/models/vlm/ministral3/finetune_ministral3_vl.py \
+--pretrained-checkpoint /models/ministral3-3b \
+--peft-scheme lora \
+--dataset-type hf \
+train.global_batch_size=64 \
+train.train_iters=1000
+```
 
-See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
+PEFT options:
+- `--peft-scheme`: Set to `lora` for LoRA or `dora` for DoRA. Omit for full finetuning.
 
-W&B report coming soon.
+You can also combine PEFT with freeze options:
+- `--freeze-language-model`: Freeze the language model
+- `--freeze-vision-model`: Freeze the vision encoder
+- `--freeze-vision-projection`: Freeze the vision projection layer
+
+Example with freeze options:
+```bash
+torchrun --nproc-per-node=8 examples/models/vlm/ministral3/finetune_ministral3_vl.py \
+--pretrained-checkpoint /models/ministral3-3b \
+--peft-scheme lora \
+--freeze-vision-model \
+train.global_batch_size=64
+```
+
+Programmatic configuration:
+```python
+from megatron.bridge.recipes.ministral3 import ministral3_3b_finetune_config
+
+# LoRA finetuning
+config = ministral3_3b_finetune_config(
+    name="ministral3_3b_lora_finetune",
+    pretrained_checkpoint="/models/ministral3-3b",
+    dataset_type="hf",
+    peft="lora",  # or "dora"
+    train_iters=1000,
+    global_batch_size=64,
+)
+
+# LoRA with vision model frozen
+config = ministral3_3b_finetune_config(
+    name="ministral3_3b_lora_language_only",
+    pretrained_checkpoint="/models/ministral3-3b",
+    peft="lora",
+    freeze_vision_model=True,
+    freeze_vision_projection=True,
+)
+```
 
 ### Recommended Configurations
 
@@ -169,9 +186,20 @@ W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
-## Evaluation
+## Example Datasets
 
-Coming soon.
+| Dataset | Maker Name | Description |
+|---------|------------|-------------|
+| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `make_cord_v2_dataset` | OCR receipts: Single-image-text dataset for receipt understanding |
+| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image Q&A for clinical images |
+| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image analogical reasoning |
+
+To change the dataset, specify `dataset.maker_name=<maker_name>` in your command.
+
+## Examples
+- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Generate with VLM (HF→Megatron): [examples/conversion/hf_to_megatron_generate_vlm.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_vlm.py)
+- Finetuning script: [examples/models/vlm/ministral3/finetune_ministral3_vl.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/ministral3/finetune_ministral3_vl.py)
 
 ## Hugging Face Model Cards
 
