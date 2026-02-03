@@ -18,7 +18,7 @@
 #
 # GLM-4.5V is a large MoE model (106B parameters)
 # LoRA/DoRA significantly reduces memory requirements
-# Recommended: TP=1, PP=8, EP=4 for LoRA (32 GPUs, 4 nodes)
+# Recommended: TP=1, PP=8, EP=4 for LoRA (256 GPUs, 32 nodes)
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
@@ -27,7 +27,7 @@
 # ==============================================================================
 
 #SBATCH --job-name=glm45v-lora
-#SBATCH --nodes=4
+#SBATCH --nodes=32
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=08:00:00

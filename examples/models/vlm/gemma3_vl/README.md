@@ -1,48 +1,8 @@
-# Gemma 3 VL (Vision-Language)
+# Gemma 3 VL Examples
 
-[Google's Gemma 3 VL](https://huggingface.co/collections/google/gemma-3-release) is a family of vision-language models built on the same research and technology used to create Gemini models. The Gemma 3 VL architecture combines the text-generation capabilities of Gemma 3 with a SigLIP vision encoder for robust visual understanding.
+This directory contains example scripts for Gemma 3 VL vision-language models.
 
-Gemma 3 VL models support multimodal tasks including image captioning, visual question answering, OCR, and general vision-language understanding.
-
-Gemma family models are supported via the Bridge system with auto-detected configuration and weight mapping.
-
-## Available Models
-
-### Vision-Language Models
-- **Gemma 3 VL 4B** (`google/gemma-3-4b-it`): 4B parameter vision-language model
-  - 34 layers, 2560 hidden size
-  - 16 attention heads, 4 query groups (GQA)
-  - Vision encoder: SigLIP with 729M parameters
-  - Recommended: 1 node, 8 GPUs
-  
-- **Gemma 3 VL 12B** (`google/gemma-3-12b-it`): 12B parameter vision-language model
-  - 48 layers, 3840 hidden size
-  - 24 attention heads, 8 query groups (GQA)
-  - Vision encoder: SigLIP with 729M parameters
-  - Recommended: 1 node, 8 GPUs
-  
-- **Gemma 3 VL 27B** (`google/gemma-3-27b-it`): 27B parameter vision-language model
-  - 62 layers, 5376 hidden size
-  - 32 attention heads, 16 query groups (GQA)
-  - Vision encoder: SigLIP with 729M parameters
-  - Recommended: 2 nodes, 16 GPUs
-
-All models support a sequence length of 131,072 tokens and use hybrid attention patterns (sliding window + global).
-
-## Model Architecture Features
-
-Gemma 3 VL builds on the Gemma 3 architecture with additional multimodal capabilities:
-
-**Language Model Features:**
-- **Hybrid Attention Pattern**: Alternates between global and local sliding window attention for efficient long-context processing
-- **GeGLU Activation**: Uses gated linear units with GELU activation for improved performance
-- **RMSNorm**: Layer normalization without mean centering for faster computation
-- **Rotary Embeddings**: Separate RoPE configurations for local and global attention layers
-
-**Vision-Language Features:**
-- **SigLIP Vision Encoder**: Pre-trained vision encoder with 729M parameters for robust visual understanding
-- **Multimodal Integration**: Seamless integration of visual and textual information through learned projection layers
-- **Flexible Image Handling**: Supports variable resolution images and multiple images per conversation
+For model introduction and architecture details, see the [Gemma 3 VL documentation](../../../../docs/models/vlm/gemma3-vl.md).
 
 ## Workspace Configuration
 
@@ -155,28 +115,15 @@ W&B report coming soon.
 
 | Model | Mode | TP | PP | Global Batch Size | Learning Rate | Hardware |
 |-------|------|----|----|-------------------|---------------|----------|
-| Gemma 3 VL 4B | Full SFT | 1 | 1 | 32-64 | 5e-6 | 8 GPUs |
-| Gemma 3 VL 4B | LoRA/DoRA | 1 | 1 | 64-128 | 1e-4 | 8 GPUs |
-| Gemma 3 VL 12B | Full SFT | 4 | 1 | 32-64 | 5e-6 | 8 GPUs |
-| Gemma 3 VL 12B | LoRA/DoRA | 1 | 1 | 64-128 | 1e-4 | 8 GPUs |
-| Gemma 3 VL 27B | Full SFT | 8 | 2 | 16-32 | 5e-6 | 16 GPUs |
-| Gemma 3 VL 27B | LoRA/DoRA | 4 | 1 | 32-64 | 1e-4 | 16 GPUs |
+| Gemma 3 VL 4B | Full SFT | 2 | 1 | 32 | 5e-5 | 8 GPUs |
+| Gemma 3 VL 4B | LoRA/DoRA | 2 | 1 | 32 | 2e-4 | 8 GPUs |
+| Gemma 3 VL 12B | Full SFT | 4 | 1 | 32 | 5e-5 | 8 GPUs |
+| Gemma 3 VL 12B | LoRA/DoRA | 2 | 1 | 32 | 2e-4 | 8 GPUs |
+| Gemma 3 VL 27B | Full SFT | 8 | 2 | 32 | 5e-5 | 16 GPUs |
+| Gemma 3 VL 27B | LoRA/DoRA | 4 | 1 | 32 | 2e-4 | 8 GPUs |
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
 ## Evaluation
 
 Coming soon.
-
-## Hugging Face Model Cards
-
-- Gemma 3 VL 4B: https://huggingface.co/google/gemma-3-4b-it
-- Gemma 3 VL 12B: https://huggingface.co/google/gemma-3-12b-it
-- Gemma 3 VL 27B: https://huggingface.co/google/gemma-3-27b-it
-
-## Related Docs
-
-- Text-Only Models: [Gemma 3](../../../../docs/models/llm/gemma3.md)
-- Recipe usage: [Recipe usage](../../../../docs/recipe-usage.md)
-- Customizing the training recipe configuration: [Configuration overview](../../../../docs/training/config-container-overview.md)
-- Training entry points: [Entry points](../../../../docs/training/entry-points.md)

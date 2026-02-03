@@ -61,14 +61,14 @@ def set_glm_45v_pipeline_model_parallel_layout(
     vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
 
     # GLM-4.5 Air has 46 decoder layers
-    # Layout maps for common PP/VP combinations
     # GLM-4.5 Vision Encoder is huge, we need to balance the first stage with the least number of layers
+    # Layout maps for common PP/VP combinations
     layout_map = {
         (1, 1): None,
-        (2, 1): [["embedding"] + ["decoder"] * 23, ["decoder"] * 23 + last_layer],
-        (4, 1): [["embedding"] + ["decoder"] * 11, ["decoder"] * 12, ["decoder"] * 12, ["decoder"] * 11 + last_layer],
+        (2, 1): [["embedding"] + ["decoder"] * 10, ["decoder"] * 36 + last_layer],
+        (4, 1): [["embedding"] + ["decoder"] * 2, ["decoder"] * 15, ["decoder"] * 15, ["decoder"] * 14 + last_layer],
         (8, 1): [["embedding"] + ["decoder"]] + [["decoder"] * 7] * 6 + [["decoder"] * 3 + last_layer],
-        (16, 1): [["embedding"] + ["decoder"] * 2] + [["decoder"] * 3] * 14 + [["decoder"] * 2 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"]] + [["decoder"] * 3] * 14 + [["decoder"] * 3 + last_layer],
     }
 
     if layout is not None:

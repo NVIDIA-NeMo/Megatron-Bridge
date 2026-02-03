@@ -1,36 +1,8 @@
-# GLM-4.5V (Vision-Language)
+# GLM-4.5V Examples
 
-[GLM-4.5V](https://huggingface.co/zai-org/GLM-4.5V) is a powerful vision-language model from Zhipu AI, built on the GLM-4.5 Air architecture. It combines the text-generation capabilities of GLM-4.5 with robust visual understanding through a multi-modal vision encoder.
+This directory contains example scripts for GLM-4.5V vision-language model.
 
-GLM-4.5V supports multimodal tasks including image captioning, visual question answering, OCR, document understanding, and general vision-language understanding. It also supports video understanding.
-
-GLM family models are supported via the Bridge system with auto-detected configuration and weight mapping.
-
-## Available Models
-
-### Vision-Language Models
-- **GLM-4.5V** (`zai-org/GLM-4.5V`): 106B parameter vision-language model (based on GLM-4.5 Air)
-  - 46 decoder layers
-  - Sparse MoE with shared experts
-  - Multi-modality support for images and videos
-  - MRoPE (Multi-Resolution Rotary Position Embedding)
-  - Recommended: 4 nodes, 32 GPUs (LoRA) or 16 nodes, 128 GPUs (Full SFT)
-
-## Model Architecture Features
-
-GLM-4.5V builds on the GLM-4.5 Air architecture with additional multimodal capabilities:
-
-**Language Model Features:**
-- **Sparse MoE Architecture**: Mixture of Experts with shared experts for efficient scaling
-- **Multi-Token Prediction**: Optional MTP layers for improved generation
-- **RMSNorm**: Layer normalization without mean centering for faster computation
-- **MRoPE**: Multi-Resolution Rotary Position Embedding for flexible position encoding
-
-**Vision-Language Features:**
-- **Multi-modal Vision Encoder**: Pre-trained vision encoder for robust visual understanding
-- **Multimodal Integration**: Seamless integration of visual and textual information through learned projection layers
-- **Image and Video Support**: Handles both static images and video content
-- **Flexible Resolution**: Supports variable resolution images
+For model introduction and architecture details, see the [GLM-4.5V documentation](../../../../docs/models/vlm/glm-45v.md).
 
 ## Workspace Configuration
 
@@ -144,7 +116,7 @@ W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-LoRA fine-tuning requires only 4 nodes (32 GPUs) with TP=1, PP=8, EP=4.
+LoRA fine-tuning requires 32 nodes (256 GPUs) with TP=1, PP=8, EP=4.
 
 **Usage:**
 ```bash
@@ -163,17 +135,43 @@ W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for fewer GPUs. Expert parallelism (EP) is essential for efficient training of this MoE model.
 
+### Recommended Configurations
+
+| Model | Mode | TP | PP | EP | Global Batch Size | Learning Rate | Hardware |
+|-------|------|----|----|-----|-------------------|---------------|----------|
+| GLM-4.5V | Full SFT | 1 | 8 | 16 | 32 | 5e-6 | 512 GPUs (64 nodes) |
+| GLM-4.5V | LoRA/DoRA | 1 | 8 | 4 | 32 | 1e-4 | 256 GPUs (32 nodes) |
+
+### Multi-Node Setup with Local Repository
+
+If you are mounting a local Megatron Bridge repository, you must pre-sync the uv cache to avoid race conditions when multiple nodes attempt to sync simultaneously. Follow these steps:
+
+1. **Start a container with your mounts and run `uv sync`:**
+   ```bash
+   # Start an interactive container with the same mounts you'll use in Slurm
+   srun --nodes=1 --ntasks=1 --container-image=/path/to/container.sqsh \
+        --container-mounts=/path/to/Megatron-Bridge:/opt/Megatron-Bridge,/shared/uv_cache:/shared/uv_cache \
+        --pty bash
+   
+   # Inside the container, pre-sync to the shared cache
+   cd /opt/Megatron-Bridge
+   UV_CACHE_DIR=/shared/uv_cache uv sync
+   ```
+
+2. **Update the Slurm script with UV_CACHE_DIR and mounts:**
+   ```bash
+   # In slurm_sft.sh or slurm_peft.sh, set:
+   export UV_CACHE_DIR="/shared/uv_cache"
+   
+   # And configure container mounts:
+   CONTAINER_MOUNTS="/path/to/Megatron-Bridge:/opt/Megatron-Bridge,/shared/uv_cache:/shared/uv_cache"
+   ```
+
+3. **Submit the job:**
+   ```bash
+   sbatch slurm_sft.sh   # or slurm_peft.sh
+   ```
+
 ## Evaluation
 
 Coming soon.
-
-## Hugging Face Model Cards
-
-- GLM-4.5V: https://huggingface.co/zai-org/GLM-4.5V
-
-## Related Docs
-
-- Text-Only Models: [GLM 4.5](../../../../docs/models/llm/glm45.md)
-- Recipe usage: [Recipe usage](../../../../docs/recipe-usage.md)
-- Customizing the training recipe configuration: [Configuration overview](../../../../docs/training/config-container-overview.md)
-- Training entry points: [Entry points](../../../../docs/training/entry-points.md)
