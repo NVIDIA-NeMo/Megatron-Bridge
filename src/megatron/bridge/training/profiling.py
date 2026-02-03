@@ -60,7 +60,7 @@ def handle_profiling_step(
     """
     if config is None:
         return None
-        
+
     if not should_profile_rank(config, rank):
         return None
 

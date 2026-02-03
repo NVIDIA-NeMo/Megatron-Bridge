@@ -50,6 +50,7 @@ from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
+from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -82,7 +83,7 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
-from megatron.bridge.data.iterator_utils import make_data_iterator_list
+
 
 def train(
     forward_step_func: ForwardStepCallable,
@@ -218,7 +219,7 @@ def train(
         config.optimizer.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
-    #should_toggle_forward_pre_hook = False
+    # should_toggle_forward_pre_hook = False
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -305,8 +306,6 @@ def train(
             if distributed_timeout_seconds_after_init is not None:
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
 
-
-        #if config.train.rampup_batch_size is not None:
         # Update number of microbatches first without consistency check to decide if a
         # checkpoint should be saved. If the number of microbatches is different
         # from the previous iteration, save a checkpoint. Then run consistency check
@@ -467,7 +466,7 @@ def train(
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if config.logger.tensorboard_dir is not None: # Skip logging as tensorboard logging is disabled.
+        if config.logger.tensorboard_dir is not None:  # Skip logging as tensorboard logging is disabled.
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 loss_scale = optimizer.get_loss_scale().item()
             else:
@@ -486,7 +485,7 @@ def train(
                     decoupled_learning_rate = param_group["lr"]
                 else:
                     learning_rate = param_group["lr"]
-                        
+
             report_memory_flag = training_log(
                 loss_dict,
                 total_loss_dict,
@@ -504,7 +503,7 @@ def train(
                 model,
                 log_max_attention_logit,
             )
-        
+
         if (
             global_state.train_state.do_valid
             and train_config.eval_interval
