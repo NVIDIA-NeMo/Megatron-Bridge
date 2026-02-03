@@ -50,6 +50,7 @@ training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
 training/distillation.md
+training/callbacks.md
 ```
 
 ```{toctree}

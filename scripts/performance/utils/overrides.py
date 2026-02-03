@@ -43,6 +43,8 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
 
+    # Checkpoint save is disabled by default for performance benchmarks
+    # Users can enable it via command-line arguments
     recipe.checkpoint.save = None
 
     recipe.logger.log_interval = 1
@@ -159,6 +161,43 @@ def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: boo
     return recipe
 
 
+def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+    """Set checkpoint save/load configuration."""
+    # When save_interval is provided, enable checkpointing
+    if args.save_interval is not None:
+        recipe.checkpoint.save_interval = args.save_interval
+        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
+
+        # Set save directory (use provided or default)
+        if args.save_dir is not None:
+            recipe.checkpoint.save = args.save_dir
+            logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        else:
+            recipe.checkpoint.save = "/nemo_run/checkpoints"
+            logger.info("Checkpoint save directory defaulting to: /nemo_run/checkpoints")
+
+    # If only save_dir is provided without save_interval, still enable checkpointing
+    elif args.save_dir is not None:
+        recipe.checkpoint.save = args.save_dir
+        logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        # Default save_interval to train_iters
+        recipe.checkpoint.save_interval = recipe.train.train_iters
+        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
+
+    if args.load_dir is not None:
+        recipe.checkpoint.load = args.load_dir
+        logger.info(f"Checkpoint load directory set to: {args.load_dir}")
+
+    if args.most_recent_k is not None:
+        recipe.checkpoint.most_recent_k = args.most_recent_k
+        logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
+
+    if args.save_config_filepath is not None:
+        recipe.logger.save_config_filepath = args.save_config_filepath
+
+    return recipe
+
+
 def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig) -> ConfigContainer:
     """Set workload base configs."""
     cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
@@ -250,6 +289,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
+    # VP special case: -1 means "not specified, use default config", but None is a valid user override
     if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
@@ -262,6 +302,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.train.micro_batch_size = args.micro_batch_size
     if args.pretrained_checkpoint is not None:
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+
+    # Handle checkpoint configuration
+    _set_checkpoint_overrides(recipe, args)
+
     if args.tokenizer_type == "NullTokenizer":
         recipe.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
     elif args.tokenizer_type == "HuggingFaceTokenizer":
@@ -374,7 +418,7 @@ def set_post_overrides(
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
-    if dp > 1 and pp > 1 and vp > 1 and compute_dtype != "fp8_mx":
+    if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
         # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
         if recipe.optimizer.optimizer != "dist_muon":
             recipe.optimizer.overlap_param_gather_with_optimizer_step = True

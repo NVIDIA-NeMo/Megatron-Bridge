@@ -26,7 +26,7 @@ Examples:
                --megatron-path /path/to/megatron_ckpt
 
         2) Run finetune using the imported checkpoint:
-           $ torchrun --nproc_per_node=8 examples/recipes/qwen/finetune_qwen3_next_80b_a3b.py \
+           $ torchrun --nproc_per_node=8 examples/models/qwen3_next/finetune_qwen3_next_80b_a3b.py \
                --pretrained-checkpoint /path/to/megatron_ckpt
 
     Using a custom YAML config file:

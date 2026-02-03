@@ -38,6 +38,13 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 logger = logging.getLogger(__name__)
 
+HF_BASED_TOKENIZERS = [
+    "BertWordPieceLowerCase",
+    "BertWordPieceCase",
+    "GPT2BPETokenizer",
+    "HuggingFaceTokenizer",
+]
+
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
     """Convert Megatron-Core config dtype settings to torch dtype.
@@ -171,6 +178,9 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
             raise AttributeError(
                 f"Attempting to set a non-existent attribute '{key}' on TokenizerConfig.\nState of TokenizerConfig before attempting this override: {cfg}"
             )
+
+    if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
+        cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
 
     return build_tokenizer(cfg)
 

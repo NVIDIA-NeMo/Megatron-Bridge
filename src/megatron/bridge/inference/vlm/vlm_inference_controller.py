@@ -102,7 +102,7 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
                     if token == 151652:
                         new_tokens.append(token)
                         new_tokens.append(151655)
-                    else:
+                    elif token != 151655:
                         new_tokens.append(token)
                 return self._tokenizer.decode(new_tokens, skip_special_tokens=False)
 
