@@ -47,7 +47,7 @@ def run_pretrain_recipe_test(
     4. No crashes occur during the process
 
     Args:
-        config_func: The recipe's pretrain_config function (parameterless API)
+        config_func: The recipe's pretrain_config function
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
@@ -56,19 +56,12 @@ def run_pretrain_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
-    shared_base_dir = Path(broadcast_path(tmp_path))
+    shared_base_dir = broadcast_path(tmp_path)
 
     try:
-        # Pretrain configs use parameterless API - call without arguments
-        config: ConfigContainer = config_func()
-
-        # Set up output directories after instantiation
-        run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
-        checkpoint_dir = run_output_dir / "checkpoints"
-        tensorboard_dir = run_output_dir / "tb_logs"
-        config.checkpoint.save = str(checkpoint_dir)
-        config.checkpoint.load = str(checkpoint_dir)
-        config.logger.tensorboard_dir = str(tensorboard_dir)
+        config: ConfigContainer = config_func(
+            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", mock=True
+        )
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
         config.train.eval_interval = 5
@@ -139,14 +132,13 @@ def run_pretrain_recipe_perf_test(
     3. No crashes occur during the process
 
     Args:
-        config_func: The recipe's pretrain_config function (parameterless API)
+        config_func: The recipe's pretrain_config function
         recipe_name: Name of the recipe for logging/debugging
         config_overrides: Optional mapping of config attribute overrides to apply
     """
     initialize_distributed()
 
-    # Pretrain configs use parameterless API - call without arguments
-    config: ConfigContainer = config_func()
+    config: ConfigContainer = config_func(name=f"{recipe_name}_functional_test", mock=True)
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
     config.train.eval_interval = 5
