@@ -67,6 +67,8 @@ def get_module_to_grid_tuple(
             continue
             
         # Get the actual module from the model
+        # TODO: Handle Float16Module-wrapped MimoModel by unwrapping to access
+        # language_model/modality_submodules (see MIMO e2e test).
         if module_name == "llm":
             module = mimo_model.language_model
         elif hasattr(mimo_model, 'modality_submodules') and module_name in mimo_model.modality_submodules:
@@ -96,15 +98,16 @@ def build_pg_collection_for_schedule(infra: MimoModelInfra):
         MultiModuleProcessGroupCollection or list of ProcessGroupCollections.
     """
     try:
-        # Try the dataclass approach (requires PR 3129)
         from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+        module_pgs = {k: v for k, v in infra.pg_collections.items() if v is not None}
+        if not module_pgs:
+            raise ValueError("module_pgs dict cannot be empty")
+        language_model_module_name = "llm" if "llm" in module_pgs else None
         return MultiModuleProcessGroupCollection(
-            module_pgs={k: v for k, v in infra.pg_collections.items() if v is not None},
-            language_model_module_name="llm"
+            module_pgs=module_pgs,
+            language_model_module_name=language_model_module_name,
         )
     except (ImportError, ValueError, TypeError) as e:
-        # Fallback: list-based approach (reference implementation pattern)
-        # This is already supported by the schedule (lines 2117-2123)
         logger.warning(f"MultiModuleProcessGroupCollection failed ({e}), using list-based fallback")
         return [pg for pg in infra.pg_collections.values() if pg is not None]
 
@@ -144,6 +147,7 @@ def finalize_model_grads_multimodule(
     model,
     num_tokens=None,
     pg_collection=None,
+    force_all_reduce=None,
     *,
     infra: MimoModelInfra,
     module_to_grid_tuple: List[Tuple],
@@ -151,7 +155,7 @@ def finalize_model_grads_multimodule(
     """Finalize gradients for each module using infra.pg_collections.
     
     IMPORTANT: Signature matches schedule's call pattern:
-        config.finalize_model_grads_func([model], num_tokens, pg_collection)
+        config.finalize_model_grads_func([model], num_tokens, pg_collection, force_all_reduce=flag)
     
     The `infra` and `module_to_grid_tuple` parameters are pre-bound via partial().
     We ignore the schedule-provided `pg_collection` and use per-module PGs.
@@ -160,6 +164,7 @@ def finalize_model_grads_multimodule(
         model: Model list (passed by schedule, ignored - we use module_to_grid_tuple).
         num_tokens: Token count for gradient scaling.
         pg_collection: Schedule-provided PG (ignored - we use per-module PGs).
+        force_all_reduce: Schedule-provided flag (ignored - per-module PGs control sync).
         infra: MimoModelInfra with per-module pg_collections (keyword-only, bound via partial).
         module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
     """

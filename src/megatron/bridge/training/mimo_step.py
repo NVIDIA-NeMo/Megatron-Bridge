@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple
 
 import torch
 from megatron.core.models.mimo import MimoModel
-from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 
 from megatron.bridge.training.state import GlobalState
 
@@ -79,15 +78,18 @@ def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:
         return None
     
     # Move tensors to GPU if not already there
+    def _move_to_cuda(obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.cuda(non_blocking=True) if not obj.is_cuda else obj
+        if isinstance(obj, dict):
+            return {k: _move_to_cuda(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            converted = [_move_to_cuda(v) for v in obj]
+            return type(obj)(converted)
+        return obj
+
     if batch is not None:
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor) and not value.is_cuda:
-                batch[key] = value.cuda(non_blocking=True)
-            elif isinstance(value, dict):
-                # Handle nested dicts (e.g., modality_inputs)
-                for k, v in value.items():
-                    if isinstance(v, torch.Tensor) and not v.is_cuda:
-                        value[k] = v.cuda(non_blocking=True)
+        batch = _move_to_cuda(batch)
     
     return batch
 
@@ -143,8 +145,15 @@ def forward_step(
     else:
         output_tensor = output
     
-    # Check if we're at the last pipeline stage
-    if is_pp_last_stage():
+    # Check if we're at the last pipeline stage for the language module
+    if model.role is None:
+        is_last_stage = True
+    elif model.role.has_language_module:
+        is_last_stage = model.role.is_last_stage(model.role.language_module_name)
+    else:
+        is_last_stage = False
+
+    if is_last_stage:
         # GUARDRAIL: Verify scalar loss at last stage
         if isinstance(output_tensor, dict):
             raise ValueError(

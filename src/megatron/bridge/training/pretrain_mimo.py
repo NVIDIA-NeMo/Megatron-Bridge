@@ -32,7 +32,8 @@ from megatron.bridge.training.train_mimo import train_mimo
 
 if TYPE_CHECKING:
     from megatron.core.models.mimo import MimoModel
-    from megatron.core.optimizer import MegatronOptimizer
+    from megatron.core.models.mimo.optimizer import MimoOptimizer
+    from megatron.core.optimizer.optimizer_config import OptimizerConfig
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra, MimoModelProvider
 
@@ -184,15 +185,17 @@ def pretrain_mimo(
     mimo_provider: "MimoModelProvider",
     forward_step_func: Callable,
     build_data_iterators_fn: Callable,
-    build_optimizers_fn: Callable,
+    opt_config: "OptimizerConfig",
+    schedulers: Dict[str, "OptimizerParamScheduler"],
     global_state: Optional[GlobalState] = None,
 ) -> None:
     """Entry point for MIMO pretraining.
     
     Steps:
     1. Call setup_mimo() to get model, infra, communicators
-    2. Build optimizers and schedulers
-    3. Call train_mimo() with all components
+    2. Set grid map on model config (reuse from infra for consistency)
+    3. Create MimoOptimizer using get_mimo_optimizer()
+    4. Call train_mimo() with all components
     
     Args:
         cfg: ConfigContainer with training configuration.
@@ -200,11 +203,27 @@ def pretrain_mimo(
         forward_step_func: Forward step function for training.
         build_data_iterators_fn: Function to build data iterators.
             Signature: (cfg, mimo_infra) -> (train_iter, valid_iter)
-        build_optimizers_fn: Function to build optimizers and schedulers.
-            Signature: (cfg, model, mimo_infra) -> (optimizers_dict, schedulers_dict)
+        opt_config: OptimizerConfig for creating MimoOptimizer.
+        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
         global_state: Optional GlobalState. If not provided, creates a new one.
     """
     logger.info("Starting MIMO pretraining")
+
+    # Ensure optimizer config computes derived fields expected by core optimizers.
+    if hasattr(opt_config, "finalize"):
+        opt_config.finalize()
+
+    # Initialize num-microbatches calculator if not already set.
+    from megatron.core import num_microbatches_calculator as nmc
+    if nmc._GLOBAL_NUM_MICROBATCHES_CALCULATOR is None:
+        nmc.init_num_microbatches_calculator(
+            dist.get_rank(),
+            getattr(cfg.train, "rampup_batch_size", None),
+            cfg.train.global_batch_size,
+            cfg.train.micro_batch_size,
+            cfg.data_parallel_size,
+            getattr(cfg.train, "decrease_batch_size_if_needed", False),
+        )
     
     # Setup MIMO components
     setup_output = setup_mimo(
@@ -213,16 +232,17 @@ def pretrain_mimo(
         build_data_iterators_fn=build_data_iterators_fn,
         global_state=global_state,
     )
+
+    # Set grid map on model config for get_mimo_optimizer()
+    # Use the SAME grid map already built for communicator/schedule - ensures consistency
+    setup_output.model.mimo_config.module_to_grid_map = setup_output.mimo_infra.module_to_grid_map
+    setup_output.model.mimo_config.language_module_key = "llm"  # Hardcoded, no extra plumbing
     
-    logger.info(f"Rank {dist.get_rank()}: Building optimizers")
+    logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
     
-    # Build optimizers and schedulers
-    # The build_optimizers_fn is provided by the caller (e.g., from optimizer PR)
-    optimizers, schedulers = build_optimizers_fn(
-        cfg,
-        setup_output.model,
-        setup_output.mimo_infra,
-    )
+    # Create MimoOptimizer using the factory function
+    from megatron.core.models.mimo.optimizer import get_mimo_optimizer
+    optimizer = get_mimo_optimizer(setup_output.model, opt_config)
     
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
     
@@ -230,7 +250,7 @@ def pretrain_mimo(
     train_mimo(
         forward_step_func=forward_step_func,
         model=setup_output.model,
-        optimizers=optimizers,
+        optimizer=optimizer,
         schedulers=schedulers,
         train_data_iterator=setup_output.train_data_iterator,
         valid_data_iterator=setup_output.valid_data_iterator,

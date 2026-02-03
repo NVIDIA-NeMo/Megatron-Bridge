@@ -316,6 +316,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             language_model_spec=language_spec,
             modality_submodules_spec=modality_specs,
             special_token_ids=self.special_token_ids,
+            module_to_grid_map=infra.module_to_grid_map if self.mimo_parallelism_config else None,
+            language_module_key="llm" if self.mimo_parallelism_config else None,
         )
         
         mimo_model = MimoModel(mimo_model_config)

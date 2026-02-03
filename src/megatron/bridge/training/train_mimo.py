@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from functools import partial
-from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -29,7 +29,6 @@ from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.eval import evaluate_and_print_results
-from megatron.bridge.training.mimo_checkpointing import MimoOptimizerWrapper
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
     get_module_to_grid_tuple,
@@ -37,7 +36,12 @@ from megatron.bridge.training.mimo_parallel_utils import (
     finalize_model_grads_multimodule,
     zero_grad_buffer_for_multimodule,
 )
-from megatron.bridge.training.profiling import handle_profiling_step, handle_profiling_stop
+from megatron.bridge.training.profiling import (
+    handle_profiling_step,
+    handle_profiling_stop,
+    initialize_pytorch_profiler,
+    should_profile_rank,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     prepare_forward_step_func,
@@ -47,7 +51,7 @@ from megatron.bridge.training.utils.flop_utils import num_floating_point_operati
 
 if TYPE_CHECKING:
     from megatron.core.models.mimo import MimoModel
-    from megatron.core.optimizer import MegatronOptimizer
+    from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
     from megatron.bridge.models.mimo.mimo_provider import MimoModelInfra
@@ -60,7 +64,7 @@ def train_step_mimo(
     forward_step_func: Callable,
     data_iterator: Iterator,
     model: "MimoModel",
-    optimizers: Dict[str, "MegatronOptimizer"],
+    optimizer: "MimoOptimizer",
     schedulers: Dict[str, "OptimizerParamScheduler"],
     global_state: GlobalState,
     multimodule_communicator: "MultiModulePipelineCommunicator",
@@ -70,15 +74,15 @@ def train_step_mimo(
     num_microbatches: int,
     seq_length: int,
     micro_batch_size: int,
-) -> Dict[str, torch.Tensor]:
+) -> Tuple[Dict[str, torch.Tensor], Optional[float], Optional[int]]:
     """Single MIMO training step.
     
     Args:
         forward_step_func: Forward step function (wrapped with GlobalState).
         data_iterator: Iterator over the dataset.
         model: MimoModel instance.
-        optimizers: Per-module optimizers {module_name: optimizer}.
-        schedulers: Per-module learning rate schedulers.
+        optimizer: MimoOptimizer managing per-module optimizers.
+        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
         global_state: GlobalState containing timers, config, train_state.
         multimodule_communicator: MultiModulePipelineCommunicator for P2P.
         multimodule_pg_collection: PG collection for schedule.
@@ -89,7 +93,7 @@ def train_step_mimo(
         micro_batch_size: Micro batch size.
         
     Returns:
-        Dictionary of reduced losses.
+        Tuple of (loss_dict, grad_norm, num_zeros_in_grad).
     """
     timers = global_state.timers
     
@@ -113,28 +117,10 @@ def train_step_mimo(
     
     timers("forward-backward").stop()
     
-    # Optimizer step for each module
+    # Optimizer step - MimoOptimizer handles all modules and computes global grad norm
     timers("optimizer", log_level=1).start(barrier=False)
     
-    update_successful = True
-    grad_norm = None
-    num_zeros_in_grad = None
-    
-    for module_name, optimizer in optimizers.items():
-        if optimizer is not None:
-            # Step the optimizer
-            result = optimizer.step()
-            
-            # Handle different return types from optimizer.step()
-            if isinstance(result, tuple):
-                if len(result) >= 2:
-                    update_successful = update_successful and result[0]
-                    if result[1] is not None:
-                        grad_norm = result[1] if grad_norm is None else max(grad_norm, result[1])
-                if len(result) >= 3 and result[2] is not None:
-                    num_zeros_in_grad = result[2] if num_zeros_in_grad is None else num_zeros_in_grad + result[2]
-            elif isinstance(result, bool):
-                update_successful = update_successful and result
+    update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
     
     timers("optimizer").stop()
     
@@ -143,13 +129,35 @@ def train_step_mimo(
         if scheduler is not None and update_successful:
             scheduler.step()
     
-    return losses_reduced if losses_reduced else {}
+    loss_dict = {}
+    if losses_reduced:
+        is_last_stage = False
+        if model.role is None:
+            is_last_stage = True
+        elif model.role.has_language_module:
+            is_last_stage = model.role.is_last_stage(model.role.language_module_name)
+
+        if is_last_stage:
+            llm_pg = infra.pg_collections.get("llm") if infra.pg_collections else None
+            for key in losses_reduced[0].keys():
+                val = [x[key].view(-1) for x in losses_reduced]
+                if val[0].numel() == 2:
+                    val = torch.vstack(val).sum(dim=0)
+                    if llm_pg is not None and llm_pg.dp_cp is not None:
+                        torch.distributed.all_reduce(val, group=llm_pg.dp_cp)
+                    loss_dict[key] = val[0] / val[1]
+                elif val[0].numel() == 1:
+                    loss_dict[key] = torch.cat(val).mean()
+                else:
+                    raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+
+    return loss_dict, grad_norm, num_zeros_in_grad
 
 
 def train_mimo(
     forward_step_func: Callable,
     model: "MimoModel",
-    optimizers: Dict[str, "MegatronOptimizer"],
+    optimizer: "MimoOptimizer",
     schedulers: Dict[str, "OptimizerParamScheduler"],
     train_data_iterator: Iterator,
     valid_data_iterator: Optional[Iterator],
@@ -163,21 +171,21 @@ def train_mimo(
     - Creates MultiModuleProcessGroupCollection for the schedule
     - Uses forward_backward_pipelining_without_interleaving with multimodule support
     - Uses zero_grad_buffer_for_multimodule() for gradient clearing
-    - Supports per-module optimizers
+    - Uses MimoOptimizer for coordinated gradient clipping with global norm
     
     Reuses from existing Bridge training:
     - GlobalState for timers, config, train_state
     - training_log() for metrics reporting
     - handle_profiling_step() and handle_profiling_stop() for profiler lifecycle
-    - save_checkpoint() with MimoOptimizerWrapper for MIMO checkpointing
+    - save_checkpoint() with MimoOptimizer for checkpointing
     - evaluate_and_print_results() for validation with multimodule support
     - maybe_finalize_async_save() for async checkpoint finalization
     
     Args:
         forward_step_func: Forward step function.
         model: MimoModel instance.
-        optimizers: Per-module optimizers {module_name: optimizer}.
-        schedulers: Per-module learning rate schedulers.
+        optimizer: MimoOptimizer managing per-module optimizers.
+        schedulers: Per-module learning rate schedulers {module_name: scheduler}.
         train_data_iterator: Training data iterator.
         valid_data_iterator: Validation data iterator (optional).
         global_state: GlobalState containing timers, config, train_state.
@@ -218,11 +226,9 @@ def train_mimo(
         module_to_grid_tuple=module_to_grid_tuple,
     )
     
-    # Optional: Set grad_scale_func from first optimizer
-    if optimizers:
-        first_optimizer = next(iter(optimizers.values()))
-        if first_optimizer is not None and hasattr(first_optimizer, 'scale_loss'):
-            model_config.grad_scale_func = first_optimizer.scale_loss
+    # Optional: Set grad_scale_func from MimoOptimizer
+    if optimizer is not None and hasattr(optimizer, 'scale_loss'):
+        model_config.grad_scale_func = optimizer.scale_loss
     
     # Validation: variable_seq_lengths should already be True (set by MimoModelProvider)
     assert model_config.variable_seq_lengths, (
@@ -235,11 +241,17 @@ def train_mimo(
     history_wct = []
     report_memory_flag = True
     
-    # TODO: Revisit when MIMO optimizer is implemented.
-    # MimoOptimizerWrapper aggregates per-module optimizer states for checkpointing.
-    # Currently uses first scheduler only - may need MimoSchedulerWrapper for consistency.
-    optimizer_wrapper = MimoOptimizerWrapper(optimizers)
+    # Get first scheduler for checkpoint saving (schedulers remain per-module)
     first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
+
+    # Profiler setup (mirrors train.py behavior)
+    prof = None
+    nsys_nvtx_context = None
+    prof_config = cfg.profiling
+    if prof_config and should_profile_rank(prof_config, dist.get_rank()):
+        if prof_config.use_pytorch_profiler:
+            prof = initialize_pytorch_profiler(prof_config, cfg.logger.tensorboard_dir)
+            prof.start()
     
     logger.info(f"Rank {dist.get_rank()}: Starting MIMO training loop")
     
@@ -248,17 +260,24 @@ def train_mimo(
     
     while train_state.step < train_config.train_iters:
         # Handle profiling
-        handle_profiling_step(global_state)
+        nsys_ctx = handle_profiling_step(
+            prof_config,
+            train_state.step,
+            dist.get_rank(),
+            prof,
+        )
+        if nsys_ctx is not None:
+            nsys_nvtx_context = nsys_ctx
         
         # Start iteration timer
         timers("iteration-time", log_level=0).start(barrier=False)
         
         # Run single training step
-        loss_dict = train_step_mimo(
+        loss_dict, grad_norm, num_zeros_in_grad = train_step_mimo(
             forward_step_func=wrapped_forward_step_func,
             data_iterator=train_data_iterator,
             model=model,
-            optimizers=optimizers,
+            optimizer=optimizer,
             schedulers=schedulers,
             global_state=global_state,
             multimodule_communicator=multimodule_communicator,
@@ -271,7 +290,8 @@ def train_mimo(
         )
         
         # Stop iteration timer
-        iteration_time = timers("iteration-time").elapsed(barrier=False)
+        timers("iteration-time").stop(barrier=False)
+        iteration_time = timers("iteration-time").elapsed(reset=True, barrier=False)
         history_wct.append(iteration_time)
         
         # Update training state
@@ -287,12 +307,10 @@ def train_mimo(
             if sched is not None:
                 learning_rate = sched.get_lr()
         
-        # Get loss scale from first optimizer
+        # Get loss scale from MimoOptimizer
         loss_scale = 1.0
-        if optimizers:
-            first_optimizer = next(iter(optimizers.values()))
-            if first_optimizer is not None and hasattr(first_optimizer, 'get_loss_scale'):
-                loss_scale = first_optimizer.get_loss_scale()
+        if optimizer is not None:
+            loss_scale = optimizer.get_loss_scale()
         
         # Log training metrics
         report_memory_flag = training_log(
@@ -303,9 +321,9 @@ def train_mimo(
             loss_scale=loss_scale,
             report_memory_flag=report_memory_flag,
             skipped_iter=0,
-            grad_norm=None,
+            grad_norm=grad_norm,
             params_norm=None,
-            num_zeros_in_grad=None,
+            num_zeros_in_grad=num_zeros_in_grad,
             config=cfg,
             global_state=global_state,
             history_wct=history_wct,
@@ -342,7 +360,7 @@ def train_mimo(
             save_checkpoint(
                 state=global_state,
                 model=[model],
-                optimizer=optimizer_wrapper,
+                optimizer=optimizer,
                 opt_param_scheduler=first_scheduler,
                 num_floating_point_operations_so_far=0,  # TODO: Add proper FLOPs tracking
             )
@@ -356,7 +374,13 @@ def train_mimo(
         )
     
     # Stop profiling
-    handle_profiling_stop(global_state)
+    handle_profiling_stop(
+        prof_config,
+        train_state.step,
+        dist.get_rank(),
+        prof,
+        nsys_nvtx_context,
+    )
     
     # Finalize any remaining async saves before exit
     maybe_finalize_async_save(
