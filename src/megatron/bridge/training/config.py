@@ -1667,7 +1667,8 @@ class ConfigContainer(Container):
         TransformerConfig), this method logs only the values that differ from the Mcore
         defaults. This makes it easier to spot unintended deviations from baseline settings.
 
-        For configs that don't inherit from Mcore, all values are logged.
+        For configs that don't inherit from Mcore, key values are logged via
+        `_get_key_config_values`, which excludes None values and callables.
         """
         # Determine the correct Mcore parent class for the model config
         # Some models (e.g., DeepSeek) use MLATransformerConfig instead of TransformerConfig
@@ -1809,11 +1810,6 @@ def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
         if value is None:
             continue
         if callable(value):
-            continue
-        # Skip very long strings or collections
-        if isinstance(value, str) and len(value) > 200:
-            continue
-        if isinstance(value, (list, dict)) and len(value) > 10:
             continue
         values[f.name] = value
 
