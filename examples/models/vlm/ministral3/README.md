@@ -96,7 +96,7 @@ Note:
 - `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward.
 - You can also use image URLs: `--image_path="https://example.com/image.jpg"`
 
-See the [inference.sh](inference.sh) script for commands to:
+See the [`inference.sh`](./inference.sh) script for commands to:
 - Run inference with Hugging Face checkpoints
 - Run inference with imported Megatron checkpoints
 - Run inference with exported Hugging Face checkpoints
@@ -146,13 +146,13 @@ Pretraining is not verified for this model.
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [sft.sh](sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
+See the [`sft.sh`](./sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
 
 W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
+See the [`peft.sh`](./peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
 
 W&B report coming soon.
 
