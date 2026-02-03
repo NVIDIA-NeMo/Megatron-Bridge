@@ -152,30 +152,31 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image_path},
+                    {"type": "image", "image_url": image_path},
                     {"type": "text", "text": prompt},
                 ],
             }
         ]
 
         # Process vision info
-        image_inputs, video_inputs = process_vision_info(messages)
+        # image_inputs, video_inputs = process_vision_info(messages)
 
-        # Apply chat template
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        # # Apply chat template
+        # text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-        # Process inputs
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
+        # # Process inputs
+        # inputs = processor(
+        #     text=[text],
+        #     images=image_inputs,
+        #     videos=video_inputs,
+        #     padding=True,
+        #     return_tensors="pt",
+        # )
+        inputs = processor(messages=messages)
         return (
             inputs.input_ids,
             inputs.pixel_values,
-            getattr(inputs, "image_grid_thw", None),
+            getattr(inputs, "image_grid_thw", None) or getattr(inputs, "grid_thws", None),
             getattr(inputs, "image_sizes", None),
             messages,
         )
@@ -209,7 +210,7 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -236,7 +237,7 @@ def main(args) -> None:
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp

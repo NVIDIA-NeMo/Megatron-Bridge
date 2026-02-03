@@ -732,9 +732,12 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        hf_tokenizer_kwargs = None
+        hf_tokenizer_kwargs = {}
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+        # Pass trust_remote_code to tokenizer if provided in kwargs
+        if kwargs.get("trust_remote_code"):
+            hf_tokenizer_kwargs["trust_remote_code"] = True
         bridge.save_megatron_model(
             megatron_model,
             megatron_path,
