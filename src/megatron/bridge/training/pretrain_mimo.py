@@ -25,13 +25,15 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
     get_module_to_grid_tuple,
+    unwrap_mimo_model,
     validate_no_stub_ranks,
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train_mimo import train_mimo
 
+from megatron.core.models.mimo import MimoModel
+
 if TYPE_CHECKING:
-    from megatron.core.models.mimo import MimoModel
     from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_config import OptimizerConfig
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
@@ -146,6 +148,18 @@ def setup_mimo(
     # IMPORTANT: MimoModel produces SBH tensors (seq, batch, hidden), NOT BSH
     # See MimoModel.align_embeddings_by_token_positions() which returns [s, b, h]
     model_config = get_model_config(model)
+    
+    # Ensure pipeline_dtype is set for P2P communication (required when any module uses PP > 1)
+    # The model config may not have this set if individual modules don't use PP
+    import torch
+    if model_config.pipeline_dtype is None:
+        if getattr(model_config, 'bf16', False):
+            model_config.pipeline_dtype = torch.bfloat16
+        elif getattr(model_config, 'fp16', False):
+            model_config.pipeline_dtype = torch.float16
+        else:
+            model_config.pipeline_dtype = torch.float32
+    
     multimodule_communicator = MultiModulePipelineCommunicator(
         mimo_infra.module_to_grid_map,
         mimo_infra.topology,
@@ -235,14 +249,17 @@ def pretrain_mimo(
 
     # Set grid map on model config for get_mimo_optimizer()
     # Use the SAME grid map already built for communicator/schedule - ensures consistency
-    setup_output.model.mimo_config.module_to_grid_map = setup_output.mimo_infra.module_to_grid_map
-    setup_output.model.mimo_config.language_module_key = "llm"  # Hardcoded, no extra plumbing
+    # Unwrap Float16Module/DDP wrapper to access mimo_config on the underlying MimoModel
+    unwrapped_model = unwrap_mimo_model(setup_output.model)
+    unwrapped_model.mimo_config.module_to_grid_map = setup_output.mimo_infra.module_to_grid_map
+    unwrapped_model.mimo_config.language_module_key = "llm"  # Hardcoded, no extra plumbing
     
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
     
     # Create MimoOptimizer using the factory function
+    # Note: get_mimo_optimizer needs the unwrapped MimoModel to access mimo_config and submodules
     from megatron.core.models.mimo.optimizer import get_mimo_optimizer
-    optimizer = get_mimo_optimizer(setup_output.model, opt_config)
+    optimizer = get_mimo_optimizer(unwrapped_model, opt_config)
     
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
     

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple
 import torch
 from megatron.core.models.mimo import MimoModel
 
+from megatron.bridge.training.mimo_parallel_utils import unwrap_mimo_model
 from megatron.bridge.training.state import GlobalState
 
 if TYPE_CHECKING:
@@ -124,10 +125,36 @@ def forward_step(
     Returns:
         Tuple of (output_tensor, loss_function or None).
     """
+    # Get the model's role to determine if we're at first pipeline stage
+    mimo_model = unwrap_mimo_model(model)
+    
+    # Determine if this rank needs data (first PP stage for its module)
+    needs_data = True
+    if mimo_model.role is not None:
+        # For LLM ranks, only first PP stage needs input_ids
+        # For encoder ranks (vision), check if first stage of any modality module
+        if mimo_model.role.has_language_module:
+            module_name = mimo_model.role.language_module_name
+            needs_data = mimo_model.role.is_first_stage(module_name)
+        elif mimo_model.role.has_modality_modules:
+            # Encoder module - check if first stage for any modality module
+            modality_modules = mimo_model.role.modality_module_names
+            needs_data = any(
+                mimo_model.role.is_first_stage(mod) for mod in modality_modules
+            )
+    
     # Get batch from iterator
     data_batch = get_batch(data_iterator)
+    
     if data_batch is None:
-        data_batch = {'input_ids': None}
+        if needs_data:
+            # First stage should have data - this is unexpected
+            logger.warning(
+                "get_batch returned None at first pipeline stage. "
+                "Check MIMO parallelism config and data loading."
+            )
+        # For non-first stages, empty dict is expected - hidden states come from pipeline
+        data_batch = {}
     
     # Extract loss_mask before forward pass
     loss_mask = data_batch.get('loss_mask')
@@ -146,10 +173,11 @@ def forward_step(
         output_tensor = output
     
     # Check if we're at the last pipeline stage for the language module
-    if model.role is None:
+    # mimo_model was already unwrapped at the start of this function
+    if mimo_model.role is None:
         is_last_stage = True
-    elif model.role.has_language_module:
-        is_last_stage = model.role.is_last_stage(model.role.language_module_name)
+    elif mimo_model.role.has_language_module:
+        is_last_stage = mimo_model.role.is_last_stage(mimo_model.role.language_module_name)
     else:
         is_last_stage = False
 

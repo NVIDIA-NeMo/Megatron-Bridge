@@ -56,12 +56,14 @@ logger = logging.getLogger(__name__)
 def build_data_iterators_fn(cfg: ConfigContainer, mimo_infra) -> Tuple:
     _ = mimo_infra
     train_state = TrainState()
+    
     train_loader, valid_loader, _ = build_train_valid_test_data_loaders(
         cfg=cfg,
         train_state=train_state,
         build_train_valid_test_datasets_provider=lambda *_: None,
         dp_group=None,
     )
+    
     def _wrap_iter(data_iter):
         if data_iter is None:
             return None
@@ -84,6 +86,7 @@ def build_data_iterators_fn(cfg: ConfigContainer, mimo_infra) -> Tuple:
 
     train_iter = iter(train_loader) if train_loader is not None else None
     valid_iter = iter(valid_loader) if valid_loader is not None else None
+    
     return _wrap_iter(train_iter), _wrap_iter(valid_iter)
 
 
@@ -126,35 +129,75 @@ def run_e2e_test() -> None:
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    
+    # Pad vocab size to be divisible by max TP we'll test (4)
+    # This is required because VocabParallelEmbedding shards the embedding table
+    max_tp = 4
     vocab_size = tokenizer.vocab_size
+    if vocab_size % max_tp != 0:
+        vocab_size = ((vocab_size // max_tp) + 1) * max_tp
 
-    # Split ranks evenly between LLM and vision modules
-    dp_per_module = world_size // 2
+    # Parallelism config from environment variables (defaults to DP-only split)
+    default_dp = world_size // 2
+    llm_tp = int(os.getenv("MIMO_LLM_TP", "1"))
+    llm_pp = int(os.getenv("MIMO_LLM_PP", "1"))
+    llm_dp = int(os.getenv("MIMO_LLM_DP", str(default_dp)))
+    llm_offset = int(os.getenv("MIMO_LLM_OFFSET", "0"))
+
+    vision_tp = int(os.getenv("MIMO_VISION_TP", "1"))
+    vision_pp = int(os.getenv("MIMO_VISION_PP", "1"))
+    vision_dp = int(os.getenv("MIMO_VISION_DP", str(default_dp)))
+    vision_offset = int(os.getenv("MIMO_VISION_OFFSET", str(llm_tp * llm_pp * llm_dp)))
+
+    llm_ranks = llm_tp * llm_pp * llm_dp
+    vision_ranks = vision_tp * vision_pp * vision_dp
+    total_ranks_needed = max(llm_offset + llm_ranks, vision_offset + vision_ranks)
+
+    if total_ranks_needed > world_size:
+        if rank == 0:
+            logger.error(
+                f"Parallelism config requires {total_ranks_needed} ranks, but only {world_size} available. "
+                f"LLM: TP={llm_tp}, PP={llm_pp}, DP={llm_dp}, offset={llm_offset} ({llm_ranks} ranks). "
+                f"Vision: TP={vision_tp}, PP={vision_pp}, DP={vision_dp}, offset={vision_offset} ({vision_ranks} ranks)."
+            )
+        dist.destroy_process_group()
+        sys.exit(1)
+
+    if rank == 0:
+        logger.info(
+            f"Parallelism config: LLM(TP={llm_tp}, PP={llm_pp}, DP={llm_dp}, offset={llm_offset}), "
+            f"Vision(TP={vision_tp}, PP={vision_pp}, DP={vision_dp}, offset={vision_offset})"
+        )
 
     mimo_parallelism_config = MimoParallelismConfig(
         module_parallelisms={
             "llm": ModuleParallelismConfig(
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                data_parallel_size=dp_per_module,
-                rank_offset=0,
+                tensor_model_parallel_size=llm_tp,
+                pipeline_model_parallel_size=llm_pp,
+                data_parallel_size=llm_dp,
+                rank_offset=llm_offset,
             ),
             "vision": ModuleParallelismConfig(
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                data_parallel_size=dp_per_module,
-                rank_offset=dp_per_module,
+                tensor_model_parallel_size=vision_tp,
+                pipeline_model_parallel_size=vision_pp,
+                data_parallel_size=vision_dp,
+                rank_offset=vision_offset,
             ),
         },
         special_token_ids={"vision": special_token_id},
     )
+
+    # Use LLM's DP for global_batch_size (defines training semantics)
+    dp_per_module = llm_dp
+
+    if rank == 0:
+        logger.info("Precision: fp32")
 
     encoder_config = TransformerConfig(
         num_layers=2,
         hidden_size=hidden_size,
         ffn_hidden_size=hidden_size * 4,
         num_attention_heads=4,
-        bf16=False,
         use_cpu_initialization=True,
     )
 
@@ -185,7 +228,6 @@ def run_e2e_test() -> None:
         hidden_size=hidden_size,
         ffn_hidden_size=hidden_size * 4,
         num_attention_heads=4,
-        bf16=False,
         use_cpu_initialization=True,
     )
 
@@ -226,12 +268,20 @@ def run_e2e_test() -> None:
 
     micro_batch_size = 2
     num_microbatches = 1
+    train_iters = 2
     global_batch_size = micro_batch_size * dp_per_module * num_microbatches
+
+    # Calculate train_samples based on max DP to ensure all modules have enough data.
+    # Vision with higher DP (4) needs more total samples than LLM with DP=2.
+    # train_samples = train_iters * micro_batch_size * max_dp * num_microbatches
+    max_dp = max(llm_dp, vision_dp)
+    train_samples = train_iters * micro_batch_size * max_dp * num_microbatches
 
     train_cfg = TrainingConfig(
         micro_batch_size=micro_batch_size,
         global_batch_size=global_batch_size,
-        train_iters=2,
+        train_iters=train_iters,
+        train_samples=train_samples,  # Override to ensure enough data for all modules
         eval_interval=1000,
         eval_iters=1,
     )

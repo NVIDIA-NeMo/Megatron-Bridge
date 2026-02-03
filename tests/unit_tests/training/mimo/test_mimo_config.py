@@ -40,17 +40,18 @@ def test_mimo_heterogeneous_rank_offset_overlap():
 
 def test_mimo_heterogeneous_valid_contiguous():
     """Test that contiguous rank allocation works correctly."""
+    # Note: encoder DP must be >= LLM DP for embedding alignment
     module_parallelisms = {
         "encoder": ModuleParallelismConfig(
-            tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=0
+            tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0
         ),
         "llm": ModuleParallelismConfig(
-            tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=2
+            tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=4
         ),
     }
     mimo_parallelism_config = MimoParallelismConfig(
         module_parallelisms=module_parallelisms,
     )
-    # No gaps, no overlap - should pass
+    # No gaps, no overlap, encoder DP >= LLM DP - should pass
     mimo_parallelism_config.finalize(world_size=None)
     assert mimo_parallelism_config.total_world_size == 6

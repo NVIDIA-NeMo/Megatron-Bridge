@@ -31,9 +31,10 @@ from megatron.bridge.training.checkpointing import maybe_finalize_async_save, sa
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.mimo_parallel_utils import (
     build_pg_collection_for_schedule,
+    finalize_model_grads_multimodule,
     get_module_to_grid_tuple,
     multimodule_no_sync,
-    finalize_model_grads_multimodule,
+    unwrap_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
 from megatron.bridge.training.profiling import (
@@ -132,10 +133,12 @@ def train_step_mimo(
     loss_dict = {}
     if losses_reduced:
         is_last_stage = False
-        if model.role is None:
+        # Access role from unwrapped model (handles Float16Module wrapper)
+        mimo_model = unwrap_mimo_model(model)
+        if mimo_model.role is None:
             is_last_stage = True
-        elif model.role.has_language_module:
-            is_last_stage = model.role.is_last_stage(model.role.language_module_name)
+        elif mimo_model.role.has_language_module:
+            is_last_stage = mimo_model.role.is_last_stage(mimo_model.role.language_module_name)
 
         if is_last_stage:
             llm_pg = infra.pg_collections.get("llm") if infra.pg_collections else None

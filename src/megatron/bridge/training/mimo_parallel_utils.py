@@ -5,6 +5,7 @@ This module provides utilities for building process group structures and handlin
 gradients across modules with different parallelism configurations.
 
 Key functions:
+- unwrap_mimo_model(): Unwrap Float16Module/DDP to get underlying MimoModel
 - build_pg_collection_for_schedule(): Build pg_collection compatible with schedule
 - multimodule_no_sync(): Context manager for gradient sync during microbatch accumulation
 - finalize_model_grads_multimodule(): Finalize gradients for each module
@@ -32,6 +33,30 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def unwrap_mimo_model(model) -> MimoModel:
+    """Unwrap Float16Module/DDP wrappers to get the underlying MimoModel.
+    
+    When using mixed precision (bf16/fp16), models are wrapped in Float16Module.
+    This function unwraps the model to access MimoModel-specific attributes
+    like `role`, `mimo_config`, `language_model`, `modality_submodules`, etc.
+    
+    Args:
+        model: A MimoModel or a wrapped version (Float16Module, DDP).
+        
+    Returns:
+        The underlying MimoModel instance.
+        
+    Raises:
+        RuntimeError: If the model cannot be unwrapped to a MimoModel.
+    """
+    unwrapped = model
+    while not isinstance(unwrapped, MimoModel) and hasattr(unwrapped, 'module'):
+        unwrapped = unwrapped.module
+    if not isinstance(unwrapped, MimoModel):
+        raise RuntimeError(f"Failed to unwrap model to MimoModel, got {type(unwrapped)}")
+    return unwrapped
 
 
 def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
@@ -62,17 +87,18 @@ def get_module_to_grid_tuple(
     """
     module_to_grid_tuple = []
     
+    # Unwrap Float16Module/DDP if present (used in mixed precision training)
+    unwrapped_model = unwrap_mimo_model(mimo_model)
+    
     for module_name, grid in infra.module_to_grid_map.items():
         if not is_current_rank_in_grid(grid):
             continue
             
-        # Get the actual module from the model
-        # TODO: Handle Float16Module-wrapped MimoModel by unwrapping to access
-        # language_model/modality_submodules (see MIMO e2e test).
+        # Get the actual module from the unwrapped model
         if module_name == "llm":
-            module = mimo_model.language_model
-        elif hasattr(mimo_model, 'modality_submodules') and module_name in mimo_model.modality_submodules:
-            module = mimo_model.modality_submodules[module_name]
+            module = unwrapped_model.language_model
+        elif hasattr(unwrapped_model, 'modality_submodules') and module_name in unwrapped_model.modality_submodules:
+            module = unwrapped_model.modality_submodules[module_name]
         else:
             logger.warning(f"Module {module_name} not found in MimoModel, skipping")
             continue
