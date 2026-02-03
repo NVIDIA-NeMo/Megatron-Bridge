@@ -152,17 +152,14 @@ def main() -> None:
     logger.info("------------------------------------------------------------------")
 
     # Load base configuration from the recipe as a Python dataclass
-    # Pretrain configs use parameterless API
-    cfg: ConfigContainer = pretrain_config()
-    logger.info("Loaded base configuration")
-
-    # If --hf-path is provided, override the model's HuggingFace path
+    # If --hf-path is provided, pass it to the recipe function
+    recipe_kwargs = {}
     if args.hf_path:
         logger.info(f"Using custom HuggingFace path: {args.hf_path}")
-        # Import AutoBridge to create a new model provider with the custom HF path
-        from megatron.bridge.models import AutoBridge
+        recipe_kwargs["hf_path"] = args.hf_path
 
-        cfg.model = AutoBridge.from_hf_pretrained(args.hf_path).to_megatron_provider(load_weights=False)
+    cfg: ConfigContainer = pretrain_config(**recipe_kwargs)
+    logger.info("Loaded base configuration")
 
     # Print configuration on rank 0
     if get_rank_safe() == 0:
