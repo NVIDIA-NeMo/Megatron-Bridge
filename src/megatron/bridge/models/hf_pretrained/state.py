@@ -703,7 +703,7 @@ class SafeTensorsStateSource(StateSource):
 
         """
         if distributed_save:
-            return self._save_generator_distibuted(
+            return self._save_generator_distributed(
                 generator, output_path, strict, save_every_n_ranks=save_every_n_ranks
             )
 
@@ -862,7 +862,7 @@ class SafeTensorsStateSource(StateSource):
                     return None
         return None
 
-    def _save_generator_distibuted(
+    def _save_generator_distributed(
         self,
         generator: Iterable[Tuple[str, torch.Tensor]],
         output_path: Union[str, Path],
@@ -932,6 +932,7 @@ class SafeTensorsStateSource(StateSource):
             assigned_expected_keys = set()
 
         buffered_tensors: Dict[str, torch.Tensor] = {}
+        actually_saved_keys: Set[str] = set()
 
         for name, tensor in generator:
             all_yielded_keys.add(name)
@@ -960,20 +961,46 @@ class SafeTensorsStateSource(StateSource):
 
             for fname in assigned_filenames:
                 keys_for_file = filename_to_keys_map[fname]
-                tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file}
+                tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file if k in buffered_tensors}
+                if not tensors_to_save:
+                    continue
                 save_file(tensors_to_save, output_path / fname)
+                actually_saved_keys.update(tensors_to_save.keys())
 
+        # Gather all saved keys from all ranks to rank 0
         if is_distributed:
+            # Convert set to list for gathering
+            local_saved_keys_list = list(actually_saved_keys) if is_saver_rank else []
+            gathered_keys = [None] * world_size
+            torch.distributed.all_gather_object(gathered_keys, local_saved_keys_list)
+
+            if rank == 0:
+                # Aggregate all saved keys from all ranks
+                all_saved_keys_aggregated = set()
+                for keys_list in gathered_keys:
+                    if keys_list:
+                        all_saved_keys_aggregated.update(keys_list)
+            else:
+                all_saved_keys_aggregated = set()
+
             torch.distributed.barrier()
+        else:
+            all_saved_keys_aggregated = actually_saved_keys
 
         if rank == 0:
             original_index_file = self.path / "model.safetensors.index.json"
             if original_index_file.exists():
                 with open(original_index_file, "r") as f:
                     original_index_data = json.load(f)
+
+                # Build weight_map only from actually saved keys, like the non-distributed path
+                new_weight_map = {
+                    key: key_to_filename_map[key] for key in key_to_filename_map if key in all_saved_keys_aggregated
+                }
+
                 new_index_data = {
                     "metadata": original_index_data.get("metadata", {}),
-                    "weight_map": key_to_filename_map,
+                    "weight_map": new_weight_map,
                 }
                 output_index_file = output_path / "model.safetensors.index.json"
                 with open(output_index_file, "w") as f:
