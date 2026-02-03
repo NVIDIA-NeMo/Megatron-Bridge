@@ -284,8 +284,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("num_nextn_predict_layers", "mtp_num_layers"),
     ]
 
-    # YARN rope scaling field mapping: (hf_rope_scaling_key, megatron_yarn_param)
-    # These are only applied when rope_scaling.rope_type == "yarn"
+    # YARN rope scaling field mapping for GPT models: (hf_rope_scaling_key, megatron_yarn_param)
+    # These are only applied when rope_scaling.type == "yarn" and provider is GPTModelProvider
+    # Uses yarn_ prefix (e.g., yarn_mscale, yarn_rotary_scaling_factor)
     YARN_ROPE_SCALING_MAPPING = [
         ("factor", "yarn_rotary_scaling_factor"),
         ("original_max_position_embeddings", "yarn_original_max_position_embeddings"),
@@ -293,6 +294,18 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("beta_slow", "yarn_beta_slow"),
         ("mscale", "yarn_mscale"),
         ("mscale_all_dim", "yarn_mscale_all_dim"),
+    ]
+
+    # MLA rope scaling field mapping: (hf_rope_scaling_key, megatron_mla_param)
+    # These are applied for MLA models (DeepSeek, Kimi, etc.) which use MLATransformerConfig
+    # Uses direct field names without yarn_ prefix (e.g., mscale, rotary_scaling_factor)
+    MLA_ROPE_SCALING_MAPPING = [
+        ("factor", "rotary_scaling_factor"),
+        ("original_max_position_embeddings", "original_max_position_embeddings"),
+        ("beta_fast", "beta_fast"),
+        ("beta_slow", "beta_slow"),
+        ("mscale", "mscale"),
+        ("mscale_all_dim", "mscale_all_dim"),
     ]
 
     # Common bidirectional activation function mapping: hf_name <-> megatron_func
@@ -350,19 +363,43 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             if value is not None:
                 provider_kwargs[megatron_name] = value
 
-        # Handle YARN rope scaling: when rope_type == "yarn", collect yarn_* params
-        # These will be applied via setattr in provider_bridge (not passed as kwargs)
+        # Handle rope scaling: extract params from rope_scaling dict
+        # HF configs use either "type" or "rope_type" key for the scaling type
+        from megatron.bridge.models.mla_provider import MLAModelProvider
+
+        is_mla_provider = self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)
         rope_scaling = getattr(hf_config, "rope_scaling", None)
+
         if rope_scaling is not None and isinstance(rope_scaling, dict):
-            if rope_scaling.get("rope_type") == "yarn":
-                yarn_params = {"position_embedding_type": "yarn"}
-                for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
-                    value = rope_scaling.get(hf_key)
-                    yarn_params[megatron_key] = value
-                if "truncate" in rope_scaling:
-                    yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
-                if yarn_params:
-                    provider_kwargs["_yarn_params"] = yarn_params
+            rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
+            if rope_type == "yarn":
+                # Check if this is an MLA provider (uses direct field names)
+                # or a GPT provider (uses yarn_ prefixed field names)
+                if is_mla_provider:
+                    # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
+                    mla_params = {}
+                    for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
+                        value = rope_scaling.get(hf_key)
+                        if value is not None:
+                            mla_params[megatron_key] = value
+                    if mla_params:
+                        provider_kwargs["_mla_rope_params"] = mla_params
+                else:
+                    # GPT models: use yarn_ prefixed field names
+                    yarn_params = {"position_embedding_type": "yarn"}
+                    for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
+                        value = rope_scaling.get(hf_key)
+                        if value is not None:
+                            yarn_params[megatron_key] = value
+                    if "truncate" in rope_scaling:
+                        yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                    if yarn_params:
+                        provider_kwargs["_yarn_params"] = yarn_params
+        elif is_mla_provider:
+            # MLA provider without rope_scaling in HF config:
+            # Override rotary_scaling_factor to 1.0 (no scaling) instead of
+            # using MLATransformerConfig default of 40
+            provider_kwargs["_mla_rope_params"] = {"rotary_scaling_factor": 1.0, "mscale_all_dim": 1.0}
 
         # Handle vocab_size_divisible_by
         vocab_size = provider_kwargs.get("vocab_size")
@@ -412,6 +449,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
 
         yarn_params = provider_kwargs.pop("_yarn_params", None)
+        mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
 
         # Add generation config
         provider_kwargs["generation_config"] = hf_pretrained.generation_config
@@ -423,6 +461,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Apply YARN params via setattr (not all providers accept these in __init__)
         if yarn_params:
             for key, value in yarn_params.items():
+                setattr(provider, key, value)
+
+        # Apply MLA rope params via setattr (for MLA models like DeepSeek, Kimi)
+        if mla_rope_params:
+            for key, value in mla_rope_params.items():
                 setattr(provider, key, value)
 
         return provider
