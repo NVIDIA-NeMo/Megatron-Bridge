@@ -66,6 +66,11 @@ class OlMoEBridge(MegatronModelBridge):
         # OlMoE uses custom layer spec with OLMoESelfAttention for QK layernorm
         provider.transformer_layer_spec = olmoe_layer_spec
 
+        # Set kv_channels (head_dim) - OLMoE HF config doesn't have head_dim, so calculate it
+        provider.kv_channels = getattr(hf_config, "head_dim", None) or (
+            hf_config.hidden_size // hf_config.num_attention_heads
+        )
+
         # OlMoE-specific architecture settings
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
