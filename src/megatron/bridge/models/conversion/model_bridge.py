@@ -388,9 +388,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     # GPT models: use yarn_ prefixed field names
                     yarn_params = {"position_embedding_type": "yarn"}
                     for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
-                        value = rope_scaling.get(hf_key)
-                        if value is not None:
-                            yarn_params[megatron_key] = value
+                        yarn_params[megatron_key] = rope_scaling.get(hf_key)
                     if "truncate" in rope_scaling:
                         yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
                     if yarn_params:
