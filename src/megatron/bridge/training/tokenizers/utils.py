@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.core.tokenizers import MegatronTokenizer
+from megatron.core.tokenizers import MegatronTokenizer, MegatronTokenizerBase
 
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 
@@ -22,7 +22,7 @@ MEGATRON_TOKENIZERS = ["BertWordPieceLowerCase", "BertWordPieceCase", "GPT2BPETo
 SP_TOKENIZERS = ["SentencePieceTokenizer", "GPTSentencePieceTokenizer", "Llama2Tokenizer"]
 
 
-def build_new_tokenizer(config: TokenizerConfig) -> MegatronTokenizer:
+def build_new_tokenizer(config: TokenizerConfig) -> MegatronTokenizerBase:
     """Initialize tokenizer from megatron.core.tokenizers based on the provided configuration.
 
     Args:

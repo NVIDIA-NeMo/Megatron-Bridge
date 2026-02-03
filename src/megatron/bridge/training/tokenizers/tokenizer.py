@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from megatron.core.tokenizers import MegatronTokenizer
+from megatron.core.tokenizers import MegatronTokenizer, MegatronTokenizerBase
 
 from megatron.bridge.training.tokenizers.bert_tokenization import FullTokenizer as FullBertTokenizer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -95,7 +95,7 @@ class MegatronLegacyTokenizer(MegatronTokenizerCore):
         return self.mask
 
 
-def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronLegacyTokenizer | MegatronTokenizer:
+def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronLegacyTokenizer | MegatronTokenizerBase:
     """Initialize tokenizer based on the provided configuration.
 
     This function serves as a factory to instantiate various tokenizer types
