@@ -69,19 +69,22 @@ Here's a minimal example using the Qwen3 30B-A3B recipe with MTP enabled:
 from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain
 from megatron.bridge.training.pretrain import pretrain
 
-config = qwen3_30b_a3b_pretrain(
-    name="qwen3_next_mtp_test",
-    data_paths=[
-            f"/path/to/dclm/preprocessed/dclm_{i:02d}_text_document"
-            for i in range(1, 11)
-        ],
-)
-# Optionally set cache dir
-config.dataset.path_to_cache = "/path/to/cache"
+log_dir = f"/path/to/log/dir"
+cfg: ConfigContainer = qwen3_30b_a3b_pretrain_config()
+cfg.logger.log_dir = log_dir
+cfg.logger.tensorboard_dir = log_dir + "/tb_logs"
+cfg.checkpoint.save = log_dir + "/checkpoints"
+cfg.checkpoint.load = log_dir + "/checkpoints"
+# Set up training dataset
+cfg.dataset.blend=[[
+    f"/path/to/dclm/preprocessed/dclm_{i:02d}_text_document"
+    for i in range(1, 11)
+], None]
+cfg.dataset.split="9999,8,2"
+cfg.dataset.path_to_cache = "/path/to/cache"
 # MTP Configuration
-config.mtp_num_layers = 1
-config.mtp_loss_scaling_factor = 0.1
-
+cfg.mtp_num_layers = 1
+cfg.mtp_loss_scaling_factor = 0.1
 pretrain(config)
 ```
 Follow the [DCLM Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm) to prepare the training data 
@@ -97,7 +100,7 @@ MTP layers take approximately the same training time as a regular transformer la
 
 - **Place MTP in the last PP stage** (required for correct loss computation)
 - **Reduce layers in other PP ranks** to balance computation time across stages
-- Example: For a 60-layer model with PP=4 and `mtp_num_layers=1`, you might use splits like `[15, 30, 45, 60]` instead of `[15, 30, 46, 60]` to account for MTP overhead in the last stage
+- Example: For a 21-layer model with PP=4 and `mtp_num_layers=1`, you might use splits like `[5, 6, 6, 4]` instead of `[5, 5, 5, 6]` to account for MTP overhead in the last stage
 
 
 ## Parallelism Support
