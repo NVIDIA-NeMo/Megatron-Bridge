@@ -126,7 +126,7 @@ Pretraining is not verified for this model.
 
 ### Supervised Fine-Tuning (SFT)
 
-Full parameter fine-tuning requires 16 nodes (128 GPUs) with TP=1, PP=8, EP=16.
+Full parameter fine-tuning requires 64 nodes (512 GPUs) with TP=1, PP=8, EP=16.
 
 **Usage:**
 ```bash

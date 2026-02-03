@@ -17,7 +17,7 @@
 # GLM-4.5V Full Supervised Fine-Tuning (SFT)
 #
 # GLM-4.5V is a large MoE model (106B parameters)
-# Recommended: TP=1, PP=8, EP=16 for full SFT (128 GPUs, 16 nodes)
+# Recommended: TP=1, PP=8, EP=16 for full SFT (512 GPUs, 64 nodes)
 # For smaller setups, use LoRA/DoRA instead (see slurm_peft.sh)
 #
 # Usage:
@@ -27,7 +27,7 @@
 # ==============================================================================
 
 #SBATCH --job-name=glm45v-sft
-#SBATCH --nodes=16
+#SBATCH --nodes=64
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
@@ -110,23 +110,23 @@ mkdir -p logs
 
 # Build CLI overrides
 CLI_OVERRIDES="
-    checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT
-    model.seq_length=$SEQ_LENGTH
-    train.train_iters=$TRAIN_ITERS
-    train.global_batch_size=$GLOBAL_BATCH_SIZE
-    train.micro_batch_size=$MICRO_BATCH_SIZE
-    train.eval_iters=$EVAL_ITERS
-    optimizer.lr=$LR
-    optimizer.min_lr=$MIN_LR
-    scheduler.lr_warmup_iters=$LR_WARMUP_ITERS
-    checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_tp${TP}_pp${PP}_ep${EP}
-    logger.log_interval=$LOG_INTERVAL
-    logger.wandb_project=$WANDB_PROJECT
-    logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP}_ep${EP}
-    dataset.maker_name=make_${DATASET_NAME}_dataset
-    dataset.seq_length=$SEQ_LENGTH
-    model.tensor_model_parallel_size=$TP
-    model.pipeline_model_parallel_size=$PP
+    checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
+    model.seq_length=$SEQ_LENGTH \
+    train.train_iters=$TRAIN_ITERS \
+    train.global_batch_size=$GLOBAL_BATCH_SIZE \
+    train.micro_batch_size=$MICRO_BATCH_SIZE \
+    train.eval_iters=$EVAL_ITERS \
+    optimizer.lr=$LR \
+    optimizer.min_lr=$MIN_LR \
+    scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
+    checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_tp${TP}_pp${PP}_ep${EP} \
+    logger.log_interval=$LOG_INTERVAL \
+    logger.wandb_project=$WANDB_PROJECT \
+    logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP}_ep${EP} \
+    dataset.maker_name=make_${DATASET_NAME}_dataset \
+    dataset.seq_length=$SEQ_LENGTH \
+    model.tensor_model_parallel_size=$TP \
+    model.pipeline_model_parallel_size=$PP \
     model.expert_model_parallel_size=$EP
 "
 
