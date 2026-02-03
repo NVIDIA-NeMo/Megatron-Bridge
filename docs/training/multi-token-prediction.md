@@ -24,7 +24,7 @@ MTP is primarily used for pre-training.
 
 - [DeepSeek-V3 Technical Report](https://arxiv.org/abs/2412.19437) - Original paper introducing MTP
 - [DeepSeek-V3 GitHub](https://github.com/deepseek-ai/DeepSeek-V3) - Official implementation
-- [Megatron Core MTP API Guide](../3rdparty/Megatron-LM/docs/user-guide/features/multi_token_prediction.md) - Low-level implementation details
+- [Megatron Core MTP Guide](https://github.com/NVIDIA/Megatron-LM/blob/main/docs/user-guide/features/multi_token_prediction.md) - Low-level implementation details
 
 ## Configuration Parameters
 
@@ -235,8 +235,7 @@ This is normal. Only the last pipeline stage builds MTP layers.
 
 ### Documentation
 
-- **Megatron Core MTP API Guide**: [`3rdparty/Megatron-LM/docs/user-guide/features/multi_token_prediction.md`](../../3rdparty/Megatron-LM/docs/user-guide/features/multi_token_prediction.md)
-  - Detailed API documentation
+- **Megatron Core MTP Guide**: [`3rdparty/Megatron-LM/docs/user-guide/features/multi_token_prediction.md`](https://github.com/NVIDIA/Megatron-LM/blob/main/docs/user-guide/features/multi_token_prediction.md)
   - Implementation notes and design decisions
 
 - **Pipeline Parallelism Guide**: [`docs/parallelisms.md`](../parallelisms.md)
