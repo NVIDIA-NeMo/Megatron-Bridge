@@ -54,10 +54,14 @@ def disable_hf_cache():
     """Disable HF cache for the dataset tests."""
     hf_home = os.environ["HF_HOME"]
     hub_offline = os.environ["HF_HUB_OFFLINE"]
-    shutil.copytree(
-        f"{hf_home}/hub/datasets--google--boolq", "/tmp/hf_home/hub/datasets--google--boolq", dirs_exist_ok=True
-    )
-    shutil.copytree(f"{hf_home}/datasets/google___boolq", "/tmp/hf_home/datasets/google___boolq", dirs_exist_ok=True)
+    src_hub = f"{hf_home}/hub/datasets--google--boolq"
+    src_datasets = f"{hf_home}/datasets/google___boolq"
+
+    # Force S3 to sync by listing the directory first
+    os.listdir(src_hub)
+    os.listdir(src_datasets)
+    shutil.copytree(src_hub, "/tmp/hf_home/hub/datasets--google--boolq", dirs_exist_ok=True)
+    shutil.copytree(src_datasets, "/tmp/hf_home/datasets/google___boolq", dirs_exist_ok=True)
     os.environ["HF_HOME"] = "/tmp/hf_home"
     del os.environ["HF_HUB_OFFLINE"]
     reload(huggingface_hub.constants)
