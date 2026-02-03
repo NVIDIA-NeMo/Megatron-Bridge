@@ -721,7 +721,6 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
     # Low precision specific optimizer params
     cfg.optimizer.lr = 6e-4
     cfg.optimizer.min_lr = 6e-6
-    cfg.optimizer.adam_eps = 1e-8
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32

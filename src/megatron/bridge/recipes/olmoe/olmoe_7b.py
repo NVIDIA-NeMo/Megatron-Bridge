@@ -201,7 +201,6 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
     # Optimizer
     cfg.scheduler.lr_warmup_iters = 2000
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
-    cfg.optimizer.adam_eps = 1e-8
 
     # Precision-aware optimizer settings
     cfg.optimizer.use_precision_aware_optimizer = True
@@ -491,7 +490,6 @@ def _olmoe_finetune_common(
         min_lr=min_lr,
         adam_beta1=0.9,
         adam_beta2=0.95,
-        adam_eps=1e-8,
         weight_decay=0.1,
     )
 

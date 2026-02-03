@@ -197,7 +197,6 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-5
     cfg.optimizer.adam_beta2 = 0.95
-    cfg.optimizer.adam_eps = 1e-8
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -324,7 +323,6 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-5
     cfg.optimizer.adam_beta2 = 0.95
-    cfg.optimizer.adam_eps = 1e-8
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -493,7 +491,6 @@ def _glm45_finetune_common(
         min_lr=min_lr,
         adam_beta1=0.9,
         adam_beta2=0.95,
-        adam_eps=1e-8,
         weight_decay=0.1,
     )
 
