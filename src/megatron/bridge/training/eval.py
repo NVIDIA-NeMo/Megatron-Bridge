@@ -27,9 +27,15 @@ from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
-# TODO: Pending PR 3129
-from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
-from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+# Multimodule support from PR 3129 (optional - fallback if not available)
+try:
+    from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
+    from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+    _MULTIMODULE_AVAILABLE = True
+except ImportError:
+    MultiModulePipelineCommunicator = None  # type: ignore
+    MultiModuleProcessGroupCollection = None  # type: ignore
+    _MULTIMODULE_AVAILABLE = False
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list

@@ -118,6 +118,12 @@ class MockMimoProvider(MimoDatasetProvider):
         if self._tokenizer is not None:
             return self._tokenizer
         
+        if not self.tokenizer_path:
+            raise ValueError(
+                "tokenizer_path must be set for MockMimoProvider. "
+                "Provide a valid HuggingFace tokenizer path (e.g., 'gpt2', 'meta-llama/Llama-2-7b-hf')."
+            )
+        
         from transformers import AutoTokenizer
         
         tokenizer = AutoTokenizer.from_pretrained(

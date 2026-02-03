@@ -214,6 +214,13 @@ def train_mimo(
     # Build pg_collection for schedule
     multimodule_pg_collection = build_pg_collection_for_schedule(mimo_infra)
     
+    # Guard against list fallback - MIMO training requires MultiModuleProcessGroupCollection
+    if isinstance(multimodule_pg_collection, list):
+        raise RuntimeError(
+            "MultiModuleProcessGroupCollection is required for MIMO training. "
+            "The list-based fallback is not supported. Ensure Megatron-LM PR 3129 is available."
+        )
+    
     # Configure gradient hooks on model config
     model_config = get_model_config(model)
     
@@ -244,7 +251,8 @@ def train_mimo(
     history_wct = []
     report_memory_flag = True
     
-    # Get first scheduler for checkpoint saving (schedulers remain per-module)
+    # Get first scheduler for checkpoint saving.
+    # All modules share the same LR schedule, so first scheduler state is representative.
     first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
 
     # Profiler setup (mirrors train.py behavior)

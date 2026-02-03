@@ -338,7 +338,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = True,
-        use_cpu_initialization: Optional[bool] = False,
+        use_cpu_initialization: Optional[bool] = None,
         init_model_with_meta_device: Optional[bool] = None,
         pre_wrap_hook: Optional[Union[
             Callable[[List[MegatronModule]], List[MegatronModule]],
@@ -420,8 +420,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             if result is not None:
                 model_list = result
         
+        # Resolve initialization settings from provider defaults if not specified
+        local_use_cpu_init = use_cpu_initialization if use_cpu_initialization is not None else self.use_cpu_initialization
+        local_init_meta_device = init_model_with_meta_device if init_model_with_meta_device is not None else self.init_model_with_meta_device
+        
         # Move to device
-        if not use_cpu_initialization and not init_model_with_meta_device:
+        if not local_use_cpu_init and not local_init_meta_device:
             for m in model_list:
                 m.cuda(torch.cuda.current_device())
         
