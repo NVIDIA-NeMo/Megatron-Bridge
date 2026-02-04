@@ -248,7 +248,7 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     return recipe
 
 
-def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace, task: str) -> ConfigContainer:
     """Set the user overrides."""
     _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
@@ -361,6 +361,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
+    if task == "pretrain":
+        recipe.dataset.create_attention_mask = False
+
     if args.hidden_size is not None:
         recipe.model.hidden_size = args.hidden_size
     if args.num_layers is not None or args.first_k_dense_replace is not None:

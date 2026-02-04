@@ -45,7 +45,7 @@ def main():
     )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
-    recipe = set_user_overrides(recipe, args)
+    recipe = set_user_overrides(recipe, args, args.task)
     recipe = set_post_overrides(
         recipe,
         args.model_family_name,
