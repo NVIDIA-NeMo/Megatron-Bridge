@@ -260,11 +260,17 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
             self.beta = 0  # No effect
             self.max_position_embeddings = self.config.seq_length
 
+    @staticmethod
     def _get_llama_4_attn_scale(
-        self, positions_ids: torch.Tensor, beta: float, max_position_embeddings: int
+        positions_ids: torch.Tensor, beta: float, max_position_embeddings: int, query_shape: tuple
     ) -> torch.Tensor:
         scaling = 1 + beta * torch.log(1 + torch.floor(positions_ids / max_position_embeddings))
-        return scaling.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        # Add dimensions to match query shape: [seq_len] -> [seq_len, 1, 1] for packed or [seq_len, 1, 1, 1] for unpacked
+        # Query can be either [seq_len, num_heads, head_dim] (packed) or [seq_len, batch, num_heads, head_dim] (unpacked)
+        num_dims_to_add = len(query_shape) - 1
+        for _ in range(num_dims_to_add):
+            scaling = scaling.unsqueeze(-1)
+        return scaling
 
     def forward(
         self,
@@ -276,6 +282,8 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
         **kwargs,
     ):
         positions_ids = torch.arange(query.shape[0], device=query.device)
-        query *= self._get_llama_4_attn_scale(positions_ids, self.beta, self.max_position_embeddings).to(query.dtype)
+        query *= self._get_llama_4_attn_scale(positions_ids, self.beta, self.max_position_embeddings, query.shape).to(
+            query.dtype
+        )
 
         return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)

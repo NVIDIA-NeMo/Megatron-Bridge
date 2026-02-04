@@ -25,10 +25,10 @@ Just use an existing recipe and enable decentralized process groups:
 
 ```bash
 # 8 GPUs: TP2 x PP2 x DP2
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/decentralized_pg/pretrain_qwen3_simple.py
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/decentralized_pg/pretrain_qwen3_simple.py
 
 # 4 GPUs: TP2 x PP2 x DP1
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/recipes/decentralized_pg/pretrain_qwen3_simple.py
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/decentralized_pg/pretrain_qwen3_simple.py
 ```
 
 The key is just two lines:
@@ -53,14 +53,14 @@ For full control over process groups:
 
 ```bash
 # 8 GPUs: TP2 x PP2 x DP2
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py
+uv run python -m torch.distributed.run --nproc_per_node=8 examples/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py
 
 # 4 GPUs: TP2 x PP2 x DP1
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/recipes/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
     --tp-size 2 --pp-size 2
 
 # 2 GPUs: TP2 x PP1 x DP1
-uv run python -m torch.distributed.run --nproc_per_node=2 examples/recipes/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 examples/decentralized_pg/pretrain_qwen3_with_decentralized_pg.py \
     --tp-size 2 --pp-size 1
 ```
 

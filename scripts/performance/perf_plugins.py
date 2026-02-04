@@ -116,8 +116,18 @@ class NsysPlugin(Plugin):
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
-        launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
-        launcher.nsys_extra_args = self.nsys_extra_args or launcher.nsys_extra_args
+
+        # Set nsys_trace if provided, otherwise use nemo_run defaults
+        if self.nsys_trace is not None:
+            launcher.nsys_trace = self.nsys_trace
+
+        # Combine default extra args with user-provided extra args
+        if self.nsys_extra_args is not None:
+            # Get existing launcher extra args (nemo_run defaults)
+            existing_extra_args = launcher.nsys_extra_args or []
+            # Combine user args with existing args (user args first for precedence)
+            launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
+            logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -270,6 +280,9 @@ class PerfEnvPlugin(Plugin):
                     del_cudnn_ln = False
             if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
+                    del_cudnn_ln = False
+            if model_family_name == "deepseek":
+                if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:

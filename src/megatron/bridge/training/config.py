@@ -28,7 +28,7 @@ from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
 )
-from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -1008,6 +1008,18 @@ class LoggerConfig:
     wandb_entity: Optional[str] = None
     """The wandb entity name."""
 
+    mlflow_experiment: Optional[str] = None
+    """The MLFlow experiment name."""
+
+    mlflow_run_name: Optional[str] = None
+    """The MLFlow run name."""
+
+    mlflow_tracking_uri: Optional[str] = None
+    """Optional MLFlow tracking URI."""
+
+    mlflow_tags: Optional[dict[str, str]] = None
+    """Optional tags to apply to the MLFlow run."""
+
     logging_level: int = logging.INFO
     """Set default logging level"""
 
@@ -1025,6 +1037,31 @@ class LoggerConfig:
 
     save_config_filepath: Optional[str] = None
     """If set, save the task configuration (ConfigContainer) to this file."""
+
+    def finalize(self) -> None:
+        """Validate logger settings and optional MLFlow dependency."""
+        if self.mlflow_experiment and (self.mlflow_run_name is None or self.mlflow_run_name == ""):
+            raise ValueError("Set logger.mlflow_run_name when enabling MLFlow logging.")
+
+        using_mlflow = any(
+            [
+                self.mlflow_experiment,
+                self.mlflow_run_name,
+                self.mlflow_tracking_uri,
+                self.mlflow_tags,
+            ]
+        )
+
+        if using_mlflow:
+            try:
+                import importlib
+
+                importlib.import_module("mlflow")
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "MLFlow logging is configured, but the 'mlflow' package is not installed. "
+                    "Install it via pip install mlflow or uv add mlflow"
+                ) from exc
 
 
 @dataclass(kw_only=True)
@@ -1375,6 +1412,7 @@ class ConfigContainer(Container):
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
+        self.logger.finalize()
         self.train.finalize()
         self.scheduler.finalize()
         self.checkpoint.finalize()
@@ -1409,6 +1447,14 @@ class ConfigContainer(Container):
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
+        _validate_fine_grained_activation_offloading(self)
+
+        # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
+        if self.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in self.model.cuda_graph_scope:
+            assert not self.rerun_state_machine.check_for_nan_in_loss, (
+                "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
+                "Set rerun_state_machine.check_for_nan_in_loss=False."
+            )
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1431,13 +1477,17 @@ class ConfigContainer(Container):
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
 
-            if self.optimizer.use_precision_aware_optimizer:
-                self.ddp.preserve_fp32_weights = False
-
             # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
             if self.model.gradient_accumulation_fusion:
                 print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
                 self.model.gradient_accumulation_fusion = False
+
+            # reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP
+            if self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
+                print_rank_0("reuse_grad_buf_for_mxfp8_param_ag is not supported with Megatron FSDP, setting to False")
+                self.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+            if self.optimizer.reuse_grad_buf_for_mxfp8_param_ag:
+                self.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
@@ -1708,4 +1758,40 @@ def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
                 "optimizer.bf16 and optimizer.fp16 must both be False when "
                 "model is using fp32 precision (model.bf16=False, model.fp16=False) and "
                 "use_precision_aware_optimizer=True."
+            )
+
+
+def _validate_fine_grained_activation_offloading(config: ConfigContainer) -> None:
+    """Validate fine-grained activation offloading configuration.
+
+    This function ensures that fine-grained activation offloading is only enabled
+    with compatible configurations (transformer_engine implementation) and that
+    necessary environment variables are set for newer TE versions.
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        ValueError: If fine-grained activation offloading is enabled with incompatible settings.
+    """
+    from megatron.core.utils import is_te_min_version
+
+    model_cfg = config.model
+
+    if not model_cfg.fine_grained_activation_offloading:
+        return
+
+    # Fine-grained activation offloading requires transformer_engine implementation
+    if model_cfg.transformer_impl != "transformer_engine":
+        raise ValueError(
+            "Fine-grained activation offloading is only supported with transformer_engine implementation. "
+            f"Current transformer_impl: {model_cfg.transformer_impl}"
+        )
+
+    # For TE >= 2.10.0, NVTE_CPU_OFFLOAD_V1 must be set to avoid offloading weights
+    if is_te_min_version("2.10.0"):
+        if os.getenv("NVTE_CPU_OFFLOAD_V1", "0") != "1":
+            raise ValueError(
+                "For fine-grained activation offloading with TE >= 2.10.0, "
+                "NVTE_CPU_OFFLOAD_V1 environment variable should be set to 1 to avoid offloading weights."
             )
