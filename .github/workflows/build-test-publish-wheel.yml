@@ -48,7 +48,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@7674f57ffc0c2aa7f79590894bbfbc5929683da1 # v0.65.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@dbcf904a528ef93d55f3c4dbdd519af7897c51f7 # v0.65.1
     with:
       dry-run: true
       python-package: megatron.bridge
