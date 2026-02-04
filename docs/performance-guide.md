@@ -573,7 +573,9 @@ RUN pip install --no-build-isolation .
 
 ```
 
-DeepEP provided `test_internode.py` to test and benchmark cross node EP communication. In our experiment, when using 4 nodes of DGX-B200, ie. EP32, the achieved thoughput of cross EP is more than 50GB/s. We provide example SLURM script for running such test of DeepEP below. 
+DeepEP provides `test_internode.py` to test and benchmark cross-node EP communication. In our experiment, when using 4 nodes of DGX-B200 (i.e., EP32), the achieved throughput for cross-EP is about 50 GB/s with IBRC. We provide an example SLURM script below for running such a test with DeepEP.
+
+In another experiment on the same cluster, with IBGDA enabled by the cluster admin, we observed approximately 10% higher inter-node performance—roughly 55 GB/s. To enable IBGDA, you need to set the environment variable `export NVSHMEM_IB_ENABLE_IBGDA=true`; there is no need to change the software version or container, because with the software provided above, both modes will work.
 
 ```bash
 srun --account=<your_account> -N 4 -p batch --time 30 \
