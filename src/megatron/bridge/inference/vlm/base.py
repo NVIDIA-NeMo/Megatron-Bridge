@@ -112,6 +112,17 @@ def setup_model_and_tokenizer(
     return inference_wrapped_model, processor
 
 
+def _expose_decoder_from_language_model(model):
+    """Recursively get language_model from model and expose decoder, handling wrapped modules."""
+    current = model
+    while hasattr(current, "module"):
+        current = current.module
+
+    if hasattr(current, "language_model"):
+        language_model = current.language_model
+        current.decoder = language_model.decoder
+
+
 def setup_inference_wrapper(
     model,
     tokenizer,
@@ -131,6 +142,8 @@ def setup_inference_wrapper(
         wrapper_cls = QwenVLInferenceWrapper
         if isinstance(config, Qwen25VLModelProvider):
             hidden_size = config.hidden_size
+            # Expose decoder for MCore Infernce Engine compatibility (used by get_mamba_inference_state_config_from_model)
+            _expose_decoder_from_language_model(mcore_model)
         else:
             hidden_size = config.language_transformer_config.hidden_size
     else:

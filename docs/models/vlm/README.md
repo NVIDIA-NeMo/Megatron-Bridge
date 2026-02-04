@@ -9,6 +9,7 @@ Megatron Bridge supports the following VLM families:
 | Model | Documentation | Description |
 |-------|---------------|-------------|
 | **Gemma 3 VL** | [gemma3-vl.md](gemma3-vl.md) | Google Gemma 3 Vision Language model |
+| **Ministral 3** | [ministral3.md](ministral3.md) | Ministral 3 Vision Language model |
 | **Nemotron Nano V2 VL** | [nemotron-nano-v2-vl.md](nemotron-nano-v2-vl.md) | NVIDIA Nemotron Nano V2 Vision Language model |
 | **Qwen2.5 VL** | [qwen2.5-vl.md](qwen2.5-vl.md) | Alibaba Cloud Qwen2.5 Vision Language model |
 | **Qwen3 VL** | [qwen3-vl.md](qwen3-vl.md) | Alibaba Cloud Qwen3 Vision Language model |
