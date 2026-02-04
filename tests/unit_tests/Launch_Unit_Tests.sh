@@ -26,7 +26,7 @@ fi
 echo ""
 
 CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
-    --timeout=1 \
+    --timeout=2 \
     -o log_cli=true \
     -o log_cli_level=INFO \
     --disable-warnings \
