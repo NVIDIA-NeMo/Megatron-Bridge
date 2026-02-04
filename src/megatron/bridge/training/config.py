@@ -32,6 +32,7 @@ from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
+from megatron.training.common_config import RNGConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -98,24 +99,6 @@ class OptimizerConfig(MCoreOptimizerConfig):
         to compute derived fields based on the current field values.
         """
         super().__post_init__()
-
-
-@dataclass(kw_only=True)
-class RNGConfig:
-    """Configuration settings for random number generation."""
-
-    seed: int = 1234
-    """Random seed used for python, numpy, pytorch, and cuda."""
-
-    te_rng_tracker: bool = False
-    """Use the Transformer Engine version of the random number generator.
-    Required for CUDA graphs support."""
-
-    inference_rng_tracker: bool = False
-    """Use a random number generator configured for inference."""
-
-    data_parallel_random_init: bool = False
-    """Enable random initialization of params across data parallel ranks"""
 
 
 @dataclass(kw_only=True)
