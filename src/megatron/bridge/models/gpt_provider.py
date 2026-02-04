@@ -160,6 +160,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
     vocab_size: Optional[int] = None
+    padded_vocab_size: Optional[int] = None
     # Set if the tokenizer provides the vocab size. In this case, the vocab size will be padded
     # Controls whether vocab size should be padded for tensor parallelism
     should_pad_vocab: bool = False
@@ -244,7 +245,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 transformer_layer_spec = transformer_layer_spec(self)
 
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
-        if self.should_pad_vocab:
+        if self.padded_vocab_size is not None:
+            assert self.padded_vocab_size >= self.vocab_size, "The provided padded vocab size should be no less than base vocab size"
+            padded_vocab_size = self.padded_vocab_size
+        elif self.should_pad_vocab:
             padded_vocab_size = calculate_padded_vocab_size(
                 self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
             )

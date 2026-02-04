@@ -20,6 +20,8 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 import torch
 import torch.distributed
 import torch.nn as nn
+from torch.nn import functional as F
+
 from megatron.core import mpu
 from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
@@ -862,6 +864,36 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         return {str(self.hf_param): full_weights}
 
+
+class WordEmbeddingMapping(ColumnParallelMapping):
+    """Mapping for word embdding / lm head"""
+
+    def __init__(self, megatron_param, hf_param, hf_vocab_size: int = None):
+        super().__init__(megatron_param, hf_param)
+        self.vocab_size = hf_vocab_size
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        """Padding if needed during conversion"""
+        if self.vocab_size is None:
+            self.vocab_size = hf_weights.shape[0]
+        if hf_weights.shape[0] != self.vocab_size:
+            raise ValueError(f"The expect vocab size is {self.vocab_size}, but the shape of loaded weight is {hf_weights.shape}")
+        full_size = megatron_module.weight.shape[0] * self.tp_size
+        if full_size != hf_weights.shape[0]:
+            if full_size < self.vocab_size:
+                raise ValueError("The vocab size of mcore model should be larger than HF ckpt!")
+            hf_weights = F.pad(hf_weights, (0, 0, 0, full_size - hf_weights.shape[0]), mode='constant', value=0)
+        return super().hf_to_megatron(hf_weights, megatron_module)
+
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+        assert self.vocab_size is not None, "hf vocab size must be provided when converting megatron weight to hf!"
+        weight_dict = super().megatron_to_hf(megatron_weights, megatron_module)
+        for k, v in weight_dict.items():
+            full_size = v.shape[0]
+            if full_size < self.vocab_size:
+                raise ValueError("The vocab size of mcore model should be larger than HF ckpt!")
+            weight_dict[k] = v[:self.vocab_size]
+        return weight_dict
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
     """Mapping for **row-parallel** linear weights.
