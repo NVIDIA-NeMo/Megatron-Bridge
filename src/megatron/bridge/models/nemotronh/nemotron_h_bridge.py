@@ -84,11 +84,6 @@ class NemotronHBridge(MegatronModelBridge):
         provider.first_last_layers_bf16 = True
         provider.is_hybrid_model = True
 
-        # Handle kv_channels from head_dim or attention_head_dim
-        kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
-        if kv_channels is not None:
-            provider.kv_channels = kv_channels
-
         # MoE-specific defaults (only if MoE is enabled)
         if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
             provider.moe_aux_loss_coeff = 0.0001
