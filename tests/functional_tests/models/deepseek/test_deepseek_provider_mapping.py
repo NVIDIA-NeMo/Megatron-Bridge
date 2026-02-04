@@ -19,6 +19,7 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2LiteModelProvider,
     DeepSeekV2ModelProvider,
     DeepSeekV3ModelProvider,
+    DeepSeekV32ModelProvider,
     MoonlightModelProvider16B,
 )
 from tests.functional_tests.utils import compare_provider_configs
@@ -30,6 +31,7 @@ HF_MODEL_ID_TO_PROVIDER = {
     "deepseek-ai/DeepSeek-V2-Lite": DeepSeekV2LiteModelProvider,
     "deepseek-ai/DeepSeek-V3": DeepSeekV3ModelProvider,
     "deepseek-ai/DeepSeek-V3-Base": DeepSeekV3ModelProvider,
+    "deepseek-ai/DeepSeek-V3.2-Exp": DeepSeekV32ModelProvider,
     "moonshotai/Moonlight-16B-A3B": MoonlightModelProvider16B,
 }
 
