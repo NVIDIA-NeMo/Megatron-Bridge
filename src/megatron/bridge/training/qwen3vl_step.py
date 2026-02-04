@@ -20,7 +20,7 @@ import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_thd_batch_on_this_cp_rank
-
+from megatron.core.transformer.enums import AttnBackend
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -179,6 +179,10 @@ def pack_or_pad_batch_sequences(
     if data_format == "thd":
         # build thd sequences with tiny padding
         seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+        cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
+        cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
+        max_seqlen_in_batch = seqlens_in_batch.max().item()
+
         seqlens_in_batch_padded = seqlens_in_batch + (divisible_by - seqlens_in_batch % divisible_by) % divisible_by
         cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
         cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
@@ -235,10 +239,10 @@ def pack_or_pad_batch_sequences(
 
     packed_seq_params = PackedSeqParams(
         qkv_format="thd",
-        cu_seqlens_q=cu_seqlens_padded,
-        max_seqlen_q=max_seqlen_in_batch_padded,
-        cu_seqlens_kv=cu_seqlens_padded,
-        max_seqlen_kv=max_seqlen_in_batch_padded,
+        cu_seqlens_q=cu_seqlens,
+        max_seqlen_q=max_seqlen_in_batch,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_kv=max_seqlen_in_batch,
         cu_seqlens_q_padded=cu_seqlens_padded,
         cu_seqlens_kv_padded=cu_seqlens_padded,
     )
@@ -297,6 +301,9 @@ def forward_step(
             data_format = "bshd"
     else:
         data_format = "bshd"
+
+    if pack_sequences_in_batch and this_pg_collection.cp.size() > 1 and model.config.attention_backend != AttnBackend.flash:
+        raise ValueError(f"When using pack_sequences_in_batch, Qwen3-VL model only supports context parallelism with flash attention backend, but got {model.config.attention_backend.name}")
 
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
         tokens,

@@ -30,6 +30,8 @@ model:
   freeze_vision_projection: false
   # cross_entropy_fusion_impl: te
   calculate_per_token_loss: true
+  attention_backend: flash
+  # num_layers: 16
 
 
 train:
@@ -39,11 +41,12 @@ train:
   eval_iters: 5
 
 optimizer:
-  lr: 0.00025
-  min_lr: 0.000025
+  lr: 0.0005
+  min_lr: 0
 
 scheduler:
-  lr_warmup_iters: 10
+  lr_warmup_iters: 0
+  lr_decay_style: constant
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
@@ -63,12 +66,18 @@ logger:
   log_interval: 1
   log_throughput: true
   log_params_norm: true
+  log_throughput_to_tensorboard: true
+  log_timers_to_tensorboard: true
+  log_validation_ppl_to_tensorboard: true
+  log_l2_norm_grad_to_tensorboard: true
   wandb_project: null
   wandb_save_dir: ./outputs/qwen3-vl/
   wandb_exp_name: null
 
 dataset:
   sequence_length: 4096
+  # maker_name: make_cv17_dataset
+  pack_sequences_in_batch: true
 
 rng:
   seed: 42

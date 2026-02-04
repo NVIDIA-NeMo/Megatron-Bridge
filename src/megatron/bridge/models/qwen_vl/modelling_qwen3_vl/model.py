@@ -107,7 +107,7 @@ class Qwen3VLModel(MegatronModule):
                     get_vision_model_config,
                 )
 
-                megatron_vision_transformer_config = get_vision_model_config(vision_transformer_config)
+                megatron_vision_transformer_config = get_vision_model_config(vision_transformer_config, language_transformer_config)
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
                 megatron_vision_transformer_config.first_pipeline_num_layers = None
 
@@ -299,8 +299,6 @@ class Qwen3VLModel(MegatronModule):
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
 
         cp_size = self.pg_collection.cp.size()
-        if cp_size > 1 and not self.freeze_vision_model:
-            raise RuntimeError("When cp_size > 1, the vision model should be frozen. Otherwise, the gradient will be wrong.")
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -319,7 +317,7 @@ class Qwen3VLModel(MegatronModule):
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                if cp_size > 1:
+                if cp_size > 1 and self.config.vision_dp_when_cp:
                     if cp_img_num is None:
                         assert images_padded is None
                         vision_data, vision_grid_thw, cp_img_num, images_padded = qwen3vl_cp_split(
@@ -355,7 +353,7 @@ class Qwen3VLModel(MegatronModule):
                                 dtype=torch.bfloat16,
                             )
                         )
-                if cp_size > 1:
+                if cp_size > 1 and self.config.vision_dp_when_cp:
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,

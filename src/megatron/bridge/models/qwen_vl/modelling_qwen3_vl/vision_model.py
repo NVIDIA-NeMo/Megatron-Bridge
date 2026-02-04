@@ -45,6 +45,8 @@ class Qwen3VLVisionModel(VisionModule):
         self.patch_size = transformer_config.patch_size
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
 
+        assert transformer_config.context_parallel_size == 1, f"context_parallel_size should be 1 in vision model but got {transformer_config.context_parallel_size}"
+
         self.patch_embed = Qwen3VLVisionPatchEmbed(transformer_config)
         self.pos_embed = nn.Embedding(transformer_config.num_position_embeddings, transformer_config.hidden_size)
         self.num_grid_per_side = int(transformer_config.num_position_embeddings**0.5)

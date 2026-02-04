@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import copy
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
@@ -52,18 +52,22 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     video_token_id: int = 151656
     vision_start_token_id: int = 151652
     hf_text_config: Optional[Qwen3VLTextConfig] = None
+    vision_dp_when_cp: bool = False
+    
 
-
-def get_vision_model_config(hf_config):
+def get_vision_model_config(hf_config, megatron_config=None):
     # init config from scratch to avoid deepcopy of parallel_state
-    config = Qwen3VLTransformerConfig(
-        num_layers=hf_config.depth,
-        hidden_size=hf_config.hidden_size,
-        num_attention_heads=hf_config.num_heads,
-        ffn_hidden_size=hf_config.intermediate_size,
-        add_bias_linear=True,
-        add_qkv_bias=True,
-    )
+    if megatron_config is None:
+        config = Qwen3VLTransformerConfig(
+            num_layers=hf_config.depth,
+            hidden_size=hf_config.hidden_size,
+            num_attention_heads=hf_config.num_heads,
+            ffn_hidden_size=hf_config.intermediate_size,
+            add_bias_linear=True,
+            add_qkv_bias=True,
+        )
+    else:
+        config = copy.copy(megatron_config)
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
     config.moe_ffn_hidden_size = None
