@@ -278,7 +278,7 @@ def main(
     )
 
     if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
