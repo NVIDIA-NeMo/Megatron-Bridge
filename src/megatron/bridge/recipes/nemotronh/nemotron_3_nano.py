@@ -496,7 +496,6 @@ def _nemotron_3_nano_finetune_common(
         lr_decay_iters=lr_decay_iters,
         adam_beta1=0.9,
         adam_beta2=0.95,
-        adam_eps=1e-8,
         weight_decay=0.1,
         max_lr=finetune_lr,
         min_lr=min_lr,
