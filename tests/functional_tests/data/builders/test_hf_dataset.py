@@ -53,7 +53,7 @@ def disable_hf_cache():
     """Disable HF cache for the dataset tests."""
     hf_home = os.environ["HF_HOME"]
     hub_offline = os.environ["HF_HUB_OFFLINE"]
-    del os.environ["HF_HOME"]
+    os.environ["HF_HOME"] = "/tmp/hf_home"
     del os.environ["HF_HUB_OFFLINE"]
     reload(huggingface_hub.constants)
     reload(datasets.config)
