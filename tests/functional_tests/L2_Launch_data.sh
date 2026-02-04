@@ -15,6 +15,12 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+# Copy test data to a writable location
+mkdir -p /tmp/hf_home/hub
+mkdir -p /tmp/hf_home/datasets
+cp -r /home/TestData/HF_HOME/hub/datasets--google--boolq /tmp/hf_home/hub/datasets--google--boolq
+cp -r /home/TestData/HF_HOME/datasets/google___boolq /tmp/hf_home/datasets/google___boolq
+
 CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
     -o log_cli=true \
     -o log_cli_level=INFO \
