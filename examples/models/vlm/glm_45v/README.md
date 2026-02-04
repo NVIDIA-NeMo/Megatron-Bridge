@@ -116,7 +116,7 @@ W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-LoRA fine-tuning requires 32 nodes (256 GPUs) with TP=1, PP=8, EP=4.
+LoRA fine-tuning requires 8 nodes (64 GPUs) with TP=1, PP=8, EP=4.
 
 **Usage:**
 ```bash
@@ -140,7 +140,7 @@ W&B report coming soon.
 | Model | Mode | TP | PP | EP | Global Batch Size | Learning Rate | Hardware |
 |-------|------|----|----|-----|-------------------|---------------|----------|
 | GLM-4.5V | Full SFT | 1 | 8 | 16 | 32 | 5e-6 | 512 GPUs (64 nodes) |
-| GLM-4.5V | LoRA/DoRA | 1 | 8 | 4 | 32 | 1e-4 | 256 GPUs (32 nodes) |
+| GLM-4.5V | LoRA/DoRA | 1 | 8 | 4 | 32 | 1e-4 | 64 GPUs (8 nodes) |
 
 ### Multi-Node Setup with Local Repository
 
