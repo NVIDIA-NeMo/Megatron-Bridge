@@ -47,6 +47,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups; \
     fi && \
+    echo ${PYTHONPATH} && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
 COPY . /opt/Megatron-Bridge
