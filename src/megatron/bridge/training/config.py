@@ -30,6 +30,7 @@ from megatron.core.optimizer import (
 )
 from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import is_torch_min_version
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -186,6 +187,13 @@ class DistributedInitConfig:
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
     """
+
+    fake_process_group: bool = False
+    """If set, initialize with fake distributed process group and all distributed
+    communication operations will be skipped. This is useful for profiling memory
+    usage of distributed training with just one GPU. Set WORLD_SIZE and RANK
+    environment variables to the specific values for target distributed scale.
+    Requires PyTorch >= 2.3.0."""
 
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
@@ -1396,6 +1404,59 @@ class ConfigContainer(Container):
         # Enable deterministic algorithms in torch
         torch.use_deterministic_algorithms(True)
 
+    def _validate_and_configure_fake_process_group(self) -> None:
+        """Validate and configure settings for fake process group mode.
+
+        Fake process groups allow profiling memory usage of distributed training
+        with a single GPU by skipping all distributed communication operations.
+
+        This method:
+        - Validates PyTorch version >= 2.3.0 (required for FakeStore)
+        - Validates incompatibility with flex MoE token dispatcher
+        - Auto-disables check_for_nan_in_loss (collective ops are skipped)
+        - Auto-disables Gloo process groups
+        - Validates incompatibility with in-process restart
+        - Validates incompatibility with decentralized process groups
+
+        Raises:
+            AssertionError: If PyTorch version is < 2.3.0 or moe_token_dispatcher_type is 'flex'.
+            ValueError: If in-process restart or decentralized process groups are enabled.
+        """
+        if not self.dist.fake_process_group:
+            return
+
+        assert is_torch_min_version("2.3.0"), "Fake process group is only supported with PyTorch 2.3.0 and above."
+
+        # Check MoE token dispatcher type compatibility
+        if hasattr(self.model, "moe_token_dispatcher_type"):
+            assert self.model.moe_token_dispatcher_type != "flex", (
+                "Fake process group is not supported with flex token dispatcher."
+            )
+
+        # Fake process group is incompatible with in-process restart
+        if self.inprocess_restart is not None and self.inprocess_restart.enabled:
+            raise ValueError(
+                "Fake process group is not compatible with in-process restart. "
+                "Please disable either fake_process_group or inprocess_restart."
+            )
+
+        # Fake process group is incompatible with decentralized process groups
+        # (decentralized PGs are created with backend="nccl" which conflicts with fake backend)
+        if self.dist.use_decentralized_pg:
+            raise ValueError(
+                "Fake process group is not compatible with use_decentralized_pg=True. "
+                "Decentralized process groups use NCCL backend which is incompatible with fake backend."
+            )
+
+        # Auto-disable settings with warnings
+        if self.rerun_state_machine.check_for_nan_in_loss:
+            self.rerun_state_machine.check_for_nan_in_loss = False
+            warn_rank_0("check_for_nan_in_loss is set to False for fake process group.")
+
+        if self.dist.use_gloo_process_groups:
+            self.dist.use_gloo_process_groups = False
+            warn_rank_0("use_gloo_process_groups is set to False for fake process group.")
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1458,6 +1519,9 @@ class ConfigContainer(Container):
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+
+        # Fake process group validations and auto-configuration
+        self._validate_and_configure_fake_process_group()
 
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:

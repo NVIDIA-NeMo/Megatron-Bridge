@@ -1155,8 +1155,12 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank", return_value=True)
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.distributed.get_backend", return_value="nccl")
     def test_profiling_memory_snapshot(
         self,
+        mock_get_backend,
+        mock_is_last_rank,
         mock_report_runtime,
         mock_report_throughput,
         mock_report_l2_norm_grad,

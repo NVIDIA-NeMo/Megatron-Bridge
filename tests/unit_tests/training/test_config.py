@@ -31,6 +31,7 @@ from megatron.bridge.training.config import (
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     GPTFIMDatasetConfig,
+    InProcessRestartConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
@@ -1390,6 +1391,185 @@ class TestConfigContainerValidation:
         try:
             container.validate()  # Should pass without error since offloading is disabled
             assert container.model.fine_grained_activation_offloading is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_requires_torch_2_3(self, monkeypatch):
+        """Test that fake_process_group requires PyTorch >= 2.3.0."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(fake_process_group=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+        try:
+            # Mock is_torch_min_version to return False
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=False):
+                with pytest.raises(
+                    AssertionError,
+                    match="Fake process group is only supported with PyTorch 2.3.0 and above",
+                ):
+                    container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_incompatible_with_flex_dispatcher(self, monkeypatch):
+        """Test that fake_process_group is incompatible with flex MoE token dispatcher."""
+        gpt_model_cfg = create_test_deepseek_config(moe_token_dispatcher_type="flex")
+        dist_cfg = create_test_distributed_init_config(fake_process_group=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+        try:
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=True):
+                with pytest.raises(
+                    AssertionError,
+                    match="Fake process group is not supported with flex token dispatcher",
+                ):
+                    container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_disables_nan_check(self, monkeypatch):
+        """Test that fake_process_group auto-disables check_for_nan_in_loss."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(fake_process_group=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+        # Enable check_for_nan_in_loss initially
+        container.rerun_state_machine.check_for_nan_in_loss = True
+
+        try:
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=True):
+                with patch("megatron.bridge.training.config.warn_rank_0"):
+                    container.validate()
+                    # Should be auto-disabled
+                    assert container.rerun_state_machine.check_for_nan_in_loss is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_disables_gloo_process_groups(self, monkeypatch):
+        """Test that fake_process_group auto-disables use_gloo_process_groups."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(
+            fake_process_group=True,
+            use_gloo_process_groups=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+
+        try:
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=True):
+                with patch("megatron.bridge.training.config.warn_rank_0"):
+                    container.validate()
+                    # Should be auto-disabled
+                    assert container.dist.use_gloo_process_groups is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_incompatible_with_inprocess_restart(self, monkeypatch):
+        """Test that fake_process_group is incompatible with in-process restart."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(fake_process_group=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+        # Enable in-process restart
+        container.inprocess_restart = InProcessRestartConfig(enabled=True)
+
+        try:
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=True):
+                with pytest.raises(
+                    ValueError,
+                    match="Fake process group is not compatible with in-process restart",
+                ):
+                    container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_incompatible_with_decentralized_pg(self, monkeypatch):
+        """Test that fake_process_group is incompatible with use_decentralized_pg."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(
+            fake_process_group=True,
+            use_decentralized_pg=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+
+        try:
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=True):
+                with pytest.raises(
+                    ValueError,
+                    match="Fake process group is not compatible with use_decentralized_pg=True",
+                ):
+                    container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_valid_configuration(self, monkeypatch):
+        """Test that fake_process_group validation passes with valid configuration."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(
+            fake_process_group=True,
+            use_gloo_process_groups=False,  # Already disabled
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+        # Disable nan check initially
+        container.rerun_state_machine.check_for_nan_in_loss = False
+
+        try:
+            with patch("megatron.bridge.training.config.is_torch_min_version", return_value=True):
+                # Should pass without error
+                container.validate()
+                assert container.dist.fake_process_group is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_fake_process_group_disabled_skips_validation(self, monkeypatch):
+        """Test that validation is skipped when fake_process_group is False."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(fake_process_group=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+        )
+        # Enable settings that would fail if fake_process_group validation ran
+        container.rerun_state_machine.check_for_nan_in_loss = True
+
+        try:
+            # Should pass - fake_process_group validation is skipped
+            container.validate()
+            # Settings should remain unchanged
+            assert container.rerun_state_machine.check_for_nan_in_loss is True
+            assert container.dist.use_gloo_process_groups is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
