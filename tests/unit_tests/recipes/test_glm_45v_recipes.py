@@ -252,9 +252,9 @@ def test_glm_45v_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For LoRA, GLM-4.5V should use TP=1, PP=4, EP=2
+    # For LoRA, GLM-4.5V should use TP=1, PP=8, EP=2
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.expert_model_parallel_size == 2
 
     # Check PEFT config
@@ -284,7 +284,7 @@ def test_glm_45v_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # For DoRA, GLM-4.5V should use same parallelism as LoRA
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.expert_model_parallel_size == 2
 
     # Check PEFT config (DoRA has alpha=64 by default, unlike LoRA's alpha=32)
@@ -311,9 +311,9 @@ def test_glm_45v_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For full SFT, GLM-4.5V should use TP=1, PP=4, EP=16
+    # For full SFT, GLM-4.5V should use TP=1, PP=8, EP=16
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.peft is None
 
@@ -383,14 +383,14 @@ def test_glm_45v_pipeline_layout_pp2():
 
     _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
 
-    # PP=2 should split 46 layers: first stage 1+23=24, second stage 23
+    # PP=2 should split 46 layers: first stage 1+10=11 (to balance vision encoder), second stage 36
     assert model_cfg.pipeline_model_parallel_layout is not None
     assert len(model_cfg.pipeline_model_parallel_layout) == 2
-    # First stage: embedding + 23 decoder layers
+    # First stage: embedding + 10 decoder layers (fewer to balance vision encoder cost)
     assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 23
-    # Last stage: 23 decoder layers + loss
-    assert model_cfg.pipeline_model_parallel_layout[1].count("decoder") == 23
+    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 10
+    # Last stage: 36 decoder layers + loss
+    assert model_cfg.pipeline_model_parallel_layout[1].count("decoder") == 36
     assert "loss" in model_cfg.pipeline_model_parallel_layout[1]
 
 
@@ -439,9 +439,9 @@ def test_glm_45v_pipeline_layout_pp16():
     # PP=16 should have 16 stages
     assert model_cfg.pipeline_model_parallel_layout is not None
     assert len(model_cfg.pipeline_model_parallel_layout) == 16
-    # First stage: embedding + 2 decoder layers
+    # First stage: embedding + 1 decoder layer (to balance vision encoder cost)
     assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 2
+    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 1
     # Last stage should have loss
     assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
 
