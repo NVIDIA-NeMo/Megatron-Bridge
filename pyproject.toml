@@ -112,7 +112,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine[pytorch]>=2.9.0a0,<2.10.0",
+    "transformer-engine[pytorch]>=2.10.0a0,<2.12.0",
 ]
 
 # uv.sources allows us to override dependencies with VCS commits.
