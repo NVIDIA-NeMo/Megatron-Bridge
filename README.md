@@ -49,7 +49,12 @@ Log in to Hugging Face Hub:
 huggingface-cli login --token <your token>
 ```
 
-Conversion-only quickstart (✅ Core):
+To run directly with one of our existing recipes:
+```sh
+torchrun --nproc-per-node=8 examples/recipes/llama/pretrain_llama3_8b.py
+```
+
+To convert a model from Hugging Face to Megatron(✅ Core):
 
 ```python
 from megatron.bridge import AutoBridge
@@ -73,7 +78,7 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
     print(name, tuple(weight.shape))
 ```
 
-Training quickstart using pre-configured recipes:
+To build your own recipes using our pre-configured ones:
 
 ```python
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
