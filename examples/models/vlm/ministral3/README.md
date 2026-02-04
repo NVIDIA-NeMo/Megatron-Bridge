@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Ministral 3 vision-language models.
 
-For model introduction and architecture details, see the [GMinistral 3 documentation](../../../../docs/models/vlm/ministral3.md).
+For model introduction and architecture details, see the [Ministral 3 documentation](../../../../docs/models/vlm/ministral3.md).
 
 ## Workspace Configuration
 
