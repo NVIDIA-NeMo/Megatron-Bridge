@@ -20,7 +20,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-ENV PYTHONPATH="/opt/Megatron-Bridge/3rdparty/Megatron-LM/:$PYTHONPATH"
+ENV PYTHONPATH="${PYTHONPATH}:/opt/Megatron-Bridge/3rdparty/Megatron-LM/"
 ENV UV_LINK_MODE=copy
 ENV UV_VERSION="0.7.2"
 
