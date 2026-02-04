@@ -16,7 +16,7 @@ import logging
 import os
 import signal
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
@@ -30,6 +30,8 @@ from megatron.core.optimizer import (
 )
 from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
+from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -1664,6 +1666,161 @@ class ConfigContainer(Container):
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
             else:
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+
+    def log_non_default_values(self) -> None:
+        """Log configuration values that differ from Megatron Core defaults.
+
+        For configs that inherit from Megatron Core (e.g., OptimizerConfig, DDPConfig,
+        TransformerConfig), this method logs only the values that differ from the Mcore
+        defaults. This makes it easier to spot unintended deviations from baseline settings.
+
+        For configs that don't inherit from Mcore, key values are logged via
+        `_get_key_config_values`, which excludes None values and callables.
+        """
+        # Determine the correct Mcore parent class for the model config
+        # Some models (e.g., DeepSeek) use MLATransformerConfig instead of TransformerConfig
+        model_mcore_class = _get_mcore_transformer_parent(self.model)
+
+        # Map of config names to their (config object, Mcore parent class or None)
+        mcore_configs = [
+            ("optimizer", self.optimizer, MCoreOptimizerConfig),
+            ("ddp", self.ddp, MCoreDistributedDataParallelConfig),
+            ("model", self.model, model_mcore_class),
+        ]
+
+        # Non-Mcore configs - log all values
+        non_mcore_configs = [
+            ("train", self.train),
+            ("scheduler", self.scheduler),
+            ("checkpoint", self.checkpoint),
+            ("logger", self.logger),
+            ("tokenizer", self.tokenizer),
+            ("rng", self.rng),
+        ]
+
+        log_lines = [""]
+        log_lines.append("=" * 70)
+        log_lines.append("Configuration Summary (Non-Default Values vs Megatron Core)")
+        log_lines.append("=" * 70)
+
+        # Log non-default values for Mcore configs
+        for config_name, config_obj, mcore_class in mcore_configs:
+            non_defaults = _get_non_default_values(config_obj, mcore_class)
+            if non_defaults:
+                log_lines.append(f"\n[{config_name}] Non-default values (vs Mcore {mcore_class.__name__}):")
+                for field_name, (current_val, default_val) in sorted(non_defaults.items()):
+                    log_lines.append(f"  {field_name}: {current_val!r}  (Mcore default: {default_val!r})")
+
+        # Log key values for non-Mcore configs
+        log_lines.append("\n" + "-" * 70)
+        log_lines.append("Other Configuration Values:")
+        log_lines.append("-" * 70)
+
+        for config_name, config_obj in non_mcore_configs:
+            if config_obj is None:
+                continue
+            key_values = _get_key_config_values(config_obj)
+            if key_values:
+                log_lines.append(f"\n[{config_name}]:")
+                for field_name, value in sorted(key_values.items()):
+                    log_lines.append(f"  {field_name}: {value!r}")
+
+        log_lines.append("\n" + "=" * 70)
+
+        print_rank_0("\n".join(log_lines))
+
+
+def _get_mcore_transformer_parent(model_config: Any) -> type:
+    """Determine the correct Mcore TransformerConfig parent class for a model.
+
+    Some models (e.g., DeepSeek v2/v3) inherit from MLATransformerConfig instead of
+    the base TransformerConfig. This function checks the inheritance chain to find
+    the appropriate Mcore class to use as the baseline for comparison.
+
+    Args:
+        model_config: The model configuration object.
+
+    Returns:
+        The appropriate Mcore TransformerConfig class (MCoreMLATransformerConfig or
+        MCoreTransformerConfig).
+    """
+    # Check if the model inherits from MLATransformerConfig
+    if isinstance(model_config, MCoreMLATransformerConfig):
+        return MCoreMLATransformerConfig
+    return MCoreTransformerConfig
+
+
+def _get_non_default_values(config_obj: Any, mcore_class: type) -> Dict[str, Tuple[Any, Any]]:
+    """Get values that differ from Mcore parent class defaults.
+
+    Args:
+        config_obj: The config object to compare.
+        mcore_class: The Megatron Core parent class to compare against.
+
+    Returns:
+        Dictionary mapping field name to (current_value, default_value) for non-default fields.
+    """
+    non_defaults = {}
+
+    # Get default values from Mcore class
+    mcore_defaults = {}
+    for f in fields(mcore_class):
+        if f.name.startswith("_"):
+            continue
+        if f.default is not MISSING:
+            mcore_defaults[f.name] = f.default
+        elif f.default_factory is not MISSING:
+            mcore_defaults[f.name] = f.default_factory()
+
+    # Compare current values against Mcore defaults
+    for f in fields(config_obj):
+        if f.name.startswith("_"):
+            continue
+        field_name = f.name
+        current_value = getattr(config_obj, field_name, None)
+
+        if field_name in mcore_defaults:
+            default_value = mcore_defaults[field_name]
+            # Skip callable values (like functions) and complex objects
+            if callable(current_value) or callable(default_value):
+                continue
+            # Compare values
+            try:
+                if current_value != default_value:
+                    non_defaults[field_name] = (current_value, default_value)
+            except (TypeError, ValueError):
+                # Some types may not be directly comparable (e.g., torch.dtype)
+                if str(current_value) != str(default_value):
+                    non_defaults[field_name] = (current_value, default_value)
+
+    return non_defaults
+
+
+def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
+    """Get key configuration values for non-Mcore configs.
+
+    Args:
+        config_obj: The config object to extract values from.
+
+    Returns:
+        Dictionary mapping field name to value for key fields.
+    """
+    values = {}
+    if not hasattr(config_obj, "__dataclass_fields__"):
+        return values
+
+    for f in fields(config_obj):
+        if f.name.startswith("_"):
+            continue
+        value = getattr(config_obj, f.name, None)
+        # Skip None values and complex objects
+        if value is None:
+            continue
+        if callable(value):
+            continue
+        values[f.name] = value
+
+    return values
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:

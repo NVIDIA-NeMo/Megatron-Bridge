@@ -277,7 +277,7 @@ def _moonlight_common(
             lr_decay_iters=train_iters,
             adam_beta1=0.9,
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             weight_decay=0.1,
             max_lr=lr,
             min_lr=min_lr,
@@ -616,7 +616,7 @@ def _moonlight_finetune_common(
         min_lr=min_lr,
         adam_beta1=0.9,
         adam_beta2=0.98,
-        adam_eps=1e-5,
+        adam_eps=1e-8,
         weight_decay=0.1,
     )
 
