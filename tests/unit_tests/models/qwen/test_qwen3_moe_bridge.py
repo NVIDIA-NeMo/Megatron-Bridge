@@ -23,9 +23,9 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_moe_bridge import Qwen3MoEBridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
 
 
 class TestQwen3MoEBridge:
@@ -91,8 +91,12 @@ class TestQwen3MoEBridge:
 
     @pytest.fixture
     def mock_qwen3_moe_config(self, qwen3_moe_30b_config_dict):
-        """Create a mock Qwen3 MoE configuration."""
-        config = Mock()
+        """Create a mock Qwen3 MoE configuration.
+
+        Uses spec=list to make getattr return None for undefined attributes
+        instead of Mock objects, which would incorrectly be passed to GPTModelProvider.
+        """
+        config = Mock(spec=[])
         for key, value in qwen3_moe_30b_config_dict.items():
             setattr(config, key, value)
         return config
@@ -120,8 +124,8 @@ class TestQwen3MoEBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_moe)
 
-        # Check that it returns a Qwen3MoEModelProvider instance
-        assert isinstance(result, Qwen3MoEModelProvider)
+        # Check that it returns a GPTModelProvider instance (after refactoring)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_qwen3_moe_config.num_hidden_layers
@@ -196,7 +200,7 @@ class TestQwen3MoEBridge:
     def test_provider_bridge_dtype_handling(self, qwen3_moe_30b_config_dict):
         """Test dtype handling in provider_bridge."""
         # Test with bfloat16
-        config = Mock()
+        config = Mock(spec=[])
         for key, value in qwen3_moe_30b_config_dict.items():
             setattr(config, key, value)
         config.torch_dtype = "bfloat16"
@@ -268,12 +272,12 @@ class TestQwen3MoEBridge:
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        # Should default to False when missing
-        assert result.share_embeddings_and_output_weights is False
+        # GPTModelProvider defaults share_embeddings_and_output_weights to True
+        assert result.share_embeddings_and_output_weights is True
 
     def test_provider_bridge_235b_config(self, qwen3_moe_235b_config_dict):
         """Test provider_bridge with Qwen3 MoE 235B configuration."""
-        config = Mock()
+        config = Mock(spec=[])
         for key, value in qwen3_moe_235b_config_dict.items():
             setattr(config, key, value)
 
