@@ -82,7 +82,6 @@ dependencies = [
     "megatron-core[dev,mlm]>=0.15.0a0,<0.17.0",
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]>=2.10.0a0,<2.12.0",
-    "transformer-engine-cu13>=2.10.0a0,<2.12.0",
     "mamba-ssm",
     "nvidia-resiliency-ext",
     "causal-conv1d",
