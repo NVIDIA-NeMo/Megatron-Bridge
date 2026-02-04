@@ -236,25 +236,54 @@ class TestSetupInferenceWrapper:
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen25(self, mock_wrapper_cls, mock_tokenizer):
-        mock_model = MagicMock()
+        """Test Qwen25 setup with module.language_model.decoder structure."""
+
+        # Create mock objects with nested structure
+        class MockObject:
+            pass
+
+        mock_decoder = MagicMock()
+
+        # Build the nested structure: model.module.language_model.decoder
+        mock_language_model = MockObject()
+        mock_language_model.decoder = mock_decoder
+
+        mock_module = MockObject()
+        mock_module.language_model = mock_language_model
+
+        mock_model = MockObject()
+        mock_model.module = mock_module
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
         mock_model.config.hidden_size = 1024
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
+        # Verify decoder was exposed at module level
+        assert hasattr(mock_module, "decoder")
+        assert mock_module.decoder is mock_decoder
+
         mock_wrapper_cls.assert_called_once()
         # Check InferenceWrapperConfig was created with correct hidden_size
-        # Args are positional: (model, InferenceWrapperConfig)
         call_args = mock_wrapper_cls.call_args
-        inference_config = call_args[0][1]  # Second positional argument
+        inference_config = call_args[0][1]
         assert inference_config.hidden_size == 1024
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen3(self, mock_wrapper_cls, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockObject:
+            pass
+
+        mock_model = MockObject()
         mock_model.config = MagicMock(spec=Qwen3VLModelProvider)
         mock_model.config.language_transformer_config = MagicMock()
         mock_model.config.language_transformer_config.hidden_size = 2048
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
@@ -266,8 +295,15 @@ class TestSetupInferenceWrapper:
         assert inference_config.hidden_size == 2048
 
     def test_setup_inference_wrapper_invalid(self, mock_tokenizer):
-        mock_model = MagicMock()
+        # Create a simple object without module attribute to avoid infinite loop
+        class MockObject:
+            pass
+
+        mock_model = MockObject()
         mock_model.config = MagicMock()  # Not Qwen config
+        mock_model.cuda = MagicMock(return_value=mock_model)
+        mock_model.to = MagicMock(return_value=mock_model)
+        mock_model.eval = MagicMock()
 
         with pytest.raises(ValueError):
             setup_inference_wrapper(mock_model, mock_tokenizer)
