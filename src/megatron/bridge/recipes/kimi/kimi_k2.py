@@ -14,6 +14,7 @@
 
 import logging
 import os
+from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -117,6 +118,7 @@ def _kimi_k2_model_config(
     recompute_num_layers: int | None = None,
     enable_deepep: bool = False,
     apply_rope_fusion: bool = False,
+    layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> KimiK2Provider:
     """
     Configure the Kimi-K2 (1T) model.
@@ -178,17 +180,19 @@ def _kimi_k2_model_config(
     }
     pp_size = pipeline_model_parallel_size or 1
     vp_size = virtual_pipeline_model_parallel_size or 1
-    if (pp_size, vp_size) not in map_pp_vp_to_layout:
-        raise ValueError(
-            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
-            f"for Kimi-K2. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
-        )
+    if layout is None:
+        if (pp_size, vp_size) not in map_pp_vp_to_layout:
+            raise ValueError(
+                f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
+                f"for Kimi-K2. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
+            )
 
-    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+        layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+        if layout is not None:
+            layout = list([list(x) for x in layout])  # yield all the elements
 
     if layout is not None:
-        layout = list([list(x) for x in layout])  # yield all the elements
-    cfg.pipeline_model_parallel_layout = layout
+        cfg.pipeline_model_parallel_layout = layout
 
     if enable_deepep:
         cfg.moe_token_dispatcher_type = "flex"
@@ -236,6 +240,7 @@ def _kimi_k2_common(
     # Precision / overlap configs
     precision_config: MixedPrecisionConfig | str | None = None,
     comm_overlap_config: CommOverlapConfig | None = None,
+    layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Kimi-K2 (1T) model.
@@ -300,6 +305,7 @@ def _kimi_k2_common(
         recompute_num_layers=recompute_num_layers,
         enable_deepep=enable_deepep,
         apply_rope_fusion=apply_rope_fusion,
+        layout=layout,
     )
 
     if optimizer_type == "adam":
@@ -356,7 +362,7 @@ def _kimi_k2_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
