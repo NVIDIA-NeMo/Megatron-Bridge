@@ -31,7 +31,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     collapse_thw,
     get_vision_cp_data,
 )
-from megatron.bridge.training.utils.packed_seq_utils import preprocess_packed_seqs
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import preprocess_packed_seqs
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
