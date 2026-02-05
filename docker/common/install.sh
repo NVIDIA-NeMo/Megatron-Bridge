@@ -112,7 +112,7 @@ main() {
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
         pip uninstall -y nvidia-modelopt
         cd 3rdparty/Model-Optimizer/ && \
-        pip install -e --no-deps . && \
+        pip install --no-deps -e . && \
         cd -
 
         # Install dependencies
