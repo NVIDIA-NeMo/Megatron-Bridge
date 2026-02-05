@@ -24,8 +24,8 @@ from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
-from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronHModelProvider
 
 
 class TestNemotronHBridge:
@@ -88,8 +88,12 @@ class TestNemotronHBridge:
 
     @pytest.fixture
     def mock_nemotronh_config(self, nemotronh_8b_config_dict):
-        """Create mock config instance."""
-        cfg = Mock()
+        """Create mock config instance.
+
+        Uses spec=[] to make getattr return None for undefined attributes
+        instead of Mock objects, which would incorrectly be passed to the provider.
+        """
+        cfg = Mock(spec=[])
         for k, v in nemotronh_8b_config_dict.items():
             setattr(cfg, k, v)
         return cfg
@@ -114,7 +118,7 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
 
         # Check that it returns a MambaModelProvider instance
-        assert isinstance(result, NemotronHModelProvider)
+        assert isinstance(result, MambaModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_nemotronh_config.num_hidden_layers
@@ -228,7 +232,7 @@ class TestNemotronHBridge:
             "routed_scaling_factor": 2.0,
         }
 
-        cfg = Mock()
+        cfg = Mock(spec=[])
         for k, v in moe_config_dict.items():
             setattr(cfg, k, v)
 
@@ -261,7 +265,7 @@ class TestNemotronHBridge:
             "routed_scaling_factor": 2.0,
         }
 
-        cfg = Mock()
+        cfg = Mock(spec=[])
         for k, v in moe_config_dict.items():
             setattr(cfg, k, v)
 
@@ -271,8 +275,8 @@ class TestNemotronHBridge:
         bridge = NemotronHBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        # MoE configs should not be set (will use defaults or not exist)
-        assert not hasattr(result, "num_moe_experts") or result.num_moe_experts is None
+        # When n_routed_experts is 0, num_moe_experts should be 0 or None
+        assert result.num_moe_experts in (0, None)
 
     def test_provider_bridge_no_moe_when_attribute_missing(self, nemotronh_8b_config_dict):
         """Test that MoE configs are not added when n_routed_experts attribute is missing."""
@@ -289,7 +293,7 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained)
 
         # Should work without MoE configs - provider should still be created
-        assert isinstance(result, NemotronHModelProvider)
+        assert isinstance(result, MambaModelProvider)
         assert not hasattr(result, "num_moe_experts") or result.num_moe_experts is None
 
     def test_mapping_registry_contains_moe_mappings(self):

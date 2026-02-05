@@ -19,11 +19,9 @@ import torch
 from transformers import NemotronConfig, NemotronForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron.nemotron_bridge import NemotronBridge
-from megatron.bridge.models.nemotron.nemotron_provider import (
-    NemotronModelProvider,
-)
 
 
 class TestNemotronBridge:
@@ -88,7 +86,7 @@ class TestNemotronBridge:
         provider = bridge.provider_bridge(mock_pretrained_nemotron)
 
         # Verify that provider is of correct type
-        assert isinstance(provider, NemotronModelProvider)
+        assert isinstance(provider, GPTModelProvider)
 
         # Check that key configuration values are correctly mapped
         assert provider.num_layers == nemotron_config.num_hidden_layers
