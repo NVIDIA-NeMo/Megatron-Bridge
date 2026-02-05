@@ -420,6 +420,13 @@ def parse_cli_args():
         default=[],
     )
     slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        type=list_of_strings,
+        help="Comma separated string of bash commands",
+        default=[],
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
