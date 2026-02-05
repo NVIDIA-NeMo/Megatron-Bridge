@@ -404,6 +404,16 @@ The save and load methods receive context dataclasses that bundle all required p
 | `strict` | `bool` | Enforce strict loading (default: `True`) |
 | `skip_load_to_model_and_opt` | `bool` | Skip loading into model/optimizer (default: `False`) |
 
+### Limitations
+
+The custom checkpoint manager is designed for customizing the save/load **operations** during training. The following limitations apply:
+
+**Checkpoint format compatibility**: Custom managers that change the checkpoint directory structure or metadata files (e.g., `latest_train_state.pt`, `run_config.yaml`) are not well supported. Many utilities in Megatron Bridge assume the standard Megatron checkpoint format. For instance, HuggingFace ↔ custom format conversion is not supported.
+
+**PEFT with custom checkpoints**: When using PEFT (Parameter-Efficient Fine-Tuning), the `pretrained_checkpoint` path must point to a Megatron-format checkpoint. The custom manager only applies to the training save/load flow (the `save` and `load` configuration paths), not to base model loading for PEFT.
+
+**Inference loading**: Loading checkpoints for inference via `model_load_save.py` utilities is undefined behavior with custom checkpoint formats. Use your custom format's loading utilities instead.
+
 ### Default Behavior
 
 When `custom_manager_class` is not set, Megatron Bridge uses `DefaultCheckpointManager`, which wraps the existing `save_checkpoint` and `load_checkpoint` functions. This ensures full backward compatibility—the checkpoint manager abstraction introduces no changes to existing training workflows.

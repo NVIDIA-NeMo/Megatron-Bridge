@@ -666,6 +666,7 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
         ImportError: If the custom manager module cannot be imported.
         AttributeError: If the custom manager class is not found in the module.
         ValueError: If custom_manager_class format is invalid.
+        TypeError: If the custom manager does not implement the CheckpointManager protocol.
 
     Example:
         # Default manager
@@ -700,7 +701,15 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
         except AttributeError as e:
             raise AttributeError(f"Module '{module_path}' does not have class '{class_name}': {e}") from e
 
-        return custom_manager_class(checkpoint_config)
+        manager = custom_manager_class(checkpoint_config)
+
+        if not isinstance(manager, CheckpointManager):
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' "
+                f"does not implement the CheckpointManager protocol."
+            )
+
+        return manager
 
     return DefaultCheckpointManager(checkpoint_config)
 
