@@ -48,7 +48,7 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
             env_value = os.getenv(env_var_name)
 
             if env_value is not None:
-                env_value = shlex.quote(f"'{env_value}'") if " " in env_value else env_value
+                env_value = f"'{env_value}'" if " " in env_value else env_value
 
                 if isinstance(action, argparse._StoreTrueAction):
                     is_true = env_value.lower() in ("true", "1", "yes", "on")
