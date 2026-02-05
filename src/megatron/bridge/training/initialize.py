@@ -113,24 +113,12 @@ def initialize_megatron(
         train_config.decrease_batch_size_if_needed,
     )
 
-    # =========================
-
-    if get_rank_safe() == 0:
-        start_time = time.time()
-        print("> compiling dataset index builder ...")
-
-        compile_helpers()
-        print(
-            ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
-            flush=True,
-        )
-    torch.distributed.barrier()
 
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
 
     # torch.distributed initialization
-    return torch_dist_init(
+    result = torch_dist_init(
         model_config=model_config,
         dist_config=dist_config,
         rng_config=rng_config,
@@ -142,6 +130,20 @@ def initialize_megatron(
         restart_store=restart_store,
         use_inprocess_restart=use_inprocess_restart,
     )
+
+    # Compile dataset helpers after distributed initialization
+    if torch.distributed.is_initialized():
+        if get_rank_safe() == 0:
+            start_time = time.time()
+            print("> compiling dataset index builder ...")
+            compile_helpers()
+            print(
+                ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
+                flush=True,
+            )
+        torch.distributed.barrier()
+
+    return result
 
 
 def torch_dist_init(
