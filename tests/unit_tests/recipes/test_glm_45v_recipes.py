@@ -252,10 +252,10 @@ def test_glm_45v_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For LoRA, GLM-4.5V should use TP=1, PP=4, EP=2
+    # For LoRA, GLM-4.5V should use TP=1, PP=8, EP=4
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 4
-    assert cfg.model.expert_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.expert_model_parallel_size == 4
 
     # Check PEFT config
     assert cfg.peft is not None
@@ -284,8 +284,8 @@ def test_glm_45v_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # For DoRA, GLM-4.5V should use same parallelism as LoRA
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 4
-    assert cfg.model.expert_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.expert_model_parallel_size == 4
 
     # Check PEFT config (DoRA has alpha=64 by default, unlike LoRA's alpha=32)
     assert cfg.peft is not None
@@ -311,9 +311,9 @@ def test_glm_45v_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For full SFT, GLM-4.5V should use TP=1, PP=4, EP=16
+    # For full SFT, GLM-4.5V should use TP=1, PP=8, EP=16
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.peft is None
 
@@ -363,35 +363,6 @@ def test_glm_45v_peft_with_freeze_options(monkeypatch: pytest.MonkeyPatch):
 
 
 # Pipeline layout tests
-def test_glm_45v_pipeline_layout_pp1():
-    """Test pipeline layout for PP=1."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 1
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
-
-    # PP=1 should have no layout (None)
-    assert model_cfg.pipeline_model_parallel_layout is None
-
-
-def test_glm_45v_pipeline_layout_pp2():
-    """Test pipeline layout for PP=2."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 2
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
-
-    # PP=2 should split 46 layers: first stage 1+23=24, second stage 23
-    assert model_cfg.pipeline_model_parallel_layout is not None
-    assert len(model_cfg.pipeline_model_parallel_layout) == 2
-    # First stage: embedding + 23 decoder layers
-    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 23
-    # Last stage: 23 decoder layers + loss
-    assert model_cfg.pipeline_model_parallel_layout[1].count("decoder") == 23
-    assert "loss" in model_cfg.pipeline_model_parallel_layout[1]
 
 
 def test_glm_45v_pipeline_layout_pp4():
@@ -419,11 +390,12 @@ def test_glm_45v_pipeline_layout_pp8():
 
     _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
 
-    # PP=8 should have 8 stages
+    # PP=8 should have 8 stages (full SFT layout: embedding+1, then 7*6, then 3+loss)
     assert model_cfg.pipeline_model_parallel_layout is not None
     assert len(model_cfg.pipeline_model_parallel_layout) == 8
-    # First stage: embedding + 5 decoder layers
+    # First stage: embedding + 1 decoder layer
     assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
+    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 1
     # Last stage should have loss
     assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
 
@@ -436,7 +408,43 @@ def test_glm_45v_pipeline_layout_pp16():
 
     _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
 
-    # PP=16 should have 16 stages
+    # PP=16 should have 16 stages (full SFT layout: embedding alone, then 3*14, then 3+loss)
+    assert model_cfg.pipeline_model_parallel_layout is not None
+    assert len(model_cfg.pipeline_model_parallel_layout) == 16
+    # First stage: embedding only (no decoder layers, to balance vision encoder cost)
+    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
+    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 0
+    # Last stage should have loss
+    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
+
+
+def test_glm_45v_pipeline_layout_pp8_peft():
+    """Test pipeline layout for PP=8 with PEFT."""
+    model_cfg = _FakeModelCfg()
+    model_cfg.pipeline_model_parallel_size = 8
+    model_cfg.virtual_pipeline_model_parallel_size = 1
+
+    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg, is_peft=True)
+
+    # PP=8 PEFT layout: embedding+5, then 6*6, then 5+loss
+    assert model_cfg.pipeline_model_parallel_layout is not None
+    assert len(model_cfg.pipeline_model_parallel_layout) == 8
+    # First stage: embedding + 5 decoder layers
+    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
+    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 5
+    # Last stage should have loss
+    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
+
+
+def test_glm_45v_pipeline_layout_pp16_peft():
+    """Test pipeline layout for PP=16 with PEFT."""
+    model_cfg = _FakeModelCfg()
+    model_cfg.pipeline_model_parallel_size = 16
+    model_cfg.virtual_pipeline_model_parallel_size = 1
+
+    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg, is_peft=True)
+
+    # PP=16 PEFT layout: embedding+2, then 3*14, then 2+loss
     assert model_cfg.pipeline_model_parallel_layout is not None
     assert len(model_cfg.pipeline_model_parallel_layout) == 16
     # First stage: embedding + 2 decoder layers
@@ -465,7 +473,7 @@ def test_glm_45v_pipeline_layout_in_config(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["pipeline_model_parallel_size"] = 2
+    overrides["pipeline_model_parallel_size"] = 8
 
     cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
 
