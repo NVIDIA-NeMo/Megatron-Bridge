@@ -608,7 +608,7 @@ def train(
                 optimizer,
                 scheduler,
                 num_floating_point_operations_so_far,
-                checkpointing_context,
+                checkpoint_manager,
                 train_data_iterator=train_data_iterator,
             )
 
