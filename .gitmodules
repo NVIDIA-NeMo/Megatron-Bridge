@@ -1,3 +1,8 @@
 [submodule "3rdparty/Megatron-LM"]
 	path = 3rdparty/Megatron-LM
 	url = https://github.com/NVIDIA/Megatron-LM.git
+
+[submodule "3rdparty/Model-Optimizer"]
+	path = 3rdparty/Model-Optimizer
+	branch = release/0.41.0
+	url = https://github.com/NVIDIA/Model-Optimizer.git
