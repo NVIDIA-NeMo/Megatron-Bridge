@@ -132,17 +132,6 @@ class UserStateCallback(Callback):
 class TestCallbacksEndToEnd:
     """Functional tests for callbacks in the training loop."""
 
-    def test_imports(self):
-        import sys
-
-        print("maanug debug: sys path: ", sys.path)
-
-        import megatron.core
-        import megatron.training
-
-        print("maanug debug: core src: ", megatron.core.__file__)
-        print("maanug debug: training src: ", megatron.training.__file__)
-
     @pytest.mark.run_only_on("GPU")
     def test_callbacks(self):
         """Comprehensive test of callback system with both registration patterns.
