@@ -110,6 +110,7 @@ main() {
 
         # Create virtual environment and install dependencies
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
+        uv pip uninstall -y nvidia-modelopt
 
         # Install dependencies
         # Skip --locked flag when testing against different MCore version
