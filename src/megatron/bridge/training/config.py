@@ -35,6 +35,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 from megatron.training.common_config import ProfilingConfig as BaseProfilingConfig
 from megatron.training.common_config import RNGConfig
 from megatron.training.resilience_config import RerunStateMachineConfig as BaseRerunStateMachineConfig
+from megatron.training.training_config import SchedulerConfig as BaseSchedulerConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -513,71 +514,8 @@ class FinetuningDatasetConfig(DataloaderConfig):
 
 
 @dataclass(kw_only=True)
-class SchedulerConfig:
+class SchedulerConfig(BaseSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
-
-    # ---------------- Learning rate config. ----------------
-    lr_decay_style: Literal["constant", "linear", "cosine", "inverse-square-root", "WSD"] = "linear"
-    """Learning rate decay function."""
-
-    lr_wsd_decay_style: Literal["exponential", "linear", "cosine"] = "exponential"
-    """Decay style for the annealing phase of WSD"""
-
-    lr_decay_iters: Optional[int] = None
-    """number of iterations to decay learning rate over, If None defaults to `train.train_iters`"""
-
-    lr_decay_samples: Optional[int] = None
-    """number of samples to decay learning rate over, If None defaults to `train.train_samples`"""
-
-    lr_wsd_decay_iters: Optional[int] = None
-    """number of iterations for the annealing phase in the wsd schedule"""
-
-    lr_wsd_decay_samples: Optional[int] = None
-    """number of samples for the annealing phase in the wsd schedule"""
-
-    lr_warmup_fraction: Optional[float] = None
-    """fraction of lr-warmup-(iters/samples) to use for warmup (as a float)"""
-
-    lr_warmup_iters: int = 0
-    """number of iterations to linearly warmup learning rate over."""
-
-    lr_warmup_samples: int = 0
-    """number of samples to linearly warmup learning rate over."""
-
-    lr_warmup_init: float = 0.0
-    """Initial value for learning rate warmup. The scheduler starts warmup from this value."""
-
-    override_opt_param_scheduler: bool = False
-    """Reset the values of the scheduler (learning rate, warmup iterations, minimum learning rate,
-    maximum number of iterations, and decay style from input arguments and ignore values from
-    checkpoints. Note that all the above values will be reset."""
-
-    use_checkpoint_opt_param_scheduler: bool = False
-    """Use checkpoint to set the values of the scheduler (learning rate, warmup iterations,
-    minimum learning rate, maximum number of iterations, and decay style from checkpoint
-    and ignore input arguments."""
-
-    # ---------------- Regularization config. ----------------
-
-    start_weight_decay: Optional[float] = None
-    """Initial weight decay coefficient for L2 regularization."""
-
-    end_weight_decay: Optional[float] = None
-    """End of run weight decay coefficient for L2 regularization."""
-
-    weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
-    """Weight decay increment function."""
-
-    no_weight_decay_cond_type: Optional[Literal["qwen3_next"]] = None
-    """Type of no weight decay condition. Choices:
-    None (default): param no weight decay if and only if it is 1D; or it is bias;
-    or it is embedding and embedding_init_method_std is not None.
-    "qwen3_next": In addition to the default rules, apply weight decay to qk layernorm as a special case."""
-
-    lr_warmup_steps: Optional[int] = field(init=False, default=None)
-    lr_decay_steps: Optional[int] = field(init=False, default=None)
-    wd_incr_steps: Optional[int] = field(init=False, default=None)
-    wsd_decay_steps: Optional[int] = field(init=False, default=None)
 
     def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
