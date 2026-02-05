@@ -280,6 +280,9 @@ def train(
                 scheduler=scheduler,
             ),
         )
+    is_any_logging_enabled = any(
+        [config.logger.tensorboard_dir, global_state.wandb_logger, global_state.mlflow_logger]
+    )
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -465,7 +468,7 @@ def train(
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if config.logger.tensorboard_dir is not None:  # Skip logging as tensorboard logging is disabled.
+        if is_any_logging_enabled:
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 loss_scale = optimizer.get_loss_scale().item()
             else:
@@ -765,15 +768,16 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    if train_config.numeric_checks:
+    if train_config.check_optimizer_step_success:
         update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
-        # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
-        # so we must gather across mp ranks
+
+    # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
+    # so we must gather across mp ranks
+    if not train_config.skip_sync_grad_norm_across_mp:
         grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
-        if optim_config.log_num_zeros_in_grad:
-            num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(
-                num_zeros_in_grad, mp_group=pg_collection.mp
-            )
+
+    if optim_config.log_num_zeros_in_grad:
+        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
 
     # Update learning rate.
     if update_successful:
