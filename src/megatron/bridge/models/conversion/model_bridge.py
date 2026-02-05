@@ -448,6 +448,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         yarn_params = provider_kwargs.pop("_yarn_params", None)
         mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
 
+        # Add generation config
+        provider_kwargs["generation_config"] = hf_pretrained.generation_config
+
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
         provider = provider_class(**provider_kwargs)
