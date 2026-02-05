@@ -48,6 +48,7 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
             env_value = os.getenv(env_var_name)
 
             if env_value is not None:
+                env_value = shlex.quote(f"'{env_value}'")
                 if isinstance(action, argparse._StoreTrueAction):
                     is_true = env_value.lower() in ("true", "1", "yes", "on")
                     if is_true:
@@ -62,7 +63,7 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
                     cli_arg_string.append(long_arg_name)
                     cli_arg_string.append(env_value)
 
-    return " ".join([shlex.quote(arg) for arg in cli_arg_string])
+    return " ".join([arg for arg in cli_arg_string])
 
 
 if __name__ == "__main__":
