@@ -108,7 +108,6 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 override-dependencies = [
-    "nvidia-modelopt[torch]>=0.37.0",
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",

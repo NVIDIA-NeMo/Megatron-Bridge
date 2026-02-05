@@ -19,7 +19,6 @@ prerelease-mode = "allow"
 
 [manifest]
 overrides = [
-    { name = "nvidia-modelopt", extras = ["torch"], git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0a4f0a8b933121f7af080261a0a5a7717f2c5d49" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
     { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=6a34b6574fa6c29d9d07fdcddf9812cbb1488878" },
@@ -3088,7 +3087,7 @@ dev = [
     { name = "megatron-energon", extra = ["av-decode"] },
     { name = "multi-storage-client" },
     { name = "nv-grouped-gemm" },
-    { name = "nvidia-modelopt" },
+    { name = "nvidia-modelopt", marker = "sys_platform != 'darwin'" },
     { name = "nvidia-resiliency-ext" },
     { name = "nvtx" },
     { name = "onnxscript", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
@@ -3981,8 +3980,8 @@ wheels = [
 
 [[package]]
 name = "nvidia-modelopt"
-version = "0.33.1.dev246+g0a4f0a8b9"
-source = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0a4f0a8b933121f7af080261a0a5a7717f2c5d49#0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }
+version = "0.41.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ninja" },
     { name = "numpy" },
@@ -3996,8 +3995,10 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch", marker = "sys_platform == 'never'" },
-    { name = "torchprofile" },
     { name = "tqdm" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/09/30147ab0d0409d3492f1d37469fe0586c82aeec6eec9a907f59d24094516/nvidia_modelopt-0.41.0-py3-none-any.whl", hash = "sha256:ffa5f903d22653649318831a470550ae55ee04716c068d5ade61c3176fdc1d7d", size = 934582, upload-time = "2026-01-20T17:21:28.494Z" },
 ]
 
 [[package]]
@@ -6920,20 +6921,6 @@ dependencies = [
     { name = "sympy", marker = "sys_platform != 'linux'" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "typing-extensions", marker = "sys_platform != 'linux'" },
-]
-
-[[package]]
-name = "torchprofile"
-version = "0.0.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "torch", marker = "sys_platform == 'never'" },
-    { name = "torchvision", marker = "sys_platform == 'never'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/36/574c0c46e818533b78b3c09505211162918188325ab4165ef11a3f295755/torchprofile-0.0.4.tar.gz", hash = "sha256:96b6da17d752a06b02977e078aea95614893b31d4117dd5dcd081f30ce65611b", size = 4557, upload-time = "2021-06-22T04:58:03.592Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/15/71ad4ed163b03cba1315f1d96e0bc8e39d5a97f92974ffa610a729b273ab/torchprofile-0.0.4-py3-none-any.whl", hash = "sha256:7151fe88dc770f0eeec241244a4c7feaec2c5e8c7852386bc2d6a8d7dde7384d", size = 7694, upload-time = "2021-06-22T04:58:02.485Z" },
 ]
 
 [[package]]
