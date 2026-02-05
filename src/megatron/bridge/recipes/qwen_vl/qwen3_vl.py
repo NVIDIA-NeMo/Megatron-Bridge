@@ -224,7 +224,7 @@ def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
         "finetune_lr": 2e-5 if is_full_sft else 2e-4,
         "freeze_language_model": True,
         "freeze_vision_model": True,
-        "freeze_vision_projection": True,
+        "freeze_vision_projection": False,
         "min_lr": 2e-6,
         "lr": 2e-5,
         "lr_warmup_iters": 200,
