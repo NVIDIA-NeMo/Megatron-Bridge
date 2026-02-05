@@ -39,6 +39,15 @@ def mock_hf_config():
     config.max_position_embeddings = 4096
     config.rope_theta = 1000000.0
     config.tie_word_embeddings = False
+    config.hidden_act = "silu"
+    # Set MLA-specific fields to None (these are auto-mapped in CONFIG_MAPPING)
+    config.q_lora_rank = None
+    config.kv_lora_rank = None
+    config.qk_nope_head_dim = None
+    config.qk_rope_head_dim = None
+    config.v_head_dim = None
+    config.num_nextn_predict_layers = None
+    config.rope_scaling = None
 
     # VL-specific configuration
     config.vision_config = Qwen2_5_VLVisionConfig()
@@ -304,6 +313,15 @@ class TestQwen25VLBridgeEdgeCases:
         minimal_config.max_position_embeddings = 4096
         minimal_config.rope_theta = 1000000.0
         minimal_config.vision_config = Qwen2_5_VLVisionConfig()
+        minimal_config.hidden_act = "silu"
+        # Set MLA-specific fields to None
+        minimal_config.q_lora_rank = None
+        minimal_config.kv_lora_rank = None
+        minimal_config.qk_nope_head_dim = None
+        minimal_config.qk_rope_head_dim = None
+        minimal_config.v_head_dim = None
+        minimal_config.num_nextn_predict_layers = None
+        minimal_config.rope_scaling = None
 
         minimal_pretrained.config = minimal_config
 
