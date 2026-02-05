@@ -34,7 +34,7 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig as
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from megatron.training.common_config import ProfilingConfig as BaseProfilingConfig
 from megatron.training.common_config import RNGConfig
-from megatron.training.resilience_config import RerunStateMachineConfig
+from megatron.training.resilience_config import RerunStateMachineConfig as BaseRerunStateMachineConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -187,6 +187,15 @@ class DistributedInitConfig:
     """Use ProcessGroupCollection passed through functions instead of relying on mcore's
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
+
+
+@dataclass
+class RerunStateMachineConfig(BaseRerunStateMachineConfig):
+    """Configuration for the rerun state machine used for result validation or stats."""
+
+    spiky_loss_factor: float = 10.0
+    """Factor for detecting spiky loss. A loss is considered spiky if it exceeds
+    this multiple of the max observed loss over the sample window."""
 
 
 @dataclass(kw_only=True)
