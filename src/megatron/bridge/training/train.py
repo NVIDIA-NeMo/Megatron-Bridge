@@ -1165,9 +1165,6 @@ def checkpoint_and_decide_exit(
     Returns:
         True if the training loop should exit, False otherwise.
     """
-    if not state.cfg.checkpoint.save:
-        return False
-
     saved_checkpoint = False
 
     # Exit based on signal handler.
