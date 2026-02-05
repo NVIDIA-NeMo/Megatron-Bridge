@@ -36,6 +36,7 @@ from megatron.training.common_config import RNGConfig
 from megatron.training.resilience_config import RerunStateMachineConfig as BaseRerunStateMachineConfig
 from megatron.training.training_config import SchedulerConfig as BaseSchedulerConfig
 from megatron.training.training_config import TrainingConfig as BaseTrainingConfig
+from megatron.training.training_config import ValidationConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -552,17 +553,6 @@ class SchedulerConfig(BaseSchedulerConfig):
 @dataclass(kw_only=True)
 class TrainingConfig(BaseTrainingConfig):
     """Configuration settings related to the training loop and validation."""
-
-    # ---------------- Validation config. ----------------
-
-    eval_iters: int = 100
-    """Number of iterations to run for evaluation validation/test for."""
-
-    eval_interval: Optional[int] = 1000
-    """Interval between running evaluation on validation set."""
-
-    skip_train: bool = False
-    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
@@ -1118,6 +1108,7 @@ class ConfigContainer(Container):
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
         default_factory=OptimizerConfigOverrideProvider
     )
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
     dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
