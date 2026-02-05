@@ -153,6 +153,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
             post_process=post_process,
+            pg_collection=self._pg_collection,
         )
 
         # Apply freeze options if any are enabled for fine-tuning
@@ -320,6 +321,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
             post_process=post_process,
+            pg_collection=self._pg_collection,
         )
 
         # Apply freeze options if any are enabled for fine-tuning

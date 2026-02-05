@@ -15,6 +15,7 @@
 import torch
 from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 
@@ -72,6 +73,7 @@ class Qwen3VLModel(MegatronModule):
         post_process: bool = True,
         add_encoder: bool = True,
         add_decoder: bool = True,
+        pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -95,6 +97,21 @@ class Qwen3VLModel(MegatronModule):
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
+        # process groups
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+        assert hasattr(self.pg_collection, "embd"), (
+            "pg_collection must have a embd. In previous version, it used default "
+            "`parallel_state.default_embedding_ranks` to create the process group."
+            "If you are using the default process group, please use"
+            "`parallel_state.get_embedding_group()` "
+            "If you don't need embd_group, you need to explicitly set it to None."
+        )
+        self.embd_group = pg_collection.embd
+        self.vp_stage = None
+        self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
         # These attributes are needed to check if the vision model should be frozen.
         self.freeze_vision_model = False
@@ -147,6 +164,7 @@ class Qwen3VLModel(MegatronModule):
             fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
+            pg_collection=pg_collection,
         )
         if pre_process:
             assert len(hf_vision_config.deepstack_visual_indexes) <= len(
@@ -254,6 +272,7 @@ class Qwen3VLModel(MegatronModule):
         position_ids: torch.Tensor = None,  # can set at dataset
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
+        loss_mask: torch.Tensor = None,
         inference_params: InferenceParams = None,
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
@@ -492,6 +511,7 @@ class Qwen3VLModel(MegatronModule):
             attention_mask=attention_mask,  # None in encoder
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
+            loss_mask=loss_mask,  # Added for THD training compatibility
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,  # currently always None
             visual_pos_masks=visual_pos_masks,
