@@ -113,7 +113,6 @@ def initialize_megatron(
         train_config.decrease_batch_size_if_needed,
     )
 
-
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
 
@@ -138,7 +137,9 @@ def initialize_megatron(
             print("> compiling dataset index builder ...")
             compile_helpers()
             print(
-                ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
+                ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(
+                    time.time() - start_time
+                ),
                 flush=True,
             )
         torch.distributed.barrier()
