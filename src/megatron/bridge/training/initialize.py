@@ -14,6 +14,7 @@
 
 import datetime
 import os
+import time
 import warnings
 from typing import Callable, Optional
 
@@ -21,6 +22,7 @@ import torch
 import torch.distributed
 import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.datasets.utils import compile_helpers
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
 from megatron.core.fusions.fused_bias_swiglu import bias_swiglu
@@ -110,6 +112,18 @@ def initialize_megatron(
         cfg.data_parallel_size,
         train_config.decrease_batch_size_if_needed,
     )
+
+    # =========================
+
+    if get_rank_safe() == 0:
+        start_time = time.time()
+        print("> compiling dataset index builder ...")
+
+        compile_helpers()
+        print(
+            ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
+            flush=True,
+        )
 
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
