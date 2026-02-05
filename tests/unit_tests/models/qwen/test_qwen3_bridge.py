@@ -22,9 +22,9 @@ from transformers import GenerationConfig, Qwen2Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
 
 
 class TestMegatronQwen3Bridge:
@@ -93,8 +93,8 @@ class TestMegatronQwen3Bridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Check that it returns a Qwen3ModelProvider instance
-        assert isinstance(result, Qwen3ModelProvider)
+        # Check that it returns a GPTModelProvider instance (after refactoring)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == qwen3_config.num_hidden_layers
@@ -202,8 +202,8 @@ class TestMegatronQwen3Bridge:
         # Pass model only
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Just verify that we got a valid Qwen3ModelProvider
-        assert isinstance(result, Qwen3ModelProvider)
+        # Just verify that we got a valid GPTModelProvider
+        assert isinstance(result, GPTModelProvider)
 
     def test_provider_bridge_without_tie_embeddings(self, qwen3_config):
         """Test provider_bridge when tie_word_embeddings is not present."""
@@ -405,7 +405,7 @@ class TestAutoBridgeIntegration:
                     "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
                 ) as mock_get_bridge:
                     mock_bridge = Mock()
-                    mock_provider = Mock(spec=Qwen3ModelProvider)
+                    mock_provider = Mock(spec=GPTModelProvider)
                     mock_bridge.provider_bridge.return_value = mock_provider
                     mock_get_bridge.return_value = mock_bridge
 

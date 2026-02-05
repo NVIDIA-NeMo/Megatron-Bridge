@@ -35,30 +35,52 @@ _GEMMA3_RECIPE_FUNCS = [
 
 
 def _safe_overrides_for(name: str) -> dict:
-    """Return overrides for recipe functions.
-
-    Pretrain configs use the new parameterless API (return empty dict).
-    Finetune configs still accept parameters.
-    """
+    # Detect if this is a finetune recipe
     is_finetune = "finetune" in name.lower()
 
+    overrides = {
+        "name": f"unit_{name}",
+        "dir": ".",
+        "train_iters": 10,
+        "global_batch_size": 2,
+        "micro_batch_size": 1,
+        "seq_length": 64,
+        "min_lr": 1e-5,
+        "lr_warmup_iters": 2,
+    }
+
     if is_finetune:
-        # Finetuning-specific overrides - finetune configs still accept parameters
-        overrides = {
-            "name": f"unit_{name}",
-            "dir": ".",
-            "train_iters": 10,
-            "global_batch_size": 2,
-            "micro_batch_size": 1,
-            "seq_length": 64,
-            "min_lr": 1e-5,
-            "lr_warmup_iters": 2,
-            "finetune_lr": 1e-4,
-            "pretrained_checkpoint": "/fake/checkpoint/path",
-        }
+        # Finetuning-specific overrides
+        overrides.update(
+            {
+                "finetune_lr": 1e-4,
+                "pretrained_checkpoint": "/fake/checkpoint/path",
+            }
+        )
+        # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
+        # Note: Finetuning always uses HF tokenizer, never null tokenizer
     else:
-        # Pretrain configs use the new parameterless API
-        overrides = {}
+        # Pretrain-specific overrides
+        overrides.update(
+            {
+                "mock": True,
+                "lr": 1e-4,
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "context_parallel_size": 1,
+                "use_null_tokenizer": True,
+            }
+        )
+
+        # Large models/variants may set additional flags in recipes; keep harmless defaults
+        lname = name.lower()
+        if "12b" in lname or "27b" in lname:
+            overrides.update(
+                {
+                    "virtual_pipeline_model_parallel_size": None,
+                    "sequence_parallel": True,
+                }
+            )
 
     return overrides
 
@@ -164,18 +186,15 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
 
     _assert_basic_config(cfg)
 
-    # Ensure tokenizer is properly configured
+    # Ensure tokenizer choice matches recipe type
     if is_finetune:
         # Finetuning recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
-        # Pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
-        if cfg.tokenizer.tokenizer_type == "NullTokenizer":
-            assert cfg.tokenizer.vocab_size is not None
-        else:
-            assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-            assert cfg.tokenizer.tokenizer_model is not None
+        # Pretrain recipes honor use_null_tokenizer override
+        if overrides.get("use_null_tokenizer"):
+            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
