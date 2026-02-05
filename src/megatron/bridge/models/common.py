@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Protocol
+import abc
+import importlib
+from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
+from typing import Any, ClassVar, Protocol
 
 
 class Serializable(Protocol):
@@ -26,3 +30,92 @@ class Serializable(Protocol):
     def from_dict(cls, data: dict[str, Any]) -> "Serializable":
         """Deserialize from dictionary using _target_ to identify class."""
         ...
+
+
+@dataclass
+class ModelBuildConfig(abc.ABC, Serializable):
+    """Abstract base class for model build configurations.
+
+    Each model type (GPT, T5, Mamba, etc.) has its own build config subclass.
+    The build config contains:
+    1. Builder path (serializable string) to link to the correct builder
+    2. Model-specific parameters not in TransformerConfig
+    3. HuggingFace metadata for checkpoint conversion
+
+    Each subclass must define `builder` as a ClassVar string pointing to
+    the appropriate ModelBuilder subclass path.
+    """
+
+    # === Builder Metadata (Serializable) ===
+    builder: ClassVar[str]
+    """Class variable with full path to builder class (e.g.,
+    'megatron.bridge.builders.GPTModelBuilder').
+    """
+
+    # === ModelOpt ===
+    restore_modelopt_state: bool = False
+    """Restore ModelOpt quantization/sparsity state."""
+
+    # === HuggingFace Metadata ===
+    hf_model_id: str | None = None
+    """HuggingFace model identifier."""
+
+    generation_config: Any | None = None
+    """Generation configuration."""
+
+    def get_builder(self):
+        """Get the appropriate builder instance for this config.
+        Dynamically imports and instantiates the builder from the string path.
+        """
+        module_path, class_name = self.builder.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        builder_cls = getattr(module, class_name)
+        return builder_cls()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize config to dictionary for saving.
+
+        Includes:
+        - _target_: Full class path for deserialization
+        - _builder_: Full builder class path (serialized from ClassVar)
+        - All dataclass fields
+        """
+        result = {
+            "_target_": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+            "_builder_": self.builder,  # Serialize the builder path
+        }
+        for f in dataclass_fields(self):
+            value = getattr(self, f.name)
+            # Skip non-serializable fields
+            if callable(value) or f.name.startswith("_"):
+                continue
+            result[f.name] = value
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelBuildConfig":
+        """Deserialize config from dictionary.
+
+        Uses _target_ to determine the correct class to instantiate.
+        The builder is restored from _builder_ or from the class's ClassVar.
+
+        Args:
+            data: Dictionary with _target_ and config fields
+
+        Returns:
+            Instance of the appropriate ModelBuildConfig subclass
+        """
+        target = data.get("_target_")
+        if target is None:
+            raise ValueError("Cannot deserialize: missing '_target_' field")
+
+        # Import the class from the target path
+        module_path, class_name = target.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        config_cls = getattr(module, class_name)
+
+        # Filter to valid fields for this class
+        valid_fields = {f.name for f in dataclass_fields(config_cls)}
+        filtered_data = {k: v for k, v in data.items() if k in valid_fields and not k.startswith("_")}
+
+        return config_cls(**filtered_data)
