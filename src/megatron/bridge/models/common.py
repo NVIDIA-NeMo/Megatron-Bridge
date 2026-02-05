@@ -23,6 +23,11 @@ from megatron.core import tensor_parallel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 
+from megatron.bridge.models.transformer_config import TransformerConfig
+
+
+ModelConfigT = TransformerConfig | dict[str, TransformerConfig] | dict[str, Any]
+
 
 class Serializable(Protocol):
     """Protocol for serializable configurations."""
@@ -144,7 +149,7 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         BuildConfigT: The type of build config this builder accepts (e.g., GPTModelBuildConfig)
     """
 
-    def __init__(self, model_config, build_config: BuildConfigT):
+    def __init__(self, model_config: ModelConfigT, build_config: BuildConfigT):
         self.model_config = model_config
         self.build_config = build_config
 
@@ -241,3 +246,151 @@ def _wrap_with_ddp(
     # TODO: impl
     ...
     return models
+
+
+@dataclass
+class ModelProvider(Generic[ModelT], Serializable):
+    """General provider that takes model config + build config and builds models.
+
+    This is the main entry point for model construction. It automatically
+    selects the correct builder based on the build_config's builder attribute.
+
+    The model_config type varies by model family:
+    - GPT: MCore TransformerConfig
+    - VLM: dict with vision and decoder configs
+    - T5: dict with encoder and decoder configs
+
+    Example:
+        >>> provider = ModelProvider(model_cfg, GPTModelBuildConfig(...))
+        >>> model = provider.provide(pg_collection)
+        >>>
+        >>> # Or for distributed training with DDP
+        >>> models = provider.provide_distributed(pg_collection, wrap_with_ddp=True)
+    """
+
+    model_config: ModelConfigT
+    """Model configuration (e.g., TransformerConfig for GPT, composite for VLM/T5)."""
+
+    build_config: ModelBuildConfig
+    """Build configuration with model-specific parameters."""
+
+    def provide(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> ModelT:
+        """Build and return a model.
+
+        Automatically selects the correct builder based on build_config.builder.
+
+        Args:
+            pg_collection: Process groups for distributed training
+            pre_process: Include embedding layer (default: based on PP stage)
+            post_process: Include output layer (default: based on PP stage)
+            vp_stage: Virtual pipeline stage
+
+        Returns:
+            The constructed model
+        """
+        builder = self.build_config.get_builder()
+        return builder.build_model(
+            self.model_config,
+            self.build_config,
+            pg_collection,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+        )
+
+    def provide_distributed(
+        self,
+        pg_collection: ProcessGroupCollection,
+        wrap_with_ddp: bool = True,
+        fp16: bool = False,
+        bf16: bool = False,
+    ) -> list[ModelT]:
+        """Build models wrapped for distributed training.
+
+        Handles virtual pipeline parallelism, DDP wrapping, and
+        mixed precision configuration.
+
+        Args:
+            pg_collection: Process groups for distributed training
+            wrap_with_ddp: Whether to wrap with DDP
+            fp16: Use FP16 mixed precision
+            bf16: Use BF16 mixed precision
+
+        Returns:
+            List of models (multiple for virtual pipeline parallelism)
+        """
+        builder = self.build_config.get_builder()
+        return builder.build_distributed_models(
+            self.model_config,
+            self.build_config,
+            pg_collection,
+            wrap_with_ddp=wrap_with_ddp,
+            fp16=fp16,
+            bf16=bf16,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the provider to a dictionary."""
+        # Serialize model_config
+        if hasattr(self.model_config, "to_dict"):
+            model_config_dict = self.model_config.to_dict()
+        elif isinstance(self.model_config, dict):
+            # Composite config (VLM, T5)
+            model_config_dict = {
+                k: v.to_dict() if hasattr(v, "to_dict") else vars(v) for k, v in self.model_config.items()
+            }
+        else:
+            model_config_dict = vars(self.model_config)
+
+        return {
+            "model_config": model_config_dict,
+            "build_config": self.build_config.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        model_config_cls: type | None = None,
+    ) -> "ModelProvider":
+        """Deserialize provider from dictionary.
+
+        Args:
+            data: Dictionary with model_config and build_config
+            model_config_cls: Optional class for model config.
+                If None, uses megatron.bridge.models.transformer_config.TransformerConfig
+
+        Returns:
+            ModelProvider instance with correct builder auto-selected
+        """
+        # Deserialize build_config - restores correct class with builder
+        build_config = ModelBuildConfig.from_dict(data["build_config"])
+
+        # Deserialize model_config
+        if model_config_cls is None:
+            from megatron.bridge.models.transformer_config import TransformerConfig
+
+            model_config_cls = TransformerConfig
+
+        model_config_data = data["model_config"]
+
+        # Handle composite configs
+        if isinstance(model_config_data, dict) and "_target_" not in model_config_data:
+            # Check if it's a composite config (e.g., VLM with vision/decoder)
+            if all(isinstance(v, dict) for v in model_config_data.values()):
+                model_config = {k: model_config_cls(**v) for k, v in model_config_data.items()}
+            else:
+                model_config = model_config_cls(**model_config_data)
+        else:
+            model_config = model_config_cls(**model_config_data)
+
+        return cls(
+            model_config=model_config,
+            build_config=build_config,
+        )
