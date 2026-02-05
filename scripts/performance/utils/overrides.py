@@ -251,7 +251,7 @@ def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> Co
         # To enable symmetric kernels, average_in_collective must be disabled.
         recipe.ddp.average_in_collective = False
 
-    if recipe.ddp.use_megatron_fsdp:
+    if recipe.ddp.use_megatron_fsdp and recipe.ddp.nccl_ub:
         recipe.ddp.fsdp_manual_registration = True
 
     return recipe
