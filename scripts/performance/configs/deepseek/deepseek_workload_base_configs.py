@@ -109,14 +109,14 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=1024,
-    tensor_model_parallel_size=4,  # TODO: TP=2 is OOM. Resolve it and revert it to recover perf
+    tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=64,
     global_batch_size=8192,
-    recompute_modules=["mla_up_proj", "mlp"],
+    recompute_modules=["mla_up_proj", "mlp", "moe_act", "layernorm", "moe", "core_attn"],
     moe_flex_dispatcher_backend="hybridep",
-    moe_a2a_overlap=False,
+    moe_a2a_overlap=True,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1

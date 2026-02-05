@@ -267,6 +267,15 @@ class PerfEnvPlugin(Plugin):
         ):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        elif(
+            model_family_name in ["deepseek"]
+            and model_recipe_name in ["deepseek_v3"]
+            and train_task == "pretrain"
+            and gpu in ["h100"]
+        ):
+            if compute_dtype in ["bf16", "fp8_sc"]:
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
