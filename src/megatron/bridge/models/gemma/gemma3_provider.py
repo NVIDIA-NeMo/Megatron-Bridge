@@ -95,7 +95,6 @@ class Gemma3ModelProvider(GPTModelProvider):
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
-    autocast_dtype: torch.dtype = torch.bfloat16
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Gemma3 model.

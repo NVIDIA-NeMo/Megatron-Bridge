@@ -56,7 +56,6 @@ class TestQwen3MoEModelProvider:
         assert provider.layernorm_epsilon == 1e-6
         assert provider.rotary_base == 1000000.0
         assert provider.position_embedding_type == "rope"
-        assert provider.autocast_dtype == torch.bfloat16
         assert provider.params_dtype == torch.bfloat16
         assert provider.bf16 is True
 
@@ -455,7 +454,6 @@ class TestQwen3MoEProviderArchitecturalFeatures:
         ]
 
         for provider in providers:
-            assert provider.autocast_dtype == torch.bfloat16
             assert provider.params_dtype == torch.bfloat16
             assert provider.bf16 is True
 

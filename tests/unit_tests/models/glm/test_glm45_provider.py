@@ -52,7 +52,6 @@ class TestGLM45ProviderDefaults:
         # DType defaults
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
-        assert provider.autocast_dtype == torch.bfloat16
 
         # Attention defaults
         assert provider.num_query_groups == 8

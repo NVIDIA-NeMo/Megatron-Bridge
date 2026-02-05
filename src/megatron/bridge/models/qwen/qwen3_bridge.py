@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3ForCausalLM
 
@@ -51,7 +50,6 @@ class Qwen3Bridge(MegatronModelBridge):
         provider.add_qkv_bias = False  # Qwen3 does NOT have QKV bias (unlike Qwen2)
         provider.hidden_dropout = 0.0
         provider.qk_layernorm = True  # Qwen3 uses QK layernorm
-        provider.autocast_dtype = torch.bfloat16
 
         return provider
 

@@ -83,7 +83,6 @@ class TestGemma3ModelProvider:
         assert provider.bf16 is True
         assert provider.fp16 is False
         assert provider.params_dtype == torch.bfloat16
-        assert provider.autocast_dtype == torch.bfloat16
 
     @patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3LanguageModelEmbedding")
     @patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3RotaryEmbedding")

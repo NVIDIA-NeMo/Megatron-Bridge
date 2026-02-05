@@ -63,7 +63,6 @@ class Qwen2ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
-    autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
 
@@ -275,7 +274,6 @@ class Qwen3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
-    autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
 
@@ -382,7 +380,6 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
-    autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
 
