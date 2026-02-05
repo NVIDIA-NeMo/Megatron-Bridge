@@ -56,11 +56,13 @@ def process_squad_example(
     """
     # Format input as: "Context: ... Question: ... Answer:"
     _input = f"Context: {example['context']} Question: {example['question']} Answer:"
-    if apply_tokenizer_chat_template and tokenizer is not None and tokenizer.library == "huggingface":
+    if apply_tokenizer_chat_template and tokenizer is not None and tokenizer.chat_template is not None:
         _input = tokenizer.apply_chat_template([{"role": "user", "content": _input}], tokenize=False)
 
     # Use the first answer as the primary output
     _output = example["answers"]["text"][0]
+    if apply_tokenizer_chat_template and tokenizer is not None and tokenizer.chat_template is not None:
+        _output = tokenizer.apply_chat_template([{"role": "assistant", "content": _output}], tokenize=False)
 
     # Keep all original answers for evaluation purposes
     original_answers = example["answers"]["text"]
