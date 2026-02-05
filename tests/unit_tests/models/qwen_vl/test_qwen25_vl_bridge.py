@@ -22,7 +22,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionC
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.qwen25_vl_bridge import Qwen25VLBridge
-from megatron.bridge.models.qwen_vl.qwen_vl_provider import Qwen25VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
 
 
 @pytest.fixture

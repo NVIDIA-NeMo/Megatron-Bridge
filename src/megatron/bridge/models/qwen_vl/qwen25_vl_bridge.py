@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
-from megatron.bridge.models.qwen_vl.qwen_vl_provider import Qwen25VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen2_5_VLForConditionalGeneration, target=Qwen25VLModel)
