@@ -14,6 +14,7 @@
 
 import logging
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import OlmoeForCausalLM
 
@@ -79,6 +80,7 @@ class OlMoEBridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
         provider.persist_layer_norm = True
+        provider.autocast_dtype = torch.bfloat16
 
         # MoE-specific settings
         provider.moe_ffn_hidden_size = hf_config.intermediate_size

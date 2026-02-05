@@ -61,6 +61,7 @@ class Llama31NemotronNano8BProvider(Llama31ModelProvider8B):
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
 
 @dataclass
@@ -76,6 +77,7 @@ class Llama31Nemotron70BProvider(Llama31ModelProvider70B):
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
 
 @dataclass
@@ -98,6 +100,7 @@ class Llama33NemotronSuper49BProvider(Llama31ModelProvider70B, HeterogeneousTran
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
     heterogeneous_layers_config_path: str | None = None
     heterogeneous_layers_config_encoded_json: str = ""
@@ -125,6 +128,7 @@ class Llama31NemotronUltra253BProvider(Llama31ModelProvider405B, HeterogeneousTr
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
     # Heterogeneous configuration fields
     heterogeneous_layers_config_path: str | None = None
@@ -145,6 +149,7 @@ class LlamaNemotronHeterogeneousProvider(Llama31ModelProvider, HeterogeneousTran
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
     # Heterogeneous configuration fields
     heterogeneous_layers_config_path: str | None = None

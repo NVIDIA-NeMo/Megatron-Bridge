@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen2ForCausalLM
 
@@ -52,6 +53,7 @@ class Qwen2Bridge(MegatronModelBridge):
         provider.add_bias_linear = False
         provider.add_qkv_bias = True
         provider.hidden_dropout = 0.0
+        provider.autocast_dtype = torch.bfloat16
 
         return provider
 

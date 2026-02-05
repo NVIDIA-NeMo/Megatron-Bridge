@@ -58,6 +58,7 @@ class TestQwen3NextModelProvider:
         assert provider.rotary_percent == 0.25
         assert provider.attention_output_gate is True
         assert provider.position_embedding_type == "rope"
+        assert provider.autocast_dtype == torch.bfloat16
         assert provider.params_dtype == torch.bfloat16
         assert provider.bf16 is True
 
@@ -434,6 +435,7 @@ class TestQwen3NextProviderArchitecturalFeatures:
         """Test that Qwen3 Next models have correct dtype defaults."""
         provider = Qwen3NextModelProvider80B_A3B()
 
+        assert provider.autocast_dtype == torch.bfloat16
         assert provider.params_dtype == torch.bfloat16
         assert provider.bf16 is True
 

@@ -76,6 +76,7 @@ class TestOlMoEModelProvider:
         assert provider.persist_layer_norm is True
         assert provider.vocab_size == 50304
         assert provider.init_method_std == 0.02
+        assert provider.autocast_dtype == torch.bfloat16
         assert provider.params_dtype == torch.float32
         assert provider.bf16 is False
 
@@ -128,15 +129,18 @@ class TestOlMoEModelProvider:
         """Test that OlMoEModelProvider dtype parameters are correctly configured."""
         provider = OlMoEModelProvider()
 
+        assert provider.autocast_dtype == torch.bfloat16
         assert provider.params_dtype == torch.float32
         assert provider.bf16 is False
 
         # Test custom dtype
         provider_fp16 = OlMoEModelProvider(
+            autocast_dtype=torch.float16,
             params_dtype=torch.float16,
             bf16=True,
         )
 
+        assert provider_fp16.autocast_dtype == torch.float16
         assert provider_fp16.params_dtype == torch.float16
         assert provider_fp16.bf16 is True
 

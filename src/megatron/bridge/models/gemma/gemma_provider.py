@@ -51,6 +51,7 @@ class GemmaModelProvider(GPTModelProvider):
     vocab_size: int = 256000
     bf16: bool = True
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Gemma model.

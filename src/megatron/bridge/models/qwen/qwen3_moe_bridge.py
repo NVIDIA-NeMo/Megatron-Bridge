@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3MoeForCausalLM
 
@@ -50,6 +51,7 @@ class Qwen3MoEBridge(MegatronModelBridge):
         provider.add_qkv_bias = False  # Qwen3 MoE does NOT have QKV bias
         provider.hidden_dropout = 0.0
         provider.qk_layernorm = True  # Qwen3 MoE uses QK layernorm
+        provider.autocast_dtype = torch.bfloat16
 
         provider.moe_grouped_gemm = True
         provider.moe_router_load_balancing_type = "aux_loss"

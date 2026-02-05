@@ -15,6 +15,7 @@
 import logging
 from functools import partial
 
+import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Glm4MoeForCausalLM
@@ -84,6 +85,7 @@ class GLM45Bridge(MegatronModelBridge):
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.hidden_dropout = 0.0
+        provider.autocast_dtype = torch.bfloat16
         provider.mtp_loss_scaling_factor = 0.3
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
 

@@ -58,6 +58,7 @@ class Gemma3ModelBridge(MegatronModelBridge):
         provider.fp16 = params_dtype == torch.float16
         provider.bf16 = params_dtype == torch.bfloat16
         provider.params_dtype = params_dtype
+        provider.autocast_dtype = params_dtype
 
         # Gemma3-specific features not in CONFIG_MAPPING
         provider.window_size = hf_config.sliding_window

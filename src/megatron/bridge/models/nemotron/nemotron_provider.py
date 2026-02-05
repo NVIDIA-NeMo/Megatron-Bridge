@@ -64,6 +64,7 @@ class NemotronModelProvider(GPTModelProvider):
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
 
 @dataclass
