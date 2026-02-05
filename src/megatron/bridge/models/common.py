@@ -16,7 +16,10 @@ import abc
 import importlib
 from dataclasses import dataclass
 from dataclasses import fields as dataclass_fields
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Generic, Protocol, TypeVar
+
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer import MegatronModule
 
 
 class Serializable(Protocol):
@@ -63,7 +66,7 @@ class ModelBuildConfig(abc.ABC, Serializable):
     generation_config: Any | None = None
     """Generation configuration."""
 
-    def get_builder(self):
+    def get_builder(self) -> "ModelBuilder":
         """Get the appropriate builder instance for this config.
         Dynamically imports and instantiates the builder from the string path.
         """
@@ -119,3 +122,47 @@ class ModelBuildConfig(abc.ABC, Serializable):
         filtered_data = {k: v for k, v in data.items() if k in valid_fields and not k.startswith("_")}
 
         return config_cls(**filtered_data)
+
+
+ModelT = TypeVar("ModelT", bound=MegatronModule)
+BuildConfigT = TypeVar("BuildConfigT", bound=ModelBuildConfig)
+
+
+class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
+    """Abstract base class for model builders.
+
+    A builder takes configuration(s) and produces model instances.
+
+    Each builder subclass should:
+    1. Implement build_model() for the specific model type
+    2. Be linked to its corresponding ModelBuildConfig via the builder string
+
+    Type Parameters:
+        ModelT: The type of model this builder produces (e.g., MCoreGPTModel)
+        BuildConfigT: The type of build config this builder accepts (e.g., GPTModelBuildConfig)
+    """
+
+    def __init__(self, model_config, build_config: BuildConfigT):
+        self.model_config = model_config
+        self.build_config = build_config
+
+    @abc.abstractmethod
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> ModelT:
+        """Build a model from the provided configurations.
+
+        Args:
+            pg_collection: Process groups for distributed training
+            pre_process: Include embedding layer
+            post_process: Include output layer
+            vp_stage: Virtual pipeline stage
+
+        Returns:
+            The constructed model
+        """
+        ...
