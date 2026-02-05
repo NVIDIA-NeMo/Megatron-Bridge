@@ -64,7 +64,7 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
                     cli_arg_string.append(long_arg_name)
                     cli_arg_string.append(env_value)
 
-    return " ".join([arg for arg in cli_arg_string])
+    return "\0".join([arg for arg in cli_arg_string])
 
 
 if __name__ == "__main__":
