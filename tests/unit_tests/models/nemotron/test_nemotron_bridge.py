@@ -16,7 +16,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig, NemotronConfig, NemotronForCausalLM
+from transformers import NemotronConfig, NemotronForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -72,7 +72,6 @@ class TestNemotronBridge:
         """Create a mock PreTrainedCausalLM with Nemotron model."""
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = nemotron_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         mock_pretrained.model = Mock(spec=NemotronForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained

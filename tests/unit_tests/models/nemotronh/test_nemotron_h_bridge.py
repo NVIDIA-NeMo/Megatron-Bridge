@@ -18,7 +18,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import GenerationConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models import AutoBridge
@@ -49,6 +48,7 @@ class TestNemotronHBridge:
             "conv_kernel": 4,
             "eos_token_id": 2,
             "expand": 2,
+            "hidden_act": "relu2",  # Required for base class activation mapping
             "hidden_dropout": 0.0,
             "hidden_size": 4096,
             "hybrid_override_pattern": "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
@@ -100,7 +100,6 @@ class TestNemotronHBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_nemotronh_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         return mock_pretrained
 
     def test_bridge_registration(self):
@@ -182,7 +181,6 @@ class TestNemotronHBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_nemotronh_config.torch_dtype = "bfloat16"
         mock_pretrained.config = mock_nemotronh_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = NemotronHBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -236,7 +234,6 @@ class TestNemotronHBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = NemotronHBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -270,7 +267,6 @@ class TestNemotronHBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = NemotronHBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -288,7 +284,6 @@ class TestNemotronHBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = NemotronHBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -376,6 +371,7 @@ class TestAutoBridgeIntegration:
             "conv_kernel": 4,
             "eos_token_id": 2,
             "expand": 2,
+            "hidden_act": "relu2",  # Required for base class activation mapping
             "hidden_dropout": 0.0,
             "hidden_size": 4096,
             "hybrid_override_pattern": "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
