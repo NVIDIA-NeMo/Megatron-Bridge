@@ -83,7 +83,7 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]>=2.10.0a0,<2.13.0",
     "mamba-ssm",
-    "nvidia-resiliency-ext",
+    "nvidia-resiliency-ext~=0.4.1",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
@@ -118,7 +118,6 @@ override-dependencies = [
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/" }
-nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.5.0" }
 nvidia-modelopt = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git", rev = "0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }
 
 [project.optional-dependencies]
