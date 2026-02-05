@@ -2,12 +2,14 @@
 
 """Megatron tokenizers."""
 
+from __future__ import annotations
+
 import base64
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-from megatron.core.tokenizers import MegatronTokenizer, MegatronTokenizerBase
+from megatron.core.tokenizers import MegatronTokenizer
 
 from megatron.bridge.training.tokenizers.bert_tokenization import FullTokenizer as FullBertTokenizer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -23,8 +25,11 @@ except ImportError:
     # Fallback to old path
     from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizerCore
 
+if TYPE_CHECKING:
+    from megatron.core.tokenizers import MegatronTokenizerBase
 
-def _compute_space_sensitive(tokenizer_instance: "MegatronTokenizer", default: bool = True) -> bool:
+
+def _compute_space_sensitive(tokenizer_instance: MegatronTokenizer, default: bool = True) -> bool:
     """
     Determine if a tokenizer is space-sensitive.
 
