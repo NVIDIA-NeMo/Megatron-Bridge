@@ -12,161 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import os
-
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
-from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.kimi import KimiK2Provider
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-from megatron.bridge.recipes.utils.optimizer_utils import (
-    distributed_fused_adam_with_cosine_annealing,
-    distributed_muon_with_cosine_annealing,
-)
+from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    GPTDatasetConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-)
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-logger = logging.getLogger(__name__)
-
-
-class KimiK2CommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Kimi-K2 recipe helper functions."""
-
-    # Core identifiers
-    dir: str | None
-    name: str
-    # Dataset configuration
-    data_paths: list[str] | None
-    data_args_path: str | None
-    train_data_path: list[str] | None
-    valid_data_path: list[str] | None
-    test_data_path: list[str] | None
-    per_split_data_args_path: str | None
-    mock: bool
-    # Model configuration
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: torch.dtype | None
-    virtual_pipeline_model_parallel_size: int | None
-    context_parallel_size: int
-    expert_model_parallel_size: int
-    sequence_parallel: bool
-    # Recomputation
-    recompute_granularity: str
-    recompute_modules: list[str] | None
-    recompute_method: str | None
-    recompute_num_layers: int | None
-    # DeePEP and RoPE
-    enable_deepep: bool
-    apply_rope_fusion: bool
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: int
-    micro_batch_size: int
-    seq_length: int
-    lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    optimizer_type: str
-    # Precision / overlap configs
-    precision_config: MixedPrecisionConfig | str | None
-    comm_overlap_config: CommOverlapConfig | None
-
-
-def kimi_k2_pretrain_config(**user_kwargs: Unpack[KimiK2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Kimi-K2 (1T).
-
-    See `_kimi_k2_common` for the full list of parameters.
-    """
-    recommended_kwargs: KimiK2CommonKwargs = {
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 16,
-        "pipeline_dtype": torch.bfloat16,
-        "expert_model_parallel_size": 32,
-        "sequence_parallel": True,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: KimiK2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _kimi_k2_common(**combined_kwargs)
-
-
-def _kimi_k2_model_config(
-    tensor_model_parallel_size: int = 2,
-    pipeline_model_parallel_size: int = 16,
-    pipeline_dtype: torch.dtype | None = None,
-    virtual_pipeline_model_parallel_size: int | None = None,
-    context_parallel_size: int = 1,
-    expert_model_parallel_size: int = 32,
-    sequence_parallel: bool = True,
-    # Recomputation
-    recompute_granularity: str = "selective",
-    recompute_modules: list[str] | None = None,
-    recompute_method: str | None = None,
-    recompute_num_layers: int | None = None,
-    enable_deepep: bool = False,
-    apply_rope_fusion: bool = False,
-) -> KimiK2Provider:
-    """
-    Configure the Kimi-K2 (1T) model.
-
-    Args:
-        tensor_model_parallel_size: Degree of tensor model parallelism.
-        pipeline_model_parallel_size: Degree of pipeline model parallelism.
-        pipeline_dtype: Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism.
-        context_parallel_size: Degree of context parallelism.
-        expert_model_parallel_size: Degree of expert model parallelism.
-        sequence_parallel: Whether to use sequence parallelism.
-        recompute_granularity: Granularity of recomputation.
-        recompute_modules: List of modules to recompute.
-        recompute_method: Method of recomputation.
-        recompute_num_layers: Number of layers to recompute.
-        enable_deepep: Whether to use DeePEP.
-        apply_rope_fusion: Whether to apply RoPE fusion.
-
-    Returns:
-        KimiK2Provider: Configuration for the Kimi-K2 model.
-    """
-    cfg = KimiK2Provider(
-        tensor_model_parallel_size=tensor_model_parallel_size,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_dtype=pipeline_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
-        context_parallel_size=context_parallel_size,
-        expert_model_parallel_size=expert_model_parallel_size,
-        sequence_parallel=sequence_parallel,
-        expert_tensor_parallel_size=1,  # Do not use ETP
-        # Recomputation
-        recompute_granularity=recompute_granularity,
-        recompute_modules=recompute_modules,
-        recompute_method=recompute_method,
-        recompute_num_layers=recompute_num_layers,
-    )
-
-    # Pipeline split for asymmetric stages as used in NeMo recipe
-    cfg.account_for_embedding_in_pipeline_split = False
-    cfg.account_for_loss_in_pipeline_split = False
-    cfg.num_layers_in_first_pipeline_stage = None
-    cfg.num_layers_in_last_pipeline_stage = None
-
-    # Performance optimization knobs
-    cfg.moe_permute_fusion = True
-    if apply_rope_fusion:
-        cfg.apply_rope_fusion = True
-
-    # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
+def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int):
+    """Get pipeline layout for Kimi-K2 based on PP and VP size."""
     map_pp_vp_to_layout = {
         (1, 1): None,
         (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + ["loss"]],
@@ -176,221 +33,154 @@ def _kimi_k2_model_config(
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
     }
-    pp_size = pipeline_model_parallel_size or 1
-    vp_size = virtual_pipeline_model_parallel_size or 1
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
             f"for Kimi-K2. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
         )
-
     layout = map_pp_vp_to_layout[(pp_size, vp_size)]
-
     if layout is not None:
-        layout = list([list(x) for x in layout])  # yield all the elements
-    cfg.pipeline_model_parallel_layout = layout
-
-    if enable_deepep:
-        cfg.moe_token_dispatcher_type = "flex"
-        cfg.moe_enable_deepep = True
-        cfg.moe_shared_expert_overlap = False
-
-    return cfg
+        layout = list([list(x) for x in layout])
+    return layout
 
 
-def _kimi_k2_common(
-    dir: str | None = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: list[str] | None = None,
-    data_args_path: str | None = None,
-    train_data_path: list[str] | None = None,
-    valid_data_path: list[str] | None = None,
-    test_data_path: list[str] | None = None,
-    per_split_data_args_path: str | None = None,
-    mock: bool = False,
-    # Model configuration
-    tensor_model_parallel_size: int = 2,
-    pipeline_model_parallel_size: int = 16,
-    pipeline_dtype: torch.dtype | None = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: int | None = None,
-    context_parallel_size: int = 1,
-    expert_model_parallel_size: int = 32,
-    sequence_parallel: bool = True,
-    # Recomputation
-    recompute_granularity: str = "selective",
-    recompute_modules: list[str] | None = None,
-    recompute_method: str | None = None,
-    recompute_num_layers: int | None = None,
-    enable_deepep: bool = False,
-    apply_rope_fusion: bool = False,
-    # Training hyperparameters
-    train_iters: int = 1_000_000,
-    global_batch_size: int = 4096,
-    micro_batch_size: int = 1,
-    seq_length: int = 4096,
-    lr: float = 3e-4,
-    min_lr: float = 3e-5,
-    lr_warmup_iters: int = 2000,
-    optimizer_type: str = "muon",
-    # Precision / overlap configs
-    precision_config: MixedPrecisionConfig | str | None = None,
-    comm_overlap_config: CommOverlapConfig | None = None,
-) -> ConfigContainer:
+def kimi_k2_pretrain_config() -> ConfigContainer:
+    """Return a pre-training config for Kimi-K2 (1T).
+
+    Recommended parallelism: TP=2, PP=16, EP=32
+    Uses Muon optimizer by default.
     """
-    Create a pre-training configuration for Kimi-K2 (1T) model.
+    cfg = _pretrain_common()
 
-    Args:
-        dir (str | None): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (str | None): Path to file containing data arguments.
-        train_data_path (list[str] | None): List of training data paths.
-        valid_data_path (list[str] | None): List of validation data paths.
-        test_data_path (list[str] | None): List of test data paths.
-        per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (torch.dtype | None): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (int | None): Size of virtual pipeline parallelism.
-        context_parallel_size (int): Degree of context parallelism.
-        expert_model_parallel_size (int): Degree of expert model parallelism.
-        sequence_parallel (bool): Whether to use sequence parallelism.
-        recompute_granularity (str): Granularity of recomputation.
-        recompute_modules (list[str] | None): List of modules to recompute.
-        recompute_method (str | None): Method of recomputation.
-        recompute_num_layers (int | None): Number of layers to recompute.
-        enable_deepep (bool): Whether to use DeePEP.
-        apply_rope_fusion (bool): Whether to apply RoPE fusion.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        optimizer_type (str): Type of optimizer ("adam" or "muon").
-        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
-        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
-
-    Returns:
-        ConfigContainer: Configuration for pre-training.
-    """
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
+    # Model config - uses KimiK2Provider instead of AutoBridge
+    cfg.model = KimiK2Provider(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=16,
+        pipeline_dtype=torch.bfloat16,
+        virtual_pipeline_model_parallel_size=None,
+        context_parallel_size=1,
+        expert_model_parallel_size=32,
+        sequence_parallel=True,
+        expert_tensor_parallel_size=1,
+        recompute_granularity="selective",
+        recompute_modules=None,
+        recompute_method=None,
+        recompute_num_layers=None,
     )
 
-    model_cfg = _kimi_k2_model_config(
-        tensor_model_parallel_size=tensor_model_parallel_size,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_dtype=pipeline_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
-        context_parallel_size=context_parallel_size,
-        expert_model_parallel_size=expert_model_parallel_size,
-        sequence_parallel=sequence_parallel,
-        recompute_granularity=recompute_granularity,
-        recompute_modules=recompute_modules,
-        recompute_method=recompute_method,
-        recompute_num_layers=recompute_num_layers,
-        enable_deepep=enable_deepep,
-        apply_rope_fusion=apply_rope_fusion,
+    # Pipeline split settings (asymmetric stages)
+    cfg.model.account_for_embedding_in_pipeline_split = False
+    cfg.model.account_for_loss_in_pipeline_split = False
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
+
+    # Set pipeline layout
+    cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(16, 1)
+
+    # Tokenizer - uses NullTokenizer with model vocab_size
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.sequence_length = 4096
+    cfg.dataset.num_workers = 8
+
+    # MoE Token Dispatcher settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Training config
+    cfg.train.train_iters = 1_000_000
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+    cfg.train.eval_interval = 2000
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 5
+    cfg.train.manual_gc_eval = 5
+
+    # Optimizer
+    opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
+        lr_warmup_iters=2000,
+        lr_decay_iters=cfg.train.train_iters,
+        max_lr=3e-4,
+        min_lr=3e-5,
     )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
 
-    if optimizer_type == "adam":
-        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-            lr_warmup_iters=lr_warmup_iters,
-            lr_decay_iters=train_iters,
-            max_lr=lr,
-            min_lr=min_lr,
-        )
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
 
-    elif optimizer_type == "muon":
-        opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
-            lr_warmup_iters=lr_warmup_iters,
-            lr_decay_iters=train_iters,
-            max_lr=lr,
-            min_lr=min_lr,
-        )
-    else:
-        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
 
-    if precision_config is None:
-        precision_config = MixedPrecisionConfig(
-            bf16=True,
-            params_dtype=torch.bfloat16,
-            pipeline_dtype=torch.bfloat16,
-            autocast_enabled=False,
-            grad_reduce_in_fp32=True,
-        )
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
 
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=5,
-            manual_gc_eval=5,
-        ),
-        optimizer=opt_cfg,
-        scheduler=scheduler_cfg,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=True,
-            overlap_param_gather=False,  # Muon needs this to be False
-            average_in_collective=True,
-            use_distributed_optimizer=False,  # Muon needs this to be False
-        ),
-        dataset=GPTDatasetConfig(
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            sequence_length=seq_length,
-            num_dataset_builder_threads=1,
-            blend=blend,
-            blend_per_split=blend_per_split,
-            split=split,
-            data_sharding=True,
-            dataloader_type="single",
-            num_workers=8,
-            skip_getting_attention_mask_from_dataset=True,
-        ),
-        logger=LoggerConfig(
-            log_interval=10,
-            tensorboard_dir=tensorboard_dir,
-            log_timers_to_tensorboard=True,
-        ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_cfg.vocab_size),
-        checkpoint=CheckpointConfig(
-            save_interval=2000,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-            async_save=False,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
+    # Memory saving (recompute & offloading) - already set in KimiK2Provider
+    # cfg.model.recompute_granularity = "selective"
+    # cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - Kimi-K2 uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
+    cfg.mixed_precision = MixedPrecisionConfig(
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        pipeline_dtype=torch.bfloat16,
+        autocast_enabled=False,
+        grad_reduce_in_fp32=True,
     )
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.model.moe_router_padding_for_fp8 = False  # Pad router for FP8 alignment
 
-    if apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=False,
-        )
+    # Communication overlap
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.model.moe_shared_expert_overlap = True
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 2000
+    cfg.checkpoint.async_save = False
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config (DIFFERENT for Muon optimizer)
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = False  # Muon needs this to be False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False  # Muon needs this to be False
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+
+    if cfg.model.apply_rope_fusion:
+        cfg.dist.enable_megatron_core_experimental = True
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
 
     return cfg
