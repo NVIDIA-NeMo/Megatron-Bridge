@@ -111,6 +111,9 @@ main() {
         # Create virtual environment and install dependencies
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
         pip uninstall -y nvidia-modelopt
+        cd 3rdparty/Model-Optimizer/ && \
+        pip install -e --no-deps . && \
+        cd -
 
         # Install dependencies
         # Skip --locked flag when testing against different MCore version
