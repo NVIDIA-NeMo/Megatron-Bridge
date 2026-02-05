@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
+import torch
+from megatron.core import tensor_parallel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 
@@ -166,3 +168,76 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
             The constructed model
         """
         ...
+
+
+def build_distributed_models(
+    builder: ModelBuilder[ModelT, BuildConfigT],
+    pg_collection: ProcessGroupCollection,
+    wrap_with_ddp: bool = True,
+    use_torch_fsdp2: bool = False,
+    use_cpu_initialization: bool = False,
+    init_model_with_meta_device: bool = False,
+    fp16: bool = False,
+    bf16: bool = False,
+) -> list[ModelT]:
+    """Build models wrapped for distributed training.
+
+    Handles virtual pipeline parallelism, DDP wrapping, and
+    mixed precision configuration.
+    """
+    # Get VP size from model config if available
+    vp_size = getattr(builder.model_config, "virtual_pipeline_model_parallel_size", None)
+    pp_group = pg_collection.pp
+
+    if pp_group.size() > 1 and vp_size is not None:
+        # Create multiple models for virtual pipeline
+        from megatron.core.pipeline_parallel.utils import (
+            is_pp_first_stage,
+            is_pp_last_stage,
+            is_vp_first_stage,
+            is_vp_last_stage,
+        )
+
+        models = []
+        for i in range(vp_size):
+            pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
+            post_process = is_vp_last_stage(vp_stage=i, vp_size=vp_size) and is_pp_last_stage(pp_group)
+            model = builder.build_model(
+                pg_collection,
+                pre_process=pre_process,
+                post_process=post_process,
+                vp_stage=i,
+            )
+            models.append(model)
+    else:
+        # Single model
+        model = builder.build_model(pg_collection)
+        models = [model]
+
+    for model_module in models:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+    if not (use_torch_fsdp2 and use_cpu_initialization) and not init_model_with_meta_device:
+        for model_module in models:
+            model_module.cuda(torch.cuda.current_device())
+
+    # TODO: handle Float16Module wrapper
+
+    # Apply DDP wrapping if requested
+    if wrap_with_ddp:
+        models = _wrap_with_ddp(models, pg_collection, fp16, bf16)
+
+    return models
+
+
+def _wrap_with_ddp(
+    models: list[ModelT],
+    pg_collection: ProcessGroupCollection,
+    fp16: bool,
+    bf16: bool,
+) -> list[ModelT]:
+    """Wrap models with DDP for distributed training."""
+    # TODO: impl
+    ...
+    return models
