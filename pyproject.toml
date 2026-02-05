@@ -112,7 +112,7 @@ override-dependencies = [
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
     "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878",
-
+    "nvidia-modelopt @ file://${PROJECT_ROOT}/3rdparty/Model-Optimizer/",
 ]
 
 [tool.uv.sources]
