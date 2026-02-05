@@ -24,7 +24,7 @@ from torch import nn
 from megatron.core import mpu
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.core.packed_seq_params import PackedSeqParams
-
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py
 class Qwen3VLVisionPatchEmbed(nn.Module):
@@ -184,7 +184,11 @@ def split_deepstack_embs(
     tp_rank: int = 0,
     cp_size: int = 1,
     cp_rank: int = 0,
+    sequence_parallel: bool = False,
 ):
+    if not sequence_parallel:
+        tp_size = 1
+        tp_rank = 0
     split_size = tp_size
     if cp_size > 1:
         split_size *= cp_size * 2
@@ -366,8 +370,7 @@ def reorganize_inputs(
 def split_data_cp_rank(val: torch.Tensor, cp_size: int, seq_dim: int, cp_rank: int = None):
     assert cp_size > 1
     assert 0 == val.shape[seq_dim] % (2 * cp_size), f"{val.shape=} {cp_size=}"
-    if cp_rank is None:
-        cp_rank = mpu.get_context_parallel_rank()
+    assert cp_rank is not None
     if val is None:
         return val
 
@@ -528,6 +531,8 @@ def get_vision_cp_data(
     square_merge_size: int,
     cp_img_num: list[int],
     images_padded: list[bool],
+    cp_rank: int,
+    cp_size: int,
 ):
     """Get vision data and grid_thw for context parallelism.
     Returns:
@@ -538,8 +543,6 @@ def get_vision_cp_data(
     """
     # we use the context parallelism size and context parallel group of LLM for vision model.
     # we only divide the number of images in each context parallel rank.
-    cp_size = mpu.get_context_parallel_world_size()
-    cp_rank = mpu.get_context_parallel_rank()
     assert cp_size == len(cp_img_num)
 
     seqlens = torch.repeat_interleave(vision_grid_thw[:, 1] * vision_grid_thw[:, 2], vision_grid_thw[:, 0])
@@ -568,7 +571,7 @@ def get_vision_cp_data(
 
 class AllGatherVisionEmbeddings(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input, seqlens_on_cp_ranks):
+    def forward(ctx, input, seqlens_on_cp_ranks, cp_group: torch.distributed.ProcessGroup):
         outputs = []
         for i in range(len(seqlens_on_cp_ranks)):
             o = torch.zeros(
@@ -578,9 +581,8 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
                 layout=input.layout,
             )
             outputs.append(o)
-        torch.distributed.all_gather(outputs, input, group=mpu.get_context_parallel_group())
-        cp_rank = mpu.get_context_parallel_rank()
-        ctx.cp_rank = cp_rank
+        torch.distributed.all_gather(outputs, input, group=cp_group)
+        ctx.cp_rank = torch.distributed.get_rank(group=cp_group)
         ctx.save_for_backward(*seqlens_on_cp_ranks)
 
         output = torch.cat(outputs, dim=0)
@@ -597,7 +599,7 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
 
 
 def preprocess_packed_seqs(
-    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True
+    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True, pg_collection: Optional[ProcessGroupCollection] = None
 ) -> tuple[torch.Tensor, PackedSeqParams]:
     """
     Preprocess packed sequences
@@ -608,9 +610,14 @@ def preprocess_packed_seqs(
     batch_size = input_ids.shape[0]
 
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-    tp_size = mpu.get_tensor_model_parallel_world_size()
-    cp_size = mpu.get_context_parallel_world_size()
-    cp_rank = mpu.get_context_parallel_rank()
+    if pg_collection is not None:
+        tp_size = pg_collection.tp.size()
+        cp_size = pg_collection.cp.size()
+        cp_rank = pg_collection.cp.rank()
+    else:
+        tp_size = mpu.get_tensor_model_parallel_world_size()
+        cp_size = mpu.get_context_parallel_world_size()
+        cp_rank = mpu.get_context_parallel_rank()
     align_size = tp_size * cp_size * 2 if cp_size > 1 else tp_size
 
     pad_size = (align_size - seqlens_in_batch % align_size) % align_size
@@ -686,6 +693,7 @@ def postprocess_packed_seqs(
     batch_size: int,
     seq_len: int,
     post_process: bool = True,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> torch.Tensor:
     """
     Postprocess packed sequences
@@ -703,14 +711,22 @@ def postprocess_packed_seqs(
     shape = [batch_size, seq_len] + list(output.shape[2:])  # 1,packed, dim -> batch_size, seq_len, dim
     output_new = torch.zeros(shape, dtype=output.dtype, device=output.device)
 
-    cp_size = mpu.get_context_parallel_world_size()
+    if pg_collection is not None:
+        cp_rank = pg_collection.cp.rank()
+        cp_size = pg_collection.cp.size()
+        cp_group = pg_collection.cp
+    else:
+        cp_rank = mpu.get_context_parallel_rank()
+        cp_size = mpu.get_context_parallel_world_size()
+        cp_group = mpu.get_context_parallel_group()
+
     # all gather output across context parallel group
     if cp_size > 1:
         # output shape: [1, packed_len, hidden_dim]
         # need to gather across cp group and concatenate in sequence dimension
         output_list = [torch.empty_like(output) for _ in range(cp_size)]
-        torch.distributed.all_gather(output_list, output.detach(), group=mpu.get_context_parallel_group())
-        output_list[mpu.get_context_parallel_rank()] = output
+        torch.distributed.all_gather(output_list, output.detach(), group=cp_group)
+        output_list[cp_rank] = output
     else:
         output_list = [output]
     for i in range(batch_size):

@@ -17,7 +17,9 @@ from __future__ import annotations
 import torch
 import math
 from megatron.core.packed_seq_params import PackedSeqParams
-
+from megatron.core.process_groups_config import ProcessGroupCollection
+from typing import Optional
+from megatron.core import mpu
 
 def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
@@ -70,12 +72,8 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     )
 
 
-# Copied from verl/verl/models/mcore/util.py
-from megatron.core import mpu
-
-
 def preprocess_packed_seqs(
-    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True, use_fp8_padding=False
+    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True, use_fp8_padding=False, pg_collection: Optional[ProcessGroupCollection] = None
 ) -> tuple[torch.Tensor, PackedSeqParams]:
     """
     Preprocess packed sequences
@@ -90,9 +88,14 @@ def preprocess_packed_seqs(
         if attention_mask is not None
         else torch.ones((batch_size), dtype=torch.int32, device=input_ids.device) * input_ids.shape[1]
     )
-    tp_size = mpu.get_tensor_model_parallel_world_size()
-    cp_size = mpu.get_context_parallel_world_size()
-    cp_rank = mpu.get_context_parallel_rank()
+    if pg_collection is not None:
+        tp_size = pg_collection.tp.size()
+        cp_size = pg_collection.cp.size()
+        cp_rank = pg_collection.cp.rank()
+    else:
+        tp_size = mpu.get_tensor_model_parallel_world_size()
+        cp_size = mpu.get_context_parallel_world_size()
+        cp_rank = mpu.get_context_parallel_rank()
     align_size = tp_size * cp_size * 2 if cp_size > 1 else tp_size
     if use_fp8_padding:
         # if fp8 is enabled, ensure the sequence is padded to multiples of 16 for better performance
@@ -178,6 +181,7 @@ def postprocess_packed_seqs(
     batch_size: int,
     seq_len: int,
     post_process: bool = True,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> torch.Tensor:
     """
     Postprocess packed sequences.
@@ -196,14 +200,21 @@ def postprocess_packed_seqs(
     shape = [batch_size, seq_len] + list(output.shape[2:])  # 1,packed, dim -> batch_size, seq_len, dim
     output_new = torch.zeros(shape, dtype=output.dtype, device=output.device)
 
-    cp_size = mpu.get_context_parallel_world_size()
+    if pg_collection is not None:
+        cp_size = pg_collection.cp.size()
+        cp_rank = pg_collection.cp.rank()
+        cp_group = pg_collection.cp
+    else:
+        cp_size = mpu.get_context_parallel_world_size()
+        cp_rank = mpu.get_context_parallel_rank()
+        cp_group = mpu.get_context_parallel_group()
     # all gather output across context parallel group
     if cp_size > 1:
         # output shape: [1, packed_len, hidden_dim]
         # need to gather across cp group and concatenate in sequence dimension
         output_list = [torch.empty_like(output, dtype=output.dtype) for _ in range(cp_size)]
-        torch.distributed.all_gather(output_list, output.detach(), group=mpu.get_context_parallel_group())
-        output_list[mpu.get_context_parallel_rank()] = output
+        torch.distributed.all_gather(output_list, output.detach(), group=cp_group)
+        output_list[cp_rank] = output
     else:
         output_list = [output]
     for i in range(batch_size):

@@ -38,6 +38,7 @@ class Qwen3VLVisionModel(VisionModule):
         patch_merger_spec: ModuleSpec,
         pre_process: bool = True,
         post_process: bool = True,
+        pg_collection: Optional[torch.distributed.ProcessGroup] = None,
     ) -> None:
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(config=transformer_config)

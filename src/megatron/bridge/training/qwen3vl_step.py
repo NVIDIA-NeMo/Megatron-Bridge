@@ -302,9 +302,6 @@ def forward_step(
     else:
         data_format = "bshd"
 
-    if pack_sequences_in_batch and this_pg_collection.cp.size() > 1 and model.config.attention_backend != AttnBackend.flash:
-        raise ValueError(f"When using pack_sequences_in_batch, Qwen3-VL model only supports context parallelism with flash attention backend, but got {model.config.attention_backend.name}")
-
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
         tokens,
         labels,

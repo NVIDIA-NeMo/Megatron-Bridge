@@ -121,6 +121,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
 
     use_hf_vision_model: bool = False
 
+    vision_dp_when_cp: bool = False
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
         Provide a Qwen3VL model instance with vision and language components.
@@ -146,7 +148,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_vision_config,
+            hf_vision_config=hf_vision_config,
             vision_transformer_layer_spec=vision_transformer_layer_spec,
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
@@ -279,6 +281,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     cp_comm_type: str = "p2p"  # Point-to-point communication for context parallel
 
     use_hf_vision_model: bool = False
+    vision_dp_when_cp: bool = False
 
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
@@ -312,7 +315,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_vision_config,
+            hf_vision_config=hf_vision_config,
             vision_transformer_layer_spec=vision_transformer_layer_spec,
             vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,

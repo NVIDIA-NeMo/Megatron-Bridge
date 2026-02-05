@@ -57,17 +57,21 @@ class Qwen3VLTransformerConfig(TransformerConfig):
 
 def get_vision_model_config(hf_config, megatron_config=None):
     # init config from scratch to avoid deepcopy of parallel_state
-    if megatron_config is None:
-        config = Qwen3VLTransformerConfig(
-            num_layers=hf_config.depth,
-            hidden_size=hf_config.hidden_size,
-            num_attention_heads=hf_config.num_heads,
-            ffn_hidden_size=hf_config.intermediate_size,
-            add_bias_linear=True,
-            add_qkv_bias=True,
-        )
-    else:
-        config = copy.copy(megatron_config)
+    config = Qwen3VLTransformerConfig(
+        num_layers=hf_config.depth,
+        hidden_size=hf_config.hidden_size,
+        num_attention_heads=hf_config.num_heads,
+        ffn_hidden_size=hf_config.intermediate_size,
+        add_bias_linear=True,
+        add_qkv_bias=True,
+    )
+
+    if megatron_config is not None:
+        config.recompute_granularity = megatron_config.recompute_granularity
+        config.recompute_method = megatron_config.recompute_method
+        config.recompute_num_layers = megatron_config.recompute_num_layers
+        config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
+
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
     config.moe_ffn_hidden_size = None

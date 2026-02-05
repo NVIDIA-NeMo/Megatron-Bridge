@@ -105,7 +105,6 @@ from megatron.bridge.training.utils.omegaconf_utils import (
 )
 from megatron.bridge.training.qwen3vl_step import forward_step
 from megatron.bridge.utils.common_utils import get_rank_safe
-from functools import partial
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -185,7 +184,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         help="Use preloaded dataset provider (enabled automatically when --data-path is set).",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
 
