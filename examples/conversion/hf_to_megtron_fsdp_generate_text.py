@@ -130,7 +130,7 @@ def main(
         hf_model_id, trust_remote_code=trust_remote_code, torch_dtype=torch.bfloat16
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
+    model_provider = bridge.to_megatron_provider(load_weights=False)
     _configure_model_provider(model_provider, tp=tp, cp=cp, ep=ep)
 
     ddp_config = DistributedDataParallelConfig(
@@ -147,6 +147,7 @@ def main(
         overlap_param_gather_with_optimizer_step=False,
         data_parallel_random_init=False,
     )
+    bridge.load_hf_weights(megatron_model)
 
     model = [m.cuda() for m in megatron_model]
 
