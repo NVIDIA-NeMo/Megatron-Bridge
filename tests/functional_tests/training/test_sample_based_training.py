@@ -30,6 +30,7 @@ from megatron.bridge.training.config import (
     RerunStateMachineConfig,
     RNGConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -59,9 +60,11 @@ class TestSampleBasedTrainingFunctional:
                 micro_batch_size=1,
                 global_batch_size=4,  # 2 GPUs * 2 data_parallel_size
                 train_samples=32,  # Sample-based training (8 iterations)
-                eval_iters=2,
-                eval_interval=4,
                 skip_train=False,
+            ),
+            validation=ValidationConfig(
+                eval_interval=4,
+                eval_iters=2,
             ),
             model=Llama32ModelProvider1B(
                 tensor_model_parallel_size=1,
