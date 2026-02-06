@@ -20,6 +20,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import nemo_run as run
@@ -50,8 +51,6 @@ try:
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from .resiliency_plugins import FaultTolerancePlugin
-
-import logging
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -184,7 +183,11 @@ def main(
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    vp_size: Optional[int],
     ep_size: Optional[int],
+    etp_size: Optional[int],
+    micro_batch_size: Optional[int],
+    global_batch_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -226,6 +229,7 @@ def main(
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
     config_variant: str = "v1",
+    gres: Optional[str] = None,
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -254,8 +258,20 @@ def main(
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
+        # Create a simple namespace with the args needed by get_exp_name_config
+        args_for_config = SimpleNamespace(
+            num_gpus=num_gpus,
+            tensor_model_parallel_size=tp_size,
+            pipeline_model_parallel_size=pp_size,
+            context_parallel_size=cp_size,
+            virtual_pipeline_model_parallel_size=vp_size,
+            expert_model_parallel_size=ep_size,
+            expert_tensor_parallel_size=etp_size,
+            micro_batch_size=micro_batch_size,
+            global_batch_size=global_batch_size,
+        )
         exp_config = get_exp_name_config(
-            args, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
         )
         exp_name = (
             wandb_experiment_name
@@ -296,7 +312,7 @@ def main(
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
             custom_bash_cmds=custom_bash_cmds,
-            gres=args.gres,
+            gres=gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
@@ -347,8 +363,8 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
-                nsys_trace=args.nsys_trace,
-                nsys_extra_args=args.nsys_extra_args,
+                nsys_trace=nsys_trace,
+                nsys_extra_args=nsys_extra_args,
             )
         )
     if pytorch_profiler:
@@ -466,22 +482,21 @@ def main(
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
 
-            if wandb_run:
-                is_testing_passed, error_msg = calc_convergence_and_performance(
-                    model_family_name=model_family_name,
-                    model_recipe_name=model_recipe_name,
-                    assets_dir=os.path.join(job_dir, exp_name),
-                    log_paths=log_paths,
-                    loss_metric="lm loss",
-                    timing_metric="elapsed time per iteration (ms)",
-                    alloc_metric="alloc",
-                    max_alloc_metric="max_alloc",
-                    golden_values_path=golden_values_path,
-                    convergence_config=convergence_params,
-                    performance_config=performance_params,
-                    memory_config=memory_params,
-                    wandb_run=wandb_run,
-                )
+            is_testing_passed, error_msg = calc_convergence_and_performance(
+                model_family_name=model_family_name,
+                model_recipe_name=model_recipe_name,
+                assets_dir=os.path.join(job_dir, exp_name),
+                log_paths=log_paths,
+                loss_metric="lm loss",
+                timing_metric="elapsed time per iteration (ms)",
+                alloc_metric="alloc",
+                max_alloc_metric="max_alloc",
+                golden_values_path=golden_values_path,
+                convergence_config=convergence_params,
+                performance_config=performance_params,
+                memory_config=memory_params,
+                wandb_run=wandb_run,
+            )
 
             if wandb_run:
                 wandb_run.finish()
@@ -546,7 +561,11 @@ if __name__ == "__main__":
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        vp_size=args.virtual_pipeline_model_parallel_size,
         ep_size=args.expert_model_parallel_size,
+        etp_size=args.expert_tensor_parallel_size,
+        micro_batch_size=args.micro_batch_size,
+        global_batch_size=args.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
@@ -602,4 +621,5 @@ if __name__ == "__main__":
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
         config_variant=config_variant,
+        gres=args.gres,
     )

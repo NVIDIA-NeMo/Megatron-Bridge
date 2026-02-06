@@ -57,6 +57,8 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "GPU utilization": {},
         "step time": {},
         "grad norm": {},
+        "alloc": None,
+        "max_alloc": None,
     }
 
     content = ""
@@ -78,6 +80,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
 
     pending_step_time = None
     pending_gpu_util = None
+    pending_grad_norm = None
 
     for line in content.split("\n"):
         # Check for step time and GPU utilization
@@ -336,6 +339,9 @@ def validate_performance(
         "outlier_threshold": 3.0,  # 3-sigma outlier detection
         # Loss curve analysis
         "skip_first_percent_loss": 0.0,  # Percentage of loss points to skip from beginning
+        # Performance timing
+        "skip_first_percent_time": 0.1,  # Percentage of iterations to skip from beginning for timing
+        "timing_threshold": 0.05,  # 5% threshold for timing validation
     }
 
     if config:
@@ -395,9 +401,8 @@ def validate_memory(
     current_alloc: float,
     golden_max_alloc: float,
     current_max_alloc: float,
-    memory_config: Dict[str, Any],
     logger: logging.Logger,
-    wandb_run: "wandb.Run",
+    wandb_run: Optional["wandb.Run"] = None,
     config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
@@ -654,11 +659,15 @@ def calc_convergence_and_performance(
         current_max_alloc=current_max_alloc,
         logger=logger,
         wandb_run=wandb_run,
-        memory_config=memory_config,
+        config=memory_config,
     )
     if not memory_result["passed"]:
         error_msg += f"Memory check failed. {memory_result['summary']}\n"
-        error_msg += f"Memory difference is greater than threshold: {memory_result['memory_diff'] * 100:.2f}% > {memory_config['memory_threshold'] * 100:.1f}%\n"
+        if "max_alloc_diff" in memory_result:
+            error_msg += f"Max alloc difference: {memory_result['max_alloc_diff'] * 100:.2f}%\n"
+        if "alloc_diff" in memory_result:
+            error_msg += f"Alloc difference: {memory_result['alloc_diff'] * 100:.2f}%\n"
+        error_msg += f"Threshold: {memory_config['memory_threshold'] * 100:.1f}%\n"
 
     wandb_run.define_metric("compare/*", step_metric="compare/step")
     for i in range(len(steps)):
