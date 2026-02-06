@@ -702,8 +702,8 @@ def calc_convergence_and_performance(
             error_msg += "All other validations passed successfully.\n"
             error_msg += f"Please update the golden values file: {expected_golden_values_path}\n"
             error_msg += "Add the following memory metrics to the golden values:\n"
-            error_msg += f"  \"{alloc_metric}\": {current_alloc},\n"
-            error_msg += f"  \"{max_alloc_metric}\": {current_max_alloc}\n"
+            error_msg += f'  "{alloc_metric}": {current_alloc},\n'
+            error_msg += f'  "{max_alloc_metric}": {current_max_alloc}\n'
 
     logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
     return len(error_msg) == 0, error_msg
