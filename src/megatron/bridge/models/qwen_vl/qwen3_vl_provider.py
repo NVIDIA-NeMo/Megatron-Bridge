@@ -229,6 +229,10 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
 
+    apply_rotary_pos_emb_in_fp32: bool = False
+    # This is not used in the model, we use hf_config.deepstack_visual_indexes to override it
+    deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
