@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 from transformers import AutoConfig, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
@@ -80,6 +81,10 @@ class TestDeepSeekConversion:
         model = model_class(config)
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 
+        for k, v in model.named_parameters():
+            if "e_score_correction_bias" in k:
+                v.data = v.data.to(torch.float32)
+
         # Save a tokenizer (use a lightweight compatible tokenizer)
         try:
             tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -136,6 +141,7 @@ class TestDeepSeekConversion:
             str(pp),
             "--ep",
             str(ep),
+            "--trust-remote-code",
         ]
 
         result = subprocess.run(
