@@ -423,6 +423,7 @@ def parse_cli_args():
         "-cb",
         "--custom_bash_cmds",
         nargs="*",
+        action="append",
         help="List of bash commands to execute before the main command",
         default=[],
     )

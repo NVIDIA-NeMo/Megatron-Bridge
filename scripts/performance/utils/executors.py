@@ -64,7 +64,7 @@ def slurm_executor(
     nemo_home: str = DEFAULT_NEMO_HOME,
     wandb_key: str = None,
     network: str = None,
-    custom_bash_cmds: List[str] = None,
+    custom_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
 ) -> run.SlurmExecutor:
@@ -79,7 +79,7 @@ def slurm_executor(
                 #SBATCH --nodelist=node001,node002
                 #SBATCH --constraint=gpu
     """
-    custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
+    custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
@@ -127,11 +127,11 @@ def slurm_executor(
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     if gpu.lower() in ["b300"]:
         numa_cmd += " -C $((SLURM_LOCALID * 16)),$((SLURM_LOCALID * 16 + 1))"
-    custom_bash_cmds.append(f" ; {numa_cmd}")
+    custom_bash_cmds.append(numa_cmd)
 
     launcher = SlurmTemplate(
         template_inline=INLINE_TEMPLATE,
-        template_vars={"pre_cmds": " ".join(custom_bash_cmds)},
+        template_vars={"pre_cmds": " ; ".join(custom_bash_cmds)},
     )
 
     executor = run.SlurmExecutor(
