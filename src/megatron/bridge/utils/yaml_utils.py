@@ -187,6 +187,7 @@ def _enum_representer(dumper, data):
         "_target_": f"{inspect.getmodule(enum_class).__name__}.{enum_class.__qualname__}",
         "_call_": True,
         "_args_": [data.value],
+        "_name_": data.name,
     }
 
     return dumper.represent_data(value)

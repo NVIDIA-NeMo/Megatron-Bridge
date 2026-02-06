@@ -81,6 +81,7 @@ class TestKeys:
         assert _Keys.PARTIAL == "_partial_"
         assert _Keys.CALL == "_call_"
         assert _Keys.ARGS == "_args_"
+        assert _Keys.NAME == "_name_"
 
 
 class TestInstantiate:

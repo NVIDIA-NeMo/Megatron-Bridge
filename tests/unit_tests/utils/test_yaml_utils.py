@@ -211,6 +211,8 @@ class TestEnumRepresenter:
         assert data["test"]["_call_"] is True
         assert "_args_" in data["test"]
         assert data["test"]["_args_"] == ["test_value1"]
+        assert "_name_" in data["test"]
+        assert data["test"]["_name_"] == "VALUE1"
         assert "TestEnum" in data["test"]["_target_"]
 
 
