@@ -652,22 +652,26 @@ def calc_convergence_and_performance(
         error_msg += f"Timing difference is greater than threshold: {performance_result['timing_diff'] * 100:.2f}% > {performance_config['timing_threshold'] * 100:.1f}%\n"
 
     # check for memory
-    memory_result = validate_memory(
-        golden_alloc=golden_alloc,
-        current_alloc=current_alloc,
-        golden_max_alloc=golden_max_alloc,
-        current_max_alloc=current_max_alloc,
-        logger=logger,
-        wandb_run=wandb_run,
-        config=memory_config,
-    )
-    if not memory_result["passed"]:
-        error_msg += f"Memory check failed. {memory_result['summary']}\n"
-        if "max_alloc_diff" in memory_result:
-            error_msg += f"Max alloc difference: {memory_result['max_alloc_diff'] * 100:.2f}%\n"
-        if "alloc_diff" in memory_result:
-            error_msg += f"Alloc difference: {memory_result['alloc_diff'] * 100:.2f}%\n"
-        error_msg += f"Threshold: {memory_config['memory_threshold'] * 100:.1f}%\n"
+    memory_metrics_missing = golden_alloc is None or golden_max_alloc is None
+    if memory_metrics_missing:
+        logger.warning("Memory metrics (alloc, max_alloc) not found in golden values - skipping memory validation")
+    else:
+        memory_result = validate_memory(
+            golden_alloc=golden_alloc,
+            current_alloc=current_alloc,
+            golden_max_alloc=golden_max_alloc,
+            current_max_alloc=current_max_alloc,
+            logger=logger,
+            wandb_run=wandb_run,
+            config=memory_config,
+        )
+        if not memory_result["passed"]:
+            error_msg += f"Memory check failed. {memory_result['summary']}\n"
+            if "max_alloc_diff" in memory_result:
+                error_msg += f"Max alloc difference: {memory_result['max_alloc_diff'] * 100:.2f}%\n"
+            if "alloc_diff" in memory_result:
+                error_msg += f"Alloc difference: {memory_result['alloc_diff'] * 100:.2f}%\n"
+            error_msg += f"Threshold: {memory_config['memory_threshold'] * 100:.1f}%\n"
 
     wandb_run.define_metric("compare/*", step_metric="compare/step")
     for i in range(len(steps)):
@@ -681,6 +685,25 @@ def calc_convergence_and_performance(
                 "compare/current_grad_norm": current_grad_norm[str(i)],
             }
         )
+
+    # Determine if we need to update golden values or if there are actual validation failures
+    has_validation_failures = not convergence_result["passed"] or not performance_result["passed"]
+
+    if memory_metrics_missing:
+        if has_validation_failures:
+            # There are actual validation failures - warn about them, don't suggest updating golden values
+            error_msg += "\n⚠️  WARNING: Convergence or performance validation failed!\n"
+            error_msg += "Fix the validation failures above before updating golden values.\n"
+            error_msg += "\nNote: Memory metrics (alloc, max_alloc) are also missing from golden values,\n"
+            error_msg += "but they should only be added AFTER convergence and performance validations pass.\n"
+        else:
+            # Only missing metrics, no validation failures - suggest updating golden values
+            error_msg += "\n📝 Memory metrics (alloc, max_alloc) are missing from golden values.\n"
+            error_msg += "All other validations passed successfully.\n"
+            error_msg += f"Please update the golden values file: {expected_golden_values_path}\n"
+            error_msg += "Add the following memory metrics to the golden values:\n"
+            error_msg += f"  \"{alloc_metric}\": {current_alloc},\n"
+            error_msg += f"  \"{max_alloc_metric}\": {current_max_alloc}\n"
 
     logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
     return len(error_msg) == 0, error_msg
