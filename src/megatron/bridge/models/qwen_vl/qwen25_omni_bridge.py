@@ -102,3 +102,80 @@ class Qwen25OmniBridge(MegatronModelBridge):
         )
 
         return provider
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """
+        Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.
+        """
+        # Supports wildcard (*) patterns for layer-specific parameters
+        param_mappings = {
+            # Direct mappings
+            "language_model.embedding.word_embeddings.weight": "thinker.model.embed_tokens.weight",
+            "language_model.output_layer.weight": "thinker.lm_head.weight",
+            "language_model.decoder.final_layernorm.weight": "thinker.model.norm.weight",
+            
+            # Layer-specific direct mappings
+            "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "thinker.model.layers.*.input_layernorm.weight",
+            "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "thinker.model.layers.*.post_attention_layernorm.weight",
+            "language_model.decoder.layers.*.self_attention.linear_proj.weight": "thinker.model.layers.*.self_attn.o_proj.weight",
+            "language_model.decoder.layers.*.mlp.linear_fc2.weight": "thinker.model.layers.*.mlp.down_proj.weight",
+            
+            # Bias mappings (if add_bias_linear=True in config)
+            "language_model.decoder.layers.*.self_attention.linear_proj.bias": "thinker.model.layers.*.self_attn.o_proj.bias",
+            "language_model.decoder.layers.*.mlp.linear_fc2.bias": "thinker.model.layers.*.mlp.down_proj.bias",
+        }
+
+        mapping_list = []
+        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
+        for megatron_param, hf_param in param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        # Add special mappings that require parameter concatenation/transformation
+        mapping_list.extend(
+            [
+                ReplicatedMapping(
+                    megatron_param="visual.**",
+                    hf_param="thinker.visual.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="audio.**",
+                    hf_param="thinker.audio_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="talker.**",
+                    hf_param="talker.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="token2wav.**",
+                    hf_param="token2wav.**",
+                ),
+                # Based on ms-swift: concatenate [Q, K, V] along head dimension
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="thinker.model.layers.*.self_attn.q_proj.weight",
+                    k="thinker.model.layers.*.self_attn.k_proj.weight",
+                    v="thinker.model.layers.*.self_attn.v_proj.weight",
+                ),
+                # QKV bias: Combine separate Q, K, V biases into single QKV bias
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    q="thinker.model.layers.*.self_attn.q_proj.bias",
+                    k="thinker.model.layers.*.self_attn.k_proj.bias",
+                    v="thinker.model.layers.*.self_attn.v_proj.bias",
+                ),
+                # Gated MLP: Stack gate and up projection matrices into single FC1 matrix
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="thinker.model.layers.*.mlp.gate_proj.weight",
+                    up="thinker.model.layers.*.mlp.up_proj.weight",
+                ),
+                # Gated MLP bias: Stack gate and up biases into single FC1 bias
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.bias",
+                    gate="thinker.model.layers.*.mlp.gate_proj.bias",
+                    up="thinker.model.layers.*.mlp.up_proj.bias",
+                ),
+            ]
+        )
+
+        return MegatronMappingRegistry(*mapping_list)
