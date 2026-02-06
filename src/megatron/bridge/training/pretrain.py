@@ -195,7 +195,7 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
             callback_manager=callback_manager,
             is_test=True,
         )
