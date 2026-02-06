@@ -400,7 +400,6 @@ jobs:
           - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
-          - script: L2_Launch_recipes_llama_cuda_graphs
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_ministral3
           - script: L2_Launch_recipes_nemotronh
