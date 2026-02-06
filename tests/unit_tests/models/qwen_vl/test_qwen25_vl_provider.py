@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch.nn.functional as F
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
 from megatron.bridge.models.qwen_vl import Qwen25VLModelProvider
@@ -34,20 +33,22 @@ class TestQwen25VLModelProvider:
         assert provider.hidden_size == 4096
         assert provider.num_attention_heads == 32
 
-        # Check Qwen2-inherited defaults
-        assert provider.normalization == "RMSNorm"
-        assert provider.activation_func is F.silu
-        assert provider.gated_linear_unit is True
-        assert provider.add_bias_linear is False
-        assert provider.add_qkv_bias is True
-        assert provider.seq_length == 4096
-        assert provider.init_method_std == 0.02
-        assert provider.hidden_dropout == 0.0
-        assert provider.attention_dropout == 0.0
-        assert provider.vocab_size == 151936
-        assert provider.share_embeddings_and_output_weights is False
-        assert provider.layernorm_epsilon == 1e-6
-        assert provider.rotary_base == 1000000.0
+        # Check VL-specific defaults (inherits from GPTModelProvider)
+        assert provider.scatter_embedding_sequence_parallel is False
+        assert provider.position_embedding_type == "mrope"
+        assert provider.mrope_section == [16, 24, 24]
+
+        # Check vision config
+        assert isinstance(provider.vision_config, Qwen2_5_VLVisionConfig)
+
+        # Check token IDs
+        assert provider.bos_token_id == 151643
+        assert provider.eos_token_id == 151645
+        assert provider.vision_start_token_id == 151652
+        assert provider.vision_end_token_id == 151653
+        assert provider.vision_token_id == 151654
+        assert provider.image_token_id == 151655
+        assert provider.video_token_id == 151656
 
     def test_qwen25_vl_vl_specific_defaults(self):
         """Test Qwen25VLModelProvider VL-specific default configuration."""
@@ -253,11 +254,11 @@ class TestQwen25VLModelProvider:
 class TestQwen25VLModelProviderInheritance:
     """Test inheritance relationships for Qwen25VLModelProvider."""
 
-    def test_qwen25_vl_inherits_from_qwen2_provider(self):
-        """Test that Qwen25VLModelProvider inherits from Qwen2ModelProvider."""
-        from megatron.bridge.models import Qwen2ModelProvider
+    def test_qwen25_vl_inherits_from_gpt_provider(self):
+        """Test that Qwen25VLModelProvider inherits from GPTModelProvider."""
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
 
-        assert issubclass(Qwen25VLModelProvider, Qwen2ModelProvider)
+        assert issubclass(Qwen25VLModelProvider, GPTModelProvider)
 
     def test_qwen25_vl_provider_method_inheritance(self):
         """Test that inherited methods work correctly."""

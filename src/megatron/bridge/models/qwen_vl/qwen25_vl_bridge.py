@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 from transformers import Qwen2_5_VLForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -25,10 +24,15 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
-from megatron.bridge.models.qwen_vl.qwen_vl_provider import Qwen25VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen2_5_VLForConditionalGeneration, target=Qwen25VLModel)
+@MegatronModelBridge.register_bridge(
+    source=Qwen2_5_VLForConditionalGeneration,
+    target=Qwen25VLModel,
+    provider=Qwen25VLModelProvider,
+    model_type="qwen2_5_vl",
+)
 class Qwen25VLBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen2.5-VL Conditional Generation.
@@ -45,36 +49,28 @@ class Qwen25VLBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen25VLModelProvider:
         hf_config = hf_pretrained.config
+        text_config = hf_config  # Qwen2.5-VL has text config fields directly on main config
 
-        provider = Qwen25VLModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            add_qkv_bias=True,  # Qwen2 has bias in QKV projections
-            vision_config=hf_config.vision_config,
-            # VL-specific token IDs
-            bos_token_id=getattr(hf_config, "bos_token_id", 151643),
-            eos_token_id=getattr(hf_config, "eos_token_id", 151645),
-            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
-            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
-            vision_token_id=getattr(hf_config, "vision_token_id", 151654),
-            image_token_id=getattr(hf_config, "image_token_id", 151655),
-            video_token_id=getattr(hf_config, "video_token_id", 151656),
-        )
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        provider = Qwen25VLModelProvider(**provider_kwargs)
+
+        # Qwen2-specific settings
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_qkv_bias = True
+        provider.add_bias_linear = False
+        provider.hidden_dropout = 0.0
+
+        # VL-specific overrides
+        provider.position_embedding_type = "mrope"
+        provider.vision_config = hf_config.vision_config
+        provider.bos_token_id = getattr(hf_config, "bos_token_id", 151643)
+        provider.eos_token_id = getattr(hf_config, "eos_token_id", 151645)
+        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 151652)
+        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
+        provider.vision_token_id = getattr(hf_config, "vision_token_id", 151654)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
+        provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
 
         return provider
 

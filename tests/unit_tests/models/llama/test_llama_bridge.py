@@ -380,9 +380,6 @@ class TestBaseClassHelperMethods:
         assert provider.position_embedding_type == "rope"
         assert provider.hidden_dropout == 0.0
 
-        # Verify generation_config is set (via base class)
-        assert provider.generation_config == mock_pretrained_llama_2.generation_config
-
     def testhf_config_to_provider_kwargs_from_base_class(self):
         """Test that hf_config_to_provider_kwargs is inherited from MegatronModelBridge."""
         assert hasattr(LlamaBridge, "hf_config_to_provider_kwargs")

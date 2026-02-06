@@ -74,7 +74,6 @@ class MistralBridge(MegatronModelBridge):
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
             vocab_size=hf_config.vocab_size,
             kv_channels=getattr(hf_config, "head_dim", None),
         )
