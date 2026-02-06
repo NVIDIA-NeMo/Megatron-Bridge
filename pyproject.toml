@@ -111,13 +111,12 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878",
-    "nvidia-modelopt @ file://${PROJECT_ROOT}/3rdparty/Model-Optimizer/",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878"
 ]
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
-nvidia-modelopt = { path = "3rdparty/Model-Optimizer/", editable = true }
+nvidia-modelopt = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git", rev = "0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }
 nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" } # Requires a source install to compile cupti for cuda13
 
 [project.optional-dependencies]
@@ -154,7 +153,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja", "nvidia-mathdx", "setuptools-scm"]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja", "nvidia-mathdx"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"
