@@ -1479,6 +1479,7 @@ class ConfigContainer(Container):
                 print_rank_0(
                     "average_in_collective is not supported with NCCL symmetric registration, setting to False"
                 )
+                self.ddp.average_in_collective = False
 
             # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
             if self.model.gradient_accumulation_fusion:
