@@ -34,11 +34,6 @@ COPY 3rdparty/Model-Optimizer/pyproject.toml 3rdparty/Model-Optimizer/setup.py /
 COPY 3rdparty/Model-Optimizer/modelopt/__init__.py /opt/Megatron-Bridge/3rdparty/Model-Optimizer/modelopt/
 COPY 3rdparty/Model-Optimizer/nvidia_modelopt.egg-info /opt/Megatron-Bridge/3rdparty/Model-Optimizer/nvidia_modelopt.egg-info/
 
-RUN git config --global --add safe.directory '*' && \
-    sed -i '/worktree/d' /opt/Megatron-Bridge/3rdparty/Model-Optimizer/.git/config && \
-    cd /opt/Megatron-Bridge/3rdparty/Model-Optimizer && \
-    git reset --hard HEAD
-
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
 ARG UV_CACHE_PRUNE_ARGS
@@ -47,11 +42,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     pip uninstall -y nvidia-modelopt && \
-    cd 3rdparty/Model-Optimizer/ && \
-    git fetch origin --tags && \
-    pip install -e . && \
-    cd - && \
-    python -c "import modelopt; print(modelopt.__version__)" && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \
