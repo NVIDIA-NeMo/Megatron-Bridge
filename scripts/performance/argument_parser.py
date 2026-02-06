@@ -425,7 +425,7 @@ def parse_cli_args():
         nargs="*",
         action="append",
         help="List of bash commands to execute before the main command",
-        default=[],
+        default=None,
     )
     slurm_args.add_argument(
         "--gres",
