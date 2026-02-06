@@ -1,8 +1,10 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
-import warnings
 
 
 @dataclass
@@ -57,10 +59,10 @@ class ModuleParallelismConfig:
 @dataclass
 class MimoParallelismConfig:
     """Configuration for multi-module (MIMO) heterogeneous parallelism.
-    
+
     Note: Phase 1 only supports heterogeneous deployment where each module
     can have different parallelism configurations and rank offsets.
-    
+
     The LLM module must be named "llm" in module_parallelisms.
     """
 

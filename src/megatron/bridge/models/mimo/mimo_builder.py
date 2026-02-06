@@ -1,13 +1,19 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 
 
+if TYPE_CHECKING:
+    from megatron.core.process_groups_config import HyperCommGrid
+
+
 def build_hypercomm_grids(
     mimo_parallelism_config: MimoParallelismConfig,
-) -> Dict[str, "HyperCommGrid"]:
+) -> Dict[str, HyperCommGrid]:
     """Create HyperCommGrid objects per module from MIMO parallelism config.
 
     Creates grids on ALL ranks (required for consistent collective calls),
@@ -49,6 +55,4 @@ def build_hypercomm_grids(
 
 def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[str, List[str]]:
     """Infer a default multi-encoder -> LLM topology."""
-    return {
-        name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"
-    } | {"llm": []}
+    return {name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"} | {"llm": []}
