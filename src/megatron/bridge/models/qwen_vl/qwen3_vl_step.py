@@ -133,7 +133,7 @@ def get_batch(
         is_last_pp_stage=is_last_pp_stage,
     )
 
-    if "visual_inputs" in batch:
+    if "visual_inputs" in batch and batch.get("visual_inputs") is not None:
         # convert visual_inputs to multi_modal_inputs which is a dict contains "pixel_values" and "image_grid_thw"
         # TODO(jinliangl): add video support
         multi_modal_inputs = batch.get("visual_inputs").normalized_for_model()
@@ -180,6 +180,8 @@ def pack_or_pad_batch_sequences(
 
     if data_format == "thd":
         # build thd sequences with tiny padding
+        if attention_mask is None:
+            attention_mask = torch.ones_like(tokens)
         seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
         cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
         cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
@@ -345,7 +347,9 @@ def forward_step(
             # calculate position_ids in model forward
             forward_args["position_ids"] = None
             if pack_sequences_in_batch:
-                forward_args["labels"] = forward_args["labels"].reshape(1, -1)
+                if forward_args["labels"] is not None:
+                    # When using pp, labels could be None
+                    forward_args["labels"] = forward_args["labels"].reshape(1, -1)
                 attention_mask = torch.ones(
                     original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
                 )
