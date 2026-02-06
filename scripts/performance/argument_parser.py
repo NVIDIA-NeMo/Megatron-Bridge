@@ -420,6 +420,13 @@ def parse_cli_args():
         default=[],
     )
     slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        type=list_of_strings,
+        help="Comma separated string of bash commands",
+        default=[],
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
@@ -558,6 +565,22 @@ def parse_cli_args():
         type=list_of_ints,
         metavar="N[,N...]",
         help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_trace",
+        type=list_of_strings,
+        metavar="TRACE[,TRACE...]",
+        help="Comma-separated list of events to trace during nsys profiling (e.g., 'cuda,nvtx'). Defaults to nemo_run defaults.",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_extra_args",
+        type=list_of_strings,
+        metavar="ARG[,ARG...]",
+        help="Comma-separated list of additional nsys arguments. Will be combined with default args.",
         required=False,
         default=None,
     )

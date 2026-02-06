@@ -194,6 +194,8 @@ def main(
     record_memory_history: bool,
     profiling_gpu_metrics: bool,
     profiling_ranks: Optional[List[int]],
+    nsys_trace: Optional[List[str]],
+    nsys_extra_args: Optional[List[str]],
     nemo_home: str,
     account: str,
     partition: str,
@@ -204,6 +206,7 @@ def main(
     custom_mounts: List[str],
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    custom_bash_cmds: List[str],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
@@ -276,7 +279,7 @@ def main(
     )
 
     if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -291,6 +294,7 @@ def main(
             custom_mounts=custom_mounts,
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
+            custom_bash_cmds=custom_bash_cmds,
             gres=args.gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
@@ -342,6 +346,8 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
+                nsys_trace=args.nsys_trace,
+                nsys_extra_args=args.nsys_extra_args,
             )
         )
     if pytorch_profiler:
@@ -459,24 +465,22 @@ def main(
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
 
-            if wandb_run:
-                is_testing_passed, error_msg = calc_convergence_and_performance(
-                    model_family_name=model_family_name,
-                    model_recipe_name=model_recipe_name,
-                    assets_dir=os.path.join(job_dir, exp_name),
-                    log_paths=log_paths,
-                    loss_metric="lm loss",
-                    timing_metric="elapsed time per iteration (ms)",
-                    golden_values_path=golden_values_path,
-                    convergence_config=convergence_params,
-                    performance_config=performance_params,
-                    wandb_run=wandb_run,
-                )
+            is_testing_passed, error_msg = calc_convergence_and_performance(
+                model_family_name=model_family_name,
+                model_recipe_name=model_recipe_name,
+                assets_dir=os.path.join(job_dir, exp_name),
+                log_paths=log_paths,
+                loss_metric="lm loss",
+                timing_metric="elapsed time per iteration (ms)",
+                golden_values_path=golden_values_path,
+                convergence_config=convergence_params,
+                performance_config=performance_params,
+                wandb_run=wandb_run,
+            )
 
+            if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
-            else:
-                is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
                 if n_attempts < max_retries:
@@ -547,6 +551,8 @@ if __name__ == "__main__":
         record_memory_history=args.record_memory_history,
         profiling_gpu_metrics=args.profiling_gpu_metrics,
         profiling_ranks=args.profiling_ranks,
+        nsys_trace=args.nsys_trace,
+        nsys_extra_args=args.nsys_extra_args,
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
@@ -557,6 +563,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,

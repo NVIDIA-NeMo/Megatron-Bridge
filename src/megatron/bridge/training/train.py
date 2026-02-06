@@ -684,6 +684,7 @@ def train_step(
 
         _handle_mxfp8_param_buffer_copy(
             optimizer=optimizer,
+            model=model,
             reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
             overlap_param_gather=cfg.ddp.overlap_param_gather,
         )
@@ -1347,7 +1348,10 @@ def _dummy_train_step(
 
 
 def _handle_mxfp8_param_buffer_copy(
-    optimizer: MegatronOptimizer, reuse_grad_buf_for_mxfp8_param_ag: bool, overlap_param_gather: bool
+    optimizer: MegatronOptimizer,
+    model: list[MegatronModule],
+    reuse_grad_buf_for_mxfp8_param_ag: bool,
+    overlap_param_gather: bool,
 ) -> None:
     """Copy main params to param buffer for mxfp8 with grad buffer reuse.
 
@@ -1355,15 +1359,25 @@ def _handle_mxfp8_param_buffer_copy(
     we need to call _copy_main_params_to_param_buffer() after the grad buffer
     is zeroed because param and grad buffer are shared.
 
+    However, we should skip this on the first iteration when forward_pre_hook is disabled,
+    because:
+    1. The first iteration's params are already in param.data (from init or checkpoint).
+    2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
+       so the main grads will be polluted by the main params.
+
     Args:
         optimizer: The MegatronOptimizer instance
+        model: List of model chunks (MegatronModule instances)
         reuse_grad_buf_for_mxfp8_param_ag: Config flag for grad buffer reuse
         overlap_param_gather: Config flag for overlapping param gathering
     """
     if reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather:
-        for optim_instance in optimizer.chained_optimizers:
-            if isinstance(optim_instance, DistributedOptimizer):
-                optim_instance._copy_main_params_to_param_buffer()
+        # Check if forward_pre_hook is enabled by checking if hooks are registered.
+        forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
+        if forward_pre_hook_enabled:
+            for optim_instance in optimizer.chained_optimizers:
+                if isinstance(optim_instance, DistributedOptimizer):
+                    optim_instance._copy_main_params_to_param_buffer()
 
 
 def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
