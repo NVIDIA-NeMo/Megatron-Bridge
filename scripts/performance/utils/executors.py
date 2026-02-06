@@ -127,11 +127,11 @@ def slurm_executor(
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     if gpu.lower() in ["b300"]:
         numa_cmd += " -C $((SLURM_LOCALID * 16)),$((SLURM_LOCALID * 16 + 1))"
-    custom_bash_cmds.append(numa_cmd)
+    custom_bash_cmds.append(f" ; {numa_cmd}")
 
     launcher = SlurmTemplate(
         template_inline=INLINE_TEMPLATE,
-        template_vars={"pre_cmds": " ; ".join(custom_bash_cmds)},
+        template_vars={"pre_cmds": " ".join(custom_bash_cmds)},
     )
 
     executor = run.SlurmExecutor(
