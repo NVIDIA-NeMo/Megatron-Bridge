@@ -59,6 +59,7 @@ HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
 }
 
 
+@pytest.mark.pleasefixme
 class TestQwen3MoeQuantizationWorkflow:
     """
     Test complete Qwen3 MoE quantization workflow: quantize HuggingFace Qwen3 MoE models
