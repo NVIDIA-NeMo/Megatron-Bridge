@@ -42,14 +42,15 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
     global_batch_size=2048,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
+    micro_batch_size=2,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=8,
+    pp_layout="Et*4|(t*4|)*14tmL",
+    expert_model_parallel_size=32,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
-    recompute_modules=["moe_act"],
+    cuda_graph_scope=[],
+    recompute_modules=["mla_up_proj"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
@@ -82,6 +83,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1 = replace(
     expert_model_parallel_size=8,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
+    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1
@@ -93,10 +95,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
     pipeline_model_parallel_size=16,
-    expert_model_parallel_size=16,
+    expert_model_parallel_size=8,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
-    moe_flex_dispatcher_backend="deepep",
+    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1
@@ -107,14 +109,14 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=1024,
-    tensor_model_parallel_size=2,
+    tensor_model_parallel_size=4,  # TODO: TP=2 is OOM. Resolve it and revert it to recover perf
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
     global_batch_size=8192,
     recompute_modules=["mla_up_proj", "mlp"],
-    moe_flex_dispatcher_backend="deepep",
-    moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
@@ -148,7 +150,11 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1,
     global_batch_size=4096,
 )
-DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2,
+    pipeline_model_parallel_size=8,
+    virtual_pipeline_model_parallel_size=2,
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2
 
