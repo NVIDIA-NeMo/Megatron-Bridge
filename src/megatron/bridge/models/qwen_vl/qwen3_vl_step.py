@@ -160,6 +160,8 @@ def pack_or_pad_batch_sequences(
     this_pg_collection,
     use_fp8_padding: bool = False,
     data_format: str = "bshd",
+    force_to_pad_to_seq_len: bool = False,
+    seq_length: int = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
     """
     Pad or truncate the batch sequences to the target length, and build packed sequences.
@@ -220,6 +222,8 @@ def pack_or_pad_batch_sequences(
     elif data_format == "bshd":
         # build bshd sequences with tiny padding to be compatible with qwen3vl model
         target_len = math.ceil(cur_len / divisible_by) * divisible_by
+        if force_to_pad_to_seq_len:
+            target_len = seq_length
         tokens = pad_or_truncate_2d_to_len(tokens, target_len=target_len, max_cap=target_len, pad_value=0)
         labels = pad_or_truncate_2d_to_len(labels, target_len=target_len, max_cap=target_len, pad_value=-100)
         loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
@@ -311,6 +315,8 @@ def forward_step(
         this_pg_collection,
         use_fp8_padding=True,
         data_format=data_format,
+        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
+        seq_length=config.seq_length,
     )
     forward_args = {
         "input_ids": tokens,
