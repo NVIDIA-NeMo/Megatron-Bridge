@@ -27,7 +27,8 @@ class VLMEngine(MCoreEngine):
     """VLM inference engine extending MCoreEngine with image support."""
 
     def __init__(
-        self, text_generation_controller: TextGenerationController,
+        self,
+        text_generation_controller: TextGenerationController,
         max_batch_size: Optional[int] = None,
         random_seed: Optional[int] = None,
     ):
