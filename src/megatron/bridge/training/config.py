@@ -683,6 +683,9 @@ class TrainingConfig:
     check_weight_hash_across_dp_replicas_interval: Optional[int] = None
     """Interval to check weight hashes are same across DP replicas. If not specified, weight hashes not checked."""
 
+    numeric_checks: bool = True
+    """Enable numeric checks for the training loop."""
+
     train_sync_interval: Optional[int] = None
     """Training CPU-GPU synchronization interval, to ensure that CPU is not running too far ahead of GPU."""
 
