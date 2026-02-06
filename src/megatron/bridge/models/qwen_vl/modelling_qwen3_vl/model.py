@@ -137,7 +137,6 @@ class Qwen3VLModel(MegatronModule):
                     pre_process=True,
                     post_process=True,
                 )
-                print(f"rank {torch.distributed.get_rank()} use megatron vision model")
             else:
                 # use hf vision model
                 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
@@ -150,7 +149,6 @@ class Qwen3VLModel(MegatronModule):
                 # Move to device if available
                 if torch.cuda.is_available():
                     self.vision_model = self.vision_model.to("cuda")
-                print(f"rank {torch.distributed.get_rank()} use hf vision model")
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -176,8 +174,6 @@ class Qwen3VLModel(MegatronModule):
             )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
-
-        self.pg_collection = get_pg_collection(self)
 
         if self.pg_collection.cp.size() > 1:
             assert self.config.calculate_per_token_loss, (
