@@ -28,9 +28,7 @@ model:
   freeze_language_model: false
   freeze_vision_model: false
   freeze_vision_projection: false
-  # cross_entropy_fusion_impl: te
   calculate_per_token_loss: true
-  attention_backend: flash
   # num_layers: 16
 
 
@@ -50,14 +48,13 @@ scheduler:
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
-  # save: /lustre/fs1/portfolios/coreai/users/jinliangl/outputs/qwen3-vl-layer-4
-  load: ./outputs/qwen3-vl/
+  load: null
+  save: null
   load_optim: false
-  ckpt_step: 0
   ckpt_format: torch_dist
+  finetune: true
   # save_interval:10
-
-
+  
 dist:
   use_megatron_fsdp: false
   use_torch_fsdp2: false
