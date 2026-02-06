@@ -53,17 +53,24 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     vision_start_token_id: int = 151652
     hf_text_config: Optional[Qwen3VLTextConfig] = None
 
+    # Vision encoder CUDA graph settings
+    # Maximum sequence length for vision encoder CUDA graphs.
+    # Set this to accommodate the largest expected vision input.
+    # If None, will be calculated from num_position_embeddings / spatial_merge_size^2
+    max_vision_cuda_graph_seq_length: Optional[int] = None
+
 
 def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
-    # # init config from scratch to avoid deepcopy of parallel_state
-    # config = Qwen3VLTransformerConfig(
-    #     num_layers=hf_config.depth,
-    #     hidden_size=hf_config.hidden_size,
-    #     num_attention_heads=hf_config.num_heads,
-    #     ffn_hidden_size=hf_config.intermediate_size,
-    #     add_bias_linear=True,
-    #     add_qkv_bias=True,
-    # )
+    
+    # Set vision encoder parameters from HF config
+    # CRITICAL: num_layers must be set to vision depth, not inherited from language model
+    config.num_layers = hf_config.depth
+    config.hidden_size = hf_config.hidden_size
+    config.num_attention_heads = hf_config.num_heads
+    config.ffn_hidden_size = hf_config.intermediate_size
+    config.add_bias_linear = True
+    config.add_qkv_bias = True
+    
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
     config.moe_ffn_hidden_size = None
@@ -98,10 +105,30 @@ def get_vision_model_config(config: Qwen3VLTransformerConfig, hf_config):
     config.pipeline_model_parallel_size = 1
     config.num_layers_in_first_pipeline_stage = None
     config.num_layers_in_last_pipeline_stage = None
-    config.virtual_pipeline_model_parallel_size = 1
+    config.virtual_pipeline_model_parallel_size = None
     config.pipeline_model_parallel_layout = None
     config.account_for_embedding_in_pipeline_split = None
     config.account_for_loss_in_pipeline_split = None
     # encoder does not support apply_rope_fusion currently. 
     config.apply_rope_fusion = False
+
+    # Vision encoder CUDA graph settings
+    # Check if the input config has vision-specific CUDA graph settings (from provider)
+    # If so, use them; otherwise default to "none" for backward compatibility
+    if hasattr(config, 'vision_cuda_graph_impl') and config.vision_cuda_graph_impl != "none":
+        config.cuda_graph_impl = config.vision_cuda_graph_impl
+        if hasattr(config, 'vision_cuda_graph_scope') and config.vision_cuda_graph_scope:
+            # Convert string scope list to CudaGraphScope enums if needed
+            from megatron.core.transformer.cuda_graphs import CudaGraphScope
+            scope_list = config.vision_cuda_graph_scope
+            if scope_list and isinstance(scope_list[0], str):
+                config.cuda_graph_scope = [CudaGraphScope[scope] for scope in scope_list]
+            else:
+                config.cuda_graph_scope = scope_list
+        else:
+            config.cuda_graph_scope = []
+    else:
+        config.cuda_graph_impl = "none"
+        config.cuda_graph_scope = []
+
     return config

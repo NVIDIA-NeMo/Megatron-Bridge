@@ -174,18 +174,36 @@ class Qwen3VLModel(MegatronModule):
             )
 
         self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
-
         self.pg_collection = get_pg_collection(self)
-        # In order to support cuda graph,
-        # we need to set the decoder, rotary_pos_emb, and position_embedding_type
-        if self.language_model is not None:
-            self.decoder = self.language_model.decoder
-            self.rotary_pos_emb = self.language_model.rotary_pos_emb
+        # Expose position_embedding_type, rotary_pos_emb, and decoder for CUDA graph helper compatibility
+        # The CUDA graph helper expects model.position_embedding_type, model.rotary_pos_emb, and model.decoder,
+        # but in Qwen3VL these are nested under language_model. This provides direct access.
+        # Expose these attributes for CUDA graph helper compatibility only when CUDA graph is enabled
+        cuda_graph_enabled = getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        if cuda_graph_enabled:
             self.position_embedding_type = self.language_model.position_embedding_type
-        # if self.vision_model is not None:
-        #     self.decoder = self.vision_model.decoder
-        #     self.rotary_pos_emb = self.vision_model.rotary_pos_emb
-        #     # self.position_embedding_type = self.vision_model.position_embedding_type
+            self.rotary_pos_emb = self.language_model.rotary_pos_emb
+            self.decoder = self.language_model.decoder
+
+        # Expose position_embedding_type, rotary_pos_emb, and decoder for CUDA graph helper compatibility
+        # The CUDA graph helper expects model.position_embedding_type, model.rotary_pos_emb, and model.decoder,
+        # but in Qwen3VL these are nested under language_model. This provides direct access.
+        # Expose these attributes for CUDA graph helper compatibility only when CUDA graph is enabled
+        cuda_graph_enabled = getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        if cuda_graph_enabled:
+            self.position_embedding_type = self.language_model.position_embedding_type
+            self.rotary_pos_emb = self.language_model.rotary_pos_emb
+            self.decoder = self.language_model.decoder
+
+        # Expose position_embedding_type, rotary_pos_emb, and decoder for CUDA graph helper compatibility
+        # The CUDA graph helper expects model.position_embedding_type, model.rotary_pos_emb, and model.decoder,
+        # but in Qwen3VL these are nested under language_model. This provides direct access.
+        # Expose these attributes for CUDA graph helper compatibility only when CUDA graph is enabled
+        cuda_graph_enabled = getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        if cuda_graph_enabled:
+            self.position_embedding_type = self.language_model.position_embedding_type
+            self.rotary_pos_emb = self.language_model.rotary_pos_emb
+            self.decoder = self.language_model.decoder
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
