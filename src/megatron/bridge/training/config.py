@@ -31,11 +31,11 @@ from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
-from megatron.training.common_config import ProfilingConfig as BaseProfilingConfig
+from megatron.training.common_config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.common_config import RNGConfig
-from megatron.training.resilience_config import RerunStateMachineConfig as BaseRerunStateMachineConfig
-from megatron.training.training_config import SchedulerConfig as BaseSchedulerConfig
-from megatron.training.training_config import TrainingConfig as BaseTrainingConfig
+from megatron.training.resilience_config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
+from megatron.training.training_config import SchedulerConfig as MTrainSchedulerConfig
+from megatron.training.training_config import TrainingConfig as MTrainTrainingConfig
 from megatron.training.training_config import ValidationConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -192,7 +192,7 @@ class DistributedInitConfig:
 
 
 @dataclass
-class RerunStateMachineConfig(BaseRerunStateMachineConfig):
+class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
     """Configuration for the rerun state machine used for result validation or stats."""
 
     spiky_loss_factor: float = 10.0
@@ -515,7 +515,7 @@ class FinetuningDatasetConfig(DataloaderConfig):
 
 
 @dataclass(kw_only=True)
-class SchedulerConfig(BaseSchedulerConfig):
+class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
 
     def finalize(self) -> None:
@@ -551,7 +551,7 @@ class SchedulerConfig(BaseSchedulerConfig):
 
 
 @dataclass(kw_only=True)
-class TrainingConfig(BaseTrainingConfig):
+class TrainingConfig(MTrainTrainingConfig):
     """Configuration settings related to the training loop and validation."""
 
     def finalize(self) -> None:
@@ -881,7 +881,7 @@ class LoggerConfig:
 
 
 @dataclass(kw_only=True)
-class ProfilingConfig(BaseProfilingConfig):
+class ProfilingConfig(MTrainProfilingConfig):
     """Configuration settings for profiling the training process."""
 
     def finalize(self) -> None:
