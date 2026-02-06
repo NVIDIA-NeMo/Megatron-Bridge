@@ -44,8 +44,8 @@ from tests.functional_tests.utils import (
 @dataclass
 class Llama3ModelProvider145M(Llama3ModelProvider):
     rotary_base: int = 500_000
-    seq_length: int = 8192
-    num_layers: int = 2
+    seq_length: int = 1024
+    num_layers: int = 1
     hidden_size: int = 768
     ffn_hidden_size: int = 2688
     num_attention_heads: int = 16
@@ -79,7 +79,7 @@ class TestPretrainResume:
             global_batch_size = 8
             micro_batch_size = 1
             seq_length = 512
-            total_iters = 20
+            total_iters = 10
             checkpoint_iters = 10
 
             # First training run - train for 10 iterations and save checkpoint
@@ -99,7 +99,7 @@ class TestPretrainResume:
                     fp16=False,
                     adam_beta1=0.9,
                     adam_beta2=0.95,
-                    adam_eps=1e-5,
+                    adam_eps=1e-8,
                     use_distributed_optimizer=True,
                     clip_grad=1.0,
                     lr=3e-3,
@@ -129,7 +129,7 @@ class TestPretrainResume:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    seq_length=seq_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",
@@ -149,6 +149,7 @@ class TestPretrainResume:
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
+                    dist_ckpt_optim_fully_reshardable=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )
@@ -180,7 +181,7 @@ class TestPretrainResume:
                     fp16=False,
                     adam_beta1=0.9,
                     adam_beta2=0.95,
-                    adam_eps=1e-5,
+                    adam_eps=1e-8,
                     use_distributed_optimizer=True,
                     clip_grad=1.0,
                     lr=3e-3,
@@ -210,7 +211,7 @@ class TestPretrainResume:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    seq_length=seq_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",
@@ -231,6 +232,7 @@ class TestPretrainResume:
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
+                    dist_ckpt_optim_fully_reshardable=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )

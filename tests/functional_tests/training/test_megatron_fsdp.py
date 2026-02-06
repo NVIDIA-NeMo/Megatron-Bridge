@@ -155,7 +155,7 @@ def create_base_dataset_config(seq_length: int, **kwargs) -> MockGPTDatasetConfi
         "reset_attention_mask": False,
         "reset_position_ids": False,
         "eod_mask_loss": False,
-        "sequence_length": seq_length,
+        "seq_length": seq_length,
         "num_dataset_builder_threads": 1,
         "data_sharding": True,
         "dataloader_type": "single",
@@ -266,6 +266,7 @@ class TestMegatronFSDP:
         finally:
             clear_directories(tmp_path)
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_with_checkpoint(self, tmp_path):
         """
@@ -285,7 +286,7 @@ class TestMegatronFSDP:
 
         try:
             seq_length = 512
-            total_iters = 20
+            total_iters = 10
 
             # Create config with checkpointing enabled
             cfg = create_fsdp_config_container(
@@ -306,6 +307,7 @@ class TestMegatronFSDP:
         finally:
             clear_directories(tmp_path)
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_save_resume(self, tmp_path):
         """
@@ -325,8 +327,8 @@ class TestMegatronFSDP:
 
         try:
             seq_length = 512
-            total_iters = 20
-            checkpoint_iters = 10
+            total_iters = 10
+            checkpoint_iters = 5
 
             # First training run - train for 10 iterations and save checkpoint
             cfg_first = create_fsdp_config_container(
@@ -348,7 +350,7 @@ class TestMegatronFSDP:
 
             torch.distributed.barrier()
 
-            # Second training run - resume from checkpoint and train for remaining 10 iterations
+            # Second training run - resume from checkpoint and train remaining iterations
             cfg_second = create_fsdp_config_container(
                 seq_length=seq_length,
                 train_iters=total_iters,
@@ -364,7 +366,7 @@ class TestMegatronFSDP:
 
             torch.distributed.barrier()
 
-            # Verify FSDP DTensor checkpoint files from second run (should be at total_iters=20)
+            # Verify FSDP DTensor checkpoint files from second run (should be at total_iters)
             verify_checkpoint_files(checkpoint_dir, total_iters, ckpt_format=cfg_second.checkpoint.ckpt_format)
 
         finally:

@@ -12,11 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import tempfile
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_test_data(tmp_path_factory):
+    """Ensure test data is available in a temporary directory by downloading if necessary."""
+    data_path = tmp_path_factory.mktemp("test_data")
+
+    # Check if data directory exists and has content
+    if not any(data_path.iterdir()):
+        logger.info(f"Test data not found at {data_path}. Downloading...")
+
+        try:
+            # Download assets to data_path
+            from tests.functional_tests.data.download_unit_tests_dataset import get_oldest_release_and_assets
+
+            get_oldest_release_and_assets(assets_dir=str(data_path))
+
+            logger.info("Test data downloaded successfully.")
+
+        except ImportError as e:
+            logger.info(f"Failed to import download function: {e}")
+        except ValueError as e:
+            logger.error(e)
+            pytest.exit(f"Failed to download test data: {e}", returncode=1)
+            # Don't fail the tests, just warn
+        except Exception as e:
+            logger.info(f"Failed to download test data: {e}")
+            # Don't fail the tests, just warn
+    else:
+        logger.info(f"Test data already available at {data_path}")
+
+    yield data_path
 
 
 def pytest_configure(config):
@@ -110,3 +148,27 @@ def reset_env_vars():
     # After the test, restore the original environment
     os.environ.clear()
     os.environ.update(original_env)
+
+
+@pytest.fixture(autouse=True)
+def reset_te_debug_state():
+    """Ensure Transformer Engine debug state is reset after each test."""
+    try:
+        from transformer_engine.debug.pytorch.debug_state import TEDebugState
+    except (ImportError, ModuleNotFoundError):
+        yield
+        return
+
+    yield
+
+    try:
+        TEDebugState._reset()
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_datasets_file_lock():
+    """Prevent the HF datasets library from writing a lock file in the read-only test data directory."""
+    with patch("datasets.builder.FileLock", return_value=MagicMock()):
+        yield

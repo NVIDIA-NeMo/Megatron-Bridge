@@ -154,6 +154,49 @@ The plugin automatically forwards the `WANDB_API_KEY` and by default injects CLI
 This allows seamless integration of W&B logging into your training workflow without manual configuration.
 
 
+### MLFlow
+
+Megatron Bridge can log metrics and artifacts to MLFlow, following the same pattern as the W&B integration.
+
+#### What Gets Logged
+
+When enabled, MLFlow receives:
+
+- Training configuration as run parameters
+- Scalar metrics (losses, learning rate, batch size, throughput, timers, memory, runtime, norms, energy, etc.)
+- Checkpoint artifacts saved under an experiment-specific artifact path per iteration
+
+#### Enable MLFlow Logging
+
+  1) Install MLFlow (installed by default with Megatron Bridge):
+
+  ```bash
+  pip install mlflow / uv add mlflow
+  ```
+
+  2) Configure the tracking server (Optional):
+  - Either set `MLFLOW_TRACKING_URI` in the environment, or
+  - Pass an explicit `mlflow_tracking_uri` in the logger config.
+
+  3) Configure logging in your training setup.
+
+  ```python
+  from megatron.bridge.training.config import LoggerConfig
+
+  cfg.logger = LoggerConfig(
+      tensorboard_dir="./runs/tensorboard",
+      mlflow_experiment="my_megatron_experiment",
+      mlflow_run_name="llama32_1b_pretrain_run",
+      mlflow_tracking_uri="http://mlflow:5000",  # optional
+      mlflow_tags={                              # optional
+          "project": "llama32",
+          "phase": "pretrain",
+      },
+  )
+  ```
+
+
+
 #### Progress Log
 
 When `logger.log_progress` is enabled, the framework generates a `progress.txt` file in the checkpoint save directory.
@@ -169,6 +212,133 @@ At each checkpoint boundary, the log is updated with:
 - **Tokens processed**
 
 This provides a lightweight, text-based audit trail of training progress, useful for tracking performance across restarts.
+
+
+## Tensor Inspection
+
+Megatron Bridge integrates with TransformerEngine's tensor inspection features via NVIDIA DLFW Inspect. This integration, controlled by {py:class}`~bridge.training.config.TensorInspectConfig`, enables advanced debugging and analysis of tensor statistics during training. When enabled, the framework handles initialization, step tracking, and cleanup automatically.
+
+```{note}
+**Current limitations:** Tensor inspection is currently supported only for linear modules in TransformerEngine (e.g., `fc1`, `fc2`, `layernorm_linear`). Operations like attention are not supported.
+```
+
+```{note}
+This section covers Megatron Bridge configuration. For comprehensive documentation on features, configuration syntax, and advanced usage, see:
+
+- [TransformerEngine Debug Documentation](https://github.com/NVIDIA/TransformerEngine/tree/af2a0c16ec11363c0af84690cd877a59f898820e/docs/debug)
+- [NVIDIA DLFW Inspect Documentation](https://github.com/NVIDIA/nvidia-dlfw-inspect/tree/4118044cc84f0183714a2ab1bc215fa49f9aaa82/docs)
+```
+
+### Installation
+
+Install NVIDIA DLFW Inspect if not already available:
+```bash
+pip install nvdlfw-inspect
+```
+
+### Available Features
+
+TransformerEngine provides the following debug features:
+
+- **LogTensorStats** – Logs high-precision tensor statistics: `min`, `max`, `mean`, `std`, `l1_norm`, `l2_norm`, `cur_amax`, `dynamic_range`.
+- **LogFp8TensorStats** – Logs quantized tensor statistics for FP8 recipes: `underflows%`, `scale_inv_min`, `scale_inv_max`, `mse`. Supports simulating alternative recipes (e.g., tracking `mxfp8_underflows%` during per-tensor current-scaling training)
+- **DisableFP8GEMM** – Runs specific GEMM operations in high precision
+- **DisableFP8Layer** – Disables FP8 for entire layers
+- **PerTensorScaling** – Enables per-tensor current scaling for specific tensors
+- **FakeQuant** – Experimental quantization testing
+
+See [TransformerEngine debug features](https://github.com/NVIDIA/TransformerEngine/tree/af2a0c16ec11363c0af84690cd877a59f898820e/transformer_engine/debug/features) for complete parameter lists and usage details.
+
+### Configuration
+
+Configure tensor inspection using {py:class}`~bridge.training.config.TensorInspectConfig` with either a YAML file or inline dictionary.
+
+#### YAML Configuration
+
+```yaml
+tensor_inspect:
+  enabled: true
+  features: ./conf/fp8_tensor_stats.yaml
+  log_dir: ./logs/tensor_inspect
+```
+
+**Example feature configuration file:**
+
+```yaml
+fp8_tensor_stats:
+  enabled: true
+  layers:
+    layer_name_regex_pattern: ".*(fc2)"
+  transformer_engine:
+    LogFp8TensorStats:
+      enabled: true
+      tensors: [weight,activation,gradient]
+      stats: ["underflows%", "mse"]
+      freq: 5
+      start_step: 0
+      end_step: 100
+```
+
+#### Python Configuration
+
+```python
+from bridge.training.config import TensorInspectConfig
+
+# Option 1: inline python dict
+cfg.tensor_inspect = TensorInspectConfig(
+    enabled=True,
+    features={
+        "fp8_gradient_stats": {
+            "enabled": True,
+            "layers": {"layer_name_regex_pattern": ".*(fc1|fc2)"},
+            "transformer_engine": {
+                "LogFp8TensorStats": {
+                    "enabled": True,
+                    "tensors": ["weight","activation","gradient"],
+                    "stats": ["underflows%", "mse"],
+                    "freq": 5,
+                    "start_step": 0,
+                    "end_step": 100,
+                },
+            },
+        }
+    },
+    log_dir="./logs/tensor_inspect",
+)
+
+# Option 2: reference external YAML
+cfg.tensor_inspect = TensorInspectConfig(
+    enabled=True,
+    features="./conf/fp8_inspect.yaml",
+    log_dir="./logs/tensor_inspect",
+)
+
+```
+
+#### Layer Selection
+
+Features apply to linear modules matched by selectors in the `layers` section:
+
+- `layer_name_regex_pattern: .*` – All supported linear layers
+- `layer_name_regex_pattern: .*layers\.(0|1|2).*(fc1|fc2|layernorm_linear)` – Linear modules in first three transformer layers
+- `layer_name_regex_pattern: .*(fc1|fc2)` – MLP projections only
+- `layer_types: [layernorm_linear, fc1]` – String matching (alternative to regex)
+
+Tensor-level selectors (`tensors`, `tensors_struct`) control which tensor roles are logged: `activation`, `gradient`, `weight`, `output`, `wgrad`, `dgrad`.
+
+### Output and Monitoring
+
+Tensor statistics are written to `tensor_inspect.log_dir` and forwarded to TensorBoard/W&B when enabled.
+
+**Log locations:**
+- Text logs: `<log_dir>/nvdlfw_inspect_statistics_logs/`
+- TensorBoard
+- W&B
+
+### Performance Considerations
+
+- Use `freq > 1` to reduce overhead. Statistics collection is expensive for large models.
+- Narrow layer selection with specific regex patterns rather than `.*`
 
 
 ## Console Logging

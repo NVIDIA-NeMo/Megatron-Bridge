@@ -15,26 +15,29 @@
 from dataclasses import fields
 from typing import Any, Callable, Dict, Optional, Type, Union
 
-from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
+from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
 from megatron.bridge.training.config import (
     DataloaderConfig,
     DatasetBuildContext,
     DatasetProvider,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
+    GPTFIMDatasetConfig,
     MockGPTDatasetConfig,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-def is_dataset_built_on_rank() -> bool:
+def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection) -> bool:
     """Determines whether the dataset should be built on the current rank.
 
     Datasets are typically built only on the first and last pipeline stages
@@ -43,9 +46,9 @@ def is_dataset_built_on_rank() -> bool:
     Returns:
         True if the dataset should be built on the current rank, False otherwise.
     """
-    return (
-        mpu.is_pipeline_first_stage() or mpu.is_pipeline_last_stage()
-    ) and mpu.get_tensor_model_parallel_rank() == 0
+    return (is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)) and (
+        pg_collection.tp.rank() == 0
+    )
 
 
 def pretrain_train_valid_test_datasets_provider(
@@ -66,6 +69,8 @@ def pretrain_train_valid_test_datasets_provider(
 
     if dataset_config.mock:
         dataset_type = MockGPTDataset
+    elif hasattr(dataset_config, "fim_data"):
+        dataset_type = GPTFIMDataset
     else:
         dataset_type = GPTDataset
 
@@ -101,12 +106,15 @@ def hf_train_valid_test_datasets_provider(
         f"> building train, validation, and test datasets for Huggingface dataset {dataset_config.dataset_name} ..."
     )
 
+    # Get field names from DataloaderConfig to exclude
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
     train_ds, valid_ds, test_ds = HFDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
             for field in fields(dataset_config)
-            if field not in fields(DataloaderConfig)
+            if field.name not in dataloader_field_names
         },
     ).build()
 
@@ -135,12 +143,15 @@ def finetuning_train_valid_test_datasets_provider(
         f">building train, validation, and test datasets for Finetuning dataset from {dataset_config.dataset_root} ..."
     )
 
+    # Get field names from DataloaderConfig to exclude
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
     train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
             for field in fields(dataset_config)
-            if field not in fields(DataloaderConfig)
+            if field.name not in dataloader_field_names
         },
     ).build()
 
@@ -151,6 +162,7 @@ def finetuning_train_valid_test_datasets_provider(
 
 _REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig]], Callable] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
+    GPTFIMDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     HFDatasetConfig: hf_train_valid_test_datasets_provider,
     FinetuningDatasetConfig: finetuning_train_valid_test_datasets_provider,

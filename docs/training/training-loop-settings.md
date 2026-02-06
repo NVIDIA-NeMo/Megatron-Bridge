@@ -22,12 +22,27 @@ The relationship between batch sizes:
 
 ### Training Duration
 
-Control when training stops using iteration counts or time-based limits.
+Control when training stops using iteration counts, sample counts, or time-based limits.
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `train_iters` | `Optional[int]` | `None` | Total number of iterations to train |
+| `train_samples` | `Optional[int]` | `None` | Total number of samples to train |
 | `exit_interval` | `Optional[int]` | `None` | Exit after iteration divisible by this value |
 | `exit_duration_in_mins` | `Optional[int]` | `None` | Exit after this many minutes |
+
+**Training Mode Selection**
+
+Megatron-Bridge supports two modes for specifying training duration:
+
+1. **Iteration-based training**: Specify `train_iters` to control the total number of training iterations.
+2. **Sample-based training**: Specify `train_samples` to control the total number of training samples.
+
+**Important constraints:**
+- You must specify **exactly one** of `train_iters` or `train_samples` - not both.
+- When using `train_samples`, training iterations are automatically calculated as `train_samples // global_batch_size`.
+- Batch size rampup (`rampup_batch_size`) is not currently supported with sample-based training.
+- Your scheduler configuration should match your training mode (see [Learning Rate Scheduling](optimizer-scheduler.md#learning-rate-scheduling)).
 
 ### Validation
 Configure validation frequency, duration, and evaluation-only modes.

@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 name: Build, test, and publish a PyPi wheel (to testpypi).
 
 on:
@@ -29,16 +28,27 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.69.1
+    with:
+      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+      non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   build-test-publish-wheel:
     needs: [pre-flight]
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.48.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.70.1
     with:
       dry-run: true
       python-package: megatron.bridge
@@ -47,9 +57,11 @@ jobs:
       no-publish: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) }}
       has-src-dir: true
       skip-test-wheel: true
-      custom-container: nvcr.io/nvidia/pytorch:25.05-py3
-      runner: linux-amd64-cpu16
+      custom-container: nvcr.io/nvidia/pytorch:25.11-py3
+      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2-container
       no-build-isolation: true
+      submodules: recursive
+      container-options: "--gpus all --runtime=nvidia"
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}

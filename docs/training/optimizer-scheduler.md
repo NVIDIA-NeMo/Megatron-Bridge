@@ -31,17 +31,32 @@ The `SchedulerConfig` controls learning rate scheduling and weight decay progres
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `lr_decay_style` | `Literal["constant", "linear", "cosine", "inverse-square-root", "WSD"]` | `"linear"` | Learning rate decay function |
-| `lr_decay_iters` | `Optional[int]` | `None` | Iterations to decay LR over (defaults to `train_iters`) |
-| `lr_warmup_iters` | `int` | `0` | Iterations to linearly warmup learning rate |
-| `lr_warmup_fraction` | `Optional[float]` | `None` | Fraction of decay iterations to use for warmup |
+| `lr_decay_iters` | `Optional[int]` | `None` | Iterations to decay LR over (defaults to `train_iters`). Use for iteration-based training. |
+| `lr_decay_samples` | `Optional[int]` | `None` | Samples to decay LR over (defaults to `train_samples`). Use for sample-based training. |
+| `lr_warmup_iters` | `int` | `0` | Iterations to linearly warmup learning rate. Use for iteration-based training. |
+| `lr_warmup_samples` | `int` | `0` | Samples to linearly warmup learning rate. Use for sample-based training. |
+| `lr_warmup_fraction` | `Optional[float]` | `None` | Fraction of decay iterations/samples to use for warmup (works with both modes) |
 | `lr_warmup_init` | `float` | `0.0` | Initial learning rate for warmup phase |
+
+**Scheduler Mode Selection**
+
+The scheduler supports two modes that must align with your training configuration:
+
+1. **Iteration-based scheduling**: Use `lr_decay_iters` and `lr_warmup_iters` with `train_iters`.
+2. **Sample-based scheduling**: Use `lr_decay_samples` and `lr_warmup_samples` with `train_samples`.
+
+**Important constraints**
+- Cannot mix iteration-based and sample-based scheduler parameters.
+- Your scheduler mode must match your training mode (iteration-based vs sample-based).
+- `lr_warmup_fraction` is compatible with both modes but cannot be used with explicit warmup iterations/samples.
 
 ### WSD (Warmup-Stable-Decay) Scheduling
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `lr_wsd_decay_style` | `Literal["exponential", "linear", "cosine"]` | `"exponential"` | Decay style for WSD annealing phase |
-| `lr_wsd_decay_iters` | `Optional[int]` | `None` | Iterations for WSD annealing phase |
+| `lr_wsd_decay_iters` | `Optional[int]` | `None` | Iterations for WSD annealing phase. Use for iteration-based training. |
+| `lr_wsd_decay_samples` | `Optional[int]` | `None` | Samples for WSD annealing phase. Use for sample-based training. |
 
 ### Weight Decay Scheduling
 

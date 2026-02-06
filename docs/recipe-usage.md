@@ -3,12 +3,19 @@
 Megatron Bridge provides production-ready training recipes for several popular models. You can find an overview of supported recipes and 🤗 HuggingFace bridges [here](index.md#supported-models).
 This guide will cover the next steps to make use of a training recipe, including how to [override configuration](#overriding-configuration) and how to [launch a job](#launch-methods).
 
+## Overview
+
+- **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
+- **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point. 
+- **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md) (see the published docs as well: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/entry-points.html).
+- **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
+
 ## Overriding configuration
 
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
 The benefit of providing the full recipe through a pythonic structure is that it is agnostic to any configuration approach that a user may prefer, whether that's YAML, `argparse` or something else. In other words, the user may override the recipe however they see fit.
 
-The following sections detail a few different ways to override the configuration recipe. For a complete training script, please see [this example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b.py).
+The following sections detail a few different ways to override the configuration recipe. For a complete training script, please see [this example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/llama/pretrain_llama3_8b.py).
 
 
 ### Python
@@ -177,7 +184,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_script.py).
+For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/llama/pretrain_llama3_8b_nemo_run_script.py).
 
 #### Plugins
 

@@ -29,6 +29,7 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
 )
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 def is_transformers_min_version(version):
@@ -100,9 +101,15 @@ class Qwen25VLModel(MegatronModule):
 
         if pre_process:
             self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
+            # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
+            hook_hf_module_setattr_for_tp_grad_sync(self.visual)
         self.language_model = self.config.provide_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
+
+        # Finalize grad will need these to be bind with module
+        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         # Bind methods from HF's Qwen2_5_VLModel to this instance
         # get_placeholder_mask is only available in transformers 4.55+
@@ -183,12 +190,16 @@ class Qwen25VLModel(MegatronModule):
             if self.config.sequence_parallel:
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
+        # Compute MRoPE position_ids on ALL pipeline stages
+        # Each stage has input_ids and visual grid info from the data iterator
+        # This avoids any broadcasting overhead
+        hf_attention_mask = None
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
             image_grid_thw,
             video_grid_thw,
             second_per_grid_ts=second_per_grid_ts,
-            attention_mask=attention_mask,
+            attention_mask=hf_attention_mask,
         )
 
         outputs = self.language_model.forward(
@@ -199,6 +210,7 @@ class Qwen25VLModel(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 

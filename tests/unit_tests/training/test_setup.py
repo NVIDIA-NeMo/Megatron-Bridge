@@ -13,9 +13,11 @@
 # limitations under the License.
 
 
+from unittest.mock import Mock, patch
+
 import pytest
 
-from megatron.bridge.training.setup import _validate_and_set_vocab_size
+from megatron.bridge.training.setup import _validate_and_set_vocab_size, maybe_log_and_save_config
 
 
 class TestValidateAndSetVocabSize:
@@ -55,3 +57,51 @@ class TestValidateAndSetVocabSize:
         )
         assert vocab_size == 32004
         assert should_pad_vocab is False
+
+
+class TestMaybeLogAndSaveConfig:
+    """Tests for maybe_log_and_save_config."""
+
+    @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
+    def test_rank_zero_saves_and_logs(self, mock_get_rank, tmp_path):
+        filepath = tmp_path / "config.yaml"
+        cfg = Mock()
+        cfg.logger.save_config_filepath = str(filepath)
+        cfg.to_yaml = Mock()
+        cfg.log_non_default_values = Mock()
+
+        maybe_log_and_save_config(cfg)
+
+        cfg.to_yaml.assert_called_once_with(str(filepath))
+        cfg.log_non_default_values.assert_called_once()
+
+    @patch("megatron.bridge.training.setup.get_rank_safe", return_value=1)
+    def test_non_zero_rank_noop(self, mock_get_rank):
+        cfg = Mock()
+        cfg.logger.save_config_filepath = "unused"
+        cfg.to_yaml = Mock()
+        cfg.log_non_default_values = Mock()
+
+        maybe_log_and_save_config(cfg)
+
+        cfg.to_yaml.assert_not_called()
+        cfg.log_non_default_values.assert_not_called()
+
+    @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
+    @patch("megatron.bridge.training.setup.print_rank_0")
+    def test_save_failure_is_logged(self, mock_print, mock_get_rank):
+        cfg = Mock()
+        cfg.logger.save_config_filepath = "path"
+
+        def raise_io_error(_):
+            raise IOError("boom")
+
+        cfg.to_yaml.side_effect = raise_io_error
+        cfg.log_non_default_values = Mock()
+
+        maybe_log_and_save_config(cfg)
+
+        # Check that error was logged via print_rank_0
+        mock_print.assert_called_once()
+        assert "Error saving config" in mock_print.call_args[0][0]
+        cfg.log_non_default_values.assert_called_once()

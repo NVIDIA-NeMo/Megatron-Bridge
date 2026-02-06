@@ -79,8 +79,6 @@ class TestMegatronCommOverlapConfig:
         cfg.finalize()
 
         assert cfg.tp_comm_overlap is True
-        assert cfg.tp_comm_overlap_cfg is None  # Should be reset to None in finalize()
-        assert cfg.tp_comm_bootstrap_backend is None  # Should be reset to None in finalize()
         assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
         assert isinstance(cfg.user_comm_overlap_cfg.tp_comm_overlap_cfg, TransformerLayerTPOverlapCfg)
 
@@ -264,72 +262,6 @@ class TestMegatronCommOverlapConfig:
         assert result.batch_p2p_comm is True  # Not overridden (user didn't specify)
         assert result.bucket_size == 2048  # Overridden by user
 
-    @patch("torch.cuda.get_device_capability", return_value=(10, 0))
-    def test_set_num_cuda_device_max_connections_hopper_multi_parallel(self, mock_cuda):
-        comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=2)
-        comm_cfg.finalize()
-        model_cfg = create_gpt_config(
-            tensor_model_parallel_size=4,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            virtual_pipeline_model_parallel_size=None,
-            sequence_parallel=True,
-            num_attention_heads=16,  # Must be divisible by TP size
-        )
-
-        with patch.dict(os.environ, {}, clear=True):
-            comm_cfg._set_num_cuda_device_max_connections(model_cfg)
-            assert os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") == "32"
-
-    @patch("torch.cuda.get_device_capability", return_value=(10, 0))
-    def test_set_num_cuda_device_max_connections_hopper_single_parallel(self, mock_cuda):
-        comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
-        comm_cfg.finalize()
-        model_cfg = create_gpt_config(
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            virtual_pipeline_model_parallel_size=None,
-            sequence_parallel=False,
-        )
-
-        with patch.dict(os.environ, {"CUDA_DEVICE_MAX_CONNECTIONS": "16"}, clear=False):
-            comm_cfg._set_num_cuda_device_max_connections(model_cfg)
-            assert "CUDA_DEVICE_MAX_CONNECTIONS" not in os.environ
-
-    @patch("torch.cuda.get_device_capability", return_value=(8, 0))
-    def test_set_num_cuda_device_max_connections_ampere_with_tp(self, mock_cuda):
-        comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
-        comm_cfg.finalize()
-        model_cfg = create_gpt_config(
-            tensor_model_parallel_size=4,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            virtual_pipeline_model_parallel_size=None,
-            sequence_parallel=True,
-            num_attention_heads=16,  # Must be divisible by TP size
-        )
-
-        with patch.dict(os.environ, {}, clear=True):
-            comm_cfg._set_num_cuda_device_max_connections(model_cfg)
-            assert os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") == "1"
-
-    @patch("torch.cuda.get_device_capability", return_value=(8, 0))
-    def test_set_num_cuda_device_max_connections_ampere_no_tp(self, mock_cuda):
-        comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
-        comm_cfg.finalize()
-        model_cfg = create_gpt_config(
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            virtual_pipeline_model_parallel_size=None,
-            sequence_parallel=False,
-        )
-
-        with patch.dict(os.environ, {"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, clear=False):
-            comm_cfg._set_num_cuda_device_max_connections(model_cfg)
-            assert "CUDA_DEVICE_MAX_CONNECTIONS" not in os.environ
-
     @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
     def test_setup_method_complete(self):
         tp_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
@@ -506,7 +438,7 @@ class TestMegatronCommOverlapConfig:
         # Check that model config was updated correctly
         assert model_cfg.tp_comm_overlap is True
         assert model_cfg.tp_comm_overlap_cfg is None
-        assert model_cfg.tp_comm_bootstrap_backend is None
+        assert model_cfg.tp_comm_bootstrap_backend == "nccl"
 
     def test_tp_overlap_config_filters_none_values(self):
         """Test that None values are filtered from tp_comm_overlap_cfg dict."""

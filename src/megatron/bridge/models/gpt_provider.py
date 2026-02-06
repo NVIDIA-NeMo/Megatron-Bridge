@@ -20,13 +20,19 @@ from functools import partial
 from typing import Any, Callable, Literal, Optional, Union
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
@@ -87,21 +93,30 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
-def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
+    # arbitrary attention mask is used for speculative decoding training
+    # When context parallel > 1, only causal mask type is supported
+    from megatron.core import parallel_state
+
+    use_arbitrary_attention_mask = (
+        config.use_arbitrary_attention_mask
+        if config.use_arbitrary_attention_mask is not None
+        else parallel_state.get_context_parallel_world_size() == 1
+    )
     return get_gpt_modelopt_spec(
         config=config,
         local_core_attention=False,
         remap_te_layernorm=True,
         real_quant_cfg="None",
-        use_arbitrary_attention_mask=True,
+        use_arbitrary_attention_mask=use_arbitrary_attention_mask,
     )
 
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
     if config.restore_modelopt_state:
-        return quantization_layer_spec(config)
+        return modelopt_transformer_layer_spec(config)
     elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
@@ -121,9 +136,12 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
     make_vocab_size_divisible_by: int = 128
-    position_embedding_type: Literal["learned_absolute", "rope"] = "learned_absolute"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn"] = "learned_absolute"
     rotary_base: int = 10000
     rotary_percent: float = 1.0
+    rope_scaling: bool = False
+    rope_scaling_factor: float = 1.0
+    rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
@@ -136,6 +154,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
+
+    hf_model_id: str | None = None
+    """Optional HuggingFace model identifier associated with this provider."""
 
     generation_config: Optional[Any] = None
 
@@ -159,24 +180,25 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # Additional parameters that might be needed
     init_model_with_meta_device: bool = False
     use_te_rng_tracker: bool = False
-    enable_cuda_graph: bool = False
     virtual_pipeline_model_parallel_size: Optional[int] = None
     account_for_embedding_in_pipeline_split: bool = False
     account_for_loss_in_pipeline_split: bool = False
 
     # Fusions
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
+    masked_softmax_fusion: bool = True
     cross_entropy_loss_fusion: bool = True  # Generally beneficial, no specific dependencies
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
-    bias_activation_fusion: bool = False  # Disabled by default as it can interfere with certain architectures
-    persist_layer_norm: bool = False
-    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
     # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
-
     restore_modelopt_state: bool = False
+
+    # Whether to use AttnMaskType.arbitrary in the ModelOpt spec.
+    # If None, it will be determined by the default behavior (arbitrary only when context_parallel==1).
+    # Set to False when using packed/remove-padding (THD) data format.
+    use_arbitrary_attention_mask: Optional[bool] = None
+
+    _pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
@@ -193,7 +215,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
 
-        if self.enable_cuda_graph:
+        if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "
                 "enabled with use_te_rng_tracker=True'."
@@ -244,6 +266,18 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.attention_backend == AttnBackend.local:
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
+        # Determine pre/post flags if not provided using vp + pp stage
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self._pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self._pg_collection.pp
+            )
+        # Expose vp stage on config for downstream modules (e.g., TE layers)
+        # so they can compute correct offsets without legacy globals.
+        self._vp_stage = vp_stage
         with model_init_device_context():
             model = MCoreGPTModel(
                 self,
@@ -256,12 +290,13 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 position_embedding_type=self.position_embedding_type,
                 rotary_percent=self.rotary_percent,
                 rotary_base=self.rotary_base,
+                rope_scaling=self.rope_scaling,
+                rope_scaling_factor=self.rope_scaling_factor,
                 seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-                pre_process=pre_process
-                or parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage),
-                post_process=post_process
-                or parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage),
+                pre_process=pre_process,
+                post_process=post_process,
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
+                pg_collection=self._pg_collection,
                 vp_stage=vp_stage,
                 **kwargs,
             )
@@ -273,25 +308,23 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.use_transformer_engine_full_layer_spec:
             # Copied from:
             # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
-            if parallel_state.get_tensor_model_parallel_world_size() > 1:
+            if self._pg_collection.tp.size() > 1:
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_tensor_parallel_group"):
-                        tp_group = parallel_state.get_tensor_model_parallel_group()
+                        tp_group = self._pg_collection.tp
                         child.set_tensor_parallel_group(tp_group)
 
-            if parallel_state.get_context_parallel_world_size() > 1:
+            if self._pg_collection.cp.size() > 1:
                 cp_stream = torch.cuda.Stream()
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_context_parallel_group"):
-                        child.set_context_parallel_group(
-                            parallel_state.get_context_parallel_group(),
-                            parallel_state.get_context_parallel_global_ranks(),
-                            cp_stream,
-                        )
+                        cp_group = self._pg_collection.cp
+                        cp_global_ranks = torch.distributed.get_process_group_ranks(cp_group)
+                        child.set_context_parallel_group(cp_group, cp_global_ranks, cp_stream)
 
         return model
 
@@ -339,6 +372,7 @@ class GPTProvider126M(GPTModelProvider):
     num_attention_heads: int = 12
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -356,6 +390,7 @@ class GPTProvider5B(GPTModelProvider):
     num_attention_heads: int = 32
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -373,6 +408,7 @@ class GPTProvider7B(GPTModelProvider):
     num_attention_heads: int = 32
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -390,6 +426,7 @@ class GPTProvider20B(GPTModelProvider):
     num_attention_heads: int = 48
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -407,6 +444,7 @@ class GPTProvider40B(GPTModelProvider):
     num_attention_heads: int = 64
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -426,4 +464,5 @@ class GPTProvider175B(GPTModelProvider):
     attention_dropout: float = 0.0
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
     layernorm_zero_centered_gamma: bool = True
