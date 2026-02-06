@@ -36,7 +36,6 @@ from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLM
 from megatron.bridge.models import Qwen3ModelProvider, Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 from megatron.core.models.vision.vit_layer_specs import (
     get_vit_layer_with_transformer_engine_spec,

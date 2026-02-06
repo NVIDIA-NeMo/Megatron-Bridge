@@ -146,7 +146,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             input_is_parallel=True,
             skip_bias_add=False,
             is_expert=False,
-            tp_comm_buffer_name="patch_fc1",
+            tp_comm_buffer_name="patch_fc2",
             tp_group=tp_group,
         )
 
@@ -352,7 +352,7 @@ def reorganize_inputs(
             idx += thw[0]
             video_seqlen += seqlen
         else:
-            assert False, f"should not have {token_id=}"
+            raise AssertionError(f"should not have {token_id=}")
 
     if video_input_mask is None:
         video_input_mask = input_ids == video_token_id
@@ -596,7 +596,7 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
         start_idx = torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0
         end_idx = start_idx + seqlens_on_cp_ranks[cp_rank].sum()
         grad_output = grad_output[start_idx:end_idx]
-        return grad_output, None
+        return grad_output, None, None
 
 
 def preprocess_packed_seqs(

@@ -69,6 +69,13 @@ def get_vision_model_config(hf_config, megatron_config=None):
         config.recompute_method = megatron_config.recompute_method
         config.recompute_num_layers = megatron_config.recompute_num_layers
         config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
+        config.enable_cuda_graph = megatron_config.enable_cuda_graph
+        config.cuda_graph_use_single_mempool = megatron_config.cuda_graph_use_single_mempool
+        config.cuda_graph_retain_backward_graph = megatron_config.cuda_graph_retain_backward_graph
+        config.cuda_graph_warmup_steps = megatron_config.cuda_graph_warmup_steps
+        config.external_cuda_graph = megatron_config.external_cuda_graph
+        config.cuda_graph_impl = megatron_config.cuda_graph_impl
+        config.cuda_graph_scope = megatron_config.cuda_graph_scope
 
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1

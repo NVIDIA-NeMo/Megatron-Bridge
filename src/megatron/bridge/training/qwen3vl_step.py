@@ -206,10 +206,10 @@ def pack_or_pad_batch_sequences(
 
         for i, seqlen in enumerate(seqlens_in_batch_cpu):
             start_idx = cu_seqlens_padded_cpu[i]
-            packed_tokens[start_idx : start_idx + seqlen] = tokens[i, :seqlen]
-            packed_labels[start_idx : start_idx + seqlen] = labels[i, :seqlen]
-            packed_loss_mask[start_idx : start_idx + seqlen] = loss_mask[i, :seqlen]
-            packed_position_ids[start_idx : start_idx + seqlen] = position_ids[i, :seqlen]
+            packed_tokens[0, start_idx : start_idx + seqlen] = tokens[i, :seqlen]
+            packed_labels[0, start_idx : start_idx + seqlen] = labels[i, :seqlen]
+            packed_loss_mask[0, start_idx : start_idx + seqlen] = loss_mask[i, :seqlen]
+            packed_position_ids[0, start_idx : start_idx + seqlen] = position_ids[i, :seqlen]
 
         tokens = packed_tokens
         labels = packed_labels
