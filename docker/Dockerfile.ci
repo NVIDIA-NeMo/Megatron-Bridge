@@ -32,7 +32,7 @@ COPY 3rdparty/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
 COPY 3rdparty/Model-Optimizer/pyproject.toml 3rdparty/Model-Optimizer/setup.py /opt/Megatron-Bridge/3rdparty/Model-Optimizer/
 COPY 3rdparty/Model-Optimizer/modelopt/__init__.py /opt/Megatron-Bridge/3rdparty/Model-Optimizer/modelopt/
-COPY .git/modules/3rdparty/Model-Optimizer /opt/Megatron-Bridge/3rdparty/Model-Optimizer/.git/
+COPY 3rdparty/Model-Optimizer/nvidia_modelopt.egg-info /opt/Megatron-Bridge/3rdparty/Model-Optimizer/nvidia_modelopt.egg-info/
 
 RUN git config --global --add safe.directory '*' && \
     sed -i '/worktree/d' /opt/Megatron-Bridge/3rdparty/Model-Optimizer/.git/config && \
