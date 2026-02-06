@@ -189,6 +189,8 @@ class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.resolve_checkpoint_path")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
@@ -203,6 +205,8 @@ class TestLoadMegatronModel:
         mock_run_config,
         mock_instantiate,
         mock_load_weights,
+        mock_resolve_path,
+        mock_get_format,
         mock_temp_dist,
     ):
         # Setup mocks
@@ -227,24 +231,34 @@ class TestLoadMegatronModel:
         with tempfile.TemporaryDirectory() as ckpt_path:
             config_file = Path(ckpt_path) / "run_config.yaml"
             config_file.touch()
+            # Mock resolve_checkpoint_path to return the path as-is
+            mock_resolve_path.return_value = ckpt_path
+            # Mock checkpoint format detection
+            mock_get_format.return_value = "torch_dist"
             result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
 
-        assert isinstance(result, dict)
-        assert result == expected_result
-        mock_run_config_fname.assert_called_once_with(ckpt_path)
-        mock_run_config.assert_called_once()
-        mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
-        mock_cpu_context.assert_called_once()
-        mock_model_cfg.provide_distributed_model.assert_called_once()
-        mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
-        assert mock_model_cfg.params_dtype == torch.bfloat16
+            assert isinstance(result, dict)
+            assert result == expected_result
+            mock_run_config_fname.assert_called_once_with(ckpt_path)
+            mock_run_config.assert_called_once()
+            mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
+            mock_cpu_context.assert_called_once()
+            mock_model_cfg.provide_distributed_model.assert_called_once()
+            mock_load_weights.assert_called_once_with(
+                ckpt_path, [mock_model], fully_parallel_load=False, strict=True, return_state_dict=True
+            )
+            assert mock_model_cfg.params_dtype == torch.bfloat16
 
-        result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
-        assert result == [mock_model]
-        mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+            result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
+            assert result == [mock_model]
+            mock_load_weights.assert_called_with(
+                ckpt_path, [mock_model], fully_parallel_load=False, strict=True, return_state_dict=False
+            )
 
     @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.resolve_checkpoint_path")
     @patch("megatron.bridge.training.mlm_compat.model._mamba_provider")
     @patch("megatron.bridge.training.mlm_compat.model._gpt_provider")
     @patch("megatron.bridge.training.mlm_compat.model._get_model")
@@ -267,6 +281,8 @@ class TestLoadMegatronModel:
         mock_get_model,
         mock_gpt_provider,
         mock_mamba_provider,
+        mock_resolve_path,
+        mock_get_format,
         mock_temp_dist,
         model_type,
     ):
@@ -275,6 +291,11 @@ class TestLoadMegatronModel:
         mock_dist.is_initialized.return_value = False
 
         ckpt_path = "/path/to/mock/dist_checkpoint"
+        # Mock resolve_checkpoint_path to return the path as-is
+        mock_resolve_path.return_value = ckpt_path
+        # Mock checkpoint format detection
+        mock_get_format.return_value = "torch_dist"
+
         mock_args = Mock()
         mock_args.vocab_size = 32000  # Add vocab_size for padded vocab calculation
         mock_args.make_vocab_size_divisible_by = 128  # Add for padded vocab calculation
@@ -321,17 +342,23 @@ class TestLoadMegatronModel:
             assert mock_args.padded_vocab_size == 32000  # 32000 is already divisible by 128, so no padding
             mock_cpu_context.assert_called_once()
             mock_get_model.assert_called_once_with(mock_args, mock_provider, mock_model_cfg)
-            mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
+            mock_load_weights.assert_called_once_with(
+                ckpt_path, [mock_model], fully_parallel_load=False, strict=True, return_state_dict=True
+            )
             assert mock_model_cfg.params_dtype == torch.bfloat16
 
             result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=False, use_cpu_init=True)
             assert result == [mock_model]
-            mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+            mock_load_weights.assert_called_with(
+                ckpt_path, [mock_model], fully_parallel_load=False, strict=True, return_state_dict=False
+            )
         else:
             with pytest.raises(AssertionError, match=f"model type {model_type} not supported."):
                 load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.resolve_checkpoint_path")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
@@ -346,6 +373,8 @@ class TestLoadMegatronModel:
         mock_run_config,
         mock_instantiate,
         mock_load_weights,
+        mock_resolve_path,
+        mock_get_format,
         mock_temp_dist,
     ):
         """Test loading model when distributed is already initialized."""
@@ -370,12 +399,18 @@ class TestLoadMegatronModel:
         with tempfile.TemporaryDirectory() as ckpt_path:
             config_file = Path(ckpt_path) / "run_config.yaml"
             config_file.touch()
+            # Mock resolve_checkpoint_path to return the path as-is
+            mock_resolve_path.return_value = ckpt_path
+            # Mock checkpoint format detection
+            mock_get_format.return_value = "torch_dist"
             result = load_megatron_model(ckpt_path, use_cpu_init=True)
 
-        assert result == mock_model
-        mock_temp_dist.assert_not_called()
+            assert result == mock_model
+            mock_temp_dist.assert_not_called()
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.resolve_checkpoint_path")
     @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
@@ -394,6 +429,8 @@ class TestLoadMegatronModel:
         mock_load_weights,
         mock_has_modelopt_state,
         mock_load_modelopt_state,
+        mock_resolve_path,
+        mock_get_format,
         mock_temp_dist,
     ):
         """Test loading model when modelopt state exists and model supports it."""
@@ -423,11 +460,15 @@ class TestLoadMegatronModel:
         with tempfile.TemporaryDirectory() as ckpt_path:
             config_file = Path(ckpt_path) / "run_config.yaml"
             config_file.touch()
+            # Mock resolve_checkpoint_path to return the path as-is
+            mock_resolve_path.return_value = ckpt_path
+            # Mock checkpoint format detection
+            mock_get_format.return_value = "torch_dist"
             result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
 
-        # Verify modelopt state was detected and set
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
-        assert mock_model_cfg.restore_modelopt_state is True
+            # Verify modelopt state was detected and set
+            mock_has_modelopt_state.assert_called_once_with(ckpt_path)
+            assert mock_model_cfg.restore_modelopt_state is True
 
         # Verify modelopt state was loaded
         mock_load_modelopt_state.assert_called_once_with([mock_model], ckpt_path)
@@ -436,6 +477,8 @@ class TestLoadMegatronModel:
         assert result == expected_result
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.resolve_checkpoint_path")
     @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
@@ -458,6 +501,8 @@ class TestLoadMegatronModel:
         mock_load_weights,
         mock_has_modelopt_state,
         mock_load_modelopt_state,
+        mock_resolve_path,
+        mock_get_format,
         mock_temp_dist,
     ):
         """Test loading MLM model when modelopt state exists but TransformerConfig doesn't support it."""
@@ -501,18 +546,22 @@ class TestLoadMegatronModel:
         mock_has_modelopt_state.return_value = True
 
         with tempfile.TemporaryDirectory() as ckpt_path:
+            # Mock resolve_checkpoint_path to return the path as-is
+            mock_resolve_path.return_value = ckpt_path
+            # Mock checkpoint format detection
+            mock_get_format.return_value = "torch_dist"
             result = load_megatron_model(ckpt_path, model_type="gpt", return_state_dict=True, use_cpu_init=True)
 
-        # Verify modelopt state was detected but not set (no attribute on TransformerConfig)
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
-        # TransformerConfig doesn't have restore_modelopt_state, so hasattr returns False
-        assert not hasattr(mock_model_cfg, "restore_modelopt_state")
+            # Verify modelopt state was detected but not set (no attribute on TransformerConfig)
+            mock_has_modelopt_state.assert_called_once_with(ckpt_path)
+            # TransformerConfig doesn't have restore_modelopt_state, so hasattr returns False
+            assert not hasattr(mock_model_cfg, "restore_modelopt_state")
 
-        # Verify modelopt state was NOT loaded (getattr returns False for missing attribute)
-        mock_load_modelopt_state.assert_not_called()
+            # Verify modelopt state was NOT loaded (getattr returns False for missing attribute)
+            mock_load_modelopt_state.assert_not_called()
 
-        assert isinstance(result, dict)
-        assert result == expected_result
+            assert isinstance(result, dict)
+            assert result == expected_result
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
