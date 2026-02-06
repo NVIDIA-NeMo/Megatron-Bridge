@@ -102,8 +102,8 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_ep${EP}_tp${TP}_pp${PP} \
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
-        model.data.train_ds.packed_sequence=True \
         model.expert_model_parallel_size=$EP \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP
 done
+
