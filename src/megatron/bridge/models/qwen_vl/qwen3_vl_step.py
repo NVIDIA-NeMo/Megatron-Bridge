@@ -19,8 +19,7 @@ from typing import Any, Iterable
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_thd_batch_on_this_cp_rank
-from megatron.core.transformer.enums import AttnBackend
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -159,7 +158,6 @@ def pack_or_pad_batch_sequences(
     position_ids: torch.Tensor,
     this_pg_collection,
     use_fp8_padding: bool = False,
-    data_format: str = "bshd",
     force_to_pad_to_seq_len: bool = False,
     seq_length: int = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
@@ -175,73 +173,26 @@ def pack_or_pad_batch_sequences(
     tp_size = this_pg_collection.tp.size()
     cp_size = this_pg_collection.cp.size()
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
-    original_align_size = divisible_by
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
 
-    if data_format == "thd":
-        # build thd sequences with tiny padding
-        if attention_mask is None:
-            attention_mask = torch.ones_like(tokens)
-        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-        cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
-        max_seqlen_in_batch = seqlens_in_batch.max().item()
 
-        seqlens_in_batch_padded = seqlens_in_batch + (divisible_by - seqlens_in_batch % divisible_by) % divisible_by
-        cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
+    # build bshd sequences with tiny padding to be compatible with qwen3vl model
+    target_len = math.ceil(cur_len / divisible_by) * divisible_by
+    if force_to_pad_to_seq_len:
+        target_len = seq_length
+    tokens = pad_or_truncate_2d_to_len(tokens, target_len=target_len, max_cap=target_len, pad_value=0)
+    labels = pad_or_truncate_2d_to_len(labels, target_len=target_len, max_cap=target_len, pad_value=-100)
+    loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
+    attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len=target_len, max_cap=target_len)
+    position_ids = pad_or_truncate_pos_to_len(position_ids, target_len=target_len, max_cap=target_len)
 
-        if use_fp8_padding:
-            align_size_last = original_align_size * 128
-            pad_size_last = (align_size_last - cu_seqlens_padded[-1] % align_size_last) % align_size_last
-            cu_seqlens_padded[-1] += pad_size_last
-            seqlens_in_batch_padded[-1] += pad_size_last
-
-        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
-        seqlens_in_batch_cpu = seqlens_in_batch.tolist()
-        cu_seqlens_padded_cpu = cu_seqlens_padded.tolist()
-        total_len = cu_seqlens_padded_cpu[-1]
-
-        # Concatenate sequences (remove padding)
-        packed_tokens = torch.zeros(1, total_len, dtype=tokens.dtype, device=device)
-        packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device)
-        packed_loss_mask = torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device)
-        packed_position_ids = torch.zeros(1, total_len, dtype=position_ids.dtype, device=device)
-
-        for i, seqlen in enumerate(seqlens_in_batch_cpu):
-            start_idx = cu_seqlens_padded_cpu[i]
-            packed_tokens[0, start_idx : start_idx + seqlen] = tokens[i, :seqlen]
-            packed_labels[0, start_idx : start_idx + seqlen] = labels[i, :seqlen]
-            packed_loss_mask[0, start_idx : start_idx + seqlen] = loss_mask[i, :seqlen]
-            packed_position_ids[0, start_idx : start_idx + seqlen] = position_ids[i, :seqlen]
-
-        tokens = packed_tokens
-        labels = packed_labels
-        loss_mask = packed_loss_mask
-        position_ids = packed_position_ids
-        # attention mask is not used with packed sequences (handled by cu_seqlens)
-        attention_mask = None
-    elif data_format == "bshd":
-        # build bshd sequences with tiny padding to be compatible with qwen3vl model
-        target_len = math.ceil(cur_len / divisible_by) * divisible_by
-        if force_to_pad_to_seq_len:
-            target_len = seq_length
-        tokens = pad_or_truncate_2d_to_len(tokens, target_len=target_len, max_cap=target_len, pad_value=0)
-        labels = pad_or_truncate_2d_to_len(labels, target_len=target_len, max_cap=target_len, pad_value=-100)
-        loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
-        attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len=target_len, max_cap=target_len)
-        position_ids = pad_or_truncate_pos_to_len(position_ids, target_len=target_len, max_cap=target_len)
-
-        seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
-        seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=tokens.device) * target_len
-        cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
-        cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
-        cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-        max_seqlen_in_batch = seqlens_in_batch.max().item()
-        max_seqlen_in_batch_padded = seqlens_in_batch_padded.max().item()
-    else:
-        raise ValueError(f"Invalid data format: {data_format}")
+    seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=device) * target_len
+    seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=device) * target_len
+    cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
+    cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
+    max_seqlen_in_batch = seqlens_in_batch.max().item()
 
     packed_seq_params = PackedSeqParams(
         qkv_format="thd",
@@ -280,9 +231,6 @@ def forward_step(
     is_first = is_pp_first_stage(this_pg_collection.pp)
     is_last = is_pp_last_stage(this_pg_collection.pp)
 
-    is_qwen3vl = "Qwen3-VL" in getattr(state.cfg.model, "hf_model_id", "")
-    assert is_qwen3vl, "Only Qwen3-VL model is supported"
-
     config = get_model_config(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
 
@@ -301,12 +249,6 @@ def forward_step(
     # To be compatible with qwen3vl, we move the sequence padding and packing to forward_step function.
     # Qwen3VL model need the original input and do cp and sp split in model.forward.
     pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
-    if pack_sequences_in_batch:
-        data_format = "thd"
-        if is_qwen3vl:
-            data_format = "bshd"
-    else:
-        data_format = "bshd"
 
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
         tokens,
@@ -316,7 +258,6 @@ def forward_step(
         position_ids,
         this_pg_collection,
         use_fp8_padding=True,
-        data_format=data_format,
         force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
         seq_length=config.seq_length,
     )
@@ -328,37 +269,23 @@ def forward_step(
         "position_ids": position_ids,
     }
 
-    if data_format == "thd":
-        forward_args, packed_seq_params = get_thd_batch_on_this_cp_rank(
-            forward_args,
-            packed_seq_params.cu_seqlens,
-            packed_seq_params.cu_seqlens_padded,
-            packed_seq_params.max_seqlen,
-            cp_size=this_pg_collection.cp.size(),
-            cp_rank=this_pg_collection.cp.rank(),
+    original_tokens = tokens.clone()
+    forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
+    forward_args["packed_seq_params"] = None
+    forward_args["input_ids"] = original_tokens
+    # calculate position_ids in model forward
+    forward_args["position_ids"] = None
+    if pack_sequences_in_batch:
+        if forward_args["labels"] is not None:
+            # When using pp, labels could be None
+            forward_args["labels"] = forward_args["labels"].reshape(1, -1)
+        attention_mask = torch.ones(
+            original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
         )
+        forward_args["attention_mask"] = attention_mask
+        # qwen3vl need the original input_ids and position_ids
+        # use split attention mask for calculate loss
         forward_args["packed_seq_params"] = packed_seq_params
-    elif data_format == "bshd":
-        original_tokens = tokens.clone()
-        forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
-        forward_args["packed_seq_params"] = None
-        if is_qwen3vl:
-            forward_args["input_ids"] = original_tokens
-            # calculate position_ids in model forward
-            forward_args["position_ids"] = None
-            if pack_sequences_in_batch:
-                if forward_args["labels"] is not None:
-                    # When using pp, labels could be None
-                    forward_args["labels"] = forward_args["labels"].reshape(1, -1)
-                attention_mask = torch.ones(
-                    original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
-                )
-                forward_args["attention_mask"] = attention_mask
-                # qwen3vl need the original input_ids and position_ids
-                # use split attention mask for calculate loss
-                forward_args["packed_seq_params"] = packed_seq_params
-    else:
-        raise ValueError(f"Invalid data format: {data_format}")
 
     # use cp split loss mask for calculate loss
     loss_mask = forward_args["loss_mask"]
