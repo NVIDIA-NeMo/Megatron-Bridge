@@ -111,7 +111,7 @@ main() {
         # Create virtual environment and install dependencies
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
         pip uninstall -y nvidia-modelopt
-        git submodule update --init --recursive
+        git fetch origin --tags 
         cd 3rdparty/Model-Optimizer/ && \
         pip install --no-deps -e . && \
         cd -
