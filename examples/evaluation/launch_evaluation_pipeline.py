@@ -111,7 +111,19 @@ def main(args):
         executor=executor,
     )
     job.start(
-        command=f"bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh {args.megatron_checkpoint} {args.num_replicas} {args.num_gpus} | tee -a deploy.log & sleep 120; bash /opt/Megatron-Bridge/examples/evaluation/eval.sh {args.output_dir} {args.parallelism} | tee -a eval.log",
+        command=f"""
+        bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh \
+            {args.megatron_checkpoint} \
+            {args.num_replicas} \
+            {args.num_gpus} \
+            {args.tensor_model_parallel_size} \
+            {args.pipeline_model_parallel_size} \
+            {args.context_model_parallel_size} | tee -a deploy.log & \
+        sleep 120; \
+        bash /opt/Megatron-Bridge/examples/evaluation/eval.sh \
+            {args.output_dir} \
+            {args.parallelism} | tee -a eval.log
+        """,
         workdir=None,
     )
 
