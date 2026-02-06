@@ -149,12 +149,12 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1,
     global_batch_size=4096,
-    recompute_modules=["mla_up_proj", "moe_act", "layernorm"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2,
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=2,
+    recompute_modules=["mla_up_proj", "moe_act", "layernorm"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2
