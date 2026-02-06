@@ -206,7 +206,7 @@ def main(
     custom_mounts: List[str],
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
-    custom_bash_cmds: List[str],
+    custom_bash_cmds: List[List[str]],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,

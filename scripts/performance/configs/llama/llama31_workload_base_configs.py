@@ -246,6 +246,7 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V1,
     num_gpus=256,
     global_batch_size=1536,
+    cuda_graph_impl="none",
 )
 
 
