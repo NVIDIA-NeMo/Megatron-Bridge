@@ -422,8 +422,8 @@ def parse_cli_args():
     slurm_args.add_argument(
         "-cb",
         "--custom_bash_cmds",
-        type=list_of_strings,
-        help="Comma separated string of bash commands",
+        nargs="*",
+        help="List of bash commands to execute before the main command",
         default=[],
     )
     slurm_args.add_argument(
