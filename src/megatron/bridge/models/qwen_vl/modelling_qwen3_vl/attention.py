@@ -13,7 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.core.transformer.attention import *
+from torch import Tensor
+from megatron.core.transformer.attention import (
+    BaseInferenceContext,
+    PackedSeqParams,
+    SelfAttention,
+    HAVE_FA3,
+    deprecate_inference_params,
+    is_fa_min_version,
+    nvtx_range_pop,
+    nvtx_range_push,
+)
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
 
@@ -28,18 +38,18 @@ class Qwen3VLSelfAttention(SelfAttention):
         self,
         hidden_states: Tensor,
         attention_mask: Tensor,
-        key_value_states: Optional[Tensor] = None,
-        inference_context: Optional[BaseInferenceContext] = None,
-        rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
-        rotary_pos_cos: Optional[Tensor] = None,
-        rotary_pos_sin: Optional[Tensor] = None,
-        attention_bias: Optional[Tensor] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
-        sequence_len_offset: Optional[int] = None,
+        key_value_states: Tensor | None = None,
+        inference_context: BaseInferenceContext | None = None,
+        rotary_pos_emb: (Tensor | tuple[Tensor, Tensor]) | None = None,
+        rotary_pos_cos: Tensor | None = None,
+        rotary_pos_sin: Tensor | None = None,
+        attention_bias: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        sequence_len_offset: int | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
-        rotary_pos_cos_sin: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Tensor]:
+        inference_params: BaseInferenceContext | None = None,
+        rotary_pos_cos_sin: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor]:
         """
         Perform a forward pass through the attention module.
 
@@ -124,7 +134,7 @@ class Qwen3VLSelfAttention(SelfAttention):
             return output, bias
 
         if in_decode_mode and self.config.enable_cuda_graph and inference_context.is_static_batching():
-            raise ValueError(f"CUDA graphs must use flash decode with static batching!")
+            raise ValueError("CUDA graphs must use flash decode with static batching!")
 
         query, key, value, rotary_pos_emb, attn_mask_type, block_table = self._adjust_key_value_for_inference(
             inference_context,

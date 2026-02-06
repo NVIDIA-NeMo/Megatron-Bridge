@@ -1,15 +1,25 @@
-from dataclasses import dataclass
-from typing import Optional, Union
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Optional
 
 import torch
 from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
-from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
-from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.utils import get_tensor_model_parallel_group_if_none
+from megatron.core.transformer.spec_utils import ModuleSpec
 from torch import nn
 from torch.nn import functional as F
 
@@ -46,7 +56,9 @@ class Qwen3VLVisionModel(VisionModule):
         self.patch_size = transformer_config.patch_size
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
 
-        assert transformer_config.context_parallel_size == 1, f"context_parallel_size should be 1 in vision model but got {transformer_config.context_parallel_size}"
+        assert transformer_config.context_parallel_size == 1, (
+            f"context_parallel_size should be 1 in vision model but got {transformer_config.context_parallel_size}"
+        )
 
         self.patch_embed = Qwen3VLVisionPatchEmbed(transformer_config)
         self.pos_embed = nn.Embedding(transformer_config.num_position_embeddings, transformer_config.hidden_size)

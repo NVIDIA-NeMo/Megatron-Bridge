@@ -35,7 +35,7 @@ model:
 train:
   train_iters: 1000
   global_batch_size: 8
-  micro_batch_size: 1
+  micro_batch_size: 4
   eval_iters: 5
 
 optimizer:

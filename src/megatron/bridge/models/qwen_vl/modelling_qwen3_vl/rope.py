@@ -173,14 +173,14 @@ def get_rope_index(
         )
         image_index, video_index = 0, 0
         attention_mask = attention_mask.to(total_input_ids.device)
-        for i, input_ids in enumerate(total_input_ids):
-            input_ids = input_ids[attention_mask[i] == 1]
+        for i, sample_input_ids in enumerate(total_input_ids):
+            sample_input_ids = sample_input_ids[attention_mask[i] == 1]
             image_nums, video_nums = 0, 0
-            vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
-            vision_tokens = input_ids[vision_start_indices + 1]
+            vision_start_indices = torch.argwhere(sample_input_ids == vision_start_token_id).squeeze(1)
+            vision_tokens = sample_input_ids[vision_start_indices + 1]
             image_nums = (vision_tokens == image_token_id).sum()
             video_nums = (vision_tokens == video_token_id).sum()
-            input_tokens = input_ids.tolist()
+            input_tokens = sample_input_ids.tolist()
             llm_pos_ids_list: list = []
             st = 0
             remain_images, remain_videos = image_nums, video_nums
@@ -237,7 +237,7 @@ def get_rope_index(
             llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
             position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
             mrope_position_deltas.append(llm_positions.max() + 1 - len(total_input_ids[i]))
-        mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
+        mrope_position_deltas = torch.tensor(mrope_position_deltas, device=total_input_ids.device).unsqueeze(1)
         return position_ids, mrope_position_deltas
     else:
         if attention_mask is not None:
@@ -269,7 +269,7 @@ def apply_rotary_pos_emb_thd_absolute(
     Args:
         t (Tensor): Input tensor T is of shape [t, h, d]
         cu_seqlens(Tensor):  Cumulative sum of sequence lengths in a batch for `t`,
-        with shape [b + 1] and dtype torch.int32.
+        with shape [b + 1] and dtype torch.int32. Currently unused but kept for API consistency.
         freqs (Tensor): Rotary Positional embedding tensor freq is of shape [max_s, 1, 1, d]
 
     Returns:

@@ -179,8 +179,8 @@ class Qwen3VLBridge(MegatronModelBridge):
             "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
             "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
             # These patch_embed are conv, we need to use ReplicatedMapping
-            # "vision_model.patch_embed.proj.**": "model.visual.patch_embed.proj.**",
-            # "vision_model.pos_embed.weight": "model.visual.pos_embed.weight",
+            "vision_model.patch_embed.proj.**": "model.visual.patch_embed.proj.**",
+            "vision_model.pos_embed.weight": "model.visual.pos_embed.weight",
         }
 
         mapping_list = []
@@ -200,14 +200,6 @@ class Qwen3VLBridge(MegatronModelBridge):
                 ConcatenatedQKVMapping(
                     megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
                     hf_param="model.visual.blocks.*.attn.qkv.bias",
-                ),
-                ReplicatedMapping(
-                    megatron_param="vision_model.patch_embed.proj.**",
-                    hf_param="model.visual.patch_embed.proj.**",
-                ),
-                ReplicatedMapping(
-                    megatron_param="vision_model.pos_embed.**",
-                    hf_param="model.visual.pos_embed.**",
                 ),
                 # QKV mapping: Combine separate Q, K, V matrices into single QKV matrix
                 QKVMapping(

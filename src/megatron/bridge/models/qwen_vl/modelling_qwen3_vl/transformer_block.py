@@ -33,6 +33,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 from torch import Tensor
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.transformer.utils import sharded_state_dict_default
+
 from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 
@@ -419,7 +421,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
         # Add modules other than self.layers
         for name, module in self.named_children():
-            if (not module is self.layers) and (not module is self.deepstack_merger_list):
+            if module is not self.layers and module is not self.deepstack_merger_list:
                 sharded_state_dict.update(
                     sharded_state_dict_default(module, f"{prefix}{name}.", sharded_offsets, metadata)
                 )

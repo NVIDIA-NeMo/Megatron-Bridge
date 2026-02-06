@@ -11,13 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import copy
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
 from typing import List, Optional
 
-import torch
 import torch.nn.functional as F
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
@@ -53,7 +51,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     vision_start_token_id: int = 151652
     hf_text_config: Optional[Qwen3VLTextConfig] = None
     vision_dp_when_cp: bool = False
-    
+
 
 def get_vision_model_config(hf_config, megatron_config=None):
     # init config from scratch to avoid deepcopy of parallel_state
@@ -89,6 +87,7 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.out_hidden_size = hf_config.out_hidden_size
     config.deepstack_visual_indexes = deepcopy(hf_config.deepstack_visual_indexes)
 
+    config.apply_rope_fusion = False
     config.gated_linear_unit = False  # no gated
     config.activation_func = partial(F.gelu, approximate="tanh")  # hidden_act
     config.kv_channels = config.hidden_size // config.num_attention_heads

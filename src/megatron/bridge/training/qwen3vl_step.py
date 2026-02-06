@@ -186,7 +186,7 @@ def pack_or_pad_batch_sequences(
         seqlens_in_batch_padded = seqlens_in_batch + (divisible_by - seqlens_in_batch % divisible_by) % divisible_by
         cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=tokens.device)
         cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
-        
+
         if use_fp8_padding:
             align_size_last = original_align_size * 128
             pad_size_last = (align_size_last - cu_seqlens_padded[-1] % align_size_last) % align_size_last
@@ -340,7 +340,9 @@ def forward_step(
             forward_args["position_ids"] = None
             if pack_sequences_in_batch:
                 forward_args["labels"] = forward_args["labels"].reshape(1, -1)
-                attention_mask = torch.ones(original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device)
+                attention_mask = torch.ones(
+                    original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
+                )
                 forward_args["attention_mask"] = attention_mask
                 # qwen3vl need the original input_ids and position_ids
                 # use split attention mask for calculate loss

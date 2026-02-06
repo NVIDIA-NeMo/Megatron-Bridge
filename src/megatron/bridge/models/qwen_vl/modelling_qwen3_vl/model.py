@@ -124,7 +124,9 @@ class Qwen3VLModel(MegatronModule):
                     get_vision_model_config,
                 )
 
-                megatron_vision_transformer_config = get_vision_model_config(hf_vision_config, megatron_config=language_transformer_config)
+                megatron_vision_transformer_config = get_vision_model_config(
+                    hf_vision_config, megatron_config=language_transformer_config
+                )
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
                 megatron_vision_transformer_config.first_pipeline_num_layers = None
 
@@ -167,9 +169,7 @@ class Qwen3VLModel(MegatronModule):
             pg_collection=pg_collection,
         )
         if pre_process:
-            assert len(hf_vision_config.deepstack_visual_indexes) <= len(
-                self.language_model.decoder.layers
-            ), (
+            assert len(hf_vision_config.deepstack_visual_indexes) <= len(self.language_model.decoder.layers), (
                 "the deepstack_visual_embeds should on the first pp-stage of language model",
                 f"got {len(hf_vision_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
                 f" {len(self.language_model.decoder.layers)} language model layers",
@@ -180,7 +180,9 @@ class Qwen3VLModel(MegatronModule):
         self.pg_collection = get_pg_collection(self)
 
         if self.pg_collection.cp.size() > 1:
-            assert self.config.calculate_per_token_loss, "Qwen3-VL model only supports context parallelism with calculate_per_token_loss enabled"
+            assert self.config.calculate_per_token_loss, (
+                "Qwen3-VL model only supports context parallelism with calculate_per_token_loss enabled"
+            )
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
@@ -262,9 +264,8 @@ class Qwen3VLModel(MegatronModule):
             for module in modules:
                 for param in module.parameters():
                     param.requires_grad = False
-        
-        self.freeze_vision_model = freeze_vision_model
 
+        self.freeze_vision_model = freeze_vision_model
 
     def forward(
         self,
@@ -319,7 +320,7 @@ class Qwen3VLModel(MegatronModule):
         position_ids = None
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
-        
+
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
 
@@ -407,7 +408,9 @@ class Qwen3VLModel(MegatronModule):
                 assert attention_mask is not None, (
                     "attention_mask is required for compute position and split by cp and sp"
                 )
-                input_ids_thd, _ = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection)
+                input_ids_thd, _ = preprocess_packed_seqs(
+                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                )
                 _, _, vision_mask_thd = reorganize_inputs(
                     input_ids=input_ids_thd,
                     pixel_values=pixel_values,
@@ -495,7 +498,12 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 # convert position_ids to THD format
                 position_ids = (
-                    preprocess_packed_seqs(position_ids.permute(1, 2, 0), attention_mask, pre_process=True, pg_collection=self.pg_collection)[0]
+                    preprocess_packed_seqs(
+                        position_ids.permute(1, 2, 0),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
                     .permute(2, 0, 1)
                     .contiguous()
                 )

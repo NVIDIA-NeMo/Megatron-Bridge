@@ -26,6 +26,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 
+
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py
 class Qwen3VLVisionPatchEmbed(nn.Module):
     def __init__(
@@ -599,7 +600,10 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
 
 
 def preprocess_packed_seqs(
-    input_ids: torch.Tensor, attention_mask: torch.Tensor, pre_process: bool = True, pg_collection: Optional[ProcessGroupCollection] = None
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    pre_process: bool = True,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> tuple[torch.Tensor, PackedSeqParams]:
     """
     Preprocess packed sequences
