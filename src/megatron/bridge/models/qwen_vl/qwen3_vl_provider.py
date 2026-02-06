@@ -55,9 +55,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     head_dim: int = 128
     hidden_size: int = 2048
 
-    # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
-    patch_size: int = 14
+    patch_size: int = 16
     temporal_patch_size: int = 2
     in_channels: int = 3
     spatial_merge_size: int = 2

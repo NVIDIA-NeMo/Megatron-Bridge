@@ -28,12 +28,12 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     vocab_size: int = 64000
     language_max_sequence_length: int = 4096
 
-    patch_size: int = 14
+    patch_size: int = 16
     temporal_patch_size: int = 2
     in_channels: int = 3
     spatial_merge_size: int = 2
     num_position_embeddings: int = 2304
-    out_hidden_size: int = 2304
+    out_hidden_size: int = 4096
 
     apply_rotary_pos_emb_in_fp32: bool = False
     deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
