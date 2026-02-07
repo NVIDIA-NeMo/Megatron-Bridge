@@ -384,6 +384,8 @@ def glm45_355b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
@@ -513,6 +515,8 @@ def glm45_air_106b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
@@ -656,6 +660,8 @@ def glm45_355b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
@@ -794,6 +800,8 @@ def glm45_air_106b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config

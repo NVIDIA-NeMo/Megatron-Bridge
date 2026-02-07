@@ -273,6 +273,8 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.ckpt_assume_constant_structure = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # Logger config
     cfg.logger.log_interval = 10
@@ -439,6 +441,8 @@ def nemotron_3_nano_peft_config(
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.ckpt_assume_constant_structure = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # Logger config
     cfg.logger.log_interval = 10

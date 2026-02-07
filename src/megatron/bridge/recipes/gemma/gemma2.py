@@ -384,6 +384,8 @@ def gemma2_2b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = True
@@ -485,6 +487,8 @@ def gemma2_9b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = True
@@ -586,6 +590,8 @@ def gemma2_27b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = True
@@ -702,6 +708,8 @@ def gemma2_2b_peft_config(
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - PEFT uses different settings (no distributed optimizer)
     cfg.ddp.overlap_grad_reduce = False
@@ -811,6 +819,8 @@ def gemma2_9b_peft_config(
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - PEFT uses different settings (no distributed optimizer)
     cfg.ddp.overlap_grad_reduce = False
@@ -920,6 +930,8 @@ def gemma2_27b_peft_config(
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - PEFT uses different settings (no distributed optimizer)
     cfg.ddp.overlap_grad_reduce = False

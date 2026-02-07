@@ -241,6 +241,8 @@ def gemma3_1b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = True
@@ -372,6 +374,8 @@ def gemma3_1b_peft_config(
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = True

@@ -355,6 +355,8 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - MoE SFT uses these settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -483,6 +485,8 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - MoE SFT uses these settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -625,6 +629,8 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - MoE PEFT uses these settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -767,6 +773,8 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - MoE PEFT uses these settings
     cfg.ddp.grad_reduce_in_fp32 = True

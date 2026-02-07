@@ -1296,6 +1296,8 @@ def llama32_1b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -1402,6 +1404,8 @@ def llama32_3b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -1502,6 +1506,8 @@ def llama3_8b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -1681,6 +1687,8 @@ def _llama3_finetune_common(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -1782,6 +1790,8 @@ def llama3_70b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -1882,6 +1892,8 @@ def llama31_70b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -1988,6 +2000,8 @@ def llama31_405b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - 405B SFT uses specific DDP settings
     cfg.ddp.overlap_grad_reduce = True
@@ -2111,6 +2125,8 @@ def llama32_1b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -2221,6 +2237,8 @@ def llama32_3b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -2334,6 +2352,8 @@ def llama3_8b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -2447,6 +2467,8 @@ def llama31_8b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -2560,6 +2582,8 @@ def llama3_70b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -2673,6 +2697,8 @@ def llama31_70b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
@@ -2793,6 +2819,8 @@ def llama31_405b_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.overlap_grad_reduce = False

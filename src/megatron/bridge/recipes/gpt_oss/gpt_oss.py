@@ -362,8 +362,9 @@ def gpt_oss_20b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 250
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GPT-OSS only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -486,8 +487,9 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 250
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GPT-OSS only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -624,8 +626,9 @@ def gpt_oss_20b_peft_config(
     cfg.checkpoint.save_interval = 250
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GPT-OSS only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -757,8 +760,9 @@ def gpt_oss_120b_peft_config(
     cfg.checkpoint.save_interval = 250
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GPT-OSS only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
