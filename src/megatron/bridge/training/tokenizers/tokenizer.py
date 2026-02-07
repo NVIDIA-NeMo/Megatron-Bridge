@@ -2,10 +2,12 @@
 
 """Megatron tokenizers."""
 
+from __future__ import annotations
+
 import base64
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from megatron.core.tokenizers import MegatronTokenizer
 
@@ -23,8 +25,11 @@ except ImportError:
     # Fallback to old path
     from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizerCore
 
+if TYPE_CHECKING:
+    from megatron.core.tokenizers import MegatronTokenizerBase
 
-def _compute_space_sensitive(tokenizer_instance: "MegatronTokenizer", default: bool = True) -> bool:
+
+def _compute_space_sensitive(tokenizer_instance: MegatronTokenizer, default: bool = True) -> bool:
     """
     Determine if a tokenizer is space-sensitive.
 
@@ -95,7 +100,7 @@ class MegatronLegacyTokenizer(MegatronTokenizerCore):
         return self.mask
 
 
-def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronLegacyTokenizer | MegatronTokenizer:
+def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronLegacyTokenizer | MegatronTokenizerBase:
     """Initialize tokenizer based on the provided configuration.
 
     This function serves as a factory to instantiate various tokenizer types

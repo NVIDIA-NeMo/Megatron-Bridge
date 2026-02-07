@@ -18,7 +18,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Optional
 
 import datasets
 import numpy as np
@@ -61,17 +61,21 @@ __idx_version__ = "0.2"  # index file version
 __idx_suffix__ = "idx"  # index file suffix
 
 
-def get_dataset_root(name: str) -> Path:
+def get_dataset_root(
+    name: str,
+    chat_template_name: Optional[str] = None,
+) -> Path:
     """
     Returns the root directory for NeMo datasets, creating it if it doesn't exist.
 
     Args:
         name (str): The name of the dataset, used to create a subdirectory within the NeMo datasets cache.
+        chat_template_name (str): The name of the chat template, used to prevent collisions of two different chat templates.
 
     Returns:
         Path: The path to the dataset's root directory.
     """
-    output = Path(NEMO_DATASETS_CACHE) / name
+    output = Path(NEMO_DATASETS_CACHE) / (f"{name}_{chat_template_name}" if chat_template_name else name)
     output.mkdir(parents=True, exist_ok=True)
 
     return output

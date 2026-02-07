@@ -47,7 +47,10 @@ class ProcessExampleFn(Protocol):
     """Protocol defining the signature for a function that processes a single dataset example."""
 
     def __call__(
-        self, example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+        self,
+        example: dict[str, Any],
+        tokenizer: Optional[MegatronTokenizer] = None,
+        apply_tokenizer_chat_template: bool = False,
     ) -> ProcessExampleOutput: ...
 
 
@@ -74,6 +77,8 @@ class HFDatasetConfig(FinetuningDatasetConfig):
         hf_kwargs: Additional keyword arguments to pass to `load_dataset`.
         hf_filter_lambda: Optional function to filter the loaded dataset.
         hf_filter_lambda_kwargs: Optional keyword arguments for `hf_filter_lambda`.
+        apply_tokenizer_chat_template: If True, apply the tokenizer's chat template
+            when processing examples.
     """
 
     dataset_name: str
@@ -89,6 +94,7 @@ class HFDatasetConfig(FinetuningDatasetConfig):
     hf_kwargs: Optional[dict[str, Any]] = None
     hf_filter_lambda: Optional[Callable] = None
     hf_filter_lambda_kwargs: Optional[dict[str, Any]] = None
+    apply_tokenizer_chat_template: bool = False
 
 
 def preprocess_and_split_data(
@@ -107,6 +113,7 @@ def preprocess_and_split_data(
     rewrite: bool = False,
     do_test: bool = True,
     do_validation: bool = True,
+    apply_tokenizer_chat_template: bool = False,
 ):
     """Download, preprocess, split, and save a Hugging Face dataset to JSONL files.
 
@@ -199,7 +206,7 @@ def preprocess_and_split_data(
             for example in tqdm(dataset, desc=f"Processing {split_name} split"):
                 json_line = {}
 
-                processed_example = process_example_fn(example, tokenizer)
+                processed_example = process_example_fn(example, tokenizer, apply_tokenizer_chat_template)
                 # Write each example as a JSON line in the output file
                 json_line["input"] = processed_example["input"]
                 json_line["output"] = processed_example["output"]
@@ -249,6 +256,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         hf_filter_lambda_kwargs: Optional[dict[str, Any]] = None,
         do_validation: bool = True,
         do_test: bool = True,
+        apply_tokenizer_chat_template: bool = False,
     ) -> None:
         """Initializes the HFDatasetBuilder.
 
@@ -277,8 +285,14 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             hf_filter_lambda_kwargs: Optional kwargs for the filter function.
             do_validation: Whether to build the validation set.
             do_test: Whether to build the test set.
+            apply_tokenizer_chat_template: Whether to apply the tokenizer's chat template.
         """
-        dataset_root = Path(dataset_root) if dataset_root else get_dataset_root(dataset_name)
+        chat_template_name = tokenizer.path.replace("/", "--") if apply_tokenizer_chat_template else None
+        dataset_root = (
+            Path(dataset_root)
+            if dataset_root
+            else get_dataset_root(dataset_name, chat_template_name=chat_template_name)
+        )
 
         # Initialize the parent class with common parameters
         super().__init__(
@@ -308,6 +322,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         self.hf_filter_lambda = hf_filter_lambda
         self.hf_filter_lambda_kwargs = hf_filter_lambda_kwargs or {}
         self.rewrite = rewrite
+        self.apply_tokenizer_chat_template = apply_tokenizer_chat_template
 
         if not val_proportion:
             self.do_validation = False
@@ -341,6 +356,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             rewrite=self.rewrite,
             do_test=self.do_test,
             do_validation=self.do_validation,
+            apply_tokenizer_chat_template=self.apply_tokenizer_chat_template,
         )
         super().prepare_data()
 

@@ -50,7 +50,12 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def default_squad_config(seq_length: int, packed_sequence: bool = False, pad_seq_to_mult: int = 1) -> HFDatasetConfig:
+def default_squad_config(
+    seq_length: int,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+    apply_tokenizer_chat_template: bool = False,
+) -> HFDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
@@ -58,6 +63,8 @@ def default_squad_config(seq_length: int, packed_sequence: bool = False, pad_seq
         packed_sequence: Whether to enable packed sequences for training efficiency
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing
             (set to `2 * context_parallel_size` for THD CP runs).
+        apply_tokenizer_chat_template: If True, apply the tokenizer's chat template
+            when processing examples.
 
     Returns:
         HFDatasetConfig configured for SQuAD finetuning
@@ -95,4 +102,5 @@ def default_squad_config(seq_length: int, packed_sequence: bool = False, pad_seq
         dataset_kwargs=dataset_kwargs,
         packed_sequence_specs=packed_sequence_specs,
         rewrite=False,
+        apply_tokenizer_chat_template=apply_tokenizer_chat_template,
     )
