@@ -321,6 +321,7 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     )
 
     # Tokenizer - HuggingFace tokenizer with trust_remote_code
+    cfg.tokenizer.tokenizer_model = "moonshotai/Moonlight-16B-A3B"
     cfg.tokenizer.hf_tokenizer_kwargs = {"trust_remote_code": True}
 
     # Checkpoint config overrides
@@ -494,6 +495,7 @@ def moonlight_16b_peft_config(
     )
 
     # Tokenizer - HuggingFace tokenizer with trust_remote_code
+    cfg.tokenizer.tokenizer_model = "moonshotai/Moonlight-16B-A3B"
     cfg.tokenizer.hf_tokenizer_kwargs = {"trust_remote_code": True}
 
     # Checkpoint config overrides
