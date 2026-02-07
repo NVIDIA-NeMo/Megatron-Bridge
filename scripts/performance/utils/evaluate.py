@@ -691,7 +691,9 @@ def calc_convergence_and_performance(
             )
 
     # Determine if we need to update golden values or if there are actual validation failures
-    has_validation_failures = not convergence_result["passed"] or not performance_result["passed"]
+    has_validation_failures = (
+        not convergence_result["passed"] or not performance_result["passed"] or has_nan_grad_norm or has_inf_grad_norm
+    )
 
     if not memory_metrics_missing:
         has_validation_failures = has_validation_failures or not memory_result["passed"]
