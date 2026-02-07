@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 """
 Utility script that materializes a significantly smaller HuggingFace checkpoint
 from an existing model configuration.  It is primarily intended to help bridge
