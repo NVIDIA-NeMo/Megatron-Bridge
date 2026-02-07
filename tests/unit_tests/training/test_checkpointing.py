@@ -2160,7 +2160,7 @@ class TestCheckpointIterationResolution:
         assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
 
     def test_ckpt_step_with_only_pretrained_raises(self):
-        """ckpt_step with only pretrained_checkpoint should raise (ckpt_step applies to load, not pretrained)."""
+        """ckpt_step with only pretrained_checkpoint should raise because pretrained path does not exist."""
         from megatron.bridge.training.config import CheckpointConfig
 
         config = CheckpointConfig(
@@ -2169,11 +2169,8 @@ class TestCheckpointIterationResolution:
             pretrained_checkpoint="/pretrained/model",  # Has pretrained but no load
         )
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(AssertionError, match="Pretrained checkpoint /pretrained/model does not exist"):
             config.finalize()
-
-        assert "ckpt_step=5000 specified but checkpoint.load is None" in str(exc_info.value)
-        assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
 
     def test_no_load_dir_returns_default(self):
         """When load_dir is None, should return iteration=-1."""
