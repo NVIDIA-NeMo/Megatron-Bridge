@@ -28,6 +28,7 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
+from torch.distributed._tensor import DTensor
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
 
@@ -827,10 +828,14 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+        else:
+            output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -850,7 +855,12 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1:
+        use_fsdp = hasattr(megatron_module, "_parameters") and any(
+            key.startswith("weight") and isinstance(value, DTensor)
+            for key, value in megatron_module._parameters.items()
+        )
+
+        if self.tp_size == 1 or use_fsdp:
             full_weights = megatron_weights
         else:
             # Gather from all TP ranks
@@ -920,10 +930,14 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor) and hf_weights.ndim != 1:
+            output_shape = [target_param.shape[0], target_param.shape[1] // self.tp_size, *target_param.shape[2:]]
+        else:
+            output_shape = target_param.shape
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -943,7 +957,12 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1 or len(megatron_weights.shape) == 1:
+        use_fsdp = hasattr(megatron_module, "_parameters") and any(
+            key.startswith("weight") and isinstance(value, DTensor)
+            for key, value in megatron_module._parameters.items()
+        )
+
+        if self.tp_size == 1 or len(megatron_weights.shape) == 1 or use_fsdp:
             # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
@@ -2023,10 +2042,14 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             splits = None
 
+        if isinstance(target_param, DTensor):
+            output_shape = [target_param.shape[0] // self.tp_size, *target_param.shape[1:]]
+        else:
+            output_shape = target_param.shape
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
-            target_param.shape,
+            output_shape,
             target_param.dtype,
             target_param.device,
         )
@@ -2046,6 +2069,11 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
+        use_fsdp = hasattr(megatron_module, "_parameters") and any(
+            key.startswith("weight") and isinstance(value, DTensor)
+            for key, value in megatron_module._parameters.items()
+        )
+
         # Handle TP gathering
         if self.tp_size == 1:
             # No TP, just split the concatenated tensor
@@ -2053,8 +2081,11 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             gate, up = torch.chunk(fused_mlp, 2, dim=0)
 
         else:
-            # Gather shards from all TP ranks
-            gathered_shards = self.gather_from_tp_ranks(megatron_weights)
+            if use_fsdp:
+                gathered_shards = torch.chunk(megatron_weights, self.tp_size, dim=0)
+            else:
+                # Gather shards from all TP ranks
+                gathered_shards = self.gather_from_tp_ranks(megatron_weights)
 
             # Split each shard back into gate and up parts
             gate_parts = []
