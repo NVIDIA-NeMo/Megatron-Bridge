@@ -111,7 +111,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         # Handle rope scaling for Llama 3.1/3.3
         if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling:
             if hf_config.rope_scaling.get("rope_type") == "llama3":
-                provider_kwargs["scale_factor"] = hf_config.rope_scaling.get("factor", 8.0)
+                provider_kwargs["rope_scaling_factor"] = hf_config.rope_scaling.get("factor", 8.0)
 
         provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
         provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)

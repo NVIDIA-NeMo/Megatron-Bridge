@@ -46,43 +46,32 @@ _QWEN2_FINETUNE_FUNCS = [
 
 
 def _safe_overrides_for(name: str) -> dict:
-    # Detect if this is a finetune recipe
+    """Return overrides for recipe functions.
+
+    Pretrain configs use the new parameterless API (return empty dict).
+    Finetune configs still accept parameters.
+    """
     is_finetune = "finetune" in name.lower()
     lname = name.lower()
 
-    overrides = {
-        "name": f"unit_{name}",
-        "dir": ".",
-        "train_iters": 10,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
-    }
-
-    # 72B has special global_batch_size defaults
-    if "72b" not in lname:
-        overrides["global_batch_size"] = 2
-
     if is_finetune:
-        # Finetuning-specific overrides
-        overrides.update(
-            {
-                "finetune_lr": 1e-4,
-            }
-        )
+        # Finetuning-specific overrides - finetune configs still accept parameters
+        overrides = {
+            "name": f"unit_{name}",
+            "dir": ".",
+            "train_iters": 10,
+            "micro_batch_size": 1,
+            "seq_length": 64,
+            "min_lr": 1e-5,
+            "lr_warmup_iters": 2,
+            "finetune_lr": 1e-4,
+        }
+        # 72B has special global_batch_size defaults
+        if "72b" not in lname:
+            overrides["global_batch_size"] = 2
     else:
-        # Pretrain-specific overrides
-        overrides.update(
-            {
-                "mock": True,
-                "lr": 1e-4,
-                "use_null_tokenizer": True,
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-                "context_parallel_size": 1,
-            }
-        )
+        # Pretrain configs use the new parameterless API
+        overrides = {}
 
     return overrides
 
@@ -153,9 +142,9 @@ def test_each_qwen2_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
-        # Pretrain recipes honor use_null_tokenizer override
-        if overrides.get("use_null_tokenizer"):
-            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+        # Pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
+        if cfg.tokenizer.tokenizer_type == "NullTokenizer":
+            assert cfg.tokenizer.vocab_size is not None
         else:
             assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
             assert cfg.tokenizer.tokenizer_model is not None

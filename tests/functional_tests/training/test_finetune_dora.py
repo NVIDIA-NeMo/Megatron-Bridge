@@ -126,7 +126,7 @@ class TestDoRAFinetune:
             fp16=False,
             adam_beta1=0.9,
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             use_distributed_optimizer=True,
             clip_grad=1.0,
             lr=lr,

@@ -51,7 +51,7 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
         use_kitchen: Whether to use kitchen extension
 
     Returns:
-        transformer_layer_spec: The transformer layer specification
+        ModuleSpec: The transformer layer specification
     """
     if use_te:
         return get_gpt_layer_with_transformer_engine_spec(

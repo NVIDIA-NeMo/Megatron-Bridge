@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -20,9 +21,9 @@ import torch
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge
-from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
 
 
 class TestMegatronOlMoEBridge:
@@ -92,19 +93,13 @@ class TestMegatronOlMoEBridge:
     @pytest.fixture
     def olmoe_1b_7b_config(self, olmoe_1b_7b_config_dict):
         """Create an OLMoE config instance for 1B-7B model."""
-        # Create a mock config object with the properties
-        config = Mock()
-        for key, value in olmoe_1b_7b_config_dict.items():
-            setattr(config, key, value)
-        return config
+        # Use SimpleNamespace so undefined attributes raise AttributeError (getattr returns None)
+        return SimpleNamespace(**olmoe_1b_7b_config_dict)
 
     @pytest.fixture
     def olmoe_custom_config(self, olmoe_custom_config_dict):
         """Create an OLMoE config instance for custom model."""
-        config = Mock()
-        for key, value in olmoe_custom_config_dict.items():
-            setattr(config, key, value)
-        return config
+        return SimpleNamespace(**olmoe_custom_config_dict)
 
     @pytest.fixture
     def mock_olmoe_1b_7b_model(self, olmoe_1b_7b_config):
@@ -175,8 +170,8 @@ class TestMegatronOlMoEBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_olmoe_1b_7b)
 
-        # Check that it returns an OlMoEModelProvider instance
-        assert isinstance(result, OlMoEModelProvider)
+        # Check that it returns a GPTModelProvider instance
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == olmoe_1b_7b_config.num_hidden_layers
@@ -192,8 +187,8 @@ class TestMegatronOlMoEBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_olmoe_custom)
 
-        # Check that it returns an OlMoEModelProvider instance
-        assert isinstance(result, OlMoEModelProvider)
+        # Check that it returns a GPTModelProvider instance
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == olmoe_custom_config.num_hidden_layers
@@ -299,12 +294,13 @@ class TestMegatronOlMoEBridge:
         assert result.kv_channels == expected_kv_channels
         assert result.kv_channels == 2048 // 16  # 128
 
-    def test_provider_bridge_dtype_handling_bfloat16(self, olmoe_1b_7b_config):
+    def test_provider_bridge_dtype_handling_bfloat16(self, olmoe_1b_7b_config_dict):
         """Test bfloat16 dtype handling in provider_bridge."""
         # Create model with bfloat16 dtype
+        config_dict = {**olmoe_1b_7b_config_dict, "torch_dtype": torch.bfloat16}
+        config = SimpleNamespace(**config_dict)
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = olmoe_1b_7b_config
-        mock_pretrained.config.torch_dtype = torch.bfloat16
+        mock_pretrained.config = config
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
@@ -321,12 +317,13 @@ class TestMegatronOlMoEBridge:
         assert result.bf16 == True
         assert result.fp16 == False
 
-    def test_provider_bridge_dtype_handling_fp16(self, olmoe_custom_config):
+    def test_provider_bridge_dtype_handling_fp16(self, olmoe_custom_config_dict):
         """Test FP16 dtype handling in provider_bridge."""
         # Create model with FP16 dtype
+        config_dict = {**olmoe_custom_config_dict, "torch_dtype": torch.float16}
+        config = SimpleNamespace(**config_dict)
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = olmoe_custom_config
-        mock_pretrained.config.torch_dtype = torch.float16
+        mock_pretrained.config = config
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
@@ -343,12 +340,13 @@ class TestMegatronOlMoEBridge:
         assert result.fp16 == True
         assert result.bf16 == False
 
-    def test_provider_bridge_dtype_handling_fp32(self, olmoe_1b_7b_config):
+    def test_provider_bridge_dtype_handling_fp32(self, olmoe_1b_7b_config_dict):
         """Test FP32 dtype handling in provider_bridge."""
         # Create model with FP32 dtype
+        config_dict = {**olmoe_1b_7b_config_dict, "torch_dtype": torch.float32}
+        config = SimpleNamespace(**config_dict)
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = olmoe_1b_7b_config
-        mock_pretrained.config.torch_dtype = torch.float32
+        mock_pretrained.config = config
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
@@ -483,14 +481,11 @@ class TestAutoBridgeIntegration:
     def test_supports_olmoe_architectures(self, olmoe_configs):
         """Test that AutoBridge.supports correctly identifies OLMoE models."""
         for model_name, config_dict in olmoe_configs.items():
-            config = Mock()
-            for key, value in config_dict.items():
-                setattr(config, key, value)
+            config = SimpleNamespace(**config_dict)
             assert AutoBridge.supports(config) == True
 
         # Test non-causal LM architecture
-        non_causal_config = Mock()
-        non_causal_config.architectures = ["OlmoeModel"]  # Not ForCausalLM
+        non_causal_config = SimpleNamespace(architectures=["OlmoeModel"])  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
 
 

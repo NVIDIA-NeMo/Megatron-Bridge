@@ -132,6 +132,7 @@ runs:
           --runtime=nvidia --gpus all \
           --shm-size=64g \
           --cpus=40 \
+          --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \

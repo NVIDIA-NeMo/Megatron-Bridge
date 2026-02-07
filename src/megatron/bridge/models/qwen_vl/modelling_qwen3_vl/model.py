@@ -198,6 +198,7 @@ class Qwen3VLModel(MegatronModule):
         position_ids: torch.Tensor = None,  # can set at dataset
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
+        loss_mask: torch.Tensor = None,
         inference_params: InferenceParams = None,
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
@@ -319,6 +320,7 @@ class Qwen3VLModel(MegatronModule):
             attention_mask=attention_mask,  # None in encoder
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
+            loss_mask=loss_mask,  # Added for THD training compatibility
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,  # currently always None
             visual_pos_masks=visual_pos_masks,

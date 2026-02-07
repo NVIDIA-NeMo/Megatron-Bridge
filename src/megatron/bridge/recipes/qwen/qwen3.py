@@ -20,15 +20,13 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
@@ -94,269 +92,482 @@ class Qwen3FinetuneKwargs(Qwen3CommonKwargs, total=False):
     wandb_exp_name: str | None
 
 
-def qwen3_600m_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_600m_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 0.6B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=1, PP=1 (fits on a single GPU).
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-0.6B",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_provider(load_weights=False)
+
+    # Tokenizer (--tokenizer-model)
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
+
+    # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.init_method_std = 0.02
+
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
 
 
-def qwen3_1p7b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_1p7b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 1.7B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=1, PP=1 (fits on a single GPU).
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-1.7B",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-1.7B"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
+
+    # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.init_method_std = 0.02
+
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
 
 
-def qwen3_4b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_4b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 4B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=2, PP=1.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-4B",
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-4B"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
+
+    # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.init_method_std = 0.02
+
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
 
 
-def qwen3_8b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_8b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 8B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=4, PP=1.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-8B",
-        "tensor_model_parallel_size": 4,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
+
+    # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.init_method_std = 0.02
+
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
 
 
-def qwen3_14b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_14b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 14B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=8, PP=1.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-14B",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-14B"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
+
+    # Model config (tensor_model_parallel_size, pipeline_model_parallel_size, etc.)
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.init_method_std = 0.02
+
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config (paths set in _pretrain_common)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
 
 
-def qwen3_32b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+def qwen3_32b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 32B.
 
-    See `_qwen3_common` for the full list of parameters.
+    Recommended parallelism: TP=8, PP=2 with recompute enabled for memory optimization.
     """
-    recommended_kwargs: Qwen3CommonKwargs = {
-        "hf_path": "Qwen/Qwen3-32B",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 2,
-        "pipeline_dtype": torch.bfloat16,
-        "enable_recompute": True,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_common(**combined_kwargs)
+    cfg = _pretrain_common()
 
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_provider(load_weights=False)
 
-def _qwen3_common(
-    hf_path: str,
-    dir: str | None = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: list[str] | None = None,
-    data_args_path: str | None = None,
-    train_data_path: list[str] | None = None,
-    valid_data_path: list[str] | None = None,
-    test_data_path: list[str] | None = None,
-    per_split_data_args_path: str | None = None,
-    mock: bool = False,
-    # Model configuration
-    tensor_model_parallel_size: int = 1,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: torch.dtype | None = None,
-    virtual_pipeline_model_parallel_size: int | None = None,
-    context_parallel_size: int = 1,
-    sequence_parallel: bool = False,
-    use_megatron_fsdp: bool = False,
-    use_null_tokenizer: bool = False,
-    enable_recompute: bool = False,
-    # Training hyperparameters
-    train_iters: int = 300000,
-    global_batch_size: int = 32,
-    micro_batch_size: int = 2,
-    seq_length: int = 4096,
-    lr: float = 3e-4,
-    min_lr: float = 3e-5,
-    lr_warmup_iters: int = 500,
-    lr_decay_iters: int | None = None,
-    eval_interval: int = 500,
-    save_interval: int = 500,
-    # Precision recipe
-    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
-    comm_overlap_config: CommOverlapConfig | None = None,
-) -> ConfigContainer:
-    """
-    Create a pre-training configuration for Qwen3 models using a given HuggingFace path.
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-32B"
 
-    Args:
-        hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-1.7B").
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallel (bool): Whether to use sequence parallelism.
-        use_megatron_fsdp (bool): Whether to use Megatron FSDP.
-        use_null_tokenizer (bool): Whether to use NullTokenizer instead of HuggingFaceTokenizer.
-        enable_recompute (bool): Whether to enable recompute for memory optimization.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
 
-    Returns:
-        ConfigContainer: Configuration for pre-training.
-    """
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.model.init_method_std = 0.02
 
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
-    )
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
 
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
-    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
-    model_cfg.pipeline_dtype = pipeline_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
-    model_cfg.context_parallel_size = context_parallel_size
-    model_cfg.sequence_parallel = sequence_parallel
-    model_cfg.seq_length = seq_length
+    cfg.model.transformer_impl = "transformer_engine"
 
-    # Add recompute settings for memory optimization (used by larger models like 32B)
-    if enable_recompute:
-        model_cfg.recompute_granularity = "full"
-        model_cfg.recompute_method = "uniform"
-        model_cfg.recompute_num_layers = 1
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
 
-    model_cfg.cross_entropy_fusion_impl = "te"
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
 
-    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        max_lr=lr,
-        min_lr=min_lr,
-    )
+    # Memory saving (recompute & offloading) - ENABLED for 32B
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
 
-    # Config Container
-    cfg_container = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_cfg,
-        scheduler=scheduler_cfg,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,  # Not supported for custom FSDP for now, need to be set to False if using FSDP
-            data_parallel_sharding_strategy="optim_grads_params",  # For custom FSDP only
-            use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
-        ),
-        dataset=GPTDatasetConfig(
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            seq_length=seq_length,
-            num_dataset_builder_threads=1,
-            blend=blend,
-            blend_per_split=blend_per_split,
-            split=split,
-            # Dataloader config parameters
-            data_sharding=True,
-            dataloader_type="single",
-            skip_getting_attention_mask_from_dataset=True,
-        ),
-        logger=LoggerConfig(
-            log_interval=10,
-            tensorboard_dir=tensorboard_dir,
-            log_timers_to_tensorboard=True,
-        ),
-        tokenizer=TokenizerConfig(
-            tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
-            tokenizer_model=hf_path if not use_null_tokenizer else None,
-            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
-        ),
-        checkpoint=CheckpointConfig(
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
-    )
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _pretrain_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default
+    # cfg.mixed_precision.fp8 = None  # not enabled
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
 
-    return cfg_container
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override them, set them here.Ex:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    return cfg
 
 
 def qwen3_600m_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:

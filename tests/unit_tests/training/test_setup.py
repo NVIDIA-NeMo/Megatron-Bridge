@@ -63,35 +63,33 @@ class TestMaybeLogAndSaveConfig:
     """Tests for maybe_log_and_save_config."""
 
     @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
-    def test_rank_zero_saves_and_logs(self, mock_get_rank, tmp_path, capsys):
+    def test_rank_zero_saves_and_logs(self, mock_get_rank, tmp_path):
         filepath = tmp_path / "config.yaml"
         cfg = Mock()
         cfg.logger.save_config_filepath = str(filepath)
         cfg.to_yaml = Mock()
-        cfg.print_yaml = Mock()
+        cfg.log_non_default_values = Mock()
 
         maybe_log_and_save_config(cfg)
 
         cfg.to_yaml.assert_called_once_with(str(filepath))
-        cfg.print_yaml.assert_called_once()
-        captured = capsys.readouterr()
-        assert "------- Task Configuration -------" in captured.out
-        assert "----------------------------------" in captured.out
+        cfg.log_non_default_values.assert_called_once()
 
     @patch("megatron.bridge.training.setup.get_rank_safe", return_value=1)
     def test_non_zero_rank_noop(self, mock_get_rank):
         cfg = Mock()
         cfg.logger.save_config_filepath = "unused"
         cfg.to_yaml = Mock()
-        cfg.print_yaml = Mock()
+        cfg.log_non_default_values = Mock()
 
         maybe_log_and_save_config(cfg)
 
         cfg.to_yaml.assert_not_called()
-        cfg.print_yaml.assert_not_called()
+        cfg.log_non_default_values.assert_not_called()
 
     @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
-    def test_save_failure_is_logged(self, mock_get_rank, capsys):
+    @patch("megatron.bridge.training.setup.print_rank_0")
+    def test_save_failure_is_logged(self, mock_print, mock_get_rank):
         cfg = Mock()
         cfg.logger.save_config_filepath = "path"
 
@@ -99,10 +97,11 @@ class TestMaybeLogAndSaveConfig:
             raise IOError("boom")
 
         cfg.to_yaml.side_effect = raise_io_error
-        cfg.print_yaml = Mock()
+        cfg.log_non_default_values = Mock()
 
         maybe_log_and_save_config(cfg)
 
-        captured = capsys.readouterr()
-        assert "Error saving config" in captured.out
-        cfg.print_yaml.assert_called_once()
+        # Check that error was logged via print_rank_0
+        mock_print.assert_called_once()
+        assert "Error saving config" in mock_print.call_args[0][0]
+        cfg.log_non_default_values.assert_called_once()

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 from typing import List, Optional, Union
 
@@ -22,23 +21,19 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.olmoe import OlMoEModelProvider
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-
-
-logger = logging.getLogger(__name__)
 
 
 class OLMoECommonKwargs(TypedDict, total=False):
@@ -130,233 +125,155 @@ class OLMoEFinetuneKwargs(TypedDict, total=False):
     wandb_exp_name: Optional[str]
 
 
-def olmoe_7b_pretrain_config(**user_kwargs: Unpack[OLMoECommonKwargs]) -> ConfigContainer:
+def _get_olmoe_pipeline_layout(pp_size: int, vp_size: int):
+    """Get pipeline layout for OLMoE-7B based on PP and VP size."""
+    # OLMoE has 16 layers
+    map_pp_vp_to_layout = {
+        (1, 1): None,
+        (2, 1): [["embedding"] + ["decoder"] * 8, ["decoder"] * 8 + ["loss"]],
+        (4, 1): [["embedding"] + ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4 + ["loss"]],
+        (2, 2): [["embedding"] + ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4 + ["loss"]],
+    }
+    if (pp_size, vp_size) not in map_pp_vp_to_layout:
+        raise ValueError(
+            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
+            f"for OLMoE (7B). Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
+        )
+    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+    if layout is not None:
+        layout = list([list(x) for x in layout])
+    return layout
+
+
+def olmoe_7b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for OLMoE-7B (7B total, ~1B active).
 
-    See `_olmoe_common` for the full list of parameters.
+    Recommended parallelism: TP=1, PP=1, EP=8
+    Uses precision-aware optimizer with bf16 gradients/moments.
     """
-    recommended_kwargs: OLMoECommonKwargs = {
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "pipeline_dtype": torch.bfloat16,
-        "virtual_pipeline_model_parallel_size": None,
-        "context_parallel_size": 1,
-        "expert_model_parallel_size": 8,
-        "sequence_parallel": False,
-        "recompute_granularity": "selective",
-        "apply_rope_fusion": False,
-        "train_iters": 500_000,
-        "global_batch_size": 2048,
-        "micro_batch_size": 1,
-        "seq_length": 4096,
-        "lr": 3e-4,
-        "min_lr": 3e-5,
-        "lr_warmup_iters": 2000,
-        "optimizer_type": "adam",
-        "eval_interval": 2000,
-        "save_interval": 2000,
-    }
-    combined_kwargs: OLMoECommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _olmoe_common(**combined_kwargs)
+    cfg = _pretrain_common()
 
-
-def _olmoe_common(
-    dir: Optional[str] = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
-    mock: bool = False,
-    # Model configuration
-    tensor_model_parallel_size: int = 1,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
-    context_parallel_size: int = 1,
-    expert_model_parallel_size: int = 8,
-    sequence_parallel: bool = False,
-    # Recomputation
-    recompute_granularity: str = "selective",
-    recompute_modules: Optional[List[str]] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
-    apply_rope_fusion: bool = False,
-    # Training hyperparameters
-    train_iters: int = 500_000,
-    global_batch_size: int = 2048,
-    micro_batch_size: int = 1,
-    seq_length: int = 4096,
-    lr: float = 3e-4,
-    min_lr: float = 3e-5,
-    lr_warmup_iters: int = 2000,
-    optimizer_type: str = "adam",
-    eval_interval: int = 2000,
-    save_interval: int = 2000,
-    # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-) -> ConfigContainer:
-    """
-    Create a pre-training configuration for OLMoE-7B model (7B total, ~1B active).
-
-    Args:
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallel_size (int): Degree of context parallelism.
-        expert_model_parallel_size (int): Degree of expert model parallelism.
-        sequence_parallel (bool): Whether to use sequence parallelism.
-        recompute_granularity (str): Recomputation granularity.
-        recompute_modules (Optional[List[str]]): Modules to recompute.
-        recompute_method (Optional[str]): Recomputation method.
-        recompute_num_layers (Optional[int]): Number of layers to recompute.
-        apply_rope_fusion (bool): Whether to apply RoPE fusion.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        optimizer_type (str): Type of optimizer to use.
-        eval_interval (int): Interval for evaluation.
-        save_interval (int): Interval for saving checkpoints.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
-
-    Returns:
-        ConfigContainer: Configuration for pre-training.
-    """
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
+    # Model config - uses OlMoEModelProvider
+    cfg.model = OlMoEModelProvider(
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+        pipeline_dtype=torch.bfloat16,
+        virtual_pipeline_model_parallel_size=None,
+        context_parallel_size=1,
+        expert_model_parallel_size=8,
+        sequence_parallel=False,
+        recompute_granularity="selective",
+        recompute_modules=None,
+        recompute_method=None,
+        recompute_num_layers=None,
     )
 
-    model_cfg = _model_config(
-        tensor_model_parallel_size=tensor_model_parallel_size,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_dtype=pipeline_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
-        context_parallel_size=context_parallel_size,
-        expert_model_parallel_size=expert_model_parallel_size,
-        sequence_parallel=sequence_parallel,
-        recompute_granularity=recompute_granularity,
-        recompute_modules=recompute_modules,
-        recompute_method=recompute_method,
-        recompute_num_layers=recompute_num_layers,
-        apply_rope_fusion=apply_rope_fusion,
+    # Pipeline layout
+    cfg.model.pipeline_model_parallel_layout = _get_olmoe_pipeline_layout(1, 1)
+
+    # Performance optimization knobs
+    cfg.model.moe_permute_fusion = True
+
+    # Tokenizer - uses NullTokenizer with model vocab_size
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
+
+    # Dataset config
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.num_workers = 8
+
+    # MoE Token Dispatcher settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Training config
+    cfg.train.train_iters = 500_000
+    cfg.train.global_batch_size = 2048
+    cfg.train.micro_batch_size = 1
+    cfg.train.eval_interval = 2000
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 5
+    cfg.train.manual_gc_eval = 5
+
+    # Optimizer
+    cfg.scheduler.lr_warmup_iters = 2000
+    cfg.scheduler.lr_decay_iters = cfg.train.train_iters
+    cfg.optimizer.adam_eps = 1e-8
+
+    # Precision-aware optimizer settings
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (recompute & offloading) - already set in OlMoEModelProvider
+    # cfg.model.recompute_granularity = "selective"
+    # cfg.model.recompute_modules = None
+    cfg.model.apply_rope_fusion = False  # Set to True for RoPE fusion (requires experimental flag)
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - OLMoE uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
+    cfg.mixed_precision = MixedPrecisionConfig(
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        pipeline_dtype=torch.bfloat16,
+        autocast_enabled=False,
+        grad_reduce_in_fp32=False,
     )
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.model.moe_router_padding_for_fp8 = False
 
-    if optimizer_type == "adam":
-        opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-            lr_warmup_iters=lr_warmup_iters,
-            lr_decay_iters=train_iters,
-            adam_beta1=0.9,
-            adam_beta2=0.95,
-            adam_eps=1e-8,
-            weight_decay=0.1,
-            max_lr=lr,
-            min_lr=min_lr,
-        )
+    # Communication overlap
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    # cfg.comm_overlap.delay_wgrad_compute = False
+    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.model.moe_shared_expert_overlap = False
 
-        opt_config.use_precision_aware_optimizer = True
-        opt_config.main_params_dtype = torch.float32
-        opt_config.main_grads_dtype = torch.bfloat16
-        opt_config.exp_avg_dtype = torch.bfloat16
-        opt_config.exp_avg_sq_dtype = torch.bfloat16
-    else:
-        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 2000
+    cfg.checkpoint.async_save = False
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
 
-    if precision_config is None:
-        precision_config = MixedPrecisionConfig(
-            bf16=True,
-            params_dtype=torch.bfloat16,
-            pipeline_dtype=torch.bfloat16,
-            autocast_enabled=False,
-            grad_reduce_in_fp32=False,
-        )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=5,
-            manual_gc_eval=5,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=False,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,
-            use_distributed_optimizer=True,
-        ),
-        dataset=GPTDatasetConfig(
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            seq_length=seq_length,
-            num_dataset_builder_threads=1,
-            blend=blend,
-            blend_per_split=blend_per_split,
-            split=split or "99990,8,2",
-            data_sharding=True,
-            dataloader_type="single",
-            num_workers=8,
-            skip_getting_attention_mask_from_dataset=True,
-        ),
-        logger=LoggerConfig(
-            log_interval=10,
-            tensorboard_dir=tensorboard_dir,
-            log_timers_to_tensorboard=True,
-        ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=model_cfg.vocab_size),
-        checkpoint=CheckpointConfig(
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-            async_save=False,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
-    )
+    if cfg.model.apply_rope_fusion:
+        cfg.dist.enable_megatron_core_experimental = True
 
-    if apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for rope fusion
-
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=False,
-        )
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
 
     return cfg
 
@@ -417,25 +334,9 @@ def _model_config(
         cfg.apply_rope_fusion = True
 
     # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
-    # OLMoE has 16 layers
-    map_pp_vp_to_layout = {
-        (1, 1): None,
-        (2, 1): [["embedding"] + ["decoder"] * 8, ["decoder"] * 8 + ["loss"]],
-        (4, 1): [["embedding"] + ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4 + ["loss"]],
-        (2, 2): [["embedding"] + ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4 + ["loss"]],
-    }
     pp_size = pipeline_model_parallel_size or 1
     vp_size = virtual_pipeline_model_parallel_size or 1
-    if (pp_size, vp_size) not in map_pp_vp_to_layout:
-        raise ValueError(
-            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
-            f"for OLMoE (7B). Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
-        )
-
-    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
-
-    if layout is not None:
-        layout = list([list(x) for x in layout])  # yield all the elements
+    layout = _get_olmoe_pipeline_layout(pp_size, vp_size)
     cfg.pipeline_model_parallel_layout = layout
 
     return cfg
