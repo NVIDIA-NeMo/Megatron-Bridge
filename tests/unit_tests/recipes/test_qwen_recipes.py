@@ -105,6 +105,12 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
+    # qwen3_next PEFT is intentionally not implemented
+    if recipe_func.__name__ == "qwen3_next_80b_a3b_peft_config":
+        with pytest.raises(NotImplementedError):
+            recipe_func(**overrides)
+        return
+
     cfg = recipe_func(**overrides)
 
     _assert_basic_config(cfg)
