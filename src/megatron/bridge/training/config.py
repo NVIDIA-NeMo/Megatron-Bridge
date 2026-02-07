@@ -14,7 +14,6 @@
 
 import logging
 import os
-import signal
 from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
@@ -32,6 +31,12 @@ from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
+from megatron.training.common_config import ProfilingConfig as MTrainProfilingConfig
+from megatron.training.common_config import RNGConfig
+from megatron.training.resilience_config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
+from megatron.training.training_config import SchedulerConfig as MTrainSchedulerConfig
+from megatron.training.training_config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.training_config import ValidationConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -98,24 +103,6 @@ class OptimizerConfig(MCoreOptimizerConfig):
         to compute derived fields based on the current field values.
         """
         super().__post_init__()
-
-
-@dataclass(kw_only=True)
-class RNGConfig:
-    """Configuration settings for random number generation."""
-
-    seed: int = 1234
-    """Random seed used for python, numpy, pytorch, and cuda."""
-
-    te_rng_tracker: bool = False
-    """Use the Transformer Engine version of the random number generator.
-    Required for CUDA graphs support."""
-
-    inference_rng_tracker: bool = False
-    """Use a random number generator configured for inference."""
-
-    data_parallel_random_init: bool = False
-    """Enable random initialization of params across data parallel ranks"""
 
 
 @dataclass(kw_only=True)
@@ -205,25 +192,8 @@ class DistributedInitConfig:
 
 
 @dataclass
-class RerunStateMachineConfig:
+class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
     """Configuration for the rerun state machine used for result validation or stats."""
-
-    error_injection_rate: int = 0
-    """Rate at which to inject unexpected results, e.g. 1000 means
-    once every 1000 result validations"""
-
-    error_injection_type: Literal["correct_result", "transient_error", "persistent_error"] = "transient_error"
-    """Type of error to inject. """
-
-    rerun_mode: Literal["disabled", "validate_results", "report_determinism_stats"] = "disabled"
-    """Use re-run engine to validate results (default) or to emit stats
-    on variability of computations due to non-deterministic algorithms."""
-
-    check_for_nan_in_loss: bool = True
-    """Check for NaN in the loss."""
-
-    check_for_spiky_loss: bool = False
-    """Check for spiky loss."""
 
     spiky_loss_factor: float = 10.0
     """Factor for detecting spiky loss. A loss is considered spiky if it exceeds
@@ -545,71 +515,8 @@ class FinetuningDatasetConfig(DataloaderConfig):
 
 
 @dataclass(kw_only=True)
-class SchedulerConfig:
+class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
-
-    # ---------------- Learning rate config. ----------------
-    lr_decay_style: Literal["constant", "linear", "cosine", "inverse-square-root", "WSD"] = "linear"
-    """Learning rate decay function."""
-
-    lr_wsd_decay_style: Literal["exponential", "linear", "cosine"] = "exponential"
-    """Decay style for the annealing phase of WSD"""
-
-    lr_decay_iters: Optional[int] = None
-    """number of iterations to decay learning rate over, If None defaults to `train.train_iters`"""
-
-    lr_decay_samples: Optional[int] = None
-    """number of samples to decay learning rate over, If None defaults to `train.train_samples`"""
-
-    lr_wsd_decay_iters: Optional[int] = None
-    """number of iterations for the annealing phase in the wsd schedule"""
-
-    lr_wsd_decay_samples: Optional[int] = None
-    """number of samples for the annealing phase in the wsd schedule"""
-
-    lr_warmup_fraction: Optional[float] = None
-    """fraction of lr-warmup-(iters/samples) to use for warmup (as a float)"""
-
-    lr_warmup_iters: int = 0
-    """number of iterations to linearly warmup learning rate over."""
-
-    lr_warmup_samples: int = 0
-    """number of samples to linearly warmup learning rate over."""
-
-    lr_warmup_init: float = 0.0
-    """Initial value for learning rate warmup. The scheduler starts warmup from this value."""
-
-    override_opt_param_scheduler: bool = False
-    """Reset the values of the scheduler (learning rate, warmup iterations, minimum learning rate,
-    maximum number of iterations, and decay style from input arguments and ignore values from
-    checkpoints. Note that all the above values will be reset."""
-
-    use_checkpoint_opt_param_scheduler: bool = False
-    """Use checkpoint to set the values of the scheduler (learning rate, warmup iterations,
-    minimum learning rate, maximum number of iterations, and decay style from checkpoint
-    and ignore input arguments."""
-
-    # ---------------- Regularization config. ----------------
-
-    start_weight_decay: Optional[float] = None
-    """Initial weight decay coefficient for L2 regularization."""
-
-    end_weight_decay: Optional[float] = None
-    """End of run weight decay coefficient for L2 regularization."""
-
-    weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
-    """Weight decay increment function."""
-
-    no_weight_decay_cond_type: Optional[Literal["qwen3_next"]] = None
-    """Type of no weight decay condition. Choices:
-    None (default): param no weight decay if and only if it is 1D; or it is bias;
-    or it is embedding and embedding_init_method_std is not None.
-    "qwen3_next": In addition to the default rules, apply weight decay to qk layernorm as a special case."""
-
-    lr_warmup_steps: Optional[int] = field(init=False, default=None)
-    lr_decay_steps: Optional[int] = field(init=False, default=None)
-    wd_incr_steps: Optional[int] = field(init=False, default=None)
-    wsd_decay_steps: Optional[int] = field(init=False, default=None)
 
     def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
@@ -644,101 +551,8 @@ class SchedulerConfig:
 
 
 @dataclass(kw_only=True)
-class TrainingConfig:
+class TrainingConfig(MTrainTrainingConfig):
     """Configuration settings related to the training loop and validation."""
-
-    # ---------------- Training config. ----------------
-
-    micro_batch_size: Optional[int] = None
-    """Batch size per model instance (local batch size). Global batch size is local batch size times
-    data parallel size times number of micro batches."""
-
-    global_batch_size: Optional[int] = None
-    """Training batch size. If set, it should be a multiple of micro-batch-size times
-    data-parallel-size. If this value is None, then use micro-batch-size * data-parallel-size
-    as the global batch size. This choice will result in 1 for number of micro-batches."""
-
-    rampup_batch_size: Optional[list[int]] = None
-    """Batch size ramp up with the following values: <start batch size>, <batch size increment>,
-    <ramp-up samples>
-    For example:
-        rampup-batch-size = [16, 8, 300000]
-        global-batch-size 1024
-    will start with global batch size 16 and over (1024 - 16) / 8 = 126 intervals will increase
-    the batch size linearly to 1024. In each interval we will use approximately
-    300000 / 126 = 2380 samples.
-    """
-
-    decrease_batch_size_if_needed: bool = False
-    """If set, decrease batch size if microbatch_size * dp_size does not divide batch_size.
-    Useful for KSO (Keep Soldiering On) to continue making progress if number of healthy GPUs
-    (and corresponding dp_size) does not support current batch_size. Old batch_size will be
-    restored if training is re-started with dp_size that divides batch_size // microbatch_size."""
-
-    empty_unused_memory_level: Literal[0, 1, 2] = 0
-    """Call torch.cuda.empty_cache() each iteration (training and eval), to reduce fragmentation.
-    0=off, 1=moderate, 2=aggressive.
-    """
-
-    check_weight_hash_across_dp_replicas_interval: Optional[int] = None
-    """Interval to check weight hashes are same across DP replicas. If not specified, weight hashes not checked."""
-
-    train_sync_interval: Optional[int] = None
-    """Training CPU-GPU synchronization interval, to ensure that CPU is not running too far ahead of GPU."""
-
-    train_iters: Optional[int] = None
-    """Total number of iterations to train over all training runs.
-    Note that either train_iters or train_samples should be provided.
-    """
-
-    train_samples: Optional[int] = None
-    """Total number of samples to train over all training runs.
-    Note that either train_iters or train_samples should be provided."""
-
-    exit_interval: Optional[int] = None
-    """Exit the program after the iteration is divisible by this value."""
-
-    exit_duration_in_mins: Optional[int] = None
-    """Exit the program after this many minutes."""
-
-    exit_signal_handler: bool = False
-    """Dynamically save the checkpoint and shutdown the training if SIGTERM is received"""
-
-    exit_signal: int = signal.SIGTERM
-    """Signal for the signal handler to detect."""
-
-    exit_signal_handler_for_dataloader: bool = False
-    """Use signal handler for dataloader workers"""
-
-    manual_gc: bool = False
-    """Disable the threshold-based default garbage collector and trigger the garbage collection
-    manually. Manual garbage collection helps to align the timing of the collection across ranks
-    which mitigates the impact of CPU-associated jitters. When the manual gc is enabled, garbage
-    collection is performed only at the start and the end of the validation routine by default."""
-
-    manual_gc_interval: int = 0
-    """Training step interval to trigger manual garbage collection.
-    When the value is set to 0, garbage collection is not triggered between training steps.
-    """
-
-    manual_gc_eval: bool = True
-    """When using manual garbage collection,
-    disable garbage collection at the start and the end of each evaluation run.
-    """
-
-    iterations_to_skip: list[int] = field(default_factory=list)
-    """List of iterations to skip during training, empty by default."""
-
-    # ---------------- Validation config. ----------------
-
-    eval_iters: int = 100
-    """Number of iterations to run for evaluation validation/test for."""
-
-    eval_interval: Optional[int] = 1000
-    """Interval between running evaluation on validation set."""
-
-    skip_train: bool = False
-    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
@@ -1067,42 +881,8 @@ class LoggerConfig:
 
 
 @dataclass(kw_only=True)
-class ProfilingConfig:
+class ProfilingConfig(MTrainProfilingConfig):
     """Configuration settings for profiling the training process."""
-
-    # ---------------- Profiling config. ----------------
-
-    use_nsys_profiler: bool = False
-    """Enable nsys profiling. When using this option, nsys options should be specified in
-    commandline. An example nsys commandline is
-    `nsys profile -s none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true
-    --capture-range=cudaProfilerApi --capture-range-end=stop`.
-    """
-
-    profile_step_start: int = 10
-    """Global step to start profiling."""
-
-    profile_step_end: int = 12
-    """Global step to stop profiling."""
-
-    use_pytorch_profiler: bool = False
-    """Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard."""
-
-    profile_ranks: list[int] = field(default_factory=lambda: [0])
-    """Global ranks to profile."""
-
-    record_memory_history: bool = False
-    """Record memory history in last rank."""
-
-    memory_snapshot_path: str = "snapshot.pickle"
-    """Specifies where to dump the memory history pickle."""
-
-    record_shapes: bool = False
-    """Record shapes of tensors."""
-
-    nvtx_ranges: bool = False
-    """Enable NVTX range annotations for profiling. When enabled, inserts NVTX markers
-    to categorize execution in profiler output."""
 
     def finalize(self) -> None:
         """Validate profiling configuration."""
@@ -1328,6 +1108,7 @@ class ConfigContainer(Container):
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
         default_factory=OptimizerConfigOverrideProvider
     )
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
     dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
