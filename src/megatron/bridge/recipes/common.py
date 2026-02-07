@@ -191,7 +191,9 @@ def _sft_common() -> ConfigContainer:
             grad_reduce_in_fp32=True,
         ),
         # Dataset config - uses SQuAD with packed sequences by default
-        dataset=default_squad_config(seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult),
+        dataset=default_squad_config(
+            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+        ),
         # Logger config
         logger=LoggerConfig(
             log_interval=1,
@@ -284,7 +286,9 @@ def _peft_common() -> ConfigContainer:
             grad_reduce_in_fp32=True,
         ),
         # Dataset config - uses SQuAD with packed sequences by default
-        dataset=default_squad_config(seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult),
+        dataset=default_squad_config(
+            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+        ),
         # Logger config
         logger=LoggerConfig(
             log_interval=1,
