@@ -25,11 +25,21 @@ from typing import List, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TENorm,
+    TERowParallelLinear,
+)
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models import Qwen3ModelProvider, Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+from megatron.core.models.vision.vit_layer_specs import (
+    get_vit_layer_with_transformer_engine_spec,
+)
 
 
 @dataclass
@@ -45,9 +55,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     head_dim: int = 128
     hidden_size: int = 2048
 
-    # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
-    patch_size: int = 14
+    patch_size: int = 16
     temporal_patch_size: int = 2
     in_channels: int = 3
     spatial_merge_size: int = 2
@@ -106,6 +115,12 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
 
     qk_layernorm: bool = True
 
+    bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
+
+    use_hf_vision_model: bool = False
+
+    vision_dp_when_cp: bool = False
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
         Provide a Qwen3VL model instance with vision and language components.
@@ -121,11 +136,19 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             qk_layernorm=self.qk_layernorm,
             fp8=False,
         )
+        vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+        vision_patch_merger_spec = PatchMergerSubmodules(
+            patch_norm=TENorm,
+            linear_fc1=TEColumnParallelLinear,
+            linear_fc2=TERowParallelLinear,
+        )
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_vision_config,
+            hf_vision_config=hf_vision_config,
+            vision_transformer_layer_spec=vision_transformer_layer_spec,
+            vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
@@ -204,6 +227,10 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
 
+    apply_rotary_pos_emb_in_fp32: bool = False
+    # This is not used in the model, we use hf_config.deepstack_visual_indexes to override it
+    deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
@@ -256,6 +283,9 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     distribute_saved_activations: bool = False  # Don't distribute saved activations
     cp_comm_type: str = "p2p"  # Point-to-point communication for context parallel
 
+    use_hf_vision_model: bool = False
+    vision_dp_when_cp: bool = False
+
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
@@ -268,10 +298,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         """
         language_transformer_config = self
 
-        # Create vision transformer config - placeholder for future use
-        # vision_transformer_config = deepcopy(self)
-        hf_config = self.vision_config
-
+        # handle vision config inside model initialization
+        hf_vision_config = self.vision_config
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=True,
@@ -279,11 +307,20 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             fp8=False,
         )
 
+        vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+        vision_patch_merger_spec = PatchMergerSubmodules(
+            patch_norm=TENorm,
+            linear_fc1=TEColumnParallelLinear,
+            linear_fc2=TERowParallelLinear,
+        )
+
         # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_config,
+            hf_vision_config=hf_vision_config,
+            vision_transformer_layer_spec=vision_transformer_layer_spec,
+            vision_patch_merger_spec=vision_patch_merger_spec,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,

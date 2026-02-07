@@ -16,38 +16,83 @@
 
 model:
   seq_length: 4096
+  use_hf_vision_model: false
+  tensor_model_parallel_size: 1
+  pipeline_model_parallel_size: 1
+  context_parallel_size: 1
+  cp_comm_type: p2p
+  cross_entropy_loss_fusion: false
+  recompute_granularity: full
+  recompute_method: uniform
+  recompute_num_layers: 1
+  freeze_language_model: false
+  freeze_vision_model: false
+  freeze_vision_projection: false
+  calculate_per_token_loss: true
+  # num_layers: 16
+
 
 train:
-  train_iters: 20
+  train_iters: 1000
   global_batch_size: 8
-  micro_batch_size: 1
+  micro_batch_size: 4
   eval_iters: 5
 
 optimizer:
-  lr: 0.00025
-  min_lr: 0.000025
+  lr: 0.0005
+  min_lr: 0
+  # make sure adam_eps is 1e-8, otherwise the training will be unstable
+  adam_eps: 1e-8
 
 scheduler:
-  lr_warmup_iters: 10
+  lr_warmup_iters: 0
+  lr_decay_style: constant
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
+  load: null
   save: null
-
+  load_optim: false
+  ckpt_format: torch_dist
+  finetune: true
+  # save_interval:10
+  
 dist:
   use_megatron_fsdp: false
   use_torch_fsdp2: false
 
 logger:
   log_interval: 1
+  log_throughput: true
+  log_params_norm: true
+  log_throughput_to_tensorboard: true
+  log_timers_to_tensorboard: true
+  log_validation_ppl_to_tensorboard: true
+  log_l2_norm_grad_to_tensorboard: true
+  wandb_project: null
+  wandb_save_dir: ./outputs/qwen3-vl/
+  wandb_exp_name: null
 
 dataset:
   sequence_length: 4096
+  # maker_name: make_cv17_dataset
+  pack_sequences_in_batch: true
 
 rng:
   seed: 42
 
 ddp:
   grad_reduce_in_fp32: true
+  average_in_collective: false
 
+profiling:
+  memory_snapshot_path: snapshot.pickle
+  nvtx_ranges: false
+  profile_ranks: [0]
+  profile_step_end: 12
+  profile_step_start: 10
+  record_memory_history: false
+  record_shapes: false
+  use_nsys_profiler: false
+  use_pytorch_profiler: false
 
