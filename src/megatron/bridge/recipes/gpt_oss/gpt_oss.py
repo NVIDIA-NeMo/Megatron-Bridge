@@ -294,7 +294,9 @@ def gpt_oss_20b_sft_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed string (matches old config)
@@ -416,7 +418,9 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed string (matches old config)
@@ -552,7 +556,9 @@ def gpt_oss_20b_peft_config(
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed string (matches old config)
@@ -683,7 +689,9 @@ def gpt_oss_120b_peft_config(
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GPT-OSS has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed string (matches old config)

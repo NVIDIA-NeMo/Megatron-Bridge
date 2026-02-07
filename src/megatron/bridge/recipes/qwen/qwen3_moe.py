@@ -282,7 +282,9 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed config object
@@ -408,7 +410,9 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed config object
@@ -548,7 +552,9 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed config object
@@ -688,7 +694,9 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
     cfg.model.moe_hybridep_num_sms = 16
 
     # Mixed precision - use bf16_mixed config object
