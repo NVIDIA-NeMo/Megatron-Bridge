@@ -67,7 +67,7 @@ classifiers = [
 ]
 dependencies = [
     "transformers<5.0.0",
-    "datasets",
+    "datasets>=2.20.0",
     "accelerate",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
