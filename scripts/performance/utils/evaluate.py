@@ -709,4 +709,4 @@ def calc_convergence_and_performance(
             error_msg += f'  "{max_alloc_metric}": {current_max_alloc}\n'
 
     logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
-    return has_validation_failures, error_msg
+    return has_validation_failures is False, error_msg
