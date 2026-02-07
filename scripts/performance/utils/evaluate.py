@@ -689,6 +689,9 @@ def calc_convergence_and_performance(
     # Determine if we need to update golden values or if there are actual validation failures
     has_validation_failures = not convergence_result["passed"] or not performance_result["passed"]
 
+    if not memory_metrics_missing:
+        has_validation_failures = has_validation_failures or not memory_result["passed"]
+
     if memory_metrics_missing:
         if has_validation_failures:
             # There are actual validation failures - warn about them, don't suggest updating golden values
@@ -706,4 +709,4 @@ def calc_convergence_and_performance(
             error_msg += f'  "{max_alloc_metric}": {current_max_alloc}\n'
 
     logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
-    return len(error_msg) == 0, error_msg
+    return has_validation_failures, error_msg

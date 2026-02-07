@@ -513,6 +513,8 @@ def main(
 
     if not is_testing_passed and error_msg is not None:
         raise AssertionError(error_msg)
+    if is_testing_passed and error_msg is not None:
+        logger.warning(error_msg)
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
