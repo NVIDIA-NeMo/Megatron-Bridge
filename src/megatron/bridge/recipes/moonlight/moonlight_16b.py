@@ -328,6 +328,8 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.async_save = False
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Moonlight uses grad_reduce_in_fp32=False
     cfg.ddp.check_for_nan_in_grad = True
@@ -499,6 +501,8 @@ def moonlight_16b_peft_config(
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.async_save = False
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Moonlight uses grad_reduce_in_fp32=False
     cfg.ddp.check_for_nan_in_grad = True

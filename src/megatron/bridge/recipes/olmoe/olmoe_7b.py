@@ -297,6 +297,8 @@ def olmoe_7b_sft_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.async_save = False
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # RNG config
     cfg.rng.seed = 5678
@@ -461,6 +463,8 @@ def olmoe_7b_peft_config(
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.async_save = False
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # RNG config
     cfg.rng.seed = 5678

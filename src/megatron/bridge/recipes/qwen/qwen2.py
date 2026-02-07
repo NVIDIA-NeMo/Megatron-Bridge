@@ -962,6 +962,8 @@ def qwen2_500m_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1058,6 +1060,8 @@ def qwen2_1p5b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1154,6 +1158,8 @@ def qwen2_7b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1250,6 +1256,8 @@ def qwen2_72b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1351,6 +1359,8 @@ def qwen25_500m_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1447,6 +1457,8 @@ def qwen25_1p5b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1543,6 +1555,8 @@ def qwen25_7b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1639,6 +1653,8 @@ def qwen25_14b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1735,6 +1751,8 @@ def qwen25_32b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1831,6 +1849,8 @@ def qwen25_72b_sft_config() -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 SFT uses different DDP settings
     cfg.ddp.grad_reduce_in_fp32 = False
@@ -1937,6 +1957,8 @@ def qwen2_500m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2038,6 +2060,8 @@ def qwen2_1p5b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2139,6 +2163,8 @@ def qwen2_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2240,6 +2266,8 @@ def qwen2_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2346,6 +2374,8 @@ def qwen25_500m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2447,6 +2477,8 @@ def qwen25_1p5b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2548,6 +2580,8 @@ def qwen25_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2649,6 +2683,8 @@ def qwen25_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2750,6 +2786,8 @@ def qwen25_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True
@@ -2851,6 +2889,8 @@ def qwen25_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config - Qwen2 PEFT DDP settings
     cfg.ddp.grad_reduce_in_fp32 = True

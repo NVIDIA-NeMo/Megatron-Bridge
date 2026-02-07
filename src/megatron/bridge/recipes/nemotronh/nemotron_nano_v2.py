@@ -316,6 +316,8 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.check_for_nan_in_grad = True
@@ -408,6 +410,8 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.check_for_nan_in_grad = True
@@ -527,6 +531,8 @@ def nemotron_nano_9b_v2_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.check_for_nan_in_grad = True
@@ -641,6 +647,8 @@ def nemotron_nano_12b_v2_peft_config(
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
     cfg.ddp.check_for_nan_in_grad = True
