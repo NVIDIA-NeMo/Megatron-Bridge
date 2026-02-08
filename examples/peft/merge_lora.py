@@ -82,6 +82,11 @@ def parse_args() -> argparse.Namespace:
         help="Base (dense) checkpoint. If omitted, resolved from run_config.yaml in the LoRA checkpoint.",
     )
     parser.add_argument("--debug", action="store_true", help="Verbose logging")
+
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
+
     return parser.parse_args()
 
 
@@ -113,6 +118,7 @@ def merge_lora(
     lora_dir: Path,
     out_dir: Path,
     hf_model_path: str,
+    args: argparse.Namespace
 ) -> None:
     """
     Merge LoRA adapter weights back into the base model.
@@ -131,11 +137,12 @@ def merge_lora(
     print_rank_0(f"Loading base model from {base_dir}")
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
 
-    # Single-GPU context; set all parallel dims to 1
     model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = 1
-    model_provider.pipeline_model_parallel_size = 1
-    model_provider.expert_model_parallel_size = 1
+
+    print_rank_0(f"Setting Parallelism: TP={args.tp} | PP={args.pp} | EP={args.ep}")
+    model_provider.tensor_model_parallel_size = args.tp
+    model_provider.pipeline_model_parallel_size = args.pp
+    model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
     model_provider.initialize_model_parallel(seed=0)
@@ -245,6 +252,7 @@ def main() -> None:
         lora_dir=lora_dir,
         out_dir=Path(args.output).expanduser().resolve(),
         hf_model_path=args.hf_model_path,
+        args=args
     )
 
 
