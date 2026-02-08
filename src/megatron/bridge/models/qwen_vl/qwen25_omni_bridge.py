@@ -39,10 +39,48 @@ class Qwen25OmniBridge(MegatronModelBridge):
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen25VLModelProvider:
+        """
+        Create a Qwen25VLModelProvider from a HuggingFace Qwen2.5-Omni pretrained model.
 
+        This method extracts configuration from the Omni model's nested structure:
+        - Language model config from `thinker_config.text_config`
+        - Vision config from `thinker_config.vision_config`
+        - mRoPE parameters from `text_config.rope_parameters`
+        - Token IDs from both `thinker_config` and `text_config`
+
+        Args:
+            hf_pretrained: HuggingFace PreTrainedVLM containing Qwen2_5OmniForConditionalGeneration
+                config with nested thinker_config structure
+
+        Returns:
+            Qwen25VLModelProvider configured with the Omni model's parameters, including:
+            - Language model parameters from text_config
+            - Vision configuration from thinker_config
+            - mRoPE section for multimodal position embeddings
+            - Token IDs for vision-language tasks (image, video, vision tokens)
+
+        Raises:
+            ValueError: If thinker_config or text_config is missing from the HF config
+
+        Note:
+            The audio_token_id is extracted but not used, as Qwen25VLModelProvider
+            only supports image and video tokens, not audio.
+        """
         hf_config = hf_pretrained.config
 
+        # Validate config structure
+        if not hasattr(hf_config, "thinker_config") or hf_config.thinker_config is None:
+            raise ValueError(
+                "Qwen2_5OmniForConditionalGeneration config must have a 'thinker_config' attribute"
+            )
+        
         thinker_config = hf_config.thinker_config
+        
+        if not hasattr(thinker_config, "text_config") or thinker_config.text_config is None:
+            raise ValueError(
+                "Qwen2_5OmniThinkerConfig must have a 'text_config' attribute"
+            )
+        
         text_config = thinker_config.text_config
         
         mrope_section = None
@@ -52,19 +90,23 @@ class Qwen25OmniBridge(MegatronModelBridge):
             elif hasattr(text_config.rope_parameters, "mrope_section"):
                 mrope_section = text_config.rope_parameters.mrope_section
         
-        rope_theta = getattr(text_config, "rope_theta", None) or (
-            text_config.rope_parameters.rope_theta
-            if hasattr(text_config, "rope_parameters") and 
-               text_config.rope_parameters is not None and
-               hasattr(text_config.rope_parameters, "rope_theta")
-            else 1000000.0
-        )
+        rope_theta = getattr(text_config, "rope_theta", None)
+        if rope_theta is None:
+            if hasattr(text_config, "rope_parameters") and text_config.rope_parameters is not None:
+                if isinstance(text_config.rope_parameters, dict):
+                    rope_theta = text_config.rope_parameters.get("rope_theta", 1000000.0)
+                elif hasattr(text_config.rope_parameters, "rope_theta"):
+                    rope_theta = text_config.rope_parameters.rope_theta
+                else:
+                    rope_theta = 1000000.0
+            else:
+                rope_theta = 1000000.0
         
         model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
         
         image_token_id = getattr(thinker_config, "image_token_id", None) or getattr(thinker_config, "image_token_index", 151655)
         video_token_id = getattr(thinker_config, "video_token_id", None) or getattr(thinker_config, "video_token_index", 151656)
-        audio_token_id = getattr(thinker_config, "audio_token_id", None) or getattr(thinker_config, "audio_token_index", 151646)
+        # audio_token_id = getattr(thinker_config, "audio_token_id", None) or getattr(thinker_config, "audio_token_index", 151646) # audio_token_id is not used by Qwen25VLModelProvider, which only supports image and video tokens
         
         provider = Qwen25VLModelProvider(
             # Language model configuration from text_config
@@ -106,6 +148,28 @@ class Qwen25OmniBridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.
+
+        This method defines the weight mapping between Megatron-Core parameter names and
+        HuggingFace Qwen2.5-Omni parameter names. The mappings include:
+
+        - Direct 1:1 mappings for embeddings, output layer, and layer norms
+        - Layer-specific mappings using wildcard (*) patterns for transformer layers
+        - Special concatenation mappings:
+          * QKVMapping: Combines separate Q, K, V projections into unified QKV
+          * GatedMLPMapping: Combines gate and up projections into single FC1
+        - Replicated mappings for multimodal components:
+          * Visual model parameters (thinker.visual.**)
+          * Audio tower parameters (thinker.audio_tower.**)
+          * Talker and token2wav components
+
+        Returns:
+            MegatronMappingRegistry: Registry containing all parameter mappings for
+                converting between Megatron and HuggingFace Qwen2.5-Omni formats
+
+        Note:
+            The mappings use wildcard patterns (*) to match layer-specific parameters
+            across all transformer layers, and (**) for recursive matching in
+            multimodal component hierarchies.
         """
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
