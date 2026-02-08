@@ -15,6 +15,8 @@
 import json
 import os
 import unittest.mock as mock
+from collections import OrderedDict
+from types import SimpleNamespace
 
 import torch
 
@@ -40,6 +42,19 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
+
+
+def _mock_tokenizer():
+    """Create a lightweight mock tokenizer for MockGPTLowLevelDataset.
+
+    MockGPTLowLevelDataset requires ``tokenizer.vocab_size`` and
+    ``tokenizer.eod`` when building mock datasets.
+    """
+    return SimpleNamespace(
+        vocab_size=1000,
+        eod=0,
+        unique_identifiers=OrderedDict({"class": "MockTokenizer"}),
+    )
 
 
 def create_simple_test_config():
@@ -151,6 +166,7 @@ class TestDataLoaders:
         mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dp_group = object()
@@ -180,6 +196,7 @@ class TestDataLoaders:
 
         cfg = create_simple_test_config()
         cfg.train.eval_iters = 0
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dp_group = object()
@@ -254,6 +271,9 @@ class TestSampleBasedDataLoaders:
         cfg.scheduler.lr_decay_iters = None
         cfg.scheduler.lr_warmup_samples = 1000
         cfg.scheduler.lr_warmup_iters = 0
+
+        # Provide a mock tokenizer required by MockGPTLowLevelDataset
+        cfg.dataset.tokenizer = _mock_tokenizer()
 
         # Need to validate config to calculate train_iters from train_samples
         with mock.patch("megatron.bridge.utils.common_utils.get_world_size_safe", return_value=1):

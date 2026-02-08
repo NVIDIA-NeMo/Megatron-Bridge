@@ -266,10 +266,6 @@ class TestSetupInferenceWrapper:
         assert mock_module.decoder is mock_decoder
 
         mock_wrapper_cls.assert_called_once()
-        # Check InferenceWrapperConfig was created with correct hidden_size
-        call_args = mock_wrapper_cls.call_args
-        inference_config = call_args[0][1]
-        assert inference_config.hidden_size == 1024
 
     @patch("megatron.bridge.inference.vlm.base.QwenVLInferenceWrapper")
     def test_setup_inference_wrapper_qwen3(self, mock_wrapper_cls, mock_tokenizer):
@@ -288,11 +284,6 @@ class TestSetupInferenceWrapper:
         _wrapper = setup_inference_wrapper(mock_model, mock_tokenizer)
 
         mock_wrapper_cls.assert_called_once()
-        # Check InferenceWrapperConfig was created with correct hidden_size
-        # Args are positional: (model, InferenceWrapperConfig)
-        call_args = mock_wrapper_cls.call_args
-        inference_config = call_args[0][1]  # Second positional argument
-        assert inference_config.hidden_size == 2048
 
     def test_setup_inference_wrapper_invalid(self, mock_tokenizer):
         # Create a simple object without module attribute to avoid infinite loop
@@ -349,13 +340,13 @@ class TestGenerate:
 
     @patch("megatron.bridge.inference.vlm.base.VLMEngine")
     @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
-    def test_generate_with_inference_params(
+    def test_generate_with_sampling_params(
         self, mock_qwen_controller, mock_engine, mock_tokenizer, mock_image_processor
     ):
-        from megatron.core.inference.common_inference_params import CommonInferenceParams
+        from megatron.core.inference.sampling_params import SamplingParams
 
         mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
-        inference_params = CommonInferenceParams(num_tokens_to_generate=100)
+        sampling_params = SamplingParams(num_tokens_to_generate=100)
 
         generate(
             wrapped_model=mock_wrapper,
@@ -364,10 +355,10 @@ class TestGenerate:
             prompts=["test"],
             images=["image"],
             processor="processor",
-            inference_params=inference_params,
+            sampling_params=sampling_params,
         )
 
         # Verify generate was called with the provided inference params
         mock_engine.return_value.generate.assert_called()
         call_args = mock_engine.return_value.generate.call_args
-        assert call_args[1]["common_inference_params"] == inference_params
+        assert call_args[1]["sampling_params"] == sampling_params

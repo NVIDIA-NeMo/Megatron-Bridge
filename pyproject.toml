@@ -67,7 +67,7 @@ classifiers = [
 ]
 dependencies = [
     "transformers<5.0.0",
-    "datasets",
+    "datasets>=2.20.0",
     "accelerate",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
@@ -111,8 +111,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878",
-
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878"
 ]
 
 [tool.uv.sources]

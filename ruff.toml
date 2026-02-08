@@ -27,6 +27,7 @@ exclude = [
     "dist",
     "docs/source/conf.py",
     "setup.py",
+    "3rdparty/**",
 ]
 
 # Files to completely ignore
