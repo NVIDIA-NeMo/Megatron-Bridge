@@ -1623,7 +1623,8 @@ class ConfigContainer(Container):
             train_val = getattr(self.train, f.name)
             if train_val is not None:
                 warnings.warn(
-                    f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead."
+                    f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead.",
+                    stacklevel=2,
                 )
                 setattr(self.validation, f.name, train_val)
 
