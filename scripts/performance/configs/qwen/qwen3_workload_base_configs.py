@@ -198,8 +198,8 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V1,
     num_gpus=256,
     pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=12,
-    expert_model_parallel_size=16,
+    expert_model_parallel_size=32,
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     global_batch_size=8192,
 )
 
@@ -217,6 +217,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_BF16_V2 = replace(
 QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_CS_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_CS_V1,
     num_gpus=256,
+    expert_model_parallel_size=32,
     global_batch_size=8192,
 )
 
@@ -267,6 +268,40 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_BF16_V2 = replace(
 QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V1,
     global_batch_size=8192,
+)
+
+
+# =============================================================================
+# Qwen3 235B A22B presets - Large Scale Proxy
+# =============================================================================
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_V2,
+    global_batch_size=512,
+)
+
+
+QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_LARGE_SCALE = replace(
+    QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V2,
+    global_batch_size=512,
 )
 
 
@@ -421,18 +456,14 @@ QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=128,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=12,
-    expert_model_parallel_size=8,
+    expert_model_parallel_size=128,
     micro_batch_size=1,
 )
 
 QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_QWEN3_NEXT_80B_A3B_CONFIG,
     num_gpus=128,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=12,
-    expert_model_parallel_size=8,
+    expert_model_parallel_size=128,
     micro_batch_size=1,
 )
 
@@ -518,4 +549,10 @@ __all__ = [
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B300_BF16_V1",
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1",
     "QWEN3_NEXT_80B_A3B_PRETRAIN_CONFIG_B200_BF16_V1",
+    # Large Scale Proxy
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE",
+    "QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_LARGE_SCALE",
 ]

@@ -23,7 +23,7 @@ Reference: https://huggingface.co/zai-org/GLM-4.5V
 """
 
 import types
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import transformers
@@ -35,6 +35,10 @@ from transformers.models.glm4v.modeling_glm4v import Glm4vModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+if TYPE_CHECKING:
+    from megatron.core.packed_seq_params import PackedSeqParams
 
 
 def is_transformers_min_version(version):
@@ -158,6 +162,7 @@ class GLM45VModel(MegatronModule):
         video_grid_thw: Optional[torch.LongTensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
+        packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
     ) -> Tensor:
@@ -233,6 +238,7 @@ class GLM45VModel(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 

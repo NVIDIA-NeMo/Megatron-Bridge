@@ -43,66 +43,36 @@ _LLAMA3_FINETUNE_FUNCS = [
 
 
 def _safe_overrides_for(name: str) -> dict:
-    # Detect if this is a finetune recipe
+    """Return overrides for recipe functions.
+
+    Pretrain configs use the new parameterless API (return empty dict).
+    Finetune configs still accept parameters.
+    Special case: low_precision pretrain configs still require mixed_precision_recipe.
+    """
     is_finetune = "finetune" in name.lower()
     lname = name.lower()
 
-    overrides = {
-        "name": f"unit_{name}",
-        "dir": ".",
-        "train_iters": 10,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
-    }
-
-    # 405B has special default for global_batch_size (6), don't override it
-    if "405b" not in lname:
-        overrides["global_batch_size"] = 2
-
     if is_finetune:
-        # Finetuning-specific overrides
-        overrides.update(
-            {
-                "finetune_lr": 1e-4,
-                # Note: Finetuning always uses HF tokenizer, never null tokenizer
-                # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
-            }
-        )
+        overrides = {
+            "name": f"unit_{name}",
+            "dir": ".",
+            "train_iters": 10,
+            "micro_batch_size": 1,
+            "seq_length": 64,
+            "min_lr": 1e-5,
+            "lr_warmup_iters": 2,
+            "finetune_lr": 1e-4,
+        }
+        # 405B has special default for global_batch_size (6), don't override it
+        if "405b" not in lname:
+            overrides["global_batch_size"] = 2
     else:
-        # Pretrain-specific overrides
-        overrides.update(
-            {
-                "mock": True,
-                "lr": 1e-4,
-                "use_null_tokenizer": True,
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-                "context_parallel_size": 1,
-            }
-        )
-        # Low precision recipes require an additional mixed_precision_recipe argument
+        # Pretrain configs use the new parameterless API
+        # Exception: low_precision recipes still require mixed_precision_recipe argument
         if "low_precision" in lname:
-            overrides.update(
-                {
-                    "mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed",
-                }
-            )
-            # Also pop LR and GBS/MBS since low_precision recipe defines its own
-            overrides.pop("lr", None)
-            overrides.pop("min_lr", None)
-            overrides.pop("micro_batch_size", None)
-            overrides.pop("global_batch_size", None)
-
-        # Large models/variants may set additional flags in pretrain recipes
-        if "70b" in lname or "405b" in lname:
-            overrides.update(
-                {
-                    "virtual_pipeline_model_parallel_size": None,
-                    "sequence_parallel": True,
-                }
-            )
+            overrides = {"mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed"}
+        else:
+            overrides = {}
 
     return overrides
 
@@ -110,6 +80,7 @@ def _safe_overrides_for(name: str) -> dict:
 class _FakeModelCfg:
     def __init__(self):
         self.cross_entropy_fusion_impl = "te"
+        self.context_parallel_size = 1
 
     def finalize(self):
         return None
@@ -163,16 +134,16 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
 
     _assert_basic_config(cfg)
 
-    # Ensure tokenizer choice matches recipe type
+    # Ensure tokenizer is properly configured
     is_finetune = "finetune" in recipe_func.__name__.lower()
     if is_finetune:
         # Finetuning recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
-        # Pretrain recipes honor use_null_tokenizer override
-        if overrides.get("use_null_tokenizer"):
-            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+        # Pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
+        if cfg.tokenizer.tokenizer_type == "NullTokenizer":
+            assert cfg.tokenizer.vocab_size is not None
         else:
             assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
             assert cfg.tokenizer.tokenizer_model is not None
