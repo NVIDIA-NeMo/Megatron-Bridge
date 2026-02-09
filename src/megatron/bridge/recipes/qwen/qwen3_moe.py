@@ -153,8 +153,9 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
     cfg.model.init_method_std = 0.02
 
     # MoE Token Dispatcher settings
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config
@@ -205,6 +206,7 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False  # Delay wgrad compute for overlap
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False  # MoE-specific: Overlap EP communication
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 
     # Checkpoint config (paths set in _pretrain_common)
@@ -221,6 +223,8 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -262,6 +266,7 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     cfg.model.account_for_loss_in_pipeline_split = True
 
     # MoE Token Dispatcher settings
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_hybridep_num_sms = 16
@@ -314,6 +319,7 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 
     # Checkpoint config
@@ -330,6 +336,8 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
