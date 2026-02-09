@@ -130,6 +130,7 @@ from megatron.bridge.models.qwen_omni import (
     Qwen3OmniModelProvider,
 )
 from megatron.bridge.models.qwen_vl import (
+    Qwen25OmniBridge,
     Qwen25VLBridge,
     Qwen25VLModel,
     Qwen25VLModelProvider,
@@ -228,6 +229,7 @@ __all__ = [
     # Nemotron Models
     "NemotronBridge",
     # VL Models
+    "Qwen25OmniBridge",
     "Qwen25VLModel",
     "Qwen25VLBridge",
     "Qwen25VLModelProvider",
