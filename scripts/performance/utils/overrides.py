@@ -398,7 +398,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if model_recipe_name == "kimi_k2":
         if pp_size is not None or vp_size != -1:
             try:
-                layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+                layout = _get_kimi_k2_pipeline_layout(
+                    recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                )
                 recipe.model.pipeline_model_parallel_layout = layout
             except ValueError:
                 logger.warning(
