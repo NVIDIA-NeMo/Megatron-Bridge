@@ -11,20 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import math
 import logging
+import math
 from functools import partial
 from typing import Any, Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
+
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
@@ -174,7 +175,6 @@ def pack_or_pad_batch_sequences(
     cp_size = this_pg_collection.cp.size()
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
-
 
     # build bshd sequences with tiny padding to be compatible with qwen3vl model
     target_len = math.ceil(cur_len / divisible_by) * divisible_by

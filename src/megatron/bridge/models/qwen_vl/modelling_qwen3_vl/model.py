@@ -13,29 +13,27 @@
 # limitations under the License.
 
 import torch
-from megatron.core import InferenceParams, mpu, tensor_parallel
+from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
+
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
-    split_deepstack_embs,
-    reorganize_inputs,
-    qwen3vl_cp_split,
-    split_data_cp_rank,
     AllGatherVisionEmbeddings,
     collapse_thw,
     get_vision_cp_data,
+    preprocess_packed_seqs,
+    qwen3vl_cp_split,
+    reorganize_inputs,
+    split_data_cp_rank,
+    split_deepstack_embs,
 )
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import preprocess_packed_seqs
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
-from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 class Qwen3VLModel(MegatronModule):
@@ -119,10 +117,11 @@ class Qwen3VLModel(MegatronModule):
         if self.pre_process:
             if not language_transformer_config.use_hf_vision_model:
                 # use megatron vision model
-                from .vision_model import Qwen3VLVisionModel
                 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
                     get_vision_model_config,
                 )
+
+                from .vision_model import Qwen3VLVisionModel
 
                 megatron_vision_transformer_config = get_vision_model_config(
                     hf_vision_config, megatron_config=language_transformer_config
@@ -140,6 +139,7 @@ class Qwen3VLModel(MegatronModule):
             else:
                 # use hf vision model
                 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
+
                 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
                 # Initialize vision model with random weights from config

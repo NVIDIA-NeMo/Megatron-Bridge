@@ -54,6 +54,9 @@ class Qwen3VLTransformerConfig(TransformerConfig):
 
 
 def get_vision_model_config(hf_config, megatron_config=None):
+    """
+    Get the vision model config for Qwen3VL vision model.
+    """
     # init config from scratch to avoid deepcopy of parallel_state
     config = Qwen3VLTransformerConfig(
         num_layers=hf_config.depth,

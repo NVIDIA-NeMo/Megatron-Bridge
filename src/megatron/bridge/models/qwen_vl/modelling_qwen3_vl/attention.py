@@ -13,17 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from torch import Tensor
+from einops import rearrange
 from megatron.core.transformer.attention import (
+    HAVE_FA3,
     BaseInferenceContext,
     PackedSeqParams,
     SelfAttention,
-    HAVE_FA3,
     deprecate_inference_params,
     is_fa_min_version,
     nvtx_range_pop,
     nvtx_range_push,
 )
+from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
 

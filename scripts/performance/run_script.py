@@ -19,10 +19,10 @@ from argument_parser import parse_cli_args
 from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
 from utils.utils import get_perf_optimized_recipe
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
-from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 
 
 logger = logging.getLogger(__name__)

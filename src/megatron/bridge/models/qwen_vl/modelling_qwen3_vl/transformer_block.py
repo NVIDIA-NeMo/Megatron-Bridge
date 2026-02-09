@@ -22,21 +22,19 @@ from contextlib import nullcontext
 from typing import Optional, Union
 
 import torch
-from torch import nn
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.enums import Fp8Recipe
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
-from torch import Tensor
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
-from megatron.core.transformer.utils import sharded_state_dict_default
-
-from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
+from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
+from megatron.core.transformer.utils import sharded_state_dict_default
+from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
+from torch import Tensor, nn
 
 
 try:
@@ -55,6 +53,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisio
 
 
 class Qwen3VLVisionTransformerBlock(TransformerBlock):
+    """
+    Vision Transformer Block for Qwen3VL vision model.
+    """
+
     def __init__(
         self,
         config: Qwen3VLTransformerConfig,
@@ -430,7 +432,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
 
 class Qwen3VLTransformerBlock(TransformerBlock):
-    """Transformer class."""
+    """
+    Transformer Block for Qwen3VL model.
+    """
 
     def _checkpointed_forward(
         self,

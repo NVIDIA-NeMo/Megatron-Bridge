@@ -17,15 +17,15 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
-from megatron.core.packed_seq_params import PackedSeqParams
-from torch import Tensor
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.core import parallel_state
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
     get_pos_emb_on_this_cp_rank,
 )
+from megatron.core.packed_seq_params import PackedSeqParams
+from torch import Tensor
+
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
 
 class Qwen3VLMultimodalRotaryEmbedding(nn.Module):

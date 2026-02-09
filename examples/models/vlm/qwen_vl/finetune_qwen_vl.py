@@ -94,6 +94,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.qwen_vl import qwen3_vl as qwen3_vl_recipes
 from megatron.bridge.recipes.qwen_vl import qwen25_vl as qwen25_vl_recipes
 from megatron.bridge.training.config import ConfigContainer
@@ -103,9 +104,9 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 from megatron.bridge.utils.common_utils import get_rank_safe
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 

@@ -17,18 +17,23 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
+from megatron.core import mpu
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.utils import get_tensor_model_parallel_group_if_none
 from torch import nn
-from megatron.core import mpu
+
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py
 class Qwen3VLVisionPatchEmbed(nn.Module):
+    """
+    Vision Patch Embed for Qwen3VL vision model.
+    """
+
     def __init__(
         self,
         config: Qwen3VLTransformerConfig,
@@ -63,6 +68,10 @@ class Qwen3VLVisionPatchEmbed(nn.Module):
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py
 class Qwen3VLVisionRotaryEmbedding(nn.Module):
+    """
+    Vision Rotary Embedding for Qwen3VL vision model.
+    """
+
     def __init__(self, dim: int, theta: float = 10000.0) -> None:
         super().__init__()
         self.dim = dim
@@ -91,12 +100,20 @@ class Qwen3VLVisionRotaryEmbedding(nn.Module):
 
 @dataclass
 class PatchMergerSubmodules:
+    """
+    Patch Merger Submodules for Qwen3VL vision model.
+    """
+
     patch_norm: Union[ModuleSpec, type] = None
     linear_fc1: Union[ModuleSpec, type] = None
     linear_fc2: Union[ModuleSpec, type] = None
 
 
 class Qwen3VLVisionPatchMerger(MegatronModule):
+    """
+    Vision Patch Merger for Qwen3VL vision model.
+    """
+
     def __init__(
         self,
         config: Qwen3VLTransformerConfig,
@@ -164,6 +181,9 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
 
 
 def split_part_by_cp_tp(cp_size, cp_rank, tp_size, tp_rank, split_size):
+    """
+    Get the split part by CP and TP for Qwen3VL vision model using zigzag pattern.
+    """
     part_list = list(range(split_size))
 
     cp_rank2 = 2 * cp_size - cp_rank - 1
@@ -187,6 +207,23 @@ def split_deepstack_embs(
     cp_rank: int = 0,
     sequence_parallel: bool = False,
 ):
+    """
+    Split the deepstack visual embeddings by CP and TP for Qwen3VL vision model.
+    NOTE:
+        first split by cp(zigzag), then split by sp
+        for example cp=2/tp=4
+        visual_pos_masks will split in 16 part:
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        first split by cp(zigzag) is:
+        cp_rank0: [0, 1, 2, 3, 12, 13, 14, 15]
+        cp_rank1: [4, 5, 6, 7, 8, 9, 10, 11]
+        then split by sp:
+        cp_rank0/tp_rank0 = [0, 1]
+        cp_rank0/tp_rank1 = [2, 3]
+        ...
+        cp_rank1/tp_rank2 = [8, 9]
+        cp_rank1/tp_rank3 = [10, 11]
+    """
     if not sequence_parallel:
         tp_size = 1
         tp_rank = 0
@@ -200,19 +237,6 @@ def split_deepstack_embs(
     assert visual_pos_masks.shape[-1] % split_size == 0
     batch_size = visual_pos_masks.size(0)
 
-    # first split by cp(zigzag), then split by sp
-    # for example cp=2/tp=4
-    # visual_pos_masks will split in 16 part:
-    # [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-    # first split by cp(zigzag) is:
-    # cp_rank0: [0, 1, 2, 3, 12, 13, 14, 15]
-    # cp_rank1: [4, 5, 6, 7, 8, 9, 10, 11]
-    # then split by sp:
-    # cp_rank0/tp_rank0 = [0, 1]
-    # cp_rank0/tp_rank1 = [2, 3]
-    # ...
-    # cp_rank1/tp_rank2 = [8, 9]
-    # cp_rank1/tp_rank3 = [10, 11]
     cp_tp_part_list = split_part_by_cp_tp(cp_size, cp_rank, tp_size, tp_rank, split_size)
     visual_pos_masks_list = visual_pos_masks.chunk(split_size, dim=-1)
     embed_lens = [ele.sum(-1) for ele in visual_pos_masks_list]
@@ -245,6 +269,9 @@ def find_vision_id_index(
     image_token_id: int,
     video_token_id: int,
 ):
+    """
+    Find the vision id index for Qwen3VL vision model.
+    """
     assert input_ids.dim() == 1, "input_ids should be flaaten"
     if input_ids.numel() == 0:
         return []
@@ -297,6 +324,9 @@ def reorganize_inputs(
     video_token_id: int = 151656,
     square_merge_size: int = 4,
 ):
+    """
+    Reorganize the inputs for Qwen3VL vision model.
+    """
     if pixel_values is None:
         if video_input_mask is None and pixel_values_videos is not None:
             video_input_mask = (input_ids == video_token_id).contiguous()
@@ -369,6 +399,9 @@ def reorganize_inputs(
 
 # reference: megatron/training/utils.py get_batch_on_this_cp_rank
 def split_data_cp_rank(val: torch.Tensor, cp_size: int, seq_dim: int, cp_rank: int = None):
+    """
+    Split the data by CP rank for Qwen3VL vision model, using zigzag pattern.
+    """
     assert cp_size > 1
     assert 0 == val.shape[seq_dim] % (2 * cp_size), f"{val.shape=} {cp_size=}"
     assert cp_rank is not None
@@ -390,6 +423,9 @@ def split_data_cp_rank(val: torch.Tensor, cp_size: int, seq_dim: int, cp_rank: i
 
 
 def expand_thw(thw: torch.Tensor) -> torch.Tensor:
+    """
+    Expand the THW for Qwen3VL vision model.
+    """
     assert thw.dim() == 2
     repeats = thw[:, 0].to(torch.long)
     assert torch.all(repeats > 0), "thw[:,0] must be > 0"
@@ -401,6 +437,9 @@ def expand_thw(thw: torch.Tensor) -> torch.Tensor:
 
 
 def collapse_thw(expanded: torch.Tensor) -> torch.Tensor:
+    """
+    Collapse the THW for Qwen3VL vision model.
+    """
     assert expanded.dim() == 2
     assert expanded.size(1) >= 2
     if expanded.shape[0] < 2:
@@ -431,6 +470,9 @@ def qwen2vl_pad_and_split(
     pixel_values: list[torch.Tensor],
     image_grid_thws: list[torch.Tensor],
 ):
+    """
+    Split the pixel values and image grid thws for Qwen3VL vision model.
+    """
     assert len(pixel_values) == len(image_grid_thws)
     # split the pixel_values
     split_pixel_values = []
@@ -501,6 +543,9 @@ def qwen3vl_cp_split(
     pixel_values: torch.Tensor,
     image_grid_thw: torch.Tensor,
 ):
+    """
+    Split the pixel values and image grid thws for Qwen3VL vision model.
+    """
     assert cp_size > 1
     if pixel_values is None:
         assert image_grid_thw is None
@@ -571,8 +616,15 @@ def get_vision_cp_data(
 
 
 class AllGatherVisionEmbeddings(torch.autograd.Function):
+    """
+    AllGatherVisionEmbeddings for Qwen3VL vision model.
+    """
+
     @staticmethod
     def forward(ctx, input, seqlens_on_cp_ranks, cp_group: torch.distributed.ProcessGroup):
+        """
+        Forward pass for AllGatherVisionEmbeddings.
+        """
         outputs = []
         for i in range(len(seqlens_on_cp_ranks)):
             o = torch.zeros(
@@ -591,6 +643,9 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        """
+        Backward pass for AllGatherVisionEmbeddings.
+        """
         cp_rank = ctx.cp_rank
         seqlens_on_cp_ranks = ctx.saved_tensors
         start_idx = torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0

@@ -23,23 +23,22 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.extensions.transformer_engine import (
     TEColumnParallelLinear,
     TENorm,
     TERowParallelLinear,
+)
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.vision.vit_layer_specs import (
+    get_vit_layer_with_transformer_engine_spec,
 )
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models import Qwen3ModelProvider, Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
-from megatron.core.models.vision.vit_layer_specs import (
-    get_vit_layer_with_transformer_engine_spec,
-)
 
 
 @dataclass
