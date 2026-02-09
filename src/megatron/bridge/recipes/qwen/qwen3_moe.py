@@ -448,7 +448,7 @@ def _qwen3_moe_finetune_common(
     name: str = "default",
     # Finetuning-specific
     pretrained_checkpoint: Optional[str] = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training hyperparameters
     train_iters: int = 100,
     global_batch_size: Optional[int] = None,
