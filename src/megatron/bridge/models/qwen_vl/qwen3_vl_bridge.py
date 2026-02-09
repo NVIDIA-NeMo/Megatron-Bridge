@@ -188,9 +188,6 @@ class Qwen3VLBridge(MegatronModelBridge):
                 "vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
                 "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
                 "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
-                # These patch_embed are conv, we need to use ReplicatedMapping
-                "vision_model.patch_embed.proj.**": "model.visual.patch_embed.proj.**",
-                "vision_model.pos_embed.weight": "model.visual.pos_embed.weight",
             }
 
         param_mappings.update(additional_param_mappings)
@@ -248,6 +245,14 @@ class Qwen3VLBridge(MegatronModelBridge):
                     ConcatenatedQKVMapping(
                         megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
                         hf_param="model.visual.blocks.*.attn.qkv.bias",
+                    ),
+                    ReplicatedMapping(
+                        megatron_param="vision_model.patch_embed.proj.**",
+                        hf_param="model.visual.patch_embed.proj.**",
+                    ),
+                    ReplicatedMapping(
+                        megatron_param="vision_model.pos_embed.weight",
+                        hf_param="model.visual.pos_embed.weight",
                     ),
                 ]
             )
@@ -421,9 +426,6 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                 "vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
                 "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
                 "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
-                # These patch_embed are conv, we need to use ReplicatedMapping
-                "vision_model.patch_embed.proj.**": "model.visual.patch_embed.proj.**",
-                "vision_model.pos_embed.weight": "model.visual.pos_embed.weight",
             }
 
         param_mappings.update(additional_param_mappings)
@@ -482,6 +484,14 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                     ConcatenatedQKVMapping(
                         megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
                         hf_param="model.visual.blocks.*.attn.qkv.bias",
+                    ),
+                    ReplicatedMapping(  # These patch_embed are conv, we need to use ReplicatedMapping
+                        megatron_param="vision_model.patch_embed.proj.**",
+                        hf_param="model.visual.patch_embed.proj.**",
+                    ),
+                    ReplicatedMapping(
+                        megatron_param="vision_model.pos_embed.weight",
+                        hf_param="model.visual.pos_embed.weight",
                     ),
                 ]
             )
