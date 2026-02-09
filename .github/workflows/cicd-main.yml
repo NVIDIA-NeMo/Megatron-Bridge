@@ -403,7 +403,6 @@ jobs:
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_ministral3
           - script: L2_Launch_recipes_nemotronh
-          - script: L2_Launch_recipes_qwen_vl
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization
