@@ -85,6 +85,7 @@ KIMI_K2_PRETRAIN_CONFIG_H100 = replace(
     global_batch_size=8192,
     recompute_modules=["mla_up_proj", "mlp"],
     moe_a2a_overlap=False,
+    pp_layout="Et|(tt|)*30L",
 )
 KIMI_K2_PRETRAIN_CONFIG_H100_BF16 = KIMI_K2_PRETRAIN_CONFIG_H100
 KIMI_K2_PRETRAIN_CONFIG_H100_FP8_CS = KIMI_K2_PRETRAIN_CONFIG_H100
