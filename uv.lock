@@ -3145,6 +3145,7 @@ dev = [
     { name = "wget" },
 ]
 mlm = [
+    { name = "accelerate" },
     { name = "flask-restful" },
     { name = "sentencepiece" },
     { name = "tiktoken" },
@@ -3154,6 +3155,7 @@ mlm = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'mlm'" },
     { name = "av", marker = "extra == 'dev'" },
     { name = "av", marker = "extra == 'lts'" },
     { name = "causal-conv1d", marker = "extra == 'dev'", specifier = "~=1.5" },
@@ -6669,7 +6671,7 @@ name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mpmath" },
+    { name = "mpmath", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
@@ -6991,16 +6993,15 @@ name = "torch"
 version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
-    { name = "sympy" },
+    { name = "filelock", marker = "sys_platform != 'linux'" },
+    { name = "fsspec", marker = "sys_platform != 'linux'" },
+    { name = "jinja2", marker = "sys_platform != 'linux'" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and sys_platform != 'linux'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and sys_platform != 'linux'" },
+    { name = "setuptools", marker = "python_full_version >= '3.12' and sys_platform != 'linux'" },
+    { name = "sympy", marker = "sys_platform != 'linux'" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
 ]
 
 [[package]]
@@ -7008,8 +7009,8 @@ name = "torchvision"
 version = "0.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
+    { name = "numpy", marker = "sys_platform != 'linux'" },
+    { name = "pillow", marker = "sys_platform != 'linux'" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
 
