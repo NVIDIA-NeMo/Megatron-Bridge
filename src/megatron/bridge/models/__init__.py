@@ -210,6 +210,7 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "BailingMoeV2Bridge",
     "BailingMoeV2ModelProvider",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",

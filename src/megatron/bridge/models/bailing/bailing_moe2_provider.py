@@ -55,9 +55,8 @@ class BailingMoeV2ModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     qk_layernorm: bool = True
     seq_length: int = 4096
-    init_method_std: int = 0.02
+    init_method_std: float = 0.02
     hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
     vocab_size: int = 157184
     share_embeddings_and_output_weights: Optional[bool] = False
     layernorm_epsilon: float = 1e-6

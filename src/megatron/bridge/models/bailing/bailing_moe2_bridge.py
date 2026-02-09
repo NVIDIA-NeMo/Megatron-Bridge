@@ -56,7 +56,7 @@ class BailingMoeV2Bridge(MegatronModelBridge):
     Megatron Bridge for Ling MoE V2 Model
 
     Example:
-        >>> from megatron.bridge import AutoBrige
+        >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("inclusionAI/Ling-mini-2.0")
         >>> provider = bridge.to_megatron_provider()
     """

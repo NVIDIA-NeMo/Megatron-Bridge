@@ -127,11 +127,6 @@ class TestBailingMoeV2Conversion:
 
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
-        # Debug: Check model dtype before saving
-        for name, param in model.named_parameters():
-            print(f"Before save - {name}: {param.dtype}")
-            break  # Just check the first parameter
-
         # Download and save tokenizer from a reference Bailing model
         try:
             tokenizer = AutoTokenizer.from_pretrained(
