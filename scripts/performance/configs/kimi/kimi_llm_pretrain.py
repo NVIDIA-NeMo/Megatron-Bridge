@@ -18,6 +18,7 @@ from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
 
+from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import kimi_k2_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -53,15 +54,23 @@ def kimi_k2_pretrain_config_gb300(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        layout=None,
-    )
+    cfg = pretrain_config()
+    precision_config = get_precision_config(precision)
+    cfg.mixed_precision = precision_config
+
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        pp_size = base_cfg.pipeline_model_parallel_size
+        vp_size = base_cfg.virtual_pipeline_model_parallel_size
+        layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+        cfg.model.pipeline_model_parallel_layout = layout
+
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -87,15 +96,23 @@ def kimi_k2_pretrain_config_gb200(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        layout=None,
-    )
+    cfg = pretrain_config()
+    precision_config = get_precision_config(precision)
+    cfg.mixed_precision = precision_config
+
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        pp_size = base_cfg.pipeline_model_parallel_size
+        vp_size = base_cfg.virtual_pipeline_model_parallel_size
+        layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+        cfg.model.pipeline_model_parallel_layout = layout
+
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -121,16 +138,23 @@ def kimi_k2_pretrain_config_b200(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        enable_deepep=True,
-        optimizer_type="muon",
-    )
+    cfg = pretrain_config()
+    precision_config = get_precision_config(precision)
+    cfg.mixed_precision = precision_config
+
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        pp_size = base_cfg.pipeline_model_parallel_size
+        vp_size = base_cfg.virtual_pipeline_model_parallel_size
+        layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+        cfg.model.pipeline_model_parallel_layout = layout
+
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -151,17 +175,23 @@ def kimi_k2_pretrain_config_h100(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
 
-    cfg = pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        enable_deepep=False,
-        optimizer_type="muon",
-        layout="Et|(tt|)*30L",
-    )
+    cfg = pretrain_config()
+    precision_config = get_precision_config(precision)
+    cfg.mixed_precision = precision_config
+
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        pp_size = base_cfg.pipeline_model_parallel_size
+        vp_size = base_cfg.virtual_pipeline_model_parallel_size
+        layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+        cfg.model.pipeline_model_parallel_layout = layout
+
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

@@ -19,6 +19,7 @@ from typing import List, Optional
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -394,6 +395,18 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
     ):
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
+    if model_recipe_name == "kimi_k2":
+        if pp_size is not None or vp_size != -1:
+            try:
+                layout = _get_kimi_k2_pipeline_layout(pp_size, vp_size)
+                recipe.model.pipeline_model_parallel_layout = layout
+            except ValueError:
+                logger.warning(
+                    f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                )
+                recipe.model.pipeline_model_parallel_layout = None
+        if pipeline_model_parallel_layout is not None:
+            recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
