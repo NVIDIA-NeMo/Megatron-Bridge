@@ -559,7 +559,7 @@ _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
     context_parallel_size=1,
     virtual_pipeline_model_parallel_size=None,
     micro_batch_size=1,
-    global_batch_size=64,
+    global_batch_size=32,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="mlp",
 )
@@ -590,10 +590,12 @@ LLAMA3_70B_LORA_CONFIG_GB200_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_GB200
 LLAMA3_70B_LORA_CONFIG_GB200_FP8_CS_V1 = replace(
     _LLAMA3_70B_LORA_CONFIG_GB200,
     pipeline_model_parallel_size=2,
+    global_batch_size=32,
 )
 LLAMA3_70B_LORA_CONFIG_GB200_FP8_MX_V1 = replace(
     _LLAMA3_70B_LORA_CONFIG_GB200,
     pipeline_model_parallel_size=2,
+    global_batch_size=32,
 )
 
 
