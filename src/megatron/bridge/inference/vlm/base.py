@@ -16,11 +16,10 @@ from typing import List, Optional, Union
 
 import torch
 import torch.distributed
-from megatron.core.inference.common_inference_params import CommonInferenceParams
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
-from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import InferenceWrapperConfig
+from megatron.core.inference.sampling_params import SamplingParams
 from PIL.Image import Image
 from transformers import AutoProcessor
 
@@ -112,6 +111,17 @@ def setup_model_and_tokenizer(
     return inference_wrapped_model, processor
 
 
+def _expose_decoder_from_language_model(model):
+    """Recursively get language_model from model and expose decoder, handling wrapped modules."""
+    current = model
+    while hasattr(current, "module"):
+        current = current.module
+
+    if hasattr(current, "language_model"):
+        language_model = current.language_model
+        current.decoder = language_model.decoder
+
+
 def setup_inference_wrapper(
     model,
     tokenizer,
@@ -130,22 +140,15 @@ def setup_inference_wrapper(
     if isinstance(config, Qwen25VLModelProvider) or isinstance(config, Qwen3VLModelProvider):
         wrapper_cls = QwenVLInferenceWrapper
         if isinstance(config, Qwen25VLModelProvider):
-            hidden_size = config.hidden_size
+            _ = config.hidden_size
+            # Expose decoder for MCore Infernce Engine compatibility (used by get_mamba_inference_state_config_from_model)
+            _expose_decoder_from_language_model(mcore_model)
         else:
-            hidden_size = config.language_transformer_config.hidden_size
+            _ = config.language_transformer_config.hidden_size
     else:
         raise ValueError(f"Unknown model config: {config}")
 
-    inference_wrapped_model = wrapper_cls(
-        mcore_model,
-        InferenceWrapperConfig(
-            hidden_size=hidden_size,
-            params_dtype=params_dtype,
-            inference_batch_times_seqlen_threshold=inference_batch_times_seqlen_threshold,
-            padded_vocab_size=tokenizer.vocab_size,
-            inference_max_seq_length=inference_max_seq_length,
-        ),
-    )
+    inference_wrapped_model = wrapper_cls(mcore_model)
 
     return inference_wrapped_model
 
@@ -159,7 +162,7 @@ def generate(
     processor=None,
     max_batch_size: int = 4,
     random_seed: Optional[int] = None,
-    inference_params: Optional[CommonInferenceParams] = None,
+    sampling_params: Optional[SamplingParams] = None,
 ) -> dict:
     """
     Generates text using a NeMo VLM model.
@@ -171,8 +174,8 @@ def generate(
         images (list): The list of images to generate text for.
         max_batch_size (int, optional): The maximum batch size. Defaults to 4.
         random_seed (Optional[int], optional): The random seed. Defaults to None.
-        inference_params (Optional["CommonInferenceParams"], optional): The inference parameters defined in
-            Mcore's CommonInferenceParams. Defaults to None.
+        sampling_params (Optional["SamplingParams"], optional): The sampling parameters defined in
+            Mcore's SamplingParams. Defaults to None.
 
     Returns:
         list[Union["InferenceRequest", str]]: A list of generated text,
@@ -196,12 +199,13 @@ def generate(
         text_generation_controller=text_generation_controller, max_batch_size=max_batch_size, random_seed=random_seed
     )
 
-    common_inference_params = inference_params or CommonInferenceParams(num_tokens_to_generate=50)
+    if sampling_params is None:
+        sampling_params = SamplingParams(num_tokens_to_generate=50)
 
     results = mcore_engine.generate(
         prompts=prompts,
         images=images,
-        common_inference_params=common_inference_params,
+        sampling_params=sampling_params,
     )
 
     return results
