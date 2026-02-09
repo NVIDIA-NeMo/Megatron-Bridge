@@ -3145,7 +3145,6 @@ dev = [
     { name = "wget" },
 ]
 mlm = [
-    { name = "accelerate" },
     { name = "flask-restful" },
     { name = "sentencepiece" },
     { name = "tiktoken" },
@@ -3155,7 +3154,6 @@ mlm = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", marker = "extra == 'mlm'" },
     { name = "av", marker = "extra == 'dev'" },
     { name = "av", marker = "extra == 'lts'" },
     { name = "causal-conv1d", marker = "extra == 'dev'", specifier = "~=1.5" },
