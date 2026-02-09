@@ -60,8 +60,8 @@ class SetupOutput(NamedTuple):
     Attributes:
         state: The global state object holding configuration and runtime information.
         model: The initialized Megatron model.
-        optimizer: The initialized optimizer.
-        scheduler: The initialized learning rate scheduler.
+        optimizer: The initialized optimizer. None when skip_train=True.
+        scheduler: The initialized learning rate scheduler. None when skip_train=True.
         train_data_iterator: The data iterator for the training dataset, if applicable.
         valid_data_iterator: The data iterator for the validation dataset, if applicable.
         test_data_iterator: The data iterator for the testing dataset, if applicable.
@@ -72,8 +72,8 @@ class SetupOutput(NamedTuple):
 
     state: GlobalState
     model: MegatronModule
-    optimizer: MegatronOptimizer
-    scheduler: OptimizerParamScheduler
+    optimizer: Optional[MegatronOptimizer]
+    scheduler: Optional[OptimizerParamScheduler]
     train_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
@@ -228,17 +228,23 @@ def setup(
     )
 
     cfg.model.timers = timers
-    cfg.optimizer.timers = timers
-    optimizer, scheduler = setup_optimizer(
-        optimizer_config=cfg.optimizer,
-        scheduler_config=cfg.scheduler,
-        model=model,
-        use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        # Only pass pg_collection when use_decentralized_pg is True.
-        # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
-        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
-        optimizer_config_override_provider=cfg.optimizer_config_override_provider,
-    )
+
+    # Skip optimizer and scheduler creation when skip_train=True to save memory
+    if cfg.train.skip_train:
+        optimizer = None
+        scheduler = None
+    else:
+        cfg.optimizer.timers = timers
+        optimizer, scheduler = setup_optimizer(
+            optimizer_config=cfg.optimizer,
+            scheduler_config=cfg.scheduler,
+            model=model,
+            use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
+            # Only pass pg_collection when use_decentralized_pg is True.
+            # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
+            pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
+            optimizer_config_override_provider=cfg.optimizer_config_override_provider,
+        )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 

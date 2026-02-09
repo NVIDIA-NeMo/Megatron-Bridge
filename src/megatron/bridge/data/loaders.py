@@ -111,6 +111,10 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
     Determines sample counts based on training mode either specified iterations or samples,
     global batch size, and evaluation interval/iterations specified in the config.
 
+    When skip_train is enabled:
+    - train_samples is set to 0 (no training data needed)
+    - validation iterations are simplified to just eval_iters since there's no training loop
+
     Args:
         cfg: The main configuration container.
 
@@ -118,14 +122,20 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         A tuple (train_samples, valid_samples, test_samples).
     """
 
-    # If train_samples is directly provided, use it
-    if cfg.train.train_samples is not None:
-        train_samples = cfg.train.train_samples
+    # When skip_train is True, we don't need training data
+    if cfg.train.skip_train:
+        train_samples = 0
+        eval_iters = cfg.train.eval_iters
     else:
-        # Otherwise fallback to calculating samples based on iterations and global batch size
-        train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+        # If train_samples is directly provided, use it
+        if cfg.train.train_samples is not None:
+            train_samples = cfg.train.train_samples
+        else:
+            # Otherwise fallback to calculating samples based on iterations and global batch size
+            train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+        # Calculate eval iterations based on training iterations and evaluation interval
+        eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
 
-    eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
     test_iters = cfg.train.eval_iters
 
     return (
@@ -196,22 +206,25 @@ def build_train_valid_test_data_loaders(
     dp_rank = torch.distributed.get_rank(group=dp_group)
     dp_size = torch.distributed.get_world_size(group=dp_group)
 
-    # Build dataloders.
-    train_dataloader = build_pretraining_data_loader(
-        train_ds,
-        train_state.consumed_train_samples,
-        cfg.dataset.dataloader_type,
-        cfg.train.micro_batch_size,
-        cfg.dataset.num_workers,
-        cfg.dataset.data_sharding,
-        worker_init_fn=maybe_worker_init_fn,
-        collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
-        pin_memory=cfg.dataset.pin_memory,
-        persistent_workers=cfg.dataset.persistent_workers,
-        data_parallel_rank=dp_rank,
-        data_parallel_size=dp_size,
-        global_batch_size=cfg.train.global_batch_size,
-    )
+    # Build dataloaders.
+    # Skip building train dataloader when skip_train=True to save memory
+    if not cfg.train.skip_train:
+        train_dataloader = build_pretraining_data_loader(
+            train_ds,
+            train_state.consumed_train_samples,
+            cfg.dataset.dataloader_type,
+            cfg.train.micro_batch_size,
+            cfg.dataset.num_workers,
+            cfg.dataset.data_sharding,
+            worker_init_fn=maybe_worker_init_fn,
+            collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
+            pin_memory=cfg.dataset.pin_memory,
+            persistent_workers=cfg.dataset.persistent_workers,
+            data_parallel_rank=dp_rank,
+            data_parallel_size=dp_size,
+            global_batch_size=cfg.train.global_batch_size,
+        )
+
     if cfg.train.skip_train and cfg.train.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,

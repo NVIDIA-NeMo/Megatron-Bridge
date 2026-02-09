@@ -216,6 +216,58 @@ class TestDataLoaders:
         assert test_dataloader is None
 
 
+class TestSkipTrainDataLoaders:
+    """Tests for skip_train=True data loader functionality."""
+
+    def test_get_train_valid_test_num_samples_skip_train(self):
+        """Test sample calculation when skip_train=True."""
+        cfg = create_simple_test_config()
+        cfg.train.skip_train = True
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
+
+        # When skip_train=True, train_samples should be 0
+        expected_train_samples = 0
+        # eval_iters should be simplified to just eval_iters (not multiplied by train checkpoints)
+        expected_eval_iters = cfg.train.eval_iters
+        expected_valid_samples = expected_eval_iters * cfg.train.global_batch_size
+        expected_test_samples = cfg.train.eval_iters * cfg.train.global_batch_size
+
+        assert train_samples == expected_train_samples
+        assert valid_samples == expected_valid_samples
+        assert test_samples == expected_test_samples
+
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
+    @mock.patch("torch.distributed.broadcast")
+    def test_build_data_loaders_skip_train(self, mock_broadcast, mock_get_rank, mock_get_world_size):
+        """Test data loader building with skip_train=True."""
+        mock_get_rank.return_value = 0
+        mock_get_world_size.return_value = 1
+
+        cfg = create_simple_test_config()
+        cfg.train.skip_train = True
+        cfg.dataset.finalize()
+        dataset_provider = get_dataset_provider(cfg.dataset)
+        dp_group = object()
+        train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
+        )
+
+        # When skip_train=True, train_dataloader should be None
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        actual_flags = mock_broadcast.call_args[0][0]
+        # do_train=0 (train_dataloader is None), do_valid=1, do_test=1
+        expected_flags = torch.tensor([0, 1, 1], dtype=torch.long, device="cuda")
+        assert torch.equal(actual_flags, expected_flags)
+        assert train_dataloader is None
+        assert valid_dataloader is not None
+        assert test_dataloader is not None
+
+
 class TestSampleBasedDataLoaders:
     """Tests for sample-based training data loader functionality."""
 

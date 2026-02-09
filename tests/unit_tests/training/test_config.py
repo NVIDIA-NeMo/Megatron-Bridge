@@ -2777,3 +2777,78 @@ class TestLoggerConfigFinalize:
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
             config.finalize()  # Should not raise
+
+
+class TestSkipTrainValidation:
+    """Tests for skip_train configuration validation and related settings."""
+
+    def test_skip_train_auto_disables_load_optim(self, monkeypatch):
+        """Test that skip_train=True automatically sets load_optim=False."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        train_cfg = create_test_training_config(skip_train=True)
+        checkpoint_cfg = create_test_checkpoint_config(load_optim=True)  # Explicitly set to True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            # Before validation, load_optim should be True
+            assert container.checkpoint.load_optim is True
+
+            container.validate()
+
+            # After validation with skip_train=True, load_optim should be False
+            assert container.checkpoint.load_optim is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_skip_train_false_preserves_load_optim(self, monkeypatch):
+        """Test that skip_train=False preserves the load_optim setting."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        train_cfg = create_test_training_config(skip_train=False)
+        checkpoint_cfg = create_test_checkpoint_config(load_optim=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            container.validate()
+
+            # load_optim should remain True since skip_train=False
+            assert container.checkpoint.load_optim is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_skip_train_with_load_optim_already_false(self, monkeypatch):
+        """Test that skip_train=True with load_optim=False works correctly."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        train_cfg = create_test_training_config(skip_train=True)
+        checkpoint_cfg = create_test_checkpoint_config(load_optim=False)  # Already False
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            container.validate()
+
+            # load_optim should still be False
+            assert container.checkpoint.load_optim is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_skip_train_default_value(self, monkeypatch):
+        """Test that skip_train defaults to False."""
+        train_cfg = create_test_training_config()
+        assert train_cfg.skip_train is False
