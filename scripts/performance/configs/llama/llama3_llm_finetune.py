@@ -20,9 +20,8 @@ from utils.utils import get_workload_base_config
 
 from megatron.bridge.recipes.llama import (
     llama3_8b_sft_config,
-    llama3_8b_peft_config,
-    llama3_70b_sft_config,
     llama3_70b_peft_config,
+    llama3_70b_sft_config,
 )
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
