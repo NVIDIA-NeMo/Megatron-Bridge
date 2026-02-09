@@ -161,6 +161,7 @@ class TestNemotronNanoV2FinetuneRecipes:
         """
         config = nemotron_nano_9b_v2_peft_config(peft_scheme="lora")
         config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Don't try to resume from default path and load from pretrained checkpoint
         return config
 
     def _finetune_wrapper_full(self, checkpoint_dir, **kwargs):
@@ -171,6 +172,7 @@ class TestNemotronNanoV2FinetuneRecipes:
         """
         config = nemotron_nano_9b_v2_sft_config()
         config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Don't try to resume from default path and load from pretrained checkpoint
         return config
 
     @pytest.mark.run_only_on("GPU")
@@ -460,6 +462,7 @@ class TestNemotron3NanoFinetuneRecipes:
         else:
             config = nemotron_3_nano_sft_config()
         config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Don't try to resume from default path and load from pretrained checkpoint
         return config
 
     @pytest.mark.run_only_on("GPU")
