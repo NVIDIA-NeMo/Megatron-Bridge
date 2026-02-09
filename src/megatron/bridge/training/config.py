@@ -15,7 +15,6 @@
 import logging
 import os
 import signal
-import warnings
 from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
@@ -729,17 +728,6 @@ class TrainingConfig:
 
     iterations_to_skip: list[int] = field(default_factory=list)
     """List of iterations to skip during training, empty by default."""
-
-    # ---------------- Validation config. ----------------
-
-    eval_iters: int | None = None
-    """Number of iterations to run for evaluation validation/test for. Deprecated in favor of ValidationConfig."""
-
-    eval_interval: int | None = None
-    """Interval between running evaluation on validation set. Deprecated in favor of ValidationConfig."""
-
-    skip_train: bool | None = None
-    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit. Deprecated in favor of ValidationConfig."""
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
@@ -1618,14 +1606,6 @@ class ConfigContainer(Container):
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
         validate_flex_dispatcher_backend(self.model)
-
-        for f in fields(ValidationConfig):
-            train_val = getattr(self.train, f.name)
-            if train_val is not None:
-                warnings.warn(
-                    f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead."
-                )
-                setattr(self.validation, f.name, train_val)
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""
