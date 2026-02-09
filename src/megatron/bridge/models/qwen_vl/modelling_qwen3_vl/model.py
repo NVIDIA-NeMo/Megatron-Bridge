@@ -18,6 +18,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.utils import log_single_rank
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
@@ -42,7 +43,7 @@ class Qwen3VLModel(MegatronModule):
     Args:
         language_transformer_config (TransformerConfig): Transformer config for the language model.
         language_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the
-        hf_vision_config (Qwen3VLConfigHF): HF config for the vision model.
+        vision_transformer_config (Qwen3VLConfigHF): HF config for the vision model.
         parallel_output (bool): Do not gather the outputs, keep them split across tensor parallel ranks. This
             is typically True for training and False for inference.
         language_rotary_percent (float): Percent of rotary dimension to use for rotary position embeddings
@@ -63,9 +64,7 @@ class Qwen3VLModel(MegatronModule):
         self,
         language_transformer_config: Qwen3VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
-        hf_vision_config: Qwen3VLConfigHF,
-        vision_transformer_layer_spec: ModuleSpec,
-        vision_patch_merger_spec: ModuleSpec,
+        vision_transformer_config: Qwen3VLConfigHF,
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -75,7 +74,6 @@ class Qwen3VLModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
         language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
@@ -90,7 +88,7 @@ class Qwen3VLModel(MegatronModule):
         self.video_token_id = language_transformer_config.video_token_id
         self.vision_start_token_id = language_transformer_config.vision_start_token_id
 
-        self.square_merge_size = hf_vision_config.spatial_merge_size**2
+        self.square_merge_size = vision_transformer_config.spatial_merge_size**2
 
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
@@ -117,14 +115,30 @@ class Qwen3VLModel(MegatronModule):
         if self.pre_process:
             if not language_transformer_config.use_hf_vision_model:
                 # use megatron vision model
+                from megatron.core.extensions.transformer_engine import (
+                    TEColumnParallelLinear,
+                    TENorm,
+                    TERowParallelLinear,
+                )
+                from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+
                 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
                     get_vision_model_config,
                 )
+                from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 
                 from .vision_model import Qwen3VLVisionModel
 
+                vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+                vision_patch_merger_spec = PatchMergerSubmodules(
+                    patch_norm=TENorm,
+                    linear_fc1=TEColumnParallelLinear,
+                    linear_fc2=TERowParallelLinear,
+                )
+
+                vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
                 megatron_vision_transformer_config = get_vision_model_config(
-                    hf_vision_config, megatron_config=language_transformer_config
+                    vision_transformer_config, megatron_config=language_transformer_config
                 )
                 megatron_vision_transformer_config.pipeline_model_parallel_size = 1
                 megatron_vision_transformer_config.first_pipeline_num_layers = None
@@ -143,12 +157,17 @@ class Qwen3VLModel(MegatronModule):
                 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
                 # Initialize vision model with random weights from config
-                self.vision_model = Qwen3VLVisionModelHF._from_config(hf_vision_config)
+                self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
                 # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
                 hook_hf_module_setattr_for_tp_grad_sync(self.vision_model)
                 # Move to device if available
                 if torch.cuda.is_available():
                     self.vision_model = self.vision_model.to("cuda")
+
+                log_single_rank(
+                    "Using HF vision model, there maybe performance degradation, please use megatron vision model if possible",
+                    rank=0,
+                )
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -167,9 +186,11 @@ class Qwen3VLModel(MegatronModule):
             pg_collection=pg_collection,
         )
         if pre_process:
-            assert len(hf_vision_config.deepstack_visual_indexes) <= len(self.language_model.decoder.layers), (
+            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
+                self.language_model.decoder.layers
+            ), (
                 "the deepstack_visual_embeds should on the first pp-stage of language model",
-                f"got {len(hf_vision_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
                 f" {len(self.language_model.decoder.layers)} language model layers",
             )
 

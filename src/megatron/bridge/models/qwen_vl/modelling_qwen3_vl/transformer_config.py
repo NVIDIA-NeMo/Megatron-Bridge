@@ -51,6 +51,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     vision_start_token_id: int = 151652
     hf_text_config: Optional[Qwen3VLTextConfig] = None
     vision_dp_when_cp: bool = False
+    use_hf_vision_model: bool = False
 
 
 def get_vision_model_config(hf_config, megatron_config=None):

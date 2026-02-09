@@ -23,22 +23,13 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from megatron.core.extensions.transformer_engine import (
-    TEColumnParallelLinear,
-    TENorm,
-    TERowParallelLinear,
-)
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
-from megatron.core.models.vision.vit_layer_specs import (
-    get_vit_layer_with_transformer_engine_spec,
-)
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models import Qwen3ModelProvider, Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 
 
 @dataclass
@@ -135,19 +126,11 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             qk_layernorm=self.qk_layernorm,
             fp8=False,
         )
-        vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_patch_merger_spec = PatchMergerSubmodules(
-            patch_norm=TENorm,
-            linear_fc1=TEColumnParallelLinear,
-            linear_fc2=TERowParallelLinear,
-        )
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            hf_vision_config=hf_vision_config,
-            vision_transformer_layer_spec=vision_transformer_layer_spec,
-            vision_patch_merger_spec=vision_patch_merger_spec,
+            vision_transformer_config=hf_vision_config,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
@@ -306,20 +289,11 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             fp8=False,
         )
 
-        vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_patch_merger_spec = PatchMergerSubmodules(
-            patch_norm=TENorm,
-            linear_fc1=TEColumnParallelLinear,
-            linear_fc2=TERowParallelLinear,
-        )
-
         # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            hf_vision_config=hf_vision_config,
-            vision_transformer_layer_spec=vision_transformer_layer_spec,
-            vision_patch_merger_spec=vision_patch_merger_spec,
+            vision_transformer_config=hf_vision_config,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
