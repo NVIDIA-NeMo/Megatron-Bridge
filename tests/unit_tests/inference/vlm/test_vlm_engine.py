@@ -22,7 +22,7 @@ class TestVLMEngine:
         mock_controller = MagicMock()
         mock_controller.tokenize_prompt.return_value = ([1, 2, 3], "image_dict")
         # Fix for TypeError: '>' not supported between instances of 'int' and 'MagicMock'
-        mock_controller.inference_wrapped_model.inference_wrapper_config.inference_max_requests = 128
+        mock_controller.inference_wrapped_model.context.max_batch_size = 128
 
         engine = VLMEngine(mock_controller, max_batch_size=4)
         engine.scheduler = MagicMock()
