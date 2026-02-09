@@ -16,6 +16,9 @@
 """
 Round-trip conversion between Hugging Face and Megatron FSDP.
 
+Note: Megatron-FSDP currently supports tensor parallelism (TP), context parallelism (CP),
+and expert parallelism (EP). Pipeline parallelism (PP) is not supported.
+
 Usage examples:
     python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_fsdp_roundtrip.py --hf-model-id Qwen/Qwen3-30B-A3B --tp 2 --cp 2 --ep 2
 """
