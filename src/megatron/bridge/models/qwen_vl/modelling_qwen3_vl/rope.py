@@ -48,7 +48,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
     def __init__(
         self,
         kv_channels: int,
-        rotary_percent: float,
+        rotary_percent: float = 1.0,
         rotary_interleaved: bool = False,
         seq_len_interpolation_factor: Optional[float] = None,
         rotary_base: int = 10000,
@@ -66,6 +66,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=torch.cuda.current_device()) / dim)
         )
         self.is_thd_format = False  # if is thd format, we do not need to split the rotary_pos_emb along CP
+
+        # default mrope section is [24, 20, 20], if no mrope section is provided, use default mrope section
+        self.mrope_section = [24, 20, 20]
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -87,7 +90,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
     def forward(
         self,
         position_ids: torch.Tensor,
-        mrope_section: List[int],
+        mrope_section: List[int] | None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         **kwargs,
     ) -> Tensor:
@@ -101,6 +104,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         Returns:
             Tensor: Embeddings after applying RoPE.
         """
+        if position_ids.ndim == 2:
+            position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
         # Use fp32 for position indices to avoid precision loss when inv_freq is bf16.
         seq = position_ids.to(device=self.inv_freq.device, dtype=torch.float32)
 
@@ -113,7 +118,11 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         seq_expanded = seq[:, :, None, :].float()
         # shape (3, bs, seq_length, dim)
         freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
-        freqs = self.apply_interleaved_mrope(freqs, mrope_section)
+        if mrope_section is not None:
+            freqs = self.apply_interleaved_mrope(freqs, mrope_section)
+        else:
+            # if mrope_section is not provided, use default mrope section
+            freqs = self.apply_interleaved_mrope(freqs, self.mrope_section)
         emb = torch.cat((freqs, freqs), dim=-1)
 
         # shape (seq_length, bs, 1, 2 * dim)
