@@ -135,7 +135,8 @@ class TestGPTOSSFinetuneRecipes:
         Creates a PEFT config and injects the toy model checkpoint.
         """
         config = gpt_oss_20b_peft_config(peft_scheme="lora")
-        config.checkpoint.load = checkpoint_dir
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Load from pretrained checkpoint and not from default path
         # Apply any additional overrides from kwargs
         if "dir" in kwargs:
             config.logger.dir = kwargs["dir"]
@@ -149,7 +150,8 @@ class TestGPTOSSFinetuneRecipes:
         Creates a full SFT config and injects the toy model checkpoint.
         """
         config = gpt_oss_20b_sft_config()
-        config.checkpoint.load = checkpoint_dir
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Load from pretrained checkpoint and not from default path
         # Apply any additional overrides from kwargs
         if "dir" in kwargs:
             config.logger.dir = kwargs["dir"]
