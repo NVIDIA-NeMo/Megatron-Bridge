@@ -38,14 +38,7 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
-
-
-try:
-    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import uneven_dtensor_to_full_tensor
-except ImportError:
-    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
-        gather_uneven_dtensor_to_full_tensor as uneven_dtensor_to_full_tensor,
-    )
+from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_pg_size
@@ -975,11 +968,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
-                full_tensor = uneven_dtensor_to_full_tensor(task.param_weight)
-                if hasattr(full_tensor, "to_local"):
-                    megatron_weights = full_tensor.to_local()
-                else:
-                    megatron_weights = full_tensor
+                full_tensor = gather_uneven_dtensor_to_full_tensor(task.param_weight)
+                megatron_weights = full_tensor.to_local()
             else:
                 megatron_weights = task.param_weight
             converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, task.megatron_module)
