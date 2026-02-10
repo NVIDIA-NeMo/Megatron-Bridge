@@ -78,9 +78,7 @@ class TestBailingMoeV2Conversion:
         # Try to load config from a reference model, or create from scratch
         try:
             # Try to get config structure from a reference model
-            config = AutoConfig.from_pretrained(
-                "inclusionAI/Ling-mini-2.0", trust_remote_code=True
-            )
+            config = AutoConfig.from_pretrained("inclusionAI/Ling-mini-2.0", trust_remote_code=True)
         except Exception:
             # If that fails, create a basic config structure
             from transformers import PretrainedConfig
@@ -102,9 +100,7 @@ class TestBailingMoeV2Conversion:
             from transformers import AutoModelForCausalLM
 
             # Create the model from config - the custom class should be registered from loading config above
-            model = AutoModelForCausalLM.from_config(
-                config, trust_remote_code=True
-            )
+            model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
         except Exception as e:
             # If that fails, try loading a minimal model to register the class
             try:
@@ -116,9 +112,7 @@ class TestBailingMoeV2Conversion:
                     device_map="cpu",  # Don't use GPU for this
                 )
                 # Now try again
-                model = AutoModelForCausalLM.from_config(
-                    config, trust_remote_code=True
-                )
+                model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
             except Exception as e2:
                 pytest.skip(
                     f"Could not create Bailing MoE V2 model: {e}. "
@@ -129,9 +123,7 @@ class TestBailingMoeV2Conversion:
 
         # Download and save tokenizer from a reference Bailing model
         try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                "inclusionAI/Ling-mini-2.0", trust_remote_code=True
-            )
+            tokenizer = AutoTokenizer.from_pretrained("inclusionAI/Ling-mini-2.0", trust_remote_code=True)
             # Ensure pad_token_id is within vocab_size range
             if tokenizer.pad_token_id is None or tokenizer.pad_token_id >= config.vocab_size:
                 tokenizer.pad_token_id = config.pad_token_id
@@ -217,14 +209,12 @@ class TestBailingMoeV2Conversion:
         # Try loading the model to verify it's valid
         # Note: This may fail if custom code isn't available, but that's OK for conversion testing
         try:
-            from transformers import AutoModelForCausalLM, AutoConfig
+            from transformers import AutoConfig, AutoModelForCausalLM
 
             # First, ensure the custom model class is registered by loading the reference config
             # Loading config with trust_remote_code=True should register the custom model class
             try:
-                _ = AutoConfig.from_pretrained(
-                    "inclusionAI/Ling-mini-2.0", trust_remote_code=True
-                )
+                _ = AutoConfig.from_pretrained("inclusionAI/Ling-mini-2.0", trust_remote_code=True)
             except Exception:
                 pass  # If this fails, try loading anyway
 
@@ -259,12 +249,8 @@ class TestBailingMoeV2Conversion:
             # The model files are created correctly, which is what matters for conversion testing
             error_msg = str(e)
             if "does not recognize this architecture" in error_msg or "custom code" in error_msg.lower():
-                print(
-                    f"WARNING: Could not load saved model for verification (custom code not available): {e}"
-                )
-                print(
-                    "This is OK - the model files were created correctly and can be used for conversion testing."
-                )
+                print(f"WARNING: Could not load saved model for verification (custom code not available): {e}")
+                print("This is OK - the model files were created correctly and can be used for conversion testing.")
             else:
                 # For other errors, fail the test
                 assert False, f"Failed to load created toy MoE model: {e}"

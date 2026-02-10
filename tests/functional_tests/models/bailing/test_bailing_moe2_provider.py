@@ -15,12 +15,12 @@
 
 import pytest
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.bailing import (
-    LingMini2ModelProvider,
-    LingFlash2ModelProvider,
     Ling1TModelProvider,
+    LingFlash2ModelProvider,
+    LingMini2ModelProvider,
 )
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from tests.functional_tests.utils import compare_provider_configs
 
 
