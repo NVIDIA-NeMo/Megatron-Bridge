@@ -37,7 +37,7 @@ PARALLELISM_CONFIGS=("2,1" "1,2")
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
     
-    echo "Running full finetuning with TP=$TP, PP=$PP"
+    echo "Running LoRA finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
         --step_func vlm_step \
