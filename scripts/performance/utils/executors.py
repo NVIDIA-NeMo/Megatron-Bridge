@@ -219,7 +219,10 @@ def dgxc_executor(
         ],
         custom_spec=(
             {
-                "annotations": [{"name": "runai.dgxc.nvidia.com/gcp-nccl", "value": "none", "exclude": False}],
+                "annotations": [
+                    {"name": "runai.dgxc.nvidia.com/gcp-nccl", "value": "none", "exclude": False},
+                    {"name": "disable-auto-efa", "value": "true", "exclude": False},
+                ],
             }
             if dgxc_cluster == "dgxcloud-gcp" and nodes == 1
             else {}
