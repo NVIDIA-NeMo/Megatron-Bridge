@@ -14,10 +14,10 @@
 # limitations under the License.
 
 """
-Round-trip conversion between Hugging Face and Megatron FSDP.
+Text generation using HuggingFace models converted to Megatron-FSDP format.
 
 Usage examples:
-    python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megtron_fsdp_generate_text.py --trust-remote-code --hf-model-id moonshotai/Moonlight-16B-A3B --ep 4
+    python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_fsdp_generate_text.py --trust-remote-code --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct --ep 1 --tp 1 --cp 1
 """
 
 from __future__ import annotations
