@@ -40,7 +40,9 @@ if HAVE_TE:
 
 @dataclass
 class SarvamMoEModelProvider(GPTModelProvider):
-
+"""
+Sarvam Base MoE Class
+"""
     transformer_layer_spec: Union[
         "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
     ] = partial(
@@ -112,7 +114,9 @@ class SarvamMoEModelProvider(GPTModelProvider):
 
 @dataclass
 class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
-
+"""
+Sarvam Base MLA Class
+"""
     transformer_layer_spec: Union[
         "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
     ] = partial(
