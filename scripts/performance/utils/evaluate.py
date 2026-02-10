@@ -13,6 +13,7 @@
 # limitations under the License.
 import json
 import logging
+import math
 import os
 import pathlib
 import re
@@ -575,9 +576,16 @@ def calc_convergence_and_performance(
 
     error_msg = ""
 
+    # check for grad norm
+    has_nan_grad_norm = any(math.isnan(current_grad_norm[step]) for step in current_grad_norm)
+    has_inf_grad_norm = any(math.isinf(current_grad_norm[step]) for step in current_grad_norm)
+    if has_nan_grad_norm or has_inf_grad_norm:
+        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
+        error_msg += f"Grad norm values: {current_grad_norm}\n"
+
     # check if golden values are exist for this model
     if not os.path.exists(expected_golden_values_path):
-        error_msg = "Convergence check failed due to missing golden values.\n"
+        error_msg += "Convergence check failed due to missing golden values.\n"
         error_msg += "This is expected if it is the first time running this model.\n"
         error_msg += (
             f"You will need to add the golden values ({expected_golden_values_path}) "
@@ -609,14 +617,6 @@ def calc_convergence_and_performance(
     # Extract golden_lm_loss and golden_iter_time lists
     logger.info(f"Comparing {len(steps)} training steps for convergence")
     steps = sorted(golden_train_loss.keys(), key=int)
-
-    # check for grad norm
-    has_nan_grad_norm = any(str(current_grad_norm[str(s)]) == "nan" for s in steps)
-    has_inf_grad_norm = any(str(current_grad_norm[str(s)]) == "inf" for s in steps)
-    if has_nan_grad_norm or has_inf_grad_norm:
-        error_msg += "Grad norm check failed. Found NaN or Inf in grad norm.\n"
-        error_msg += f"Grad norm values: {current_grad_norm}\n"
-        return len(error_msg) == 0, error_msg
 
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
@@ -691,7 +691,9 @@ def calc_convergence_and_performance(
             )
 
     # Determine if we need to update golden values or if there are actual validation failures
-    has_validation_failures = not convergence_result["passed"] or not performance_result["passed"]
+    has_validation_failures = (
+        not convergence_result["passed"] or not performance_result["passed"] or has_nan_grad_norm or has_inf_grad_norm
+    )
 
     if not memory_metrics_missing:
         has_validation_failures = has_validation_failures or not memory_result["passed"]
