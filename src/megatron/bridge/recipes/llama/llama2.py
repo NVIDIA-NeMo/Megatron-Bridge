@@ -54,7 +54,7 @@ def llama2_7b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
