@@ -14,7 +14,7 @@
 
 import abc
 import importlib
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
@@ -83,19 +83,28 @@ class ModelConfig(abc.ABC, Serializable):
         Includes:
         - _target_: Full class path for deserialization
         - _builder_: Full builder class path (serialized from ClassVar)
-        - All dataclass fields
+        - All dataclass fields, including nested dataclasses
         """
-        result = {
-            "_target_": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
-            "_builder_": self.builder,  # Serialize the builder path
-        }
-        for f in dataclass_fields(self):
-            value = getattr(self, f.name)
-            # TODO: recurse on sub dataclasses
-            # Skip non-serializable fields
-            if callable(value) or f.name.startswith("_"):
-                continue
-            result[f.name] = value
+
+        def _to_dict(config):
+            result = {
+                "_target_": f"{config.__class__.__module__}.{config.__class__.__qualname__}",
+            }
+            for f in dataclass_fields(config):
+                value = getattr(config, f.name)
+                # Skip non-serializable fields
+                if callable(value) or f.name.startswith("_"):
+                    continue
+
+                if is_dataclass(value):
+                    result[f.name] = _to_dict(value)  # recurse on nested dataclasses
+                else:
+                    result[f.name] = value
+
+            return result
+
+        result = _to_dict(self)
+        result["_builder_"] = self.builder  # Serialize the builder path
         return result
 
     @classmethod
@@ -111,22 +120,34 @@ class ModelConfig(abc.ABC, Serializable):
         Returns:
             Instance of the appropriate ModelBuildConfig subclass
         """
-        target = data.get("_target_")
-        if target is None:
-            raise ValueError("Cannot deserialize: missing '_target_' field")
 
-        # Import the class from the target path
-        module_path, class_name = target.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        config_cls = getattr(module, class_name)
+        def _from_dict(subdata):
+            target = subdata.get("_target_")
+            if target is None:
+                raise ValueError("Cannot deserialize: missing '_target_' field")
 
-        # Filter to valid fields for this class
-        valid_fields = {f.name for f in dataclass_fields(config_cls)}
-        filtered_data = {k: v for k, v in data.items() if k in valid_fields and not k.startswith("_")}
+            # Import the class from the target path
+            module_path, class_name = target.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            config_cls = getattr(module, class_name)
 
-        # TODO: recurse on sub dataclasses
+            # Filter to valid fields for this class
+            valid_fields = {f.name for f in dataclass_fields(config_cls)}
+            filtered_data = {k: v for k, v in subdata.items() if k in valid_fields and not k.startswith("_")}
 
-        return config_cls(**filtered_data)
+            # recurse on serialized nested dataclasses
+            subconfigs = {}
+            for k, v in filtered_data.items():
+                if isinstance(v, dict):
+                    subconfigs[k] = _from_dict(v)
+            filtered_data.update(subconfigs)
+
+            return config_cls(**filtered_data)
+
+        result = _from_dict(data)
+        result.builder = data["_builder_"]
+
+        return result
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
