@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import torch
 
@@ -387,7 +386,6 @@ def glm45_355b_sft_config() -> ConfigContainer:
     # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -518,7 +516,6 @@ def glm45_air_106b_sft_config() -> ConfigContainer:
     # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -542,7 +539,7 @@ def glm45_air_106b_sft_config() -> ConfigContainer:
 
 
 def glm45_355b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for GLM-4.5 355B-A32B.
 
@@ -663,7 +660,6 @@ def glm45_355b_peft_config(
     # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -682,7 +678,7 @@ def glm45_355b_peft_config(
 
 
 def glm45_air_106b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for GLM-4.5 Air 106B-A12B.
 
@@ -803,7 +799,6 @@ def glm45_air_106b_peft_config(
     # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
-    # DDP config - GLM only sets check_for_nan_in_grad
     # DDP config
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False

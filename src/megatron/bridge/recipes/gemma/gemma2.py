@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import torch
 
@@ -613,7 +612,7 @@ def gemma2_27b_sft_config() -> ConfigContainer:
 
 
 def gemma2_2b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Gemma2 2B.
 
@@ -724,7 +723,7 @@ def gemma2_2b_peft_config(
 
 
 def gemma2_9b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Gemma2 9B.
 
@@ -835,7 +834,7 @@ def gemma2_9b_peft_config(
 
 
 def gemma2_27b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Gemma2 27B.
 

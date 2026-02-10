@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import torch
 
@@ -832,7 +831,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
 
 
 def nemotronh_4b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for NemotronH 4B.
 
@@ -980,7 +979,7 @@ def nemotronh_4b_peft_config(
 
 
 def nemotronh_8b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for NemotronH 8B.
 
@@ -1096,7 +1095,7 @@ def nemotronh_8b_peft_config(
 
 
 def nemotronh_47b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for NemotronH 47B.
 
@@ -1212,7 +1211,7 @@ def nemotronh_47b_peft_config(
 
 
 def nemotronh_56b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for NemotronH 56B.
 

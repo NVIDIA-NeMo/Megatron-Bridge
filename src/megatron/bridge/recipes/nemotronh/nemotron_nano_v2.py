@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Union
-
 import torch
 
 from megatron.bridge.models.nemotronh import (
@@ -431,7 +429,7 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
 
 
 def nemotron_nano_9b_v2_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron Nano 9B v2.
 
@@ -547,7 +545,7 @@ def nemotron_nano_9b_v2_peft_config(
 
 
 def nemotron_nano_12b_v2_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron Nano 12B v2.
 

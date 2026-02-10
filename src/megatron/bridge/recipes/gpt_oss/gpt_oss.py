@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
-
 import torch
 
 from megatron.bridge import AutoBridge
@@ -513,7 +511,7 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
 
 
 def gpt_oss_20b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for GPT-OSS 20B.
 
@@ -647,7 +645,7 @@ def gpt_oss_20b_peft_config(
 
 
 def gpt_oss_120b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for GPT-OSS 120B.
 
