@@ -41,6 +41,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
@@ -224,7 +225,7 @@ def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
         "finetune_lr": 2e-5 if is_full_sft else 2e-4,
         "freeze_language_model": True,
         "freeze_vision_model": True,
-        "freeze_vision_projection": True,
+        "freeze_vision_projection": False,
         "min_lr": 2e-6,
         "lr": 2e-5,
         "lr_warmup_iters": 200,
@@ -500,13 +501,15 @@ def _qwen3_vl_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_config,
         scheduler=scheduler,

@@ -546,7 +546,13 @@ class TestAutoBridge:
             # Check artifacts were saved on rank 0
             mock_hf_model.save_artifacts.assert_called_once_with("./output_dir", original_source_path=None)
             mock_save_hf_weights.assert_called_once_with(
-                mock_megatron_model, "./output_dir", True, True, merge_adapter_weights=True
+                mock_megatron_model,
+                "./output_dir",
+                True,
+                True,
+                merge_adapter_weights=True,
+                distributed_save=False,
+                save_every_n_ranks=1,
             )
 
     def test_save_hf_pretrained_config_only_raises(self):
@@ -577,7 +583,13 @@ class TestAutoBridge:
             # Artifacts should NOT be saved on non-zero rank
             mock_hf_model.save_artifacts.assert_not_called()
             mock_save_hf_weights.assert_called_once_with(
-                mock_megatron_model, "./output_dir", True, True, merge_adapter_weights=True
+                mock_megatron_model,
+                "./output_dir",
+                True,
+                True,
+                merge_adapter_weights=True,
+                distributed_save=False,
+                save_every_n_ranks=1,
             )
 
     def test_export_hf_weights(self):

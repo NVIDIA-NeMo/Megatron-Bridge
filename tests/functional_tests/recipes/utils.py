@@ -47,7 +47,7 @@ def run_pretrain_recipe_test(
     4. No crashes occur during the process
 
     Args:
-        config_func: The recipe's pretrain_config function
+        config_func: The recipe's pretrain_config function (parameterless API)
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
@@ -56,16 +56,23 @@ def run_pretrain_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
-    shared_base_dir = broadcast_path(tmp_path)
+    shared_base_dir = Path(broadcast_path(tmp_path))
 
     try:
-        config: ConfigContainer = config_func(
-            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", mock=True
-        )
+        # Pretrain configs use parameterless API - call without arguments
+        config: ConfigContainer = config_func()
+
+        # Set up output directories after instantiation
+        run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
+        checkpoint_dir = run_output_dir / "checkpoints"
+        tensorboard_dir = run_output_dir / "tb_logs"
+        config.checkpoint.save = str(checkpoint_dir)
+        config.checkpoint.load = str(checkpoint_dir)
+        config.logger.tensorboard_dir = str(tensorboard_dir)
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
@@ -82,7 +89,7 @@ def run_pretrain_recipe_test(
             config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100  # Minimal test samples
 
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
@@ -132,17 +139,18 @@ def run_pretrain_recipe_perf_test(
     3. No crashes occur during the process
 
     Args:
-        config_func: The recipe's pretrain_config function
+        config_func: The recipe's pretrain_config function (parameterless API)
         recipe_name: Name of the recipe for logging/debugging
         config_overrides: Optional mapping of config attribute overrides to apply
     """
     initialize_distributed()
 
-    config: ConfigContainer = config_func(name=f"{recipe_name}_functional_test", mock=True)
+    # Pretrain configs use parameterless API - call without arguments
+    config: ConfigContainer = config_func()
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
-    config.train.eval_interval = 5
-    config.train.eval_iters = 0  # Skip evaluation. TODO: Fix this.
+    config.validation.eval_interval = 5
+    config.validation.eval_iters = 0  # Skip evaluation. TODO: Fix this.
 
     # Standardize batch sizes for functional tests
     config.train.micro_batch_size = 1
@@ -222,8 +230,8 @@ def run_pretrain_vl_recipe_test(
         )
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
@@ -239,7 +247,7 @@ def run_pretrain_vl_recipe_test(
         config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 8
 
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
