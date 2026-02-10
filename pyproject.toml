@@ -111,7 +111,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@d9b7fc5770a88af06e2e9c2bd97b550614c3a69f",
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt @ git+https://github.com/NVIDIA/TensorRT-Model-Optimizer.git@0.41.0",
