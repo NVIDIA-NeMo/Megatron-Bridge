@@ -38,7 +38,6 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
-from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import gather_uneven_dtensor_to_full_tensor
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_pg_size
@@ -753,15 +752,15 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
         if use_megatron_fsdp:
             original_megatron_model = megatron_model
-            megatron_model = unwrap_model(megatron_model)
+        unwrapped_model_list = unwrap_model(megatron_model)
         # [ModelOpt]: Hide extra parameters registered in Distillation mode
         with contextlib.ExitStack() as stack:
-            if hasattr(megatron_model[0], "hide_teacher_model"):
-                stack.enter_context(megatron_model[0].hide_teacher_model())
-            if hasattr(megatron_model[0], "hide_loss_modules"):
-                stack.enter_context(megatron_model[0].hide_loss_modules())
+            if hasattr(unwrapped_model_list[0], "hide_teacher_model"):
+                stack.enter_context(unwrapped_model_list[0].hide_teacher_model())
+            if hasattr(unwrapped_model_list[0], "hide_loss_modules"):
+                stack.enter_context(unwrapped_model_list[0].hide_loss_modules())
 
-            hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+            hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
@@ -811,12 +810,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     )
                 task.param_weight.data.copy_(converted_weights)
 
-        self._broadcast_shared_embeddings(megatron_model)
+        self._broadcast_shared_embeddings(unwrapped_model_list)
         if use_megatron_fsdp:
             for m in original_megatron_model:
                 m.module.install_optimized_model_weights()
             return original_megatron_model
-        return megatron_model
+        return unwrapped_model_list
 
     def stream_weights_hf_to_megatron(
         self,
@@ -968,6 +967,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
+                from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+                    gather_uneven_dtensor_to_full_tensor,
+                )
+
                 full_tensor = gather_uneven_dtensor_to_full_tensor(task.param_weight)
                 megatron_weights = full_tensor.to_local()
             else:
