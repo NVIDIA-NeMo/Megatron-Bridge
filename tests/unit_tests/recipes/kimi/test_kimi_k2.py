@@ -72,7 +72,7 @@ class TestKimiK2PretrainConfig:
         assert cfg.train.train_iters == 1_000_000
         assert cfg.train.global_batch_size == 4096
         assert cfg.train.micro_batch_size == 1
-        assert cfg.train.eval_interval == 2000
+        assert cfg.validation.eval_interval == 2000
         assert cfg.train.manual_gc is True
         assert cfg.train.manual_gc_interval == 5
         assert cfg.train.manual_gc_eval == 5
