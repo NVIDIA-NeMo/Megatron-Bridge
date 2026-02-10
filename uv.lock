@@ -21,7 +21,7 @@ prerelease-mode = "allow"
 overrides = [
     { name = "cryptography", specifier = ">=43.0.0,<47" },
     { name = "mlflow", specifier = ">=3.5.0" },
-    { name = "nvidia-modelopt", git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0.41.0" },
+    { name = "nvidia-modelopt", specifier = "~=0.41.0" },
     { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
@@ -4031,7 +4031,7 @@ wheels = [
 [[package]]
 name = "nvidia-modelopt"
 version = "0.41.0"
-source = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git?rev=0.41.0#d39cf45a444f5a0f85a266808c0e3987c2399e7b" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ninja" },
     { name = "numpy" },
@@ -4046,6 +4046,9 @@ dependencies = [
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "tqdm" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/09/30147ab0d0409d3492f1d37469fe0586c82aeec6eec9a907f59d24094516/nvidia_modelopt-0.41.0-py3-none-any.whl", hash = "sha256:ffa5f903d22653649318831a470550ae55ee04716c068d5ade61c3176fdc1d7d", size = 934582, upload-time = "2026-01-20T17:21:28.494Z" },
 ]
 
 [[package]]
