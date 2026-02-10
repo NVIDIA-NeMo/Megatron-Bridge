@@ -125,49 +125,49 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
         post_process: bool | None = None,
         vp_stage: int | None = None,
     ) -> MCoreMambaModel:
-        mamba_stack_spec = self.model_config.mamba_stack_spec
+        mamba_stack_spec = self._model_config.mamba_stack_spec
         if not isinstance(mamba_stack_spec, ModuleSpec):
             # Check if the function accepts config parameter
             import inspect
 
             if len(inspect.signature(mamba_stack_spec).parameters) > 0:
-                mamba_stack_spec = mamba_stack_spec(self.model_config)
+                mamba_stack_spec = mamba_stack_spec(self._model_config)
             else:
                 mamba_stack_spec = mamba_stack_spec()
 
         assert (
-            getattr(self.model_config.transformer, "virtual_pipeline_model_parallel_size", None) is None
+            getattr(self._model_config.transformer, "virtual_pipeline_model_parallel_size", None) is None
             and vp_stage is None
         ), (
             "Virtual pipeline model parallelism is temporarily unsupported in SSM/Mamba "
             "models due to upstream MCore MambaModel API dependency"
         )
 
-        assert self.model_config.vocab_size is not None, "vocab_size must be configured before calling build_model()"
-        if self.model_config.should_pad_vocab:
+        assert self._model_config.vocab_size is not None, "vocab_size must be configured before calling build_model()"
+        if self._model_config.should_pad_vocab:
             padded_vocab_size = calculate_padded_vocab_size(
-                self.model_config.vocab_size,
-                self.model_config.make_vocab_size_divisible_by,
-                self.model_config.transformer.tensor_model_parallel_size,
+                self._model_config.vocab_size,
+                self._model_config.make_vocab_size_divisible_by,
+                self._model_config.transformer.tensor_model_parallel_size,
             )
         else:
-            padded_vocab_size = self.model_config.vocab_size
+            padded_vocab_size = self._model_config.vocab_size
 
         return MCoreMambaModel(
-            config=self.model_config.transformer,
+            config=self._model_config.transformer,
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
-            max_sequence_length=self.model_config.seq_length,
-            hybrid_attention_ratio=self.model_config.hybrid_attention_ratio,
-            hybrid_mlp_ratio=self.model_config.hybrid_mlp_ratio,
-            hybrid_override_pattern=self.model_config.hybrid_override_pattern,
-            fp16_lm_cross_entropy=self.model_config.fp16_lm_cross_entropy,
-            parallel_output=self.model_config.parallel_output,
-            share_embeddings_and_output_weights=self.model_config.share_embeddings_and_output_weights,
-            position_embedding_type=self.model_config.position_embedding_type,
-            rotary_percent=self.model_config.rotary_percent,
-            rotary_base=self.model_config.rotary_base,
-            seq_len_interpolation_factor=self.model_config.seq_len_interpolation_factor,
+            max_sequence_length=self._model_config.seq_length,
+            hybrid_attention_ratio=self._model_config.hybrid_attention_ratio,
+            hybrid_mlp_ratio=self._model_config.hybrid_mlp_ratio,
+            hybrid_override_pattern=self._model_config.hybrid_override_pattern,
+            fp16_lm_cross_entropy=self._model_config.fp16_lm_cross_entropy,
+            parallel_output=self._model_config.parallel_output,
+            share_embeddings_and_output_weights=self._model_config.share_embeddings_and_output_weights,
+            position_embedding_type=self._model_config.position_embedding_type,
+            rotary_percent=self._model_config.rotary_percent,
+            rotary_base=self._model_config.rotary_base,
+            seq_len_interpolation_factor=self._model_config.seq_len_interpolation_factor,
             pre_process=pre_process or is_pp_first_stage(pg_collection.pp),
             post_process=post_process or is_pp_last_stage(pg_collection.pp),
             pg_collection=pg_collection,

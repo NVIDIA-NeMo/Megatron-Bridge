@@ -163,13 +163,16 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
     1. Implement build_model() for the specific model type
     2. Be linked to its corresponding ModelBuildConfig via the builder string
 
+    Builders are factory objects, therefore any state saved in __init__ should not be modified
+    and only used to build the model.
+
     Type Parameters:
         ModelT: The type of model this builder produces (e.g., MCoreGPTModel)
         BuildConfigT: The type of build config this builder accepts (e.g., GPTModelBuildConfig)
     """
 
     def __init__(self, model_config: ModelConfig):
-        self.model_config = model_config
+        self._model_config = model_config
 
     @abc.abstractmethod
     def build_model(
@@ -208,9 +211,9 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         mixed precision configuration.
         """
         # Get VP size from model config if available
-        vp_size = getattr(self.model_config, "virtual_pipeline_model_parallel_size", None)
+        vp_size = getattr(self._model_config, "virtual_pipeline_model_parallel_size", None)
         if vp_size is None:
-            transformer_config = getattr(self.model_config, "transformer_config", None)
+            transformer_config = getattr(self._model_config, "transformer_config", None)
             vp_size = getattr(transformer_config, "virtual_pipeline_model_parallel_size", None)
         pp_group = pg_collection.pp
 
