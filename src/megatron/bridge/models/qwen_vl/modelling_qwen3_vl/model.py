@@ -256,7 +256,7 @@ class Qwen3VLModel(MegatronModule):
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
-        ### there is a workaround for supporting sequence packing with context parallelism
+        # there is a workaround for supporting sequence packing with context parallelism
         # cp split with sequence packing will make model lose vision token information, so we need to keep
         # the original input_ids and pack them after vision embedding is calculated,
         # cooporate with verl's models/mcore/model_forward.py
