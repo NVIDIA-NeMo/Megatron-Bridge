@@ -220,8 +220,8 @@ def olmoe_7b_sft_config() -> ConfigContainer:
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
@@ -370,8 +370,8 @@ def olmoe_7b_peft_config(
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5

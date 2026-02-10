@@ -531,7 +531,7 @@ def qwen3_600m_sft_config() -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -619,7 +619,7 @@ def qwen3_1p7b_sft_config() -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -707,7 +707,7 @@ def qwen3_4b_sft_config() -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -795,7 +795,7 @@ def qwen3_8b_sft_config() -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -883,7 +883,7 @@ def qwen3_14b_sft_config() -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -972,7 +972,7 @@ def qwen3_32b_sft_config() -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -1073,7 +1073,7 @@ def qwen3_600m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -1167,7 +1167,7 @@ def qwen3_1p7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -1261,7 +1261,7 @@ def qwen3_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -1355,7 +1355,7 @@ def qwen3_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -1449,7 +1449,7 @@ def qwen3_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 
@@ -1544,7 +1544,7 @@ def qwen3_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
-    cfg.train.eval_interval = 30
+    cfg.validation.eval_interval = 30
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
 

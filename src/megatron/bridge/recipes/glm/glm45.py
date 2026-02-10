@@ -322,8 +322,8 @@ def glm45_355b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
@@ -452,8 +452,8 @@ def glm45_air_106b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
@@ -596,8 +596,8 @@ def glm45_355b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
@@ -735,8 +735,8 @@ def glm45_air_106b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 

@@ -248,7 +248,7 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
 
     # Training config overrides
-    cfg.train.eval_interval = 500
+    cfg.validation.eval_interval = 500
 
     # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
     # _sft_common already sets seq_length=2048 and packed_sequence=True
@@ -416,7 +416,7 @@ def nemotron_3_nano_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 500
+    cfg.validation.eval_interval = 500
 
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # _peft_common already sets seq_length=2048 and packed_sequence=True

@@ -192,8 +192,8 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 64  # packed_sequence=False, so use 64
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True

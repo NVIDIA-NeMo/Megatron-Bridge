@@ -1241,8 +1241,8 @@ def llama32_1b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8  # packed_sequence=True, else 128
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -1351,8 +1351,8 @@ def llama32_3b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -1459,8 +1459,8 @@ def llama3_8b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -1640,8 +1640,8 @@ def _llama3_finetune_common(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -1743,8 +1743,8 @@ def llama3_70b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -1845,8 +1845,8 @@ def llama31_70b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -1953,8 +1953,8 @@ def llama31_405b_sft_config() -> ConfigContainer:
 
     # Training config - 405B uses different batch size
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 16  # 405B SFT uses 16
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2077,8 +2077,8 @@ def llama32_1b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2189,8 +2189,8 @@ def llama32_3b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2304,8 +2304,8 @@ def llama3_8b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2419,8 +2419,8 @@ def llama31_8b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2534,8 +2534,8 @@ def llama3_70b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2649,8 +2649,8 @@ def llama31_70b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -2771,8 +2771,8 @@ def llama31_405b_peft_config(
 
     # Training config - 405B PEFT uses GBS=32
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 30
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 30
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True

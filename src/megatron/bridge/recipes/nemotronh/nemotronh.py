@@ -503,8 +503,8 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config - packed_sequence=True by default (from _sft_common)
     # Override seq_length for NemotronH (uses 8192)
@@ -600,8 +600,8 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192
@@ -695,8 +695,8 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192
@@ -790,8 +790,8 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192
@@ -943,8 +943,8 @@ def nemotronh_4b_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192
@@ -1059,8 +1059,8 @@ def nemotronh_8b_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192
@@ -1175,8 +1175,8 @@ def nemotronh_47b_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192
@@ -1291,8 +1291,8 @@ def nemotronh_56b_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config
     cfg.dataset.seq_length = 8192

@@ -294,8 +294,8 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
     # _sft_common already sets seq_length=2048 and packed_sequence=True
@@ -389,8 +389,8 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
@@ -510,8 +510,8 @@ def nemotron_nano_9b_v2_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
@@ -626,8 +626,8 @@ def nemotron_nano_12b_v2_peft_config(
         )
 
     # Training config overrides
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
 
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism

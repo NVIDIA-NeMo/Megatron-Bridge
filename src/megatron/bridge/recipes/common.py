@@ -177,10 +177,12 @@ def _sft_common() -> ConfigContainer:
         # Training config - shorter training for SFT
         train=TrainingConfig(
             train_iters=1000,
-            eval_interval=100,
-            eval_iters=32,
             global_batch_size=128,
             micro_batch_size=1,
+        ),
+        validation=ValidationConfig(
+            eval_interval=100,
+            eval_iters=32,
         ),
         # Optimizer and scheduler
         optimizer=opt_cfg,
@@ -272,10 +274,12 @@ def _peft_common() -> ConfigContainer:
         # Training config - shorter training for PEFT
         train=TrainingConfig(
             train_iters=1000,
-            eval_interval=100,
-            eval_iters=32,
             global_batch_size=128,
             micro_batch_size=1,
+        ),
+        validation=ValidationConfig(
+            eval_interval=100,
+            eval_iters=32,
         ),
         # Optimizer and scheduler
         optimizer=opt_cfg,
