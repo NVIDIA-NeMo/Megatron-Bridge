@@ -14,19 +14,28 @@
 
 import torch
 from megatron.core import InferenceParams, tensor_parallel
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TENorm,
+    TERowParallelLinear,
+)
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.utils import log_single_rank
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
+    Qwen3VLTransformerConfig,
+    get_vision_model_config,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
+    PatchMergerSubmodules,
     collapse_thw,
     get_vision_cp_data,
     preprocess_packed_seqs,
@@ -35,6 +44,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_data_cp_rank,
     split_deepstack_embs,
 )
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 
 
 class Qwen3VLModel(MegatronModule):
@@ -113,61 +123,30 @@ class Qwen3VLModel(MegatronModule):
         self.freeze_vision_model = False
 
         if self.pre_process:
-            if not language_transformer_config.use_hf_vision_model:
-                # use megatron vision model
-                from megatron.core.extensions.transformer_engine import (
-                    TEColumnParallelLinear,
-                    TENorm,
-                    TERowParallelLinear,
-                )
-                from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+            if language_transformer_config.use_hf_vision_model:
+                raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
+            # use megatron vision model
+            vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+            vision_patch_merger_spec = PatchMergerSubmodules(
+                patch_norm=TENorm,
+                linear_fc1=TEColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            )
 
-                from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
-                    get_vision_model_config,
-                )
-                from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+            vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+            megatron_vision_transformer_config = get_vision_model_config(
+                vision_transformer_config, megatron_config=language_transformer_config
+            )
+            megatron_vision_transformer_config.pipeline_model_parallel_size = 1
+            megatron_vision_transformer_config.first_pipeline_num_layers = None
 
-                from .vision_model import Qwen3VLVisionModel
-
-                vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
-                vision_patch_merger_spec = PatchMergerSubmodules(
-                    patch_norm=TENorm,
-                    linear_fc1=TEColumnParallelLinear,
-                    linear_fc2=TERowParallelLinear,
-                )
-
-                vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
-                megatron_vision_transformer_config = get_vision_model_config(
-                    vision_transformer_config, megatron_config=language_transformer_config
-                )
-                megatron_vision_transformer_config.pipeline_model_parallel_size = 1
-                megatron_vision_transformer_config.first_pipeline_num_layers = None
-
-                self.vision_model = Qwen3VLVisionModel(
-                    megatron_vision_transformer_config,
-                    vision_transformer_layer_spec,
-                    vision_patch_merger_spec,
-                    pre_process=True,
-                    post_process=True,
-                )
-            else:
-                # use hf vision model
-                from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
-
-                from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-
-                # Initialize vision model with random weights from config
-                self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
-                # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
-                hook_hf_module_setattr_for_tp_grad_sync(self.vision_model)
-                # Move to device if available
-                if torch.cuda.is_available():
-                    self.vision_model = self.vision_model.to("cuda")
-
-                log_single_rank(
-                    "Using HF vision model, there maybe performance degradation, please use megatron vision model if possible",
-                    rank=0,
-                )
+            self.vision_model = Qwen3VLVisionModel(
+                megatron_vision_transformer_config,
+                vision_transformer_layer_spec,
+                vision_patch_merger_spec,
+                pre_process=True,
+                post_process=True,
+            )
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -236,53 +215,24 @@ class Qwen3VLModel(MegatronModule):
             freeze_vision_projection (bool): Freeze the vision projection module.
         """
         modules = []
-        if not self.config.use_hf_vision_model:
-            if freeze_language_model and self.language_model is not None:
-                modules.append(self.language_model)
-            if freeze_vision_model and self.vision_model is not None:
-                modules.append(self.vision_model)
-            if freeze_vision_projection and self.vision_model is not None:
-                modules.append(self.vision_model.decoder.deepstack_merger_list)
-                modules.append(self.vision_model.merger)
+        if freeze_language_model and self.language_model is not None:
+            modules.append(self.language_model)
+        if freeze_vision_model and self.vision_model is not None:
+            modules.append(self.vision_model)
+        if freeze_vision_projection and self.vision_model is not None:
+            modules.append(self.vision_model.decoder.deepstack_merger_list)
+            modules.append(self.vision_model.merger)
 
-            for module in modules:
-                for param in module.parameters():
-                    param.requires_grad = False
+        for module in modules:
+            for param in module.parameters():
+                param.requires_grad = False
 
-            if freeze_vision_model and not freeze_vision_projection:
-                if self.vision_model is not None:
-                    for param in self.vision_model.decoder.deepstack_merger_list.parameters():
-                        param.requires_grad = True
-                    for param in self.vision_model.merger.parameters():
-                        param.requires_grad = True
-        else:
-            modules = []
-            if freeze_language_model and self.language_model is not None:
-                modules.append(self.language_model)
-
-            if freeze_vision_model and self.vision_model is not None:
-                # Freeze vision encoder components (patch_embed, blocks, pos_embed, rotary_pos_emb)
-                if hasattr(self.vision_model, "patch_embed"):
-                    modules.append(self.vision_model.patch_embed)
-                if hasattr(self.vision_model, "blocks"):
-                    modules.append(self.vision_model.blocks)
-                if hasattr(self.vision_model, "pos_embed"):
-                    modules.append(self.vision_model.pos_embed)
-                if hasattr(self.vision_model, "rotary_pos_emb"):
-                    modules.append(self.vision_model.rotary_pos_emb)
-
-            if freeze_vision_projection and self.vision_model is not None:
-                # Freeze vision projection components (merger and deepstack_merger_list)
-                if hasattr(self.vision_model, "merger"):
-                    modules.append(self.vision_model.merger)
-                if hasattr(self.vision_model, "deepstack_merger_list"):
-                    modules.append(self.vision_model.deepstack_merger_list)
-
-            for module in modules:
-                for param in module.parameters():
-                    param.requires_grad = False
-
-        self.freeze_vision_model = freeze_vision_model
+        if freeze_vision_model and not freeze_vision_projection:
+            if self.vision_model is not None:
+                for param in self.vision_model.decoder.deepstack_merger_list.parameters():
+                    param.requires_grad = True
+                for param in self.vision_model.merger.parameters():
+                    param.requires_grad = True
 
     def forward(
         self,
