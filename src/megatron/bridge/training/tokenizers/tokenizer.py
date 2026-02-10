@@ -64,19 +64,19 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
         kwargs["additional_special_tokens"] = config.special_tokens if config.special_tokens else []
         if config.hf_tokenizer_kwargs:
             kwargs.update(config.hf_tokenizer_kwargs)
-    elif config.tokenizer_type == 'MultimodalTokenizer':
-        tokenizer_library = 'multimodal'
-        kwargs['prompt_format'] = config.tokenizer_prompt_format
-        kwargs['special_tokens'] = config.special_tokens
-        kwargs['image_tag_type'] = config.image_tag_type
+    elif config.tokenizer_type == "MultimodalTokenizer":
+        tokenizer_library = "multimodal"
+        kwargs["prompt_format"] = config.tokenizer_prompt_format
+        kwargs["special_tokens"] = config.special_tokens
+        kwargs["image_tag_type"] = config.image_tag_type
         kwargs['force_system_message'] = config.force_system_message
-    elif config.tokenizer_type == 'SFTTokenizer':
-        tokenizer_library = 'sft'
+    elif config.tokenizer_type == "SFTTokenizer":
+        tokenizer_library = "sft"
         tokenizer_path = config.tokenizer_model
-        kwargs['prompt_format'] = config.tokenizer_prompt_format
-    elif config.tokenizer_type in ['NullTokenizer', 'NullMultimodalTokenizer']:
+        kwargs["prompt_format"] = config.tokenizer_prompt_format
+    elif config.tokenizer_type in ["NullTokenizer", "NullMultimodalTokenizer"]:
         tokenizer_library = (
-            'null-text' if config.tokenizer_type == 'NullTokenizer' else 'null-multimodal'
+            "null-text" if config.tokenizer_type == "NullTokenizer" else "null-multimodal"
         )
         metadata = {"library": tokenizer_library}
         if config.vocab_size:
