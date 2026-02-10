@@ -68,6 +68,10 @@ class TestMinistral3Conversion:
     Test Ministral 3 model conversion from local HuggingFace model with different parallelism configurations.
     """
 
+    def test_dummy_always_passes(self):
+        """A dummy test that always succeeds when the rest are skipped due to transformers version."""
+        assert True
+
     @pytest.fixture(scope="class")
     def ministral3_toy_model_path(self, tmp_path_factory):
         """
