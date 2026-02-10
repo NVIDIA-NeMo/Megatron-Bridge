@@ -225,7 +225,11 @@ def dgxc_executor(
                 ],
             }
             if dgxc_cluster == "dgxcloud-gcp" and nodes == 1
-            else {}
+            else {
+                "annotations": [
+                    {"name": "disable-auto-efa", "value": "true", "exclude": False},
+                ],
+            }
         ),
         env_vars=env_vars,
         launcher="torchrun",
