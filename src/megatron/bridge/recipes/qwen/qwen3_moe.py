@@ -292,8 +292,8 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 100
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -422,8 +422,8 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 100
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -566,8 +566,8 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # Training config
     cfg.train.train_iters = 100
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -710,8 +710,8 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
 
     # Training config
     cfg.train.train_iters = 100
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100

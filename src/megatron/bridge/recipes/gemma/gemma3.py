@@ -185,8 +185,8 @@ def gemma3_1b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 100
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -317,8 +317,8 @@ def gemma3_1b_peft_config(
 
     # Training config
     cfg.train.train_iters = 100
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 10
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True

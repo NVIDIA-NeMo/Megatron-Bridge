@@ -302,8 +302,8 @@ def gpt_oss_20b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
@@ -427,8 +427,8 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
@@ -566,8 +566,8 @@ def gpt_oss_20b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
@@ -700,8 +700,8 @@ def gpt_oss_120b_peft_config(
 
     # Training config
     cfg.train.train_iters = 1000
-    cfg.train.eval_interval = 50
-    cfg.train.eval_iters = 32
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 32
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 

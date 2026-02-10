@@ -282,7 +282,7 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
 
     # Training config overrides
-    cfg.train.eval_interval = 50
+    cfg.validation.eval_interval = 50
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
@@ -456,7 +456,7 @@ def moonlight_16b_peft_config(
         cfg.peft = peft_scheme
 
     # Training config overrides
-    cfg.train.eval_interval = 50
+    cfg.validation.eval_interval = 50
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
