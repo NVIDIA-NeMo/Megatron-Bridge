@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import logging
 
 import torch
@@ -24,14 +25,15 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
+from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
 
 
 logger = logging.getLogger(__name__)
 
 
-@MegatronModelBridge.register_bridge(source=OlmoeForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=OlmoeForCausalLM, target=GPTModel, model_type="olmoe")
 class OlMoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for OlMoE Models.
@@ -46,31 +48,50 @@ class OlMoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> OlMoEModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace OlMoE config to Megatron GPTModelProvider.
+
+        Uses base class implementation for common conversion, then sets
+        OlMoE-specific config. OlMoE uses QK layernorm and mixture of experts.
+
+        Args:
+            hf_pretrained: HuggingFace PreTrainedCausalLM containing the OlMoE config
+
+        Returns:
+            GPTModelProvider configured for OlMoE architecture
+        """
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider = OlMoEModelProvider(
-            add_qkv_bias=hf_config.attention_bias,
-            hidden_size=hf_config.hidden_size,
-            init_method_std=hf_config.initializer_range,
-            ffn_hidden_size=hf_config.intermediate_size,
-            moe_ffn_hidden_size=hf_config.intermediate_size,
-            seq_length=hf_config.max_position_embeddings,
-            kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_moe_experts=hf_config.num_experts,
-            moe_router_topk=hf_config.num_experts_per_tok,
-            num_layers=hf_config.num_hidden_layers,
-            num_query_groups=hf_config.num_key_value_heads,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=hf_config.rope_theta,
-            moe_aux_loss_coeff=hf_config.router_aux_loss_coef,
-            vocab_size=hf_config.vocab_size,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
+        # OlMoE uses custom layer spec with OLMoESelfAttention for QK layernorm
+        provider.transformer_layer_spec = olmoe_layer_spec
+
+        # Set kv_channels (head_dim) - OLMoE HF config doesn't have head_dim, so calculate it
+        provider.kv_channels = getattr(hf_config, "head_dim", None) or (
+            hf_config.hidden_size // hf_config.num_attention_heads
         )
+
+        # OlMoE-specific architecture settings
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.hidden_dropout = 0.0
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.persist_layer_norm = True
+        provider.autocast_dtype = torch.bfloat16
+
+        # MoE-specific settings
+        provider.moe_ffn_hidden_size = hf_config.intermediate_size
+        provider.moe_aux_loss_coeff = hf_config.router_aux_loss_coef
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_router_pre_softmax = True
+        provider.moe_grouped_gemm = True
+        provider.moe_router_score_function = "softmax"
+        provider.moe_permute_fusion = True
+        provider.moe_router_dtype = "fp32"
 
         return provider
 

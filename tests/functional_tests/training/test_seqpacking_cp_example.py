@@ -66,8 +66,8 @@ class TestPeftSftExample:
         cfg.train.train_iters = 2
         cfg.train.global_batch_size = 2
         cfg.train.micro_batch_size = 1
-        cfg.train.eval_interval = 1
-        cfg.train.eval_iters = 0
+        cfg.validation.eval_interval = 1
+        cfg.validation.eval_iters = 0
         cfg.scheduler.lr_warmup_iters = 0
         cfg.logger.log_interval = 1
         cfg.logger.tensorboard_dir = tensorboard_dir

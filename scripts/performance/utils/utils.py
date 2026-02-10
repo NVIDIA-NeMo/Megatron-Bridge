@@ -252,7 +252,19 @@ def get_perf_optimized_recipe(
 
 
 def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
-    """Get the library recipe."""
+    """Get the library recipe.
+
+    Note: Library pretrain recipes no longer accept kwargs. This function calls the recipe
+    without arguments and then configures the output directories on the returned config.
+
+    The old API was: recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
+    This set:
+        - run_output_dir = "/nemo_run/{name}"
+        - checkpoint_dir = "/nemo_run/{name}/checkpoints"
+        - tensorboard_dir = "/nemo_run/{name}/tb_logs"
+    """
+    import os
+
     family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
 
@@ -264,7 +276,27 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
         model_recipe_name = f"{model_recipe_name}_finetune_config"
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
-    return recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
+
+    # Library pretrain recipes no longer accept kwargs - call without args
+    # and configure the returned ConfigContainer
+    cfg = recipe_builder()
+
+    # Set output directories that were previously configured via dir="/nemo_run/" and name=wandb_experiment_name
+    base_output_dir = "/nemo_run"
+    run_output_dir = os.path.join(base_output_dir, wandb_experiment_name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Checkpoint paths
+    cfg.checkpoint.save = checkpoint_dir
+    cfg.checkpoint.load = checkpoint_dir
+
+    # Logger paths
+    cfg.logger.tensorboard_dir = tensorboard_dir
+    cfg.logger.wandb_exp_name = wandb_experiment_name
+    cfg.logger.wandb_save_dir = os.path.join(run_output_dir, "wandb")
+
+    return cfg
 
 
 class _Colors:

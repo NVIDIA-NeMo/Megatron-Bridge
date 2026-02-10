@@ -36,54 +36,30 @@ _GLM45_RECIPE_FUNCS = [
 
 
 def _safe_overrides_for(name: str) -> dict:
-    # Detect if this is a finetune recipe
+    """Return overrides for recipe functions.
+
+    Pretrain configs use the new parameterless API (return empty dict).
+    Finetune configs still accept parameters.
+    """
     is_finetune = "finetune" in name.lower()
 
-    overrides = {
-        "name": f"unit_{name}",
-        "dir": ".",
-        "train_iters": 10,
-        "global_batch_size": 2,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
-    }
-
     if is_finetune:
-        # Finetuning-specific overrides
-        overrides.update(
-            {
-                "finetune_lr": 1e-4,
-                "pretrained_checkpoint": "/fake/checkpoint/path",
-            }
-        )
-        # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
-        # Note: Finetuning always uses HF tokenizer, never null tokenizer
+        # Finetuning-specific overrides - finetune configs still accept parameters
+        overrides = {
+            "name": f"unit_{name}",
+            "dir": ".",
+            "train_iters": 10,
+            "global_batch_size": 2,
+            "micro_batch_size": 1,
+            "seq_length": 64,
+            "min_lr": 1e-5,
+            "lr_warmup_iters": 2,
+            "finetune_lr": 1e-4,
+            "pretrained_checkpoint": "/fake/checkpoint/path",
+        }
     else:
-        # Pretrain-specific overrides
-        overrides.update(
-            {
-                "mock": True,
-                "lr": 1e-4,
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-                "context_parallel_size": 1,
-                "expert_model_parallel_size": 1,
-                "use_null_tokenizer": True,
-                "num_layers": 4,  # Override for faster testing
-            }
-        )
-
-        # Large models/variants may set additional flags in recipes
-        lname = name.lower()
-        if "355b" in lname or "106b" in lname:
-            overrides.update(
-                {
-                    "virtual_pipeline_model_parallel_size": None,
-                    "sequence_parallel": True,
-                }
-            )
+        # Pretrain configs use the new parameterless API
+        overrides = {}
 
     return overrides
 
@@ -219,9 +195,12 @@ def test_each_glm45_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
-        # Pretrain recipes honor use_null_tokenizer override
-        if overrides.get("use_null_tokenizer"):
-            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+        # Pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
+        if cfg.tokenizer.tokenizer_type == "NullTokenizer":
+            assert cfg.tokenizer.vocab_size is not None
+        else:
+            assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+            assert cfg.tokenizer.tokenizer_model is not None
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
@@ -405,9 +384,8 @@ def test_glm45_355b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("glm45_355b_pretrain_config")
-
-    cfg = glm45_355b_pretrain_config(**overrides)
+    # Pretrain configs use the new parameterless API
+    cfg = glm45_355b_pretrain_config()
 
     _assert_basic_config(cfg)
 
@@ -425,9 +403,8 @@ def test_glm45_air_106b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("glm45_air_106b_pretrain_config")
-
-    cfg = glm45_air_106b_pretrain_config(**overrides)
+    # Pretrain configs use the new parameterless API
+    cfg = glm45_air_106b_pretrain_config()
 
     _assert_basic_config(cfg)
 
@@ -475,17 +452,16 @@ def test_glm45_mtp_configuration(monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("glm45_355b_pretrain_config")
-    overrides["mtp_num_layers"] = 2
-    overrides["mtp_loss_scaling_factor"] = 0.5
-
-    cfg = glm45_355b_pretrain_config(**overrides)
+    # Pretrain configs use the new parameterless API
+    cfg = glm45_355b_pretrain_config()
 
     _assert_basic_config(cfg)
 
-    # Check MTP configuration
-    assert cfg.model.mtp_num_layers == 2
-    assert cfg.model.mtp_loss_scaling_factor == 0.5
+    # Check MTP configuration exists and has valid values
+    assert hasattr(cfg.model, "mtp_num_layers")
+    assert hasattr(cfg.model, "mtp_loss_scaling_factor")
+    assert cfg.model.mtp_num_layers >= 0
+    assert cfg.model.mtp_loss_scaling_factor >= 0
 
 
 def test_glm45_recompute_configuration(monkeypatch: pytest.MonkeyPatch):
@@ -495,16 +471,12 @@ def test_glm45_recompute_configuration(monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("glm45_355b_pretrain_config")
-    overrides["recompute_granularity"] = "full"
-    overrides["recompute_method"] = "uniform"
-    overrides["recompute_num_layers"] = 2
-
-    cfg = glm45_355b_pretrain_config(**overrides)
+    # Pretrain configs use the new parameterless API
+    cfg = glm45_355b_pretrain_config()
 
     _assert_basic_config(cfg)
 
-    # Check recompute configuration
-    assert cfg.model.recompute_granularity == "full"
-    assert cfg.model.recompute_method == "uniform"
-    assert cfg.model.recompute_num_layers == 2
+    # Check recompute configuration exists
+    assert hasattr(cfg.model, "recompute_granularity")
+    assert hasattr(cfg.model, "recompute_method")
+    assert hasattr(cfg.model, "recompute_num_layers")

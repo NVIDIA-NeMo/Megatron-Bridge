@@ -420,6 +420,14 @@ def parse_cli_args():
         default=[],
     )
     slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute before the main command",
+        default=None,
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
@@ -744,6 +752,9 @@ def parse_cli_args():
         type=float,
         default=0.20,
         help="Percentage of loss points to skip from beginning for convergence analysis",
+    )
+    testing_args.add_argument(
+        "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
     )
 
     return parser
