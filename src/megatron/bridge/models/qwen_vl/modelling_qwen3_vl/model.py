@@ -229,27 +229,41 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        assert pixel_values_videos is None and video_grid_thw is None, "not support video now"
         assert inference_params is None, "not support inference"
 
         video_start_index = 0
         vision_grid_thw = None
         vision_data = None
         image_mask = None
+        video_mask = None
         deepstack_feature_lists = None
         # position ids is computed within the model
         position_ids = None
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
         if self.pre_process:
-            if image_grid_thw is not None:
-                image_mask = image_input_mask
-                if image_mask is None:
-                    image_mask = (input_ids == self.image_token_id).contiguous()
-                vision_grid_thw = image_grid_thw
-                vision_data = pixel_values
-                video_start_index = image_mask.sum().item()
-                assert video_start_index > 0
+            if image_grid_thw is not None or video_grid_thw is not None:
+                if image_grid_thw is not None:
+                    image_mask = image_input_mask
+                    if image_mask is None:
+                        image_mask = (input_ids == self.image_token_id).contiguous()
+                    vision_grid_thw = image_grid_thw
+                    vision_data = pixel_values
+                    video_start_index = image_mask.sum().item()
+                else:
+                    video_start_index = 0
+                
+                # Handle videos - concatenate if both present
+                if video_grid_thw is not None:
+                    video_mask = (input_ids == self.video_token_id).contiguous()
+                    if vision_grid_thw is not None:
+                        # Both images and videos present - concatenate
+                        vision_grid_thw = torch.cat([vision_grid_thw, video_grid_thw], dim=0)
+                        vision_data = torch.cat([vision_data, pixel_values_videos], dim=0)
+                    else:
+                        # Only videos present
+                        vision_grid_thw = video_grid_thw
+                        vision_data = pixel_values_videos
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
@@ -278,18 +292,39 @@ class Qwen3VLModel(MegatronModule):
                         f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
                         f"{video_start_index}"
                     )
-                assert video_embeds is None, "not support video now"
-
+                
                 if image_embeds is not None:
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
                     combined_embeddings[image_mask] = image_embeds
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+
+                if video_embeds is not None:
+                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                    combined_embeddings[video_mask] = video_embeds
+                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+
+                # Create visual_pos_masks for deepstack processing
+                if image_embeds is not None and video_embeds is not None:
+                    visual_pos_masks = image_mask | video_mask
+                elif image_embeds is not None:
+                    visual_pos_masks = image_mask
+                elif video_embeds is not None:
+                    visual_pos_masks = video_mask
+                else:
+                    visual_pos_masks = None
+            else:
+                visual_pos_masks = None
+                
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None
+            visual_pos_masks = None
 
+        # For training with right-side padding, attention_mask is not needed for RoPE 
+        # position computation since real tokens naturally start at position 0
+        hf_attention_mask=None
         if position_ids is None:
             position_ids, _ = get_rope_index(
                 self.config.spatial_merge_size,
@@ -299,11 +334,10 @@ class Qwen3VLModel(MegatronModule):
                 input_ids,
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
-                attention_mask=attention_mask,
+                attention_mask=hf_attention_mask,
                 packed_seq_params=packed_seq_params,
             )
 
-        visual_pos_masks = image_mask
         deepstack_visual_embeds = deepstack_feature_lists
         if self.config.sequence_parallel:
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
