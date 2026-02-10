@@ -96,6 +96,7 @@ def main(
 
     model_provider = bridge.to_megatron_provider(load_weights=False)
     _configure_model_provider(model_provider, tp=tp, cp=cp, ep=ep)
+    model_provider.gradient_accumulation_fusion = False
 
     ddp_config = DistributedDataParallelConfig(
         use_distributed_optimizer=True,
