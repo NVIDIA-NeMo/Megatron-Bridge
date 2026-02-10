@@ -82,7 +82,7 @@ config = ConfigContainer(
 
 #### Implement Tensor Parallelism
 
-Megatron Bridge integrates TP through the implementation from Megatron Core.
+Megatron Bridge integrates TP through the implementation from Megatron Core. For detailed API usage and additional configurations, consult the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.tensor_parallel.html).
 
 ### Pipeline Parallelism
 
@@ -127,7 +127,7 @@ For more insights into this approach, see the detailed blog: [Scaling Language M
 
 #### Implement Pipeline Parallelism
 
-The Megatron Bridge implementation of PP leverages functionalities from Megatron Core.
+The Megatron Bridge implementation of PP leverages functionalities from Megatron Core. For more detailed API usage and configurations related to PP, visit the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.pipeline_parallel.html).
 
 ### Expert Parallelism and Mixture of Experts (MoE)
 
