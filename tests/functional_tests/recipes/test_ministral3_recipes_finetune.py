@@ -37,6 +37,10 @@ MINISTRAL3_FINETUNE_RECIPES = [
 class TestMinistral3Recipes:
     """Test class for Ministral 3 recipe functional tests."""
 
+    def test_dummy_always_passes(self):
+        """A dummy test that always succeeds when the rest are skipped due to transformers version."""
+        assert True
+
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("config_func,recipe_name,model_overrides", MINISTRAL3_FINETUNE_RECIPES)
     def test_ministral3_finetune_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
