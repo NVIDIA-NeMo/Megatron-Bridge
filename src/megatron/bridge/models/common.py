@@ -68,14 +68,14 @@ class ModelConfig(abc.ABC, Serializable):
     generation_config: Any | None = None
     """Generation configuration."""
 
-    def get_builder(self) -> "ModelBuilder":
+    def get_builder_cls(self) -> type:
         """Get the appropriate builder instance for this config.
         Dynamically imports and instantiates the builder from the string path.
         """
         module_path, class_name = self.builder.rsplit(".", 1)
         module = importlib.import_module(module_path)
         builder_cls = getattr(module, class_name)
-        return builder_cls()
+        return builder_cls
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize config to dictionary for saving.
@@ -276,15 +276,10 @@ class ModelProvider(Generic[ModelT]):
     """General provider that takes model config + build config and builds models.
 
     This is the main entry point for model construction. It automatically
-    selects the correct builder based on the build_config's builder attribute.
-
-    The model_config type varies by model family:
-    - GPT: MCore TransformerConfig
-    - VLM: dict with vision and decoder configs
-    - T5: dict with encoder and decoder configs
+    selects the correct builder based on the model_config's builder attribute.
 
     Example:
-        >>> provider = ModelProvider(model_cfg, GPTModelBuildConfig(...))
+        >>> provider = ModelProvider(model_cfg)
         >>> model = provider.provide(pg_collection)
         >>>
         >>> # Or for distributed training with DDP
@@ -292,7 +287,6 @@ class ModelProvider(Generic[ModelT]):
     """
 
     model_config: ModelConfig
-    """Model configuration (e.g., TransformerConfig for GPT, composite for VLM/T5)."""
 
     def provide(
         self,
@@ -303,7 +297,7 @@ class ModelProvider(Generic[ModelT]):
     ) -> ModelT:
         """Build and return a model.
 
-        Automatically selects the correct builder based on build_config.builder.
+        Automatically selects the correct builder based on model_config.builder.
 
         Args:
             pg_collection: Process groups for distributed training
@@ -314,8 +308,8 @@ class ModelProvider(Generic[ModelT]):
         Returns:
             The constructed model
         """
-        builder = self.model_config.get_builder()
-        return builder(self.model_config).build_model(
+        builder_cls = self.model_config.get_builder_cls()
+        return builder_cls(self.model_config).build_model(
             pg_collection,
             pre_process=pre_process,
             post_process=post_process,
@@ -343,8 +337,8 @@ class ModelProvider(Generic[ModelT]):
         Returns:
             List of models (multiple for virtual pipeline parallelism)
         """
-        builder = self.model_config.get_builder()
-        return builder(self.model_config).build_distributed_models(
+        builder_cls = self.model_config.get_builder_cls()
+        return builder_cls(self.model_config).build_distributed_models(
             pg_collection,
             wrap_with_ddp=wrap_with_ddp,
             fp16=fp16,
