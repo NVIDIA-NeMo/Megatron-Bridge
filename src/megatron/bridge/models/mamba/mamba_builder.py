@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, ClassVar, Literal
 
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
@@ -73,16 +73,16 @@ def get_default_mamba_stack_spec(config: "MambaModelConfig") -> ModuleSpec:
         return transformer_engine_mamba_stack_spec()
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MambaModelConfig(ModelConfig):
-    """Configuration for Mamba model building that is NOT part of TransformerConfig.
+    """Complete configuration for a Mamba model. Contains a TransformerConfig.
 
     This is a pure data container with no behavior - just configuration values.
-    All the logic for using these values lives in the MambaModelBuilder.
+    All the logic for using these values lives in the `MambaModelBuilder`.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.mamba.MambaModelBuilder"
-    transformer: TransformerConfig = field(default_factory=TransformerConfig)
+    transformer: TransformerConfig
     fp16_lm_cross_entropy: bool = False
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = False
@@ -108,11 +108,11 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
 
     Example:
         >>> # model_config is MCore TransformerConfig for GPT
-        >>> model_cfg = TransformerConfig(num_layers=32, hidden_size=4096, ...)
-        >>> build_cfg = MambaExtraConfig(vocab_size=32000, seq_length=2048, ...)
+        >>> transformer_cfg = TransformerConfig(num_layers=32, hidden_size=4096, ...)
+        >>> model_cfg = MambaModelConfig(transformer=transformer_cfg, vocab_size=32000, seq_length=2048, ...)
         >>>
         >>> # Build model
-        >>> model = MambaModelBuilder(model_cfg, build_cfg).build_model(pg_collection)
+        >>> model = MambaModelBuilder(model_cfg).build_model(pg_collection)
     """
 
     def __init__(self, model_config: MambaModelConfig):
