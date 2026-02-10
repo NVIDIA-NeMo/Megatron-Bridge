@@ -76,13 +76,13 @@ LR_WARMUP_ITERS=10
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
-# EP/TP/PP combinations: "EP,TP,PP" configurations
-PARALLELISM_CONFIGS=("8,1,1" "1,4,2")
+# EP/TP/PP/SP combinations: "EP,TP,PP,SP" configurations
+PARALLELISM_CONFIGS=("8,1,1,False" "1,4,2,False" "2,2,2,True")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r EP TP PP <<< "$config"
+    IFS=',' read -r EP TP PP SP <<< "$config"
 
-    echo "Running full finetuning with EP=$EP, TP=$TP, PP=$PP"
+    echo "Running full finetuning with EP=$EP, TP=$TP, PP=$PP, SP=$SP"
     python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
         --step_func vlm_step \
@@ -95,13 +95,14 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_ep${EP}_tp${TP}_pp${PP}  \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_ep${EP}_tp${TP}_pp${PP}_sp_${SP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_ep${EP}_tp${TP}_pp${PP} \
+        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_ep${EP}_tp${TP}_pp${PP}_sp_${SP} \
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
         model.expert_model_parallel_size=$EP \
         model.tensor_model_parallel_size=$TP \
-        model.pipeline_model_parallel_size=$PP
+        model.pipeline_model_parallel_size=$PP \
+        model.sequence_parallel=$SP
 done
