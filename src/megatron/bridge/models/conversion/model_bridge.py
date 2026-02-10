@@ -37,13 +37,20 @@ import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
+
+
+try:
+    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import uneven_dtensor_to_full_tensor
+except ImportError:
+    from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
+        gather_uneven_dtensor_to_full_tensor as uneven_dtensor_to_full_tensor,
+    )
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import (
-    get_pg_size,
-    unwrap_model,
-)
+from megatron.core.utils import get_pg_size
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from torch.distributed._tensor import DTensor
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -164,6 +171,33 @@ def _megatron_local_name_to_global(
         elif ".bias" in param_name:
             param_name = _update_expert_number(param_name, "bias")
     return param_name
+
+
+def unwrap_model(model, module_instances=None):
+    """Unwrap_model to return the final model instance"""
+    if module_instances is None:
+        from megatron.core.distributed import DistributedDataParallel as DDP
+        from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
+        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+            FullyShardedDataParallel as megatron_FSDP,
+        )
+        from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
+        from megatron.core.transformer.module import Float16Module
+
+        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
+
+    return_list = True
+    if not isinstance(model, list):
+        model = [model]
+        return_list = False
+    unwrapped_model = []
+    for model_module in model:
+        while isinstance(model_module, module_instances):
+            model_module = model_module.module
+        unwrapped_model.append(model_module)
+    if not return_list:
+        return unwrapped_model[0]
+    return unwrapped_model
 
 
 class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
@@ -749,6 +783,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
+        if use_megatron_fsdp:
+            original_megatron_model = megatron_model
+            megatron_model = unwrap_model(megatron_model)
         # [ModelOpt]: Hide extra parameters registered in Distillation mode
         with contextlib.ExitStack() as stack:
             if hasattr(megatron_model[0], "hide_teacher_model"):
@@ -774,6 +812,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             if converted_weights is not None:
                 # Assert that param_weight is not None for HF->Megatron tasks
                 assert task.param_weight is not None, "param_weight is required for HF->Megatron conversion"
+                if isinstance(task.param_weight, DTensor):
+                    sliced_converted_weights = converted_weights.reshape(-1)[task.param_weight.megatron_fsdp_slice]
+                    task.param_weight._local_tensor.reshape(-1).copy_(sliced_converted_weights)
+                    continue
 
                 # Check shape compatibility before copying
                 if converted_weights.shape != task.param_weight.shape:
@@ -803,6 +845,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 task.param_weight.data.copy_(converted_weights)
 
         self._broadcast_shared_embeddings(megatron_model)
+        if use_megatron_fsdp:
+            for m in original_megatron_model:
+                m.module.install_optimized_model_weights()
+            return original_megatron_model
         return megatron_model
 
     def stream_weights_hf_to_megatron(
@@ -936,24 +982,35 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
+        if use_megatron_fsdp:
+            unwrapped_model_list = unwrap_model(megatron_model)
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+            conversion_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
 
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
-            adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+            adapter_tasks_by_base = self.build_adapter_conversion_tasks(unwrapped_model_list)
 
         megatron_to_hf_tasks = conversion_tasks
-        unwrapped_model = unwrap_model(megatron_model)[0]
+        unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
+            if isinstance(task.param_weight, DTensor):
+                full_tensor = uneven_dtensor_to_full_tensor(task.param_weight)
+                if hasattr(full_tensor, "to_local"):
+                    megatron_weights = full_tensor.to_local()
+                else:
+                    megatron_weights = full_tensor
+            else:
+                megatron_weights = task.param_weight
+            converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, task.megatron_module)
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,
