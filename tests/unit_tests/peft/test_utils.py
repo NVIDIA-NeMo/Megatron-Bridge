@@ -602,10 +602,16 @@ class TestParallelLinearAdapter:
         # Output should be unpadded back to original size
         assert output.shape == (7, 10)
 
+    @patch("megatron.bridge.peft.utils.parallel_state")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_sharded_state_dict(self, mock_row_linear, mock_col_linear, mock_config):
+    def test_parallel_linear_adapter_sharded_state_dict(
+        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
+    ):
         """Test sharded state dict functionality."""
+        # Mock parallel state (needed for dense adapter TP replica_id logic)
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
+
         # Mock linear layers with sharded_state_dict methods
         mock_linear_in = Mock()
         mock_linear_out = Mock()
@@ -626,13 +632,17 @@ class TestParallelLinearAdapter:
         mock_linear_in.sharded_state_dict.assert_called_once_with("adapter.linear_in.", (), None)
         mock_linear_out.sharded_state_dict.assert_called_once_with("adapter.linear_out.", (), None)
 
+    @patch("megatron.bridge.peft.utils.parallel_state")
     @patch("megatron.bridge.peft.utils.apply_swiglu_sharded_factory")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sharded_state_dict_fc1_special_case(
-        self, mock_row_linear, mock_col_linear, mock_swiglu_factory, mock_config
+        self, mock_row_linear, mock_col_linear, mock_swiglu_factory, mock_parallel_state, mock_config
     ):
         """Test sharded state dict with special handling for linear_fc1."""
+        # Mock parallel state (needed for dense adapter TP replica_id logic)
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
+
         # Mock linear layers
         mock_linear_in = Mock()
         mock_linear_out = Mock()
