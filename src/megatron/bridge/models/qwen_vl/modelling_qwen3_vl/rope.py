@@ -17,6 +17,8 @@ from typing import List, Optional
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core import parallel_state
+from megatron.core.models.common.embeddings.rope_utils import get_pos_emb_on_this_cp_rank
 from torch import Tensor
 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLTextRotaryEmbedding
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
@@ -89,5 +91,11 @@ class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
         freqs = self.apply_interleaved_mrope(freqs, mrope_section)
         emb = torch.cat((freqs, freqs), dim=-1)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
+        if parallel_state.get_context_parallel_world_size() > 1:
+            # slice rotary_pos_emb along sequence dimension and select the parition of the current
+            # CP rank
+            emb = get_pos_emb_on_this_cp_rank(
+                emb, 0, parallel_state.get_context_parallel_group()
+            )
         _ = packed_seq_params  # packed sequences not supported yet
         return emb

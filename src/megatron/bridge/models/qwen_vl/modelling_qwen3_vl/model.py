@@ -23,8 +23,19 @@ from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_index, split_deepstack_embs
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+    get_rope_index,
+    split_deepstack_embs,
+    reorganize_inputs,
+)
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+from megatron.bridge.utils.context_parallel_utils import (
+    AllGatherVisionEmbeddings,
+    qwen3vl_parallel_split,
+    get_vision_parallel_data,
+    split_data_cp_rank,
+    collapse_thw,
+)
 
 
 class Qwen3VLModel(MegatronModule):
@@ -75,6 +86,8 @@ class Qwen3VLModel(MegatronModule):
         self.image_token_id = language_transformer_config.image_token_id
         self.video_token_id = language_transformer_config.video_token_id
         self.vision_start_token_id = language_transformer_config.vision_start_token_id
+
+        self.square_merge_size = vision_transformer_config.spatial_merge_size**2
 
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
@@ -208,6 +221,9 @@ class Qwen3VLModel(MegatronModule):
         video_grid_thw: torch.Tensor = None,
         # cat set at dataset
         image_input_mask: torch.Tensor = None,
+        video_input_mask: torch.Tensor = None,
+        cp_img_num: list[int] = None,
+        **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
 
@@ -220,43 +236,89 @@ class Qwen3VLModel(MegatronModule):
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
 
-            video_start_index:
-                0 -- all video
-                len(video_seq) -- all image
-                others -- mixture
-            *_input_mask: should not be None in the first PP stage
         Returns:
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
-        assert pixel_values_videos is None and video_grid_thw is None, "not support video now"
         assert inference_params is None, "not support inference"
+        assert packed_seq_params is None, "not support packed_seq_params"
 
-        video_start_index = 0
         vision_grid_thw = None
         vision_data = None
-        image_mask = None
+        vision_mask = None
         deepstack_feature_lists = None
-        # position ids is computed within the model
-        position_ids = None
+        cp_size = mpu.get_context_parallel_world_size()
+        parallel_size = mpu.get_tensor_and_context_parallel_world_size()
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
         if self.pre_process:
-            if image_grid_thw is not None:
-                image_mask = image_input_mask
-                if image_mask is None:
-                    image_mask = (input_ids == self.image_token_id).contiguous()
-                vision_grid_thw = image_grid_thw
-                vision_data = pixel_values
-                video_start_index = image_mask.sum().item()
-                assert video_start_index > 0
+            vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                pixel_values_videos=pixel_values_videos,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                image_input_mask=image_input_mask,
+                video_input_mask=video_input_mask,
+                image_token_id=self.image_token_id,
+                video_token_id=self.video_token_id,
+                square_merge_size=self.square_merge_size,
+            )
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                vision_embeds, deepstack_feature_lists = self.vision_model(
-                    hidden_states=vision_data,
-                    grid_thw=vision_grid_thw,
-                )
+                if parallel_size > 1:
+                    if cp_img_num is None:
+                        vision_data, vision_grid_thw, cp_img_num = (
+                            qwen3vl_parallel_split(
+                                parallel_size,
+                                vision_data,
+                                vision_grid_thw,
+                            )
+                        )
+                    vision_data, vision_grid_thw, seqlen_on_parallel_ranks = (
+                        get_vision_parallel_data(
+                            vision_data,
+                            vision_grid_thw,
+                            self.square_merge_size,
+                            cp_img_num,
+                        )
+                    )
+                    vision_grid_thw = collapse_thw(vision_grid_thw)
+
+                if vision_data.shape[0] > 0:
+                    vision_embeds, deepstack_feature_lists = self.vision_model(
+                        hidden_states=vision_data,
+                        grid_thw=vision_grid_thw,
+                    )
+                else:
+                    vision_embeds = torch.zeros(
+                        (0, self.language_model.config.hidden_size),
+                        device=vision_data.device,
+                        dtype=torch.bfloat16,
+                    )
+                    deepstack_feature_lists = []
+                    for _ in self.vision_model.config.deepstack_visual_indexes:
+                        deepstack_feature_lists.append(
+                            torch.zeros(
+                                (0, self.language_model.config.hidden_size),
+                                device=vision_data.device,
+                                dtype=torch.bfloat16,
+                            )
+                        )
+
+                if parallel_size > 1:
+                    vision_embeds = AllGatherVisionEmbeddings.apply(
+                        vision_embeds,
+                        seqlen_on_parallel_ranks,
+                        mpu.get_tensor_and_context_parallel_group(),
+                    )
+                    for i in range(len(deepstack_feature_lists)):
+                        deepstack_feature_lists[i] = AllGatherVisionEmbeddings.apply(
+                            deepstack_feature_lists[i],
+                            seqlen_on_parallel_ranks,
+                            mpu.get_tensor_and_context_parallel_group(),
+                        )
 
             combined_embeddings = self.language_model.embedding(
                 input_ids=input_ids,
@@ -264,26 +326,12 @@ class Qwen3VLModel(MegatronModule):
             ).clone()  # [text_seq_len, b, h_language]
 
             if vision_embeds is not None:
-                if video_start_index == 0:
-                    image_embeds = None
-                    video_embeds = vision_embeds
-                elif video_start_index == vision_embeds.shape[0]:
-                    image_embeds = vision_embeds
-                    video_embeds = None
-                elif 0 < video_start_index < vision_embeds.shape[0]:
-                    image_embeds = vision_embeds[:video_start_index]
-                    video_embeds = vision_embeds[video_start_index:]
-                else:
-                    raise ValueError(
-                        f"Expect video token start index in range [0, {vision_embeds.shape[0]}], but got "
-                        f"{video_start_index}"
-                    )
-                assert video_embeds is None, "not support video now"
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                combined_embeddings[vision_mask] = vision_embeds
+                combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
-                if image_embeds is not None:
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
-                    combined_embeddings[image_mask] = image_embeds
-                    combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+            if combined_embeddings is not None and cp_size > 1:
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0)
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
@@ -303,14 +351,17 @@ class Qwen3VLModel(MegatronModule):
                 packed_seq_params=packed_seq_params,
             )
 
-        visual_pos_masks = image_mask
+        visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
-        if self.config.sequence_parallel:
+        if self.config.sequence_parallel or cp_size > 1:
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
                 visual_pos_masks,
                 deepstack_visual_embeds,
                 tp_size=mpu.get_tensor_model_parallel_world_size(),
                 tp_rank=mpu.get_tensor_model_parallel_rank(),
+                cp_size = cp_size,
+                cp_rank=mpu.get_context_parallel_rank(),
+                sequence_parallel=self.config.sequence_parallel,
             )
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
