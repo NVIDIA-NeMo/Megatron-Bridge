@@ -372,15 +372,6 @@ class TestMegatronOlMoEBridge:
         # Check that initializer range is mapped correctly
         assert result.init_method_std == olmoe_1b_7b_config.initializer_range
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_olmoe_1b_7b):
-        """Test that generation config is passed through."""
-        bridge = OlMoEBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_olmoe_1b_7b)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_olmoe_1b_7b.generation_config
-
     def test_mapping_registry_implementation(self, mock_pretrained_olmoe_1b_7b):
         """Test that mapping_registry returns a proper MegatronMappingRegistry."""
         bridge = OlMoEBridge()

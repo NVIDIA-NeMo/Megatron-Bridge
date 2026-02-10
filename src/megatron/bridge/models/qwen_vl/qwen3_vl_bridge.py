@@ -97,7 +97,6 @@ class Qwen3VLBridge(MegatronModelBridge):
             fp16=(model_dtype == torch.float16),
             bf16=(model_dtype == torch.bfloat16),
             params_dtype=model_dtype,
-            generation_config=hf_pretrained.generation_config,
             # Qwen3 specific parameters
             add_qkv_bias=text_config.attention_bias,  # Qwen3 can have bias in QKV
             qk_layernorm=True,  # Qwen3 uses QK layernorm
@@ -263,7 +262,6 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             fp16=(model_dtype == torch.float16),
             bf16=(model_dtype == torch.bfloat16),
             params_dtype=model_dtype,
-            generation_config=hf_pretrained.generation_config,
             # Qwen3 specific parameters
             add_qkv_bias=text_config.attention_bias,  # Qwen3 can have bias in QKV
             qk_layernorm=True,  # Qwen3 uses QK layernorm

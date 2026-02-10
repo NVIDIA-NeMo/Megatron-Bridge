@@ -20,7 +20,6 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -106,7 +105,6 @@ class TestQwen3MoEBridge:
         """Create a mock PreTrainedCausalLM with Qwen3 MoE model."""
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_moe_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         mock_pretrained.model = Mock()
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained
@@ -207,7 +205,6 @@ class TestQwen3MoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -224,22 +221,12 @@ class TestQwen3MoEBridge:
         assert result.bf16 is False
         assert result.params_dtype == torch.float16
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_qwen3_moe):
-        """Test generation config mapping."""
-        bridge = Qwen3MoEBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_qwen3_moe)
-
-        # Check that generation config is passed through
-        assert result.generation_config == mock_pretrained_qwen3_moe.generation_config
-
     def test_provider_bridge_tie_word_embeddings_true(self, mock_qwen3_moe_config):
         """Test provider_bridge with tie_word_embeddings=True."""
         mock_qwen3_moe_config.tie_word_embeddings = True
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_moe_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -252,7 +239,6 @@ class TestQwen3MoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_moe_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -267,7 +253,6 @@ class TestQwen3MoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_moe_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -283,7 +268,6 @@ class TestQwen3MoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
