@@ -36,7 +36,7 @@ from typing import (
 import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.activations import fast_gelu
+from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -313,6 +313,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         "silu": F.silu,
         "gelu": F.gelu,
         "relu": F.relu,
+        "relu2": squared_relu,
         "tanh": torch.tanh,
         "gelu_pytorch_tanh": fast_gelu,
     }
@@ -425,8 +426,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         Default implementation that:
         1. Converts HF config to provider kwargs using CONFIG_MAPPING
-        2. Adds generation_config
-        3. Creates and returns a GPTModelProvider
+        2. Creates and returns a GPTModelProvider
 
         Subclasses should override this to add model-specific configuration
         by calling super().provider_bridge() then setting properties directly
@@ -448,9 +448,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         yarn_params = provider_kwargs.pop("_yarn_params", None)
         mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
-
-        # Add generation config
-        provider_kwargs["generation_config"] = hf_pretrained.generation_config
 
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
