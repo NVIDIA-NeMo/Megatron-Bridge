@@ -40,7 +40,7 @@ def transformer_engine_mamba_stack_spec() -> ModuleSpec:
     return default_mamba_stack_spec
 
 
-def modelopt_mamba_stack_spec(config: "MambaModelConfig") -> ModuleSpec:
+def modelopt_mamba_stack_spec() -> ModuleSpec:
     """Mamba stack specification for quantization with ModelOpt.
 
     Uses Norm instead of TENorm and ColumnParallelLinear/RowParallelLinear
@@ -68,7 +68,7 @@ def get_default_mamba_stack_spec(config: "MambaModelConfig") -> ModuleSpec:
         ModuleSpec: Appropriate module specification based on config
     """
     if config.restore_modelopt_state:
-        return modelopt_mamba_stack_spec(config)
+        return modelopt_mamba_stack_spec()
     else:
         return transformer_engine_mamba_stack_spec()
 
