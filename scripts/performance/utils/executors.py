@@ -221,15 +221,10 @@ def dgxc_executor(
             {
                 "annotations": [
                     {"name": "runai.dgxc.nvidia.com/gcp-nccl", "value": "none", "exclude": False},
-                    {"name": "disable-auto-efa", "value": "true", "exclude": False},
                 ],
             }
             if dgxc_cluster == "dgxcloud-gcp" and nodes == 1
-            else {
-                "annotations": [
-                    {"name": "disable-auto-efa", "value": "true", "exclude": False},
-                ],
-            }
+            else {}
         ),
         env_vars=env_vars,
         launcher="torchrun",
