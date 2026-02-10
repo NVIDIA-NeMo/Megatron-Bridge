@@ -183,7 +183,7 @@ def load_recipe(
     kwargs = {}
     if accepts_peft:
         kwargs["peft"] = peft_scheme
-    if accepts_packed_sequence:
+    if accepts_packed_sequence and packed_sequence:
         kwargs["packed_sequence"] = packed_sequence
     if accepts_seq_length and seq_length is not None:
         kwargs["seq_length"] = seq_length

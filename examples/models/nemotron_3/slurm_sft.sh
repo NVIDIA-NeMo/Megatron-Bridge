@@ -17,7 +17,7 @@
 # Nemotron 3 Nano Full Supervised Fine-Tuning (SFT)
 #
 # Nemotron 3 Nano is a 30B parameter model with A3B (Active 3 Billion) architecture
-# Recommended: TP=1, PP=1, EP=8 for full SFT (8 GPUs, 2 node)
+# Recommended: TP=1, PP=1, EP=8 for full SFT (16 GPUs, 2 node)
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
