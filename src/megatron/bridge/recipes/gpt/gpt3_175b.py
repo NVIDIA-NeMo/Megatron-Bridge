@@ -57,7 +57,7 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 2
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
