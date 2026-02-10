@@ -15,7 +15,7 @@ Unless explicitly stated, any megatron model path in the commands below should N
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Qwen3-VL Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/qwen_vl/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Qwen3-VL Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/qwen3_vl/README.md).
 
 ## Hugging Face Model Cards
 - Qwen3-VL-8B: `https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct`

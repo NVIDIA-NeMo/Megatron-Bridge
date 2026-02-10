@@ -38,7 +38,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
     
     echo "Running full finetuning with TP=$TP, PP=$PP"
-    uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
+    python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
         --step_func vlm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -83,7 +83,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r EP TP PP <<< "$config"
 
     echo "Running full finetuning with EP=$EP, TP=$TP, PP=$PP"
-    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+    python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
         --step_func vlm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
