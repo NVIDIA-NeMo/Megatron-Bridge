@@ -184,13 +184,17 @@ def deepseek_v3_pretrain_config_h100(
     )
     precision_config = get_precision_config(precision)
 
+    pp_layout = None
+    if base_cfg.pp_layout:
+        pp_layout = base_cfg.pp_layout
+
     cfg = pretrain_config(
         mock=mock,
         precision_config=precision_config,
         pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
         virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout="Et|(tt|)*30mL",
+        layout=pp_layout,
     )
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
