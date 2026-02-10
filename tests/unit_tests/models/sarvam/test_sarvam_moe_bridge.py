@@ -302,7 +302,10 @@ class TestSarvamMoEBridge:
             ("decoder.layers.*.mlp.linear_fc2.weight", "model.layers.*.mlp.down_proj.weight"),
             # Expert + shared expert down-proj
             ("decoder.layers.*.mlp.experts.linear_fc2.weight*", "model.layers.*.mlp.experts.*.down_proj.weight"),
-            ("decoder.layers.*.mlp.shared_experts.linear_fc2.weight", "model.layers.*.mlp.shared_experts.down_proj.weight"),
+            (
+                "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
+                "model.layers.*.mlp.shared_experts.down_proj.weight",
+            ),
         ]
 
         for megatron_param, hf_param in expected_pairs:
@@ -404,4 +407,3 @@ class TestSarvamMoEBridge:
         m = registry.hf_to_megatron_lookup("model.layers.2.mlp.gate.weight")
         assert m is not None
         assert m.megatron_param == "decoder.layers.2.mlp.router.weight"
-

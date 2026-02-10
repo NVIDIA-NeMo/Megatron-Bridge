@@ -30,9 +30,7 @@ def get_common_config(hf_pretrained: PreTrainedCausalLM) -> dict:
     config["num_attention_heads"] = hf_config.num_attention_heads
     config["num_moe_experts"] = hf_config.num_experts
     config["moe_router_topk"] = hf_config.num_experts_per_tok
-    config["moe_shared_expert_intermediate_size"] = (
-        hf_config.num_shared_experts * hf_config.moe_intermediate_size
-    )
+    config["moe_shared_expert_intermediate_size"] = hf_config.num_shared_experts * hf_config.moe_intermediate_size
     config["moe_layer_freq"] = [0] * hf_config.first_k_dense_replace + [1] * (
         hf_config.num_hidden_layers - hf_config.first_k_dense_replace
     )

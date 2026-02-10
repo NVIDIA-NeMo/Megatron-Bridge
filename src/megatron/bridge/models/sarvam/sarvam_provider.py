@@ -18,9 +18,11 @@ from functools import partial
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import MLATransformerConfig
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +37,14 @@ if TYPE_CHECKING:
     from megatron.core.transformer import ModuleSpec
 
 if HAVE_TE:
-    from megatron.core.utils import is_te_min_version
+    pass
 
 
 @dataclass
 class SarvamMoEModelProvider(GPTModelProvider):
-"""
-Sarvam Base MoE Class
-"""
-    transformer_layer_spec: Union[
-        "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
-    ] = partial(
+    """Sarvam Base MoE Class"""
+
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
         get_gpt_decoder_block_spec,
         use_transformer_engine=HAVE_TE,
         normalization="RMSNorm",
@@ -103,9 +102,7 @@ Sarvam Base MoE Class
     ffn_hidden_size: int = 8192
     moe_ffn_hidden_size: int = 1024
     moe_shared_expert_intermediate_size: int = 1024
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] + [1] * 18
-    )
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 18)
     bf16: bool = True
 
     # GQA
@@ -114,12 +111,9 @@ Sarvam Base MoE Class
 
 @dataclass
 class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
-"""
-Sarvam Base MLA Class
-"""
-    transformer_layer_spec: Union[
-        "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
-    ] = partial(
+    """Sarvam Base MLA Class"""
+
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
         get_gpt_decoder_block_spec,
         use_transformer_engine=HAVE_TE,
         normalization="RMSNorm",
@@ -186,9 +180,7 @@ Sarvam Base MLA Class
     ffn_hidden_size: int = 16384
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] + [1] * 31
-    )
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 31)
     bf16: bool = True
 
     # MLA
@@ -197,4 +189,3 @@ Sarvam Base MLA Class
     qk_head_dim: int = 128
     qk_pos_emb_head_dim: int = 64
     v_head_dim: int = 128
-    

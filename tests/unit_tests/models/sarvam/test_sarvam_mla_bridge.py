@@ -90,7 +90,10 @@ class TestSarvamMLABridge:
         assert provider.generation_config == mock_pretrained_mla.generation_config
 
         # MLA-specific
-        assert provider.kv_channels == mock_pretrained_mla.config.hidden_size // mock_pretrained_mla.config.num_attention_heads
+        assert (
+            provider.kv_channels
+            == mock_pretrained_mla.config.hidden_size // mock_pretrained_mla.config.num_attention_heads
+        )
         assert provider.kv_lora_rank == mock_pretrained_mla.config.kv_lora_rank
         assert provider.qk_head_dim == mock_pretrained_mla.config.qk_nope_head_dim
         assert provider.qk_pos_emb_head_dim == mock_pretrained_mla.config.qk_rope_head_dim
@@ -292,7 +295,10 @@ class TestSarvamMLABridge:
             ("decoder.layers.*.mlp.linear_fc2.weight", "model.layers.*.mlp.down_proj.weight"),
             # Expert + shared expert down-proj
             ("decoder.layers.*.mlp.experts.linear_fc2.weight*", "model.layers.*.mlp.experts.*.down_proj.weight"),
-            ("decoder.layers.*.mlp.shared_experts.linear_fc2.weight", "model.layers.*.mlp.shared_experts.down_proj.weight"),
+            (
+                "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
+                "model.layers.*.mlp.shared_experts.down_proj.weight",
+            ),
         ]
 
         for megatron_param, hf_param in expected_pairs:
@@ -382,4 +388,3 @@ class TestSarvamMLABridge:
         m = registry.hf_to_megatron_lookup("model.layers.2.mlp.gate.e_score_correction_bias")
         assert m is not None
         assert m.megatron_param == "decoder.layers.2.mlp.router.expert_bias"
-

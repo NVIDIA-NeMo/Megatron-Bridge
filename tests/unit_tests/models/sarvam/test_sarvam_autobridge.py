@@ -19,8 +19,7 @@ Unit tests for AutoBridge integration/validation for Sarvam architectures.
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from transformers import PretrainedConfig
 
@@ -127,7 +126,9 @@ class TestAutoBridgeSarvamConfigValidation:
 
             bridge = AutoBridge.from_hf_pretrained(temp_dir)
 
-            with patch("megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge") as mock_get_bridge:
+            with patch(
+                "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
+            ) as mock_get_bridge:
                 mock_bridge = Mock()
                 mock_provider = Mock()
                 mock_bridge.provider_bridge.return_value = mock_provider
@@ -136,4 +137,3 @@ class TestAutoBridgeSarvamConfigValidation:
                 provider = bridge.to_megatron_provider(load_weights=False)
                 assert provider == mock_provider
                 mock_bridge.provider_bridge.assert_called_once_with(hf_model)
-
