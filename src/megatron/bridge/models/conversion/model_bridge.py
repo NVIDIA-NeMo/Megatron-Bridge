@@ -62,6 +62,7 @@ from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
     persistent_buffers,
+    unwrap_model,
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -171,33 +172,6 @@ def _megatron_local_name_to_global(
         elif ".bias" in param_name:
             param_name = _update_expert_number(param_name, "bias")
     return param_name
-
-
-def unwrap_model(model, module_instances=None):
-    """Unwrap_model to return the final model instance"""
-    if module_instances is None:
-        from megatron.core.distributed import DistributedDataParallel as DDP
-        from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
-        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-            FullyShardedDataParallel as megatron_FSDP,
-        )
-        from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
-        from megatron.core.transformer.module import Float16Module
-
-        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
-
-    return_list = True
-    if not isinstance(model, list):
-        model = [model]
-        return_list = False
-    unwrapped_model = []
-    for model_module in model:
-        while isinstance(model_module, module_instances):
-            model_module = model_module.module
-        unwrapped_model.append(model_module)
-    if not return_list:
-        return unwrapped_model[0]
-    return unwrapped_model
 
 
 class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
@@ -982,9 +956,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
-        if use_megatron_fsdp:
-            unwrapped_model_list = unwrap_model(megatron_model)
+        unwrapped_model_list = unwrap_model(megatron_model)
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)

@@ -162,7 +162,7 @@ def main(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    prompt = "what is reforcement learning?"
+    prompt = "what is reinforcement learning?"
     input_ids = tokenizer.encode(prompt, return_tensors="pt").cuda()
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)

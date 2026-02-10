@@ -96,7 +96,6 @@ class TestHFFSDPConversion:
 
         # Save model and config
         model.save_pretrained(model_dir, safe_serialization=True)
-        model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
 

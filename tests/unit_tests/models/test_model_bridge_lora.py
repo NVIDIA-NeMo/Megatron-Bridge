@@ -258,7 +258,7 @@ def test_global_param_names_skip_adapter(monkeypatch):
         lambda *_args, **_kwargs: _args[2],
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        "megatron.bridge.models.conversion.utils.unwrap_model",
         lambda models: models if isinstance(models, list) else [models],
     )
     monkeypatch.setattr(
@@ -324,7 +324,7 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
         lambda *_args, **_kwargs: _args[2],
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        "megatron.bridge.models.conversion.utils.unwrap_model",
         lambda models: models if isinstance(models, list) else [models],
     )
     monkeypatch.setattr(
@@ -699,7 +699,7 @@ def test_stream_weights_megatron_to_hf_skips_merge_when_disabled(monkeypatch):
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        "megatron.bridge.models.conversion.utils.unwrap_model",
         lambda *_args, **_kwargs: [SimpleNamespace(config=SimpleNamespace(pipeline_model_parallel_size=1))],
     )
 
