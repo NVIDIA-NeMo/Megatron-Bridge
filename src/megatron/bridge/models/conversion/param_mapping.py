@@ -41,6 +41,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _module_uses_fsdp(megatron_module: nn.Module) -> bool:
+    """Return True if the module uses Megatron-FSDP"""
+    return hasattr(megatron_module, "_parameters") and any(
+        key.startswith("weight") and isinstance(value, DTensor) for key, value in megatron_module._parameters.items()
+    )
+
+
 class MegatronParamMapping(ABC, Generic[WeightType]):
     """
     Abstract base class for weight conversion between Megatron and external formats.
@@ -855,12 +862,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        use_fsdp = hasattr(megatron_module, "_parameters") and any(
-            key.startswith("weight") and isinstance(value, DTensor)
-            for key, value in megatron_module._parameters.items()
-        )
-
-        if self.tp_size == 1 or use_fsdp:
+        if self.tp_size == 1 or _module_uses_fsdp(megatron_module):
             full_weights = megatron_weights
         else:
             # Gather from all TP ranks
@@ -957,12 +959,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        use_fsdp = hasattr(megatron_module, "_parameters") and any(
-            key.startswith("weight") and isinstance(value, DTensor)
-            for key, value in megatron_module._parameters.items()
-        )
-
-        if self.tp_size == 1 or len(megatron_weights.shape) == 1 or use_fsdp:
+        if self.tp_size == 1 or len(megatron_weights.shape) == 1 or _module_uses_fsdp(megatron_module):
             # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
@@ -2069,11 +2066,6 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        use_fsdp = hasattr(megatron_module, "_parameters") and any(
-            key.startswith("weight") and isinstance(value, DTensor)
-            for key, value in megatron_module._parameters.items()
-        )
-
         # Handle TP gathering
         if self.tp_size == 1:
             # No TP, just split the concatenated tensor
@@ -2081,7 +2073,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             gate, up = torch.chunk(fused_mlp, 2, dim=0)
 
         else:
-            if use_fsdp:
+            if _module_uses_fsdp(megatron_module):
                 gathered_shards = torch.chunk(megatron_weights, self.tp_size, dim=0)
             else:
                 # Gather shards from all TP ranks
