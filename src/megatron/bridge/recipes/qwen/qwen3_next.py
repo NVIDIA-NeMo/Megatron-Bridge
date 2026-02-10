@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import torch
 
@@ -283,7 +282,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
 
 
 def qwen3_next_80b_a3b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Qwen3-Next 80B-A3B.
 

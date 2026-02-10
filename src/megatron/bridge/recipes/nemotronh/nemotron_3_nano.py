@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import torch
 
@@ -307,7 +306,7 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
 
 
 def nemotron_3_nano_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron 3 Nano (30B-A3B MoE).
 

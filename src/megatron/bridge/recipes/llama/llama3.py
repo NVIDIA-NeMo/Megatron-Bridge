@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import torch
 
@@ -2030,7 +2029,7 @@ def llama31_405b_sft_config() -> ConfigContainer:
 
 
 def llama32_1b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3.2 1B.
 
@@ -2142,7 +2141,7 @@ def llama32_1b_peft_config(
 
 
 def llama32_3b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3.2 3B.
 
@@ -2254,7 +2253,7 @@ def llama32_3b_peft_config(
 
 
 def llama3_8b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3 8B.
 
@@ -2369,7 +2368,7 @@ def llama3_8b_peft_config(
 
 
 def llama31_8b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3.1 8B.
 
@@ -2484,7 +2483,7 @@ def llama31_8b_peft_config(
 
 
 def llama3_70b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3 70B.
 
@@ -2599,7 +2598,7 @@ def llama3_70b_peft_config(
 
 
 def llama31_70b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3.1 70B.
 
@@ -2714,7 +2713,7 @@ def llama31_70b_peft_config(
 
 
 def llama31_405b_peft_config(
-    peft_scheme: Union[str, PEFT] = "lora",
+    peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for Llama 3.1 405B.
 
