@@ -164,18 +164,16 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     texts = [processor.apply_chat_template(example["conversation"], tokenize=False) for example in examples]
     # Build per-example images (list) and split by presence
     per_example_images = []
-    has_images = []
+    per_example_videos = []
+    has_visual = []
     for example in examples:
-        imgs = process_vision_info(example["conversation"])[0]
-        if imgs is None:
-            imgs = []
-        elif not isinstance(imgs, list):
-            imgs = [imgs]
-        per_example_images.append(imgs)
-        has_images.append(len(imgs) > 0)
+        imgs, vids = process_vision_info(example["conversation"])
+        per_example_images.append(imgs if imgs else [])
+        per_example_videos.append(vids if vids else [])
+        has_visual.append(len(imgs or []) > 0 or len(vids or []) > 0)
 
-    idx_with = [i for i, h in enumerate(has_images) if h]
-    idx_without = [i for i, h in enumerate(has_images) if not h]
+    idx_with = [i for i, h in enumerate(has_visual) if h]
+    idx_without = [i for i, h in enumerate(has_visual) if not h]
 
     batch_with = None
     batch_without = None
@@ -183,9 +181,11 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if idx_with:
         texts_with = [texts[i] for i in idx_with]
         images_with = [per_example_images[i] for i in idx_with]
+        videos_with = [per_example_videos[i] for i in idx_with]
         batch_with = processor(
             text=texts_with,
-            images=images_with,
+            images=images_with if any(images_with) else None,
+            videos=videos_with if any(videos_with) else None,
             padding=True,
             return_tensors="pt",
             min_pixels=200704,  # 256*28*28
@@ -234,10 +234,10 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
         batch = {"input_ids": input_ids}
         # Carry over vision tensors if present
-        if "pixel_values" in batch_with:
-            batch["pixel_values"] = batch_with["pixel_values"]
-        if "image_grid_thw" in batch_with:
-            batch["image_grid_thw"] = batch_with["image_grid_thw"]
+        visual_keys = ["pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"]
+        for k in visual_keys:
+            if k in batch_with:
+                batch[k] = batch_with[k]
 
     labels = batch["input_ids"].clone()[:, 1:].contiguous()
     labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
@@ -268,11 +268,12 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     visual_inputs = Qwen2_5_VLVisualInputs(
         pixel_values=batch.get("pixel_values"),
         image_grid_thw=batch.get("image_grid_thw"),
+        pixel_values_videos=batch.get("pixel_values_videos"),
+        video_grid_thw=batch.get("video_grid_thw"),
     )
-    if "pixel_values" in batch:
-        del batch["pixel_values"]
-    if "image_grid_thw" in batch:
-        del batch["image_grid_thw"]
+    for k in ["pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"]:
+        if k in batch:
+            del batch[k]
     batch["visual_inputs"] = visual_inputs
     return batch
 
