@@ -85,7 +85,7 @@ cfg.dataset.path_to_cache = "/path/to/cache"
 # MTP Configuration
 cfg.mtp_num_layers = 1
 cfg.mtp_loss_scaling_factor = 0.1
-pretrain(config)
+pretrain(cfg)
 ```
 Follow the [DCLM Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm) to prepare the training data 
 
