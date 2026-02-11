@@ -815,8 +815,8 @@ def save_checkpoint(
     else:
         _post_save_global_barrier()
 
-    # Additional callback for wandb (last rank)
-    if not torch.distributed.is_initialized() or is_last_rank():
+    # Additional callback for wandb/mlflow (last rank, global checkpoints only)
+    if ckpt_type != CheckpointType.LOCAL and (not torch.distributed.is_initialized() or is_last_rank()):
 
         def wandb_finalize_fn() -> None:
             wandb_utils.on_save_checkpoint_success(
