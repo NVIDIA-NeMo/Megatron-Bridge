@@ -374,26 +374,11 @@ def setup_data_iterators(
         Each element can be a single iterator or a list of iterators if virtual
         pipeline parallelism is enabled.
     """
-    if cfg.model.virtual_pipeline_model_parallel_size is not None and cfg.dataset.dataloader_type != "batch":
-        train_data_iterator = []
-        valid_data_iterator = []
-        test_data_iterator = []
-        for i in range(model_length):
-            iterators = build_train_valid_test_data_iterators(
-                cfg=cfg,
-                train_state=train_state,
-                build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-                dp_group=dp_group,
-            )
-            train_data_iterator.append(iterators[0])
-            valid_data_iterator.append(iterators[1])
-            test_data_iterator.append(iterators[2])
-    else:
-        train_data_iterator, valid_data_iterator, test_data_iterator = build_train_valid_test_data_iterators(
-            cfg=cfg,
-            train_state=train_state,
-            build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-            dp_group=dp_group,
-        )
+    train_data_iterator, valid_data_iterator, test_data_iterator = build_train_valid_test_data_iterators(
+        cfg=cfg,
+        train_state=train_state,
+        build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=dp_group,
+    )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator
