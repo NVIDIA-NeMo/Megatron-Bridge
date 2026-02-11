@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Type
 
 import torch.nn.functional as F
-
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
@@ -20,12 +19,12 @@ from megatron.bridge.models.transformer_config import TransformerConfig
 @dataclass
 class LlavaMimoProvider(MimoModelProvider):
     """LLaVA-style Vision-Language Model provider.
-    
+
     Preconfigures specs for:
     - Vicuna-7B style language model (Llama-based)
     - CLIP-style vision encoder
     - 2-layer MLP projector
-    
+
     Example:
         >>> from my_encoders import HFCLIPEncoder
         >>> provider = LlavaMimoProvider(
@@ -34,19 +33,19 @@ class LlavaMimoProvider(MimoModelProvider):
         ... )
         >>> result = provider.provide()
     """
-    
+
     # Vision encoder (user must provide)
     vision_encoder_module: Optional[Type] = None
     vision_encoder_params: Dict = field(default_factory=dict)
     vision_projector_input_size: int = 1024  # CLIP ViT-L/14 output size
-    
+
     # Override defaults
     image_special_token_id: int = 32000
     vocab_size: int = 32256  # Vicuna vocab size
-    
+
     # Optional custom configs
     language_config: Optional[TransformerConfig] = None
-    
+
     def __post_init__(self):
         """Build specs after initialization."""
         if self.vision_encoder_module is None:
@@ -54,11 +53,11 @@ class LlavaMimoProvider(MimoModelProvider):
                 "vision_encoder_module must be provided. "
                 "Example: LlavaMimoProvider(vision_encoder_module=HFCLIPEncoder, ...)"
             )
-        
+
         # Create default language config if not provided
         if self.language_config is None:
             self.language_config = self._get_default_language_config()
-        
+
         # Build language model spec
         self.language_model_spec = ModuleSpec(
             module=GPTModel,
@@ -72,15 +71,13 @@ class LlavaMimoProvider(MimoModelProvider):
                 "position_embedding_type": "rope",
             },
         )
-        
+
         # Build vision modality spec
-        self.modality_submodules_spec = {
-            "images": self._build_vision_submodule_spec()
-        }
-        
+        self.modality_submodules_spec = {"images": self._build_vision_submodule_spec()}
+
         # Set special token IDs
         self.special_token_ids = {"images": self.image_special_token_id}
-    
+
     def _get_default_language_config(self) -> TransformerConfig:
         """Create default Vicuna-7B language model config."""
         return TransformerConfig(
@@ -96,7 +93,7 @@ class LlavaMimoProvider(MimoModelProvider):
             attention_dropout=0.0,
             hidden_dropout=0.0,
         )
-    
+
     def _build_vision_submodule_spec(self) -> ModuleSpec:
         """Build vision modality specification."""
         # Vision encoder
@@ -104,19 +101,19 @@ class LlavaMimoProvider(MimoModelProvider):
             module=self.vision_encoder_module,
             params=self.vision_encoder_params,
         )
-        
+
         # Vision projector (2-layer MLP)
         projection_config = TransformerConfig(
             num_layers=2,
             hidden_size=self.language_config.hidden_size,
             num_attention_heads=1,
         )
-        
+
         projection_layer_spec = ModuleSpec(
             module=None,
             submodules=MLPSubmodules(linear_fc1=None, linear_fc2=None),
         )
-        
+
         vision_projection = ModuleSpec(
             module=MultimodalProjector,
             params={
@@ -126,7 +123,7 @@ class LlavaMimoProvider(MimoModelProvider):
                 "input_size": self.vision_projector_input_size,
             },
         )
-        
+
         return ModuleSpec(
             module=VisionModalitySubmodules,
             params={},
