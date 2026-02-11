@@ -24,6 +24,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    ConcatenatedQKVMapping,
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
@@ -102,6 +103,9 @@ class Qwen3VLBridge(MegatronModelBridge):
         provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
         provider.mrope_section = text_config.rope_scaling.get("mrope_section", [24, 20, 20])
 
+        # TODO: setattr use_hf_vision_model to bridge instance in a dangerous way, maybe optimize it later.
+        setattr(self, "use_hf_vision_model", provider.use_hf_vision_model)
+
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -115,6 +119,32 @@ class Qwen3VLBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.mlp.linear_fc2.weight": "model.language_model.layers.*.mlp.down_proj.weight",
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
+            # vision module attn
+            "vision_model.decoder.layers.*.self_attention.linear_proj.weight": "model.visual.blocks.*.attn.proj.weight",
+            "vision_model.decoder.layers.*.self_attention.linear_proj.bias": "model.visual.blocks.*.attn.proj.bias",
+            # vision module mlp
+            "vision_model.decoder.layers.*.mlp.linear_fc1.weight": "model.visual.blocks.*.mlp.linear_fc1.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.bias": "model.visual.blocks.*.mlp.linear_fc1.bias",
+            "vision_model.decoder.layers.*.mlp.linear_fc2.weight": "model.visual.blocks.*.mlp.linear_fc2.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc2.bias": "model.visual.blocks.*.mlp.linear_fc2.bias",
+            # vision module norm
+            "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.visual.blocks.*.norm1.weight",
+            "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_bias": "model.visual.blocks.*.norm1.bias",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.visual.blocks.*.norm2.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_bias": "model.visual.blocks.*.norm2.bias",
+            # # vision module deepstack merger
+            "vision_model.decoder.deepstack_merger_list.*.patch_norm.weight": "model.visual.deepstack_merger_list.*.norm.weight",
+            "vision_model.decoder.deepstack_merger_list.*.patch_norm.bias": "model.visual.deepstack_merger_list.*.norm.bias",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc1.weight": "model.visual.deepstack_merger_list.*.linear_fc1.weight",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc1.bias": "model.visual.deepstack_merger_list.*.linear_fc1.bias",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc2.weight": "model.visual.deepstack_merger_list.*.linear_fc2.weight",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc2.bias": "model.visual.deepstack_merger_list.*.linear_fc2.bias",
+            # vision module merger
+            "vision_model.merger.patch_norm.**": "model.visual.merger.norm.**",
+            "vision_model.merger.linear_fc1.weight": "model.visual.merger.linear_fc1.weight",
+            "vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
+            "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
+            "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
         }
 
         mapping_list = []
@@ -126,12 +156,6 @@ class Qwen3VLBridge(MegatronModelBridge):
         # Add special mappings that require parameter transformation
         mapping_list.extend(
             [
-                # Vision model weights are replicated directly
-                # This handles all vision encoder layers, patch embeddings, mergers, etc.
-                ReplicatedMapping(
-                    megatron_param="vision_model.**",
-                    hf_param="model.visual.**",
-                ),
                 # QKV mapping: Combine separate Q, K, V matrices into single QKV matrix
                 QKVMapping(
                     megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
@@ -151,6 +175,22 @@ class Qwen3VLBridge(MegatronModelBridge):
                     megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
                     gate="model.language_model.layers.*.mlp.gate_proj.weight",
                     up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    hf_param="model.visual.blocks.*.attn.qkv.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    hf_param="model.visual.blocks.*.attn.qkv.bias",
+                ),
+                ReplicatedMapping(
+                    megatron_param="vision_model.patch_embed.proj.**",
+                    hf_param="model.visual.patch_embed.proj.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="vision_model.pos_embed.weight",
+                    hf_param="model.visual.pos_embed.weight",
                 ),
             ]
         )
@@ -274,6 +314,32 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
             # MoE router weights
             "language_model.decoder.layers.*.mlp.router.weight": "model.language_model.layers.*.mlp.gate.weight",
+            # vision module attn
+            "vision_model.decoder.layers.*.self_attention.linear_proj.weight": "model.visual.blocks.*.attn.proj.weight",
+            "vision_model.decoder.layers.*.self_attention.linear_proj.bias": "model.visual.blocks.*.attn.proj.bias",
+            # vision module mlp
+            "vision_model.decoder.layers.*.mlp.linear_fc1.weight": "model.visual.blocks.*.mlp.linear_fc1.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.bias": "model.visual.blocks.*.mlp.linear_fc1.bias",
+            "vision_model.decoder.layers.*.mlp.linear_fc2.weight": "model.visual.blocks.*.mlp.linear_fc2.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc2.bias": "model.visual.blocks.*.mlp.linear_fc2.bias",
+            # vision module norm
+            "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.visual.blocks.*.norm1.weight",
+            "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_bias": "model.visual.blocks.*.norm1.bias",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.visual.blocks.*.norm2.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_bias": "model.visual.blocks.*.norm2.bias",
+            # # vision module deepstack merger
+            "vision_model.decoder.deepstack_merger_list.*.patch_norm.weight": "model.visual.deepstack_merger_list.*.norm.weight",
+            "vision_model.decoder.deepstack_merger_list.*.patch_norm.bias": "model.visual.deepstack_merger_list.*.norm.bias",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc1.weight": "model.visual.deepstack_merger_list.*.linear_fc1.weight",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc1.bias": "model.visual.deepstack_merger_list.*.linear_fc1.bias",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc2.weight": "model.visual.deepstack_merger_list.*.linear_fc2.weight",
+            "vision_model.decoder.deepstack_merger_list.*.linear_fc2.bias": "model.visual.deepstack_merger_list.*.linear_fc2.bias",
+            # vision module merger
+            "vision_model.merger.patch_norm.**": "model.visual.merger.norm.**",
+            "vision_model.merger.linear_fc1.weight": "model.visual.merger.linear_fc1.weight",
+            "vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
+            "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
+            "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
         }
 
         mapping_list = []
@@ -285,11 +351,6 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         # Add special mappings that require parameter transformation
         mapping_list.extend(
             [
-                # Vision model weights are replicated directly
-                ReplicatedMapping(
-                    megatron_param="vision_model.**",
-                    hf_param="model.visual.**",
-                ),
                 # QKV mapping: Combine separate Q, K, V matrices
                 QKVMapping(
                     megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
@@ -311,6 +372,23 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                 ExpertMLPDownProjMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="model.language_model.layers.*.mlp.experts.down_proj",
+                ),
+                # QKV mapping for vision model
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    hf_param="model.visual.blocks.*.attn.qkv.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    hf_param="model.visual.blocks.*.attn.qkv.bias",
+                ),
+                ReplicatedMapping(  # These patch_embed are conv, we need to use ReplicatedMapping
+                    megatron_param="vision_model.patch_embed.proj.**",
+                    hf_param="model.visual.patch_embed.proj.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="vision_model.pos_embed.weight",
+                    hf_param="model.visual.pos_embed.weight",
                 ),
             ]
         )

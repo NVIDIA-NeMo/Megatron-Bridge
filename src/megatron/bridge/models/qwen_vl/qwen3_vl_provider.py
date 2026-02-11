@@ -44,7 +44,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
     # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
-    patch_size: int = 14
+    patch_size: int = 16
     temporal_patch_size: int = 2
     in_channels: int = 3
     spatial_merge_size: int = 2
@@ -94,6 +94,16 @@ class Qwen3VLModelProvider(GPTModelProvider):
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
+
+    sequence_parallel: bool = False
+
+    qk_layernorm: bool = True
+
+    bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
+
+    use_hf_vision_model: bool = False
+
+    vision_dp_when_cp: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL model instance with vision and language components."""
@@ -187,6 +197,10 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
 
+    apply_rotary_pos_emb_in_fp32: bool = False
+    # This is not used in the model, we use hf_config.deepstack_visual_indexes to override it
+    deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
@@ -234,6 +248,9 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     distribute_saved_activations: bool = False
     cp_comm_type: str = "p2p"
 
+    use_hf_vision_model: bool = False
+    vision_dp_when_cp: bool = False
+
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
@@ -242,7 +259,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3 VL MoE model instance with vision and language components."""
         language_transformer_config = self
-        hf_config = self.vision_config
+        hf_vision_config = self.vision_config
 
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
@@ -255,7 +272,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=hf_config,
+            vision_transformer_config=hf_vision_config,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
