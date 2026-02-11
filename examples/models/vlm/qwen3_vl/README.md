@@ -90,10 +90,9 @@ Here is a breakdown of the key specifications:
   - `qwen3_vl_235b_a22b_finetune_config`: Finetuning for 235B-A22B VL model with PEFT support
     
 Before training, ensure the following environment variables are set:
-1. `SAVE_DIR`: checkpoint and log saving directory
-2. `HF_TOKEN`: to download models from HF Hub (if required)
-3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
-4. `WANDB_API_KEY`: (optional) to enable WandB logging
+1. `HF_TOKEN`: to download models from HF Hub (if required)
+2. `HF_HOME`: (optional) to avoid re-downloading models and datasets
+3. `WANDB_API_KEY`: (optional) to enable WandB logging
 
 ### Pretrain
 
