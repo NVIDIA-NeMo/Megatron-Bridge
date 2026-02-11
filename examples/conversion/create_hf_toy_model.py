@@ -12,6 +12,7 @@ Example:
         --output-dir /tmp/qwen3_toy \
         --num-hidden-layers 2 \
         --num-experts 4
+
     ```
 
 The script works by:
@@ -103,32 +104,43 @@ def _adjust_config(
     num_experts_per_tok: Optional[int],
     moe_intermediate_size: Optional[int],
 ) -> None:
-    """Mutate the config in-place so it matches the requested toy topology."""
+    """Mutate config(s) in-place so they match requested layer/expert topology."""
 
-    config.num_hidden_layers = num_hidden_layers
+    def _adjust_one(cfg) -> None:
+        cfg.num_hidden_layers = num_hidden_layers
 
-    if hasattr(config, "max_window_layers"):
-        config.max_window_layers = min(config.max_window_layers, num_hidden_layers)
+        if hasattr(cfg, "max_window_layers"):
+            cfg.max_window_layers = min(cfg.max_window_layers, num_hidden_layers)
 
-    if hasattr(config, "layer_types"):
-        config.layer_types = config.layer_types[:num_hidden_layers]
+        if hasattr(cfg, "layer_types"):
+            cfg.layer_types = cfg.layer_types[:num_hidden_layers]
 
-    mlp_only_layers = getattr(config, "mlp_only_layers", [])
-    if isinstance(mlp_only_layers, (list, tuple)):
-        config.mlp_only_layers = [layer for layer in mlp_only_layers if layer < num_hidden_layers]
+        mlp_only_layers = getattr(cfg, "mlp_only_layers", [])
+        if isinstance(mlp_only_layers, (list, tuple)):
+            cfg.mlp_only_layers = [layer for layer in mlp_only_layers if layer < num_hidden_layers]
 
-    config.num_experts = num_experts
-    config.num_experts_per_tok = (
-        num_experts_per_tok
-        if num_experts_per_tok is not None
-        else min(num_experts, getattr(config, "num_experts_per_tok", num_experts))
-    )
+        # Kimi-style configs may use n_routed_experts while many others use num_experts.
+        for field in ("num_experts", "n_routed_experts"):
+            if hasattr(cfg, field):
+                setattr(cfg, field, num_experts)
 
-    if hasattr(config, "router_top_k"):
-        config.router_top_k = min(config.num_experts, config.num_experts_per_tok)
+        if hasattr(cfg, "num_experts_per_tok"):
+            cfg.num_experts_per_tok = (
+                num_experts_per_tok
+                if num_experts_per_tok is not None
+                else min(num_experts, getattr(cfg, "num_experts_per_tok", num_experts))
+            )
 
-    if moe_intermediate_size is not None:
-        config.moe_intermediate_size = moe_intermediate_size
+        if hasattr(cfg, "router_top_k"):
+            cfg.router_top_k = min(num_experts, getattr(cfg, "num_experts_per_tok", num_experts))
+
+        if moe_intermediate_size is not None and hasattr(cfg, "moe_intermediate_size"):
+            cfg.moe_intermediate_size = moe_intermediate_size
+
+    _adjust_one(config)
+    text_config = getattr(config, "text_config", None)
+    if text_config is not None:
+        _adjust_one(text_config)
 
 
 def _save_tokenizer(output_dir: Path, tokenizer_id: str, *, trust_remote_code: bool) -> None:
@@ -171,7 +183,8 @@ def main() -> None:
     print(f"Toy HuggingFace checkpoint saved to: {output_dir}")
     print(f"  hidden_layers={args.num_hidden_layers}")
     print(f"  num_experts={args.num_experts}")
-    print(f"  num_experts_per_tok={config.num_experts_per_tok}")
+    effective_cfg = getattr(config, "text_config", config)
+    print(f"  num_experts_per_tok={getattr(effective_cfg, 'num_experts_per_tok', 'N/A')}")
     print(f"  tokenizer_source={tokenizer_id}")
 
 
