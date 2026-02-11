@@ -625,7 +625,7 @@ def _nemotronh_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
     peft: str | PEFT | None = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
@@ -663,7 +663,7 @@ def _nemotronh_finetune_common(
         sequence_parallelism: Whether to use sequence parallelism.
         pretrained_checkpoint: Path to pretrained checkpoint to load from.
         peft: PEFT configuration (e.g., "lora", "dora") or PEFT object. None for full SFT. Default: "lora".
-        packed_sequence: Whether to use packed sequences. Default: False.
+        packed_sequence: Whether to use packed sequences. Default: True.
         train_iters: Total number of training iterations. Default: 1000.
         global_batch_size: Global batch size. Default: 128.
         micro_batch_size: Micro batch size. Default: 1.
