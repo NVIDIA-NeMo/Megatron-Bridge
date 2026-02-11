@@ -190,6 +190,7 @@ def run_pretrain_vl_recipe_test(
     tensor_model_parallel_size: Optional[int] = None,
     pipeline_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
+    dataset_overrides: Optional[dict] = None,
     forward_step_func: Optional[Callable] = None,
 ):
     """
@@ -205,6 +206,7 @@ def run_pretrain_vl_recipe_test(
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
         pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
+        dataset_overrides: Optional mapping of dataset attribute overrides to apply
     """
     if forward_step_func is None:
         # Import locally to avoid loading VLM stack for non-VL tests
@@ -260,6 +262,14 @@ def run_pretrain_vl_recipe_test(
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
                 setattr(config.model, attribute_name, attribute_value)
+
+        # Apply any dataset-specific overrides provided by the caller
+        if dataset_overrides:
+            for attribute_name, attribute_value in dataset_overrides.items():
+                setattr(config.dataset, attribute_name, attribute_value)
+
+        if config.dataset.pack_sequences_in_batch:
+            config.train.micro_batch_size = 2
 
         pretrain(config, vlm_forward_step)
 
