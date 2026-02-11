@@ -36,6 +36,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -186,7 +187,7 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -313,7 +314,7 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -522,10 +523,12 @@ def _glm45_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
