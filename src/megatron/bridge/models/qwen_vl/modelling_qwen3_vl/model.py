@@ -119,13 +119,9 @@ class Qwen3VLModel(MegatronModule):
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
-        # These attributes are needed to check if the vision model should be frozen.
-        self.freeze_vision_model = False
-
         if self.pre_process:
             if language_transformer_config.use_hf_vision_model:
                 raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
-            # use megatron vision model
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
             vision_patch_merger_spec = PatchMergerSubmodules(
                 patch_norm=TENorm,
