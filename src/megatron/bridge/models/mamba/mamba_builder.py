@@ -171,4 +171,5 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             pre_process=pre_process or is_pp_first_stage(pg_collection.pp),
             post_process=post_process or is_pp_last_stage(pg_collection.pp),
             pg_collection=pg_collection,
+            vp_stage=vp_stage,
         )
