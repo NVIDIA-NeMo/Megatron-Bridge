@@ -713,7 +713,7 @@ def save_checkpoint(
             # Embed TrainState so consumed_train_samples and other counters
             # survive a local-checkpoint resume.  Goes into the ``common``
             # part of MCoreTensorAwareStateDict (replicated, atomic).
-            state_dict["bridge_train_state"] = train_state.state_dict()
+            state_dict["train_state_metadata"] = train_state.state_dict()
 
             algo = ckpt_cfg.non_persistent_local_ckpt_algo
             cached_metadata = None
@@ -1678,13 +1678,14 @@ def _load_checkpoint_from_path(
     # Handle train state
     if not cfg.checkpoint.finetune:
         if ckpt_type == CheckpointType.LOCAL:
-            # Local checkpoints embed bridge_train_state in the state dict.
-            state.train_state = TrainState()
-            if "bridge_train_state" in state_dict:
-                print_rank_0("Restoring TrainState from local checkpoint (bridge_train_state)")
-                state.train_state.load_state_dict(state_dict["bridge_train_state"])
+            # Local checkpoints embed train_state_metadata in the state dict.
+            if "train_state_metadata" in state_dict:
+                print_rank_0("Restoring TrainState from local checkpoint (train_state_metadata)")
+                state.train_state = TrainState()
+                state.train_state.load_state_dict(state_dict["train_state_metadata"])
             else:
-                print_rank_0("WARNING: bridge_train_state not found in local checkpoint, counters reset")
+                print_rank_0("WARNING: train_state_metadata not found in local checkpoint, counters reset")
+                state.train_state = TrainState(step=state_dict.get("iteration", 0))
         else:
             train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
             if file_exists(train_state_filename):
