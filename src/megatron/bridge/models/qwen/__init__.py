@@ -15,7 +15,8 @@
 from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge  # noqa: F401
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge  # noqa: F401
 from megatron.bridge.models.qwen.qwen3_moe_bridge import Qwen3MoEBridge  # noqa: F401
-from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
+# Disabled: Qwen3NextForCausalLM requires a newer transformers version
+# from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
 from megatron.bridge.models.qwen.qwen_provider import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
@@ -32,8 +33,8 @@ from megatron.bridge.models.qwen.qwen_provider import (
     Qwen3MoEModelProvider,
     Qwen3MoEModelProvider30B_A3B,
     Qwen3MoEModelProvider235B_A22B,
-    Qwen3NextModelProvider,
-    Qwen3NextModelProvider80B_A3B,
+    # Qwen3NextModelProvider,
+    # Qwen3NextModelProvider80B_A3B,
     Qwen25ModelProvider1P5B,
     Qwen25ModelProvider3B,
     Qwen25ModelProvider7B,
@@ -67,6 +68,6 @@ __all__ = [
     "Qwen3MoEModelProvider",
     "Qwen3MoEModelProvider30B_A3B",
     "Qwen3MoEModelProvider235B_A22B",
-    "Qwen3NextModelProvider",
-    "Qwen3NextModelProvider80B_A3B",
+    # "Qwen3NextModelProvider",
+    # "Qwen3NextModelProvider80B_A3B",
 ]
