@@ -9,7 +9,8 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific l
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Unit tests for Qwen3VL Self Attention implementation.
@@ -126,6 +127,7 @@ class TestQwen3VLSelfAttention:
         assert bias.shape[0] == config.hidden_size
 
     @pytest.mark.internal
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA")
     def test_self_attention_mpu(self):
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()

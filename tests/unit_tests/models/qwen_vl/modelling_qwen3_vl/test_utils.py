@@ -53,7 +53,8 @@ Test utils functions for Qwen3VL model.
 class TestQwen3VLUtils:
     """Test suite for Qwen3VL utility functions."""
 
-    def setup_class(self):
+    @classmethod
+    def setup_class(cls):
         if not dist.is_initialized():
             rank = int(os.environ.get("RANK", "0"))
             local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -73,6 +74,12 @@ class TestQwen3VLUtils:
                 rank=rank,
                 timeout=datetime.timedelta(minutes=30),
             )
+
+    @classmethod
+    def teardown_class(cls):
+        """Teardown distributed process group once after all tests in this class."""
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
     def _setup_parallel_state(self, tp_size=1, ep_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state with specified parallelism configuration.
@@ -104,16 +111,7 @@ class TestQwen3VLUtils:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="VisionRotaryEmbedding uses CUDA")
     def test_vision_patch_embed(self):
-        """Test Qwen3VLVisionPatchEmbed forward
-        Uses actual Qwen3-VL-30B-A3B model sizes to ensure compatibility
-        with the vision model output (2048 hidden size).
-
-        Args:
-            hf_config: HuggingFace config object.
-
-        Returns:
-            Qwen3VLTransformerConfig: Configuration for the language model.
-        """
+        """Test Qwen3VLVisionPatchEmbed forward pass with representative config."""
         config = Qwen3VLTransformerConfig(
             hidden_size=1024,
             num_attention_heads=4,
@@ -142,6 +140,7 @@ class TestQwen3VLUtils:
 
     def test_patch_merger(self):
         """Test Qwen3VLVisionPatchMerger forward (requires parallel state)."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
         config = Qwen3VLTransformerConfig(
             num_layers=1,
             hidden_size=1024,
@@ -166,6 +165,7 @@ class TestQwen3VLUtils:
         x = torch.randn(seqlens, config.hidden_size).cuda()
         out = merger(x)
         assert out.shape == (seqlens // config.spatial_merge_size**2, config.out_hidden_size)
+        self.destroy_parallel_state()
 
     def test_split_part_by_cp_tp(self):
         """
@@ -214,6 +214,7 @@ class TestQwen3VLUtils:
             image_token_id=image_token_id,
             video_token_id=video_token_id,
         )
+
         assert pv.shape[0] == 4
         assert grid.shape == (1, 3)
 
@@ -257,6 +258,8 @@ class TestQwen3VLUtils:
         image_grid_thw = torch.tensor([[1, 4, 4]], dtype=torch.long)
 
         pv, grid, cp_img_num, images_padded = qwen3vl_cp_split(2, pixel_values, image_grid_thw)
+        assert pv is not None
+        assert grid is not None
         assert len(cp_img_num) == 2
         assert all(not p for p in images_padded)
 
@@ -291,6 +294,10 @@ class TestQwen3VLUtils:
         assert data1.shape[0] == 4
         assert grid1.shape == (1, 3)
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
+        reason="Requires at least 2 GPUs",
+    )
     def test_preprocess_packed_seqs(self):
         """Test preprocess_packed_seqs with pg_collection (or mpu when init)."""
         tp_size = 1
@@ -307,6 +314,10 @@ class TestQwen3VLUtils:
 
         self.destroy_parallel_state()
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
+        reason="Requires at least 2 GPUs",
+    )
     def test_allgather_vision_embeddings(self):
         """Test AllGatherVisionEmbeddings forward/backward."""
         tp_size = 1
