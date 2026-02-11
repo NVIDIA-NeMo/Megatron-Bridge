@@ -1840,7 +1840,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         .. code-block:: python
 
             # Create mapping for attention weights
-            mapping = QKVMapping(
+            mapping = ConcatenatedQKVMapping(
                 megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                 qkv="model.layers.*.self_attn.qkv.weight",
             )
