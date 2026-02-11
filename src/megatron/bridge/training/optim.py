@@ -59,7 +59,14 @@ def setup_optimizer(
         OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
     )
 
-    if "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
+    if hasattr(optimizer_config, "provide"):
+        optimizer = optimizer_config.provide(
+            model_chunks=model,
+            config_overrides=config_overrides,
+            use_gloo_process_groups=use_gloo_process_groups,
+            pg_collection=pg_collection,
+        )
+    elif "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
         optimizer = get_megatron_optimizer(
             config=optimizer_config,
             model_chunks=model,

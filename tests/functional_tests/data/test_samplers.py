@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict
+from types import SimpleNamespace
+
 from megatron.bridge.data.loaders import build_train_valid_test_datasets
 from megatron.bridge.data.samplers import (
     RandomSeedDataset,
@@ -19,6 +22,19 @@ from megatron.bridge.data.samplers import (
 )
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config as pretrain_config
+
+
+def _mock_tokenizer():
+    """Create a lightweight mock tokenizer for MockGPTLowLevelDataset.
+
+    MockGPTLowLevelDataset requires ``tokenizer.vocab_size`` and
+    ``tokenizer.eod`` when building mock datasets.
+    """
+    return SimpleNamespace(
+        vocab_size=128256,
+        eod=0,
+        unique_identifiers=OrderedDict({"class": "MockTokenizer"}),
+    )
 
 
 class TestDataSamplers:
@@ -49,6 +65,7 @@ class TestDataSamplers:
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
@@ -92,6 +109,7 @@ class TestDataSamplers:
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
@@ -144,6 +162,7 @@ class TestDataSamplers:
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
@@ -568,6 +587,7 @@ class TestBatchDataloaderIntegration:
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
         cfg.train.global_batch_size = 16
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
@@ -604,6 +624,7 @@ class TestBatchDataloaderIntegration:
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)

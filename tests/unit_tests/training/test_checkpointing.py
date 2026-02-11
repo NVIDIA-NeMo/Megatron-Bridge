@@ -275,6 +275,7 @@ class TestRNGState:
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.dp_cp.rank.return_value = 0
         mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.ep.size.return_value = 1  # EP = 1 (no expert parallelism)
 
         result = get_rng_state(
             data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
@@ -289,6 +290,163 @@ class TestRNGState:
         assert rng_state["random_rng_state"] == "random_state"
         assert rng_state["np_rng_state"] == "np_state"
         assert rng_state["rng_tracker_states"] == "tracker_states"
+
+    @patch("megatron.bridge.training.checkpointing.get_pg_size")
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.cuda.get_rng_state")
+    @patch("torch.get_rng_state")
+    @patch("numpy.random.get_state")
+    @patch("random.getstate")
+    def test_get_rng_state_with_expert_parallelism(
+        self, mock_random, mock_np, mock_torch, mock_cuda, mock_dist_init, mock_tp, mock_get_pg_size
+    ):
+        """Test RNG state collection with Expert Parallelism (EP > 1).
+
+        When EP > 1, RNG state should be sharded by (PP, TP, DP) dimensions
+        with replica_id=0, since different EP ranks may have different RNG states.
+        """
+        # Setup mocks
+        mock_dist_init.return_value = False
+        mock_random.return_value = "random_state"
+        mock_np.return_value = "np_state"
+        mock_torch.return_value = torch.tensor([1, 2, 3])
+        mock_cuda.return_value = torch.tensor([4, 5, 6])
+        mock_tracker = Mock()
+        mock_tracker.get_states.return_value = "tracker_states"
+        mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
+
+        # Mock get_pg_size to return EP size > 1
+        mock_get_pg_size.return_value = 8  # EP > 1
+
+        # Create mock pg_collection with EP > 1 configuration
+        mock_pg_collection = Mock()
+        mock_pg_collection.pp.rank.return_value = 1
+        mock_pg_collection.pp.size.return_value = 2
+        mock_pg_collection.tp.rank.return_value = 3
+        mock_pg_collection.tp.size.return_value = 4
+        mock_pg_collection.dp_cp.rank.return_value = 5
+        mock_pg_collection.dp_cp.size.return_value = 6
+
+        result = get_rng_state(
+            data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
+        )
+
+        # Verify get_pg_size was called with pg_collection.ep
+        mock_get_pg_size.assert_called_once_with(mock_pg_collection.ep)
+
+        # Verify the result is a ShardedObject with correct sharding
+        assert result.key == "rng_state"
+        # Shape should be (pp_size, tp_size, dp_size) when EP > 1
+        assert result.global_shape == (2, 4, 6)
+        # Global offset should include dp_rank
+        assert result.global_offset == (1, 3, 5)
+        # replica_id should be 0 (not dp_rank) when EP > 1
+        assert result.replica_id == 0
+
+    @patch("megatron.bridge.training.checkpointing.get_pg_size")
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.cuda.get_rng_state")
+    @patch("torch.get_rng_state")
+    @patch("numpy.random.get_state")
+    @patch("random.getstate")
+    def test_get_rng_state_without_expert_parallelism(
+        self, mock_random, mock_np, mock_torch, mock_cuda, mock_dist_init, mock_tp, mock_get_pg_size
+    ):
+        """Test RNG state collection without Expert Parallelism (EP = 1).
+
+        When EP = 1, RNG state should be sharded by (PP, TP) dimensions
+        with replica_id=dp_rank (standard behavior).
+        """
+        # Setup mocks
+        mock_dist_init.return_value = False
+        mock_random.return_value = "random_state"
+        mock_np.return_value = "np_state"
+        mock_torch.return_value = torch.tensor([1, 2, 3])
+        mock_cuda.return_value = torch.tensor([4, 5, 6])
+        mock_tracker = Mock()
+        mock_tracker.get_states.return_value = "tracker_states"
+        mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
+
+        # Mock get_pg_size to return EP size = 1
+        mock_get_pg_size.return_value = 1  # EP = 1
+
+        # Create mock pg_collection with EP = 1 configuration
+        mock_pg_collection = Mock()
+        mock_pg_collection.pp.rank.return_value = 1
+        mock_pg_collection.pp.size.return_value = 2
+        mock_pg_collection.tp.rank.return_value = 3
+        mock_pg_collection.tp.size.return_value = 4
+        mock_pg_collection.dp_cp.rank.return_value = 5
+        mock_pg_collection.dp_cp.size.return_value = 1
+
+        result = get_rng_state(
+            data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
+        )
+
+        # Verify get_pg_size was called with pg_collection.ep
+        mock_get_pg_size.assert_called_once_with(mock_pg_collection.ep)
+
+        # Verify the result is a ShardedObject with correct sharding
+        assert result.key == "rng_state"
+        # Shape should be (pp_size, tp_size) when EP = 1
+        assert result.global_shape == (2, 4)
+        # Global offset should NOT include dp_rank
+        assert result.global_offset == (1, 3)
+        # replica_id should be dp_rank when EP = 1
+        assert result.replica_id == 5
+
+    @patch("megatron.bridge.training.checkpointing.get_pg_size")
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.cuda.get_rng_state")
+    @patch("torch.get_rng_state")
+    @patch("numpy.random.get_state")
+    @patch("random.getstate")
+    def test_get_rng_state_with_none_ep_group(
+        self, mock_random, mock_np, mock_torch, mock_cuda, mock_dist_init, mock_tp, mock_get_pg_size
+    ):
+        """Test RNG state collection when EP group is None (not initialized).
+
+        When pg_collection.ep is None, get_pg_size returns 1, so this should
+        behave the same as EP=1 (sharded by PP, TP with replica_id=dp_rank).
+        """
+        # Setup mocks
+        mock_dist_init.return_value = False
+        mock_random.return_value = "random_state"
+        mock_np.return_value = "np_state"
+        mock_torch.return_value = torch.tensor([1, 2, 3])
+        mock_cuda.return_value = torch.tensor([4, 5, 6])
+        mock_tracker = Mock()
+        mock_tracker.get_states.return_value = "tracker_states"
+        mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
+
+        # Mock get_pg_size to return 1 (what it does for None groups)
+        mock_get_pg_size.return_value = 1
+
+        # Create mock pg_collection with ep=None
+        mock_pg_collection = Mock()
+        mock_pg_collection.pp.rank.return_value = 0
+        mock_pg_collection.pp.size.return_value = 2
+        mock_pg_collection.tp.rank.return_value = 1
+        mock_pg_collection.tp.size.return_value = 4
+        mock_pg_collection.dp_cp.rank.return_value = 3
+        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.ep = None  # Explicitly None
+
+        result = get_rng_state(
+            data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
+        )
+
+        # Verify get_pg_size was called with None
+        mock_get_pg_size.assert_called_once_with(None)
+
+        # Verify the result is a ShardedObject with correct sharding (same as EP=1)
+        assert result.key == "rng_state"
+        assert result.global_shape == (2, 4)  # (pp_size, tp_size)
+        assert result.global_offset == (0, 1)  # (pp_rank, tp_rank)
+        assert result.replica_id == 3  # dp_rank
 
 
 class TestDeleteExtraState:

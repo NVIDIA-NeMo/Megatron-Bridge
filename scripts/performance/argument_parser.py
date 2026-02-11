@@ -145,7 +145,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm"],
+        choices=["llm", "vlm", "qwen3vl"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -420,6 +420,14 @@ def parse_cli_args():
         default=[],
     )
     slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute before the main command",
+        default=None,
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
@@ -558,6 +566,22 @@ def parse_cli_args():
         type=list_of_ints,
         metavar="N[,N...]",
         help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_trace",
+        type=list_of_strings,
+        metavar="TRACE[,TRACE...]",
+        help="Comma-separated list of events to trace during nsys profiling (e.g., 'cuda,nvtx'). Defaults to nemo_run defaults.",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_extra_args",
+        type=list_of_strings,
+        metavar="ARG[,ARG...]",
+        help="Comma-separated list of additional nsys arguments. Will be combined with default args.",
         required=False,
         default=None,
     )
@@ -728,6 +752,9 @@ def parse_cli_args():
         type=float,
         default=0.20,
         help="Percentage of loss points to skip from beginning for convergence analysis",
+    )
+    testing_args.add_argument(
+        "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
     )
 
     return parser

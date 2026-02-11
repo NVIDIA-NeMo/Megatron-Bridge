@@ -111,9 +111,6 @@ class Qwen25VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
-        # Expose decoder for MCore Infernce Engine compatibility (used by get_mamba_inference_state_config_from_model)
-        self.decoder = self.language_model.decoder
-
         # Bind methods from HF's Qwen2_5_VLModel to this instance
         # get_placeholder_mask is only available in transformers 4.55+
         if is_transformers_min_version("4.55.0"):
@@ -213,6 +210,7 @@ class Qwen25VLModel(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 
