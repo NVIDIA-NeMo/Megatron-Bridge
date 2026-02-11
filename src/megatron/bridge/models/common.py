@@ -340,7 +340,6 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         return model_list
 
 
-@dataclass
 class ModelProvider(Generic[ModelT]):
     """General provider that takes model config + build config and builds models.
 
@@ -355,7 +354,8 @@ class ModelProvider(Generic[ModelT]):
         >>> models = provider.provide_distributed(pg_collection, wrap_with_ddp=True)
     """
 
-    model_config: ModelConfig
+    def __init__(self, model_config: ModelConfig) -> None:
+        self.model_config = model_config
 
     def provide(
         self,
