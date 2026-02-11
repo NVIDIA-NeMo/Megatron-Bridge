@@ -111,15 +111,15 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@6a34b6574fa6c29d9d07fdcddf9812cbb1488878",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@d9b7fc5770a88af06e2e9c2bd97b550614c3a69f",
     "mlflow>=3.5.0",
-    "cryptography>=43.0.0,<47"
+    "cryptography>=43.0.0,<47",
+    "nvidia-modelopt~=0.41.0",
+    "nvidia-resiliency-ext @ git+https://github.com/NVIDIA/nvidia-resiliency-ext.git@v0.4.1"  # Requires a source install to compile cupti for cuda13
 ]
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
-nvidia-modelopt = { git = "https://github.com/NVIDIA/TensorRT-Model-Optimizer.git", rev = "0a4f0a8b933121f7af080261a0a5a7717f2c5d49" }
-nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" } # Requires a source install to compile cupti for cuda13
 
 [project.optional-dependencies]
 recipes = [

@@ -205,10 +205,14 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
         peft="lora",
         precision_config=precision_config,
         packed_sequence=True,
-        seq_length=2048,
+        seq_length=4096,
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+
+    # Override target_modules to only apply LoRA to QKV
+    cfg.peft.target_modules = ["linear_qkv"]
 
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
     # This ensures consistent cu_seqlens tensor shapes across batches, which is required
@@ -231,14 +235,26 @@ def llama3_70b_lora_config_gb200(precision: str = "bf16", config_variant: str = 
     )
     precision_config = get_precision_config(precision)
 
+    # BF16 uses seq_length=2048, FP8 variants use seq_length=4096
+    seq_length = 2048 if precision.lower() == "bf16" else 4096
+
     cfg = llama3_70b_finetune_config(
         peft="lora",
         precision_config=precision_config,
         packed_sequence=True,
-        seq_length=2048,
+        seq_length=seq_length,
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
+    # This ensures consistent cu_seqlens tensor shapes across batches, which is required
+    # for CUDA graphs and avoids NaN issues in attention kernels.
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+
+    # Override target_modules to only apply LoRA to QKV
+    cfg.peft.target_modules = ["linear_qkv"]
 
     return cfg
 
@@ -263,5 +279,9 @@ def llama3_70b_lora_config_h100(precision: str = "bf16", config_variant: str = "
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
+
+    # Override target_modules to only apply LoRA to QKV
+    cfg.peft.target_modules = ["linear_qkv"]
 
     return cfg

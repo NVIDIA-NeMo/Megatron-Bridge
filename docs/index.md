@@ -55,6 +55,13 @@ training/callbacks.md
 ```
 
 ```{toctree}
+:caption: Model Optimization with ModelOpt
+:hidden:
+
+modelopt/quantization.md
+```
+
+```{toctree}
 :caption: Development
 :hidden:
 
@@ -83,4 +90,5 @@ models/llm/README.md
 models/vlm/README.md
 releases/README.md
 training/README.md
+modelopt/README.md
 ```

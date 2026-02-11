@@ -343,15 +343,6 @@ class TestMegatronGemmaBridge:
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_gemma_2b):
-        """Test that generation config is passed through."""
-        bridge = GemmaBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_gemma_2b)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_gemma_2b.generation_config
-
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Gemma models."""

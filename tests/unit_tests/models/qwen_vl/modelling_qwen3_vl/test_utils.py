@@ -18,7 +18,8 @@ from types import SimpleNamespace
 
 import torch
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_index, split_deepstack_embs
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import split_deepstack_embs
 
 
 class TestQwen3VLUtils:
