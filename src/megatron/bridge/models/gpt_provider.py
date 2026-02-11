@@ -93,31 +93,6 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
-# Models that support TE spec for quantization (can use TE spec when restoring modelopt state)
-# Add model name patterns here (matched against hf_model_id, case-insensitive)
-MODELOPT_TE_SUPPORTED_MODELS = [
-    "Qwen3-8B",
-]
-
-
-def _supports_modelopt_te_spec(hf_model_id: str | None) -> bool:
-    """Check if the model supports TE spec when restoring modelopt state.
-
-    Args:
-        hf_model_id: The HuggingFace model ID or path (e.g., "/models/Qwen3-8B" or "Qwen/Qwen3-8B")
-
-    Returns:
-        True if the model supports TE spec for modelopt, False otherwise.
-    """
-    if hf_model_id is None:
-        return False
-    model_name = hf_model_id.split("/")[-1]
-    for supported_model in MODELOPT_TE_SUPPORTED_MODELS:
-        if supported_model.lower() in model_name.lower():
-            return True
-    return False
-
-
 def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
     # arbitrary attention mask is used for speculative decoding training
@@ -139,14 +114,8 @@ def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
-    """Determine the most appropriate layer specification based on availability.
-
-    When restore_modelopt_state is True, uses modelopt_transformer_layer_spec (local spec)
-    unless modelopt_use_te is also True, in which case it uses TE spec.
-    """
-    if config.restore_modelopt_state and not config.modelopt_use_te:
-        return modelopt_transformer_layer_spec(config)
-    elif config.use_transformer_engine_full_layer_spec:
+    """Determine the most appropriate layer specification based on availability."""
+    if config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
         return transformer_engine_layer_spec(config)
@@ -217,13 +186,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
-    # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
     restore_modelopt_state: bool = False
-
-    # If True, use TE spec even when restoring modelopt state (instead of local spec).
-    # This is useful for models that were quantized with TE spec and should be loaded with TE spec.
-    # When restore_modelopt_state=True and modelopt_use_te=True, TE spec is used instead of modelopt local spec.
-    modelopt_use_te: bool = False
 
     # Whether to use AttnMaskType.arbitrary in the ModelOpt spec.
     # If None, it will be determined by the default behavior (arbitrary only when context_parallel==1).

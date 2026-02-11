@@ -59,7 +59,6 @@ HF_QWEN3_MOE_TOY_MODEL_CONFIG = {
 }
 
 
-@pytest.mark.pleasefixme
 class TestQwen3MoeQuantizationWorkflow:
     """
     Test complete Qwen3 MoE quantization workflow: quantize HuggingFace Qwen3 MoE models
@@ -223,11 +222,6 @@ class TestQwen3MoeQuantizationWorkflow:
         )
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.xfail(
-        reason="mcore bump: TransformerLayer now passes padding_mask to MoE MLP, "
-        "but modelopt's _QuantMoELayer.forward() does not accept it yet.",
-        strict=False,
-    )
     def test_qwen3_moe_quantization_and_generation_with_expert_parallelism(self, qwen3_moe_toy_model_path, tmp_path):
         """
         Test complete Qwen3 MoE workflow: quantize with expert tensor parallelism (tp=2, etp=2),
@@ -308,11 +302,6 @@ class TestQwen3MoeQuantizationWorkflow:
             raise
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.xfail(
-        reason="mcore bump: TransformerLayer now passes padding_mask to MoE MLP, "
-        "but modelopt's _QuantMoELayer.forward() does not accept it yet.",
-        strict=False,
-    )
     @pytest.mark.parametrize(
         "quant_tp,quant_pp,quant_etp,gen_tp,gen_pp,gen_etp,test_name",
         [

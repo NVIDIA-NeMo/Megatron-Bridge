@@ -77,7 +77,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
         "out_hidden_size": 256,
         "deepstack_visual_indexes": [1, 2, 3],
     },
-    "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+    "rope_scaling": {"rope_type": "default", "mrope_section": [16, 24, 24]},
     "text_config": {
         "hidden_size": 256,
         "intermediate_size": 512,
@@ -87,7 +87,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
         "vocab_size": 152064,
         "max_position_embeddings": 32768,
         "rope_theta": 1000000.0,
-        "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "rope_scaling": {"rope_type": "default", "mrope_section": [16, 24, 24], "rope_theta": 1000000.0},
         "torch_dtype": "bfloat16",
     },
     "vocab_size": 152064,
@@ -122,7 +122,11 @@ class TestQwen3VLQuantizationWorkflow:
 
         # Set rope_scaling on text_config
         if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_scaling = {"type": "mrope", "mrope_section": [16, 24, 24]}
+            config.text_config.rope_scaling = {
+                "rope_type": "default",
+                "mrope_section": [16, 24, 24],
+                "rope_theta": 1000000.0,
+            }
 
         # Create model with random weights and convert to bfloat16
         model = Qwen3VLForConditionalGeneration(config)
@@ -154,7 +158,6 @@ class TestQwen3VLQuantizationWorkflow:
             preprocessor_config = {
                 "image_processor_type": "Qwen2VLImageProcessor",
                 "do_resize": True,
-                "size": {"height": 224, "width": 224},
                 "do_normalize": True,
                 "image_mean": [0.48145466, 0.4578275, 0.40821073],
                 "image_std": [0.26862954, 0.26130258, 0.27577711],

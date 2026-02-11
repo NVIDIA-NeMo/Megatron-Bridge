@@ -42,7 +42,6 @@ from typing import Generator, Optional
 import modelopt.torch.quantization as mtq
 import torch
 from datasets import load_dataset
-from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
 from quantize_utils import (
@@ -157,7 +156,6 @@ def _hf_dataset_forward_loop_func(
     model,
     processor,
     calib_size: int,
-    force_all_expert_routing: bool = False,
     calib_dataset: str = "detection-datasets/coco",
     use_random_calib: bool = False,
 ):
@@ -167,16 +165,9 @@ def _hf_dataset_forward_loop_func(
         model: The VLM model to calibrate.
         processor: HuggingFace processor for the model.
         calib_size: Number of calibration samples.
-        force_all_expert_routing: Force all experts during MoE calibration.
         calib_dataset: HuggingFace dataset name for calibration.
         use_random_calib: Use random synthetic images instead of downloading from HuggingFace.
     """
-    # Force all expert routing for MoE models during calibration
-    if force_all_expert_routing:
-        for name, module in model.named_modules():
-            if isinstance(module, TopKRouter):
-                module.topk = module.num_experts
-
     if use_random_calib:
         dataloader = get_random_calib_dataloader(calib_size)
     else:
@@ -208,12 +199,6 @@ def _hf_dataset_forward_loop_func(
             enable_kv_cache=False,
             disable_tqdm=True,
         )
-
-    # Restore original topk after calibration is complete
-    if force_all_expert_routing:
-        for name, module in model.named_modules():
-            if isinstance(module, TopKRouter):
-                module.topk = module.config.moe_router_topk
 
 
 def _custom_prompt_forward_loop_func(
@@ -286,7 +271,6 @@ def main(
     compress: bool = False,
     weight_only: bool = False,
     export_kv_cache_quant: bool = False,
-    force_all_expert_routing: bool = False,
     trust_remote_code: bool = True,
     prompts: str = "Describe this image.",
     skip_quantization: bool = False,
@@ -352,7 +336,6 @@ def main(
                 model,
                 processor,
                 calib_size,
-                force_all_expert_routing,
                 use_random_calib=use_random_calib,
             )
 
@@ -468,7 +451,6 @@ if __name__ == "__main__":
             args.compress,
             args.weight_only,
             args.export_kv_cache_quant,
-            args.force_all_expert_routing,
             args.trust_remote_code,
             args.prompts,
             args.skip_quantization,

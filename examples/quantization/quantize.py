@@ -36,7 +36,6 @@ import warnings
 import modelopt.torch.quantization as mtq
 import torch
 from datasets import load_dataset
-from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
 from quantize_utils import (
@@ -50,12 +49,7 @@ from tqdm import tqdm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.gpt_provider import (
-    _supports_modelopt_te_spec,
-    modelopt_transformer_layer_spec,
-)
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider, modelopt_mamba_stack_spec
 
 
 warnings.filterwarnings("ignore")
@@ -73,23 +67,13 @@ def get_calib_dataloader(calib_size=512, max_sequence_length=512):
         yield dataset[i][text_column][:max_sequence_length]
 
 
-def _hf_dataset_forward_loop_func(model, tokenizer, calib_size, force_all_expert_routing=False):
+def _hf_dataset_forward_loop_func(model, tokenizer, calib_size):
     """Forward loop function for calibration using HuggingFace dataset."""
     dataloader = get_calib_dataloader(calib_size)
-
-    if force_all_expert_routing:
-        for name, module in model.named_modules():
-            if isinstance(module, TopKRouter):
-                module.topk = module.num_experts
 
     for prompt in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank()):
         tokens = tokenizer(prompt, return_tensors="pt")
         megatron_generate(model, tokens.input_ids.cuda(), osl=1)
-
-        if force_all_expert_routing:
-            for name, module in model.named_modules():
-                if isinstance(module, TopKRouter):
-                    module.topk = module.config.moe_router_topk
 
 
 def _custom_prompt_forward_loop_func(model, prompts, tokenizer, is_rank_0, osl=32):
@@ -118,7 +102,6 @@ def main(
     compress: bool = False,
     weight_only: bool = False,
     export_kv_cache_quant: bool = False,
-    force_all_expert_routing: bool = False,
     prompts: str = "Hello!|Born in California, Soyer trained as a",
     trust_remote_code: bool | None = None,
 ) -> None:
@@ -143,23 +126,7 @@ def main(
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = torch.bfloat16
 
-    # Set the correct layer spec for quantization based on model type
-    # Only certain models support TE spec; others use quantization_layer_spec
-    if _supports_modelopt_te_spec(hf_model_id):
-        # Model supports TE spec, use default (TE) layer spec
-        _layer_spec_used = "TE spec (default)"
-    else:
-        # For models that don't support TE spec: use quantization layer specs
-        # Disable MoE permute fusion for SequentialMLP (used by quantization specs)
-        # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
-        model_provider.moe_permute_fusion = False
-        if isinstance(model_provider, MambaModelProvider):
-            model_provider.mamba_stack_spec = modelopt_mamba_stack_spec
-            _layer_spec_used = "quantization_mamba_stack_spec"
-        else:
-            model_provider.transformer_layer_spec = modelopt_transformer_layer_spec
-            _layer_spec_used = "quantization_layer_spec"
-
+    # All models use TE spec (default) for quantization
     # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
@@ -173,7 +140,6 @@ def main(
         console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
         console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
         console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
-        console.print(f"[green]Layer spec used: {_layer_spec_used}[/green]")
 
     # Formatting
     if is_rank_0:
@@ -192,7 +158,7 @@ def main(
 
         # Define forward loop function for calibration
         ptq_forward_loop_func = lambda model: _hf_dataset_forward_loop_func(
-            model, bridge.hf_pretrained.tokenizer, calib_size, force_all_expert_routing
+            model, bridge.hf_pretrained.tokenizer, calib_size
         )
 
         # Apply quantization
@@ -287,7 +253,6 @@ if __name__ == "__main__":
         args.compress,
         args.weight_only,
         args.export_kv_cache_quant,
-        args.force_all_expert_routing,
         args.prompts,
         args.trust_remote_code,
     )

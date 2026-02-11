@@ -436,68 +436,6 @@ class TestLoadMegatronModel:
         assert result == expected_result
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
-    @patch("megatron.bridge.models.gpt_provider._supports_modelopt_te_spec")
-    @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
-    @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
-    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
-    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
-    @patch("megatron.bridge.training.checkpointing.read_run_config")
-    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
-    @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
-    @patch("megatron.bridge.training.model_load_save.dist")
-    def test_load_mbridge_saved_model_with_modelopt_use_te(
-        self,
-        mock_dist,
-        mock_cpu_context,
-        mock_run_config_fname,
-        mock_run_config,
-        mock_instantiate,
-        mock_load_weights,
-        mock_has_modelopt_state,
-        mock_load_modelopt_state,
-        mock_supports_te_spec,
-        mock_temp_dist,
-    ):
-        """Test loading model when modelopt state exists and model supports TE spec."""
-        # Setup mocks
-        mock_dist.is_available.return_value = False
-        mock_dist.is_initialized.return_value = False
-
-        mock_run_cfg_dict = {"model": {"tensor_model_parallel_size": 1}}
-        mock_run_config.return_value = mock_run_cfg_dict
-
-        mock_model = Mock()
-        mock_model_cfg = Mock(spec=ModelProviderMixin)
-        mock_model_cfg.params_dtype = torch.float32
-        mock_model_cfg.bf16 = True
-        mock_model_cfg.fp16 = False
-        mock_model_cfg.provide_distributed_model.return_value = [mock_model]
-        mock_model_cfg.use_cpu_initialization = False
-        mock_model_cfg.restore_modelopt_state = False
-        mock_model_cfg.modelopt_use_te = False  # Initially False
-        mock_model_cfg.hf_model_id = "Qwen/Qwen3-8B"
-
-        mock_instantiate.return_value = mock_model_cfg
-        expected_result = {"layer.weight": torch.randn(2, 2)}
-        mock_load_weights.return_value = expected_result
-
-        # Mock modelopt state exists and TE spec is supported
-        mock_has_modelopt_state.return_value = True
-        mock_supports_te_spec.return_value = True
-
-        with tempfile.TemporaryDirectory() as ckpt_path:
-            config_file = Path(ckpt_path) / "run_config.yaml"
-            config_file.touch()
-            result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
-
-        # Verify modelopt_use_te was set to True
-        assert mock_model_cfg.modelopt_use_te is True
-        mock_supports_te_spec.assert_called_once_with("Qwen/Qwen3-8B")
-
-        assert isinstance(result, dict)
-        assert result == expected_result
-
-    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")

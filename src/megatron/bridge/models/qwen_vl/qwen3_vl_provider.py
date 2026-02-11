@@ -250,8 +250,6 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
 
-    language_transformer_layer_spec: Callable[["Qwen3VLMoEModelProvider"], "ModuleSpec"] = default_language_layer_spec
-
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
