@@ -103,7 +103,7 @@ def evaluate(
 
     with torch.no_grad():
         if verbose:
-            print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
+            print_rank_0(f"Evaluating on {state.cfg.validation.eval_iters * eval_batch_size} samples")
 
         if (
             state.cfg.model.cuda_graph_impl == "local"
@@ -123,10 +123,10 @@ def evaluate(
             )
 
         iteration = 0
-        while iteration < state.cfg.train.eval_iters:
+        while iteration < state.cfg.validation.eval_iters:
             iteration += 1
             if verbose:
-                print_rank_0(f"Evaluating iter {iteration}/{state.cfg.train.eval_iters}")
+                print_rank_0(f"Evaluating iter {iteration}/{state.cfg.validation.eval_iters}")
 
             # Handle finetuning vs pretraining data consumption
             seq_length = state.cfg.model.seq_length  # Default for pretraining

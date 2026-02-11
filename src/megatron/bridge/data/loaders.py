@@ -125,8 +125,8 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         # Otherwise fallback to calculating samples based on iterations and global batch size
         train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
-    eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
-    test_iters = cfg.train.eval_iters
+    eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
+    test_iters = cfg.validation.eval_iters
 
     return (
         train_samples,
@@ -212,7 +212,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
     )
-    if cfg.train.skip_train and cfg.train.eval_iters > 0:
+    if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             0,
@@ -228,7 +228,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_size=dp_size,
             global_batch_size=cfg.train.global_batch_size,
         )
-    elif cfg.train.eval_iters > 0:
+    elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
@@ -246,7 +246,7 @@ def build_train_valid_test_data_loaders(
             global_batch_size=cfg.train.global_batch_size,
         )
 
-    if cfg.train.eval_iters > 0:
+    if cfg.validation.eval_iters > 0:
         test_dataloader = build_pretraining_data_loader(
             test_ds,
             0,
@@ -265,8 +265,8 @@ def build_train_valid_test_data_loaders(
 
     # Flags to know if we need to do training/validation/testing.
     do_train = train_dataloader is not None and cfg.train.train_iters > 0
-    do_valid = valid_dataloader is not None and cfg.train.eval_iters > 0
-    do_test = test_dataloader is not None and cfg.train.eval_iters > 0
+    do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
+    do_test = test_dataloader is not None and cfg.validation.eval_iters > 0
     flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
 
     torch.distributed.broadcast(flags, 0)
