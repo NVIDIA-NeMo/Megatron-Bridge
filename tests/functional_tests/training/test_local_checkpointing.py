@@ -197,7 +197,7 @@ class TestLocalCheckpointing:
         torch.distributed.barrier()
 
         try:
-            # --- Run 1: train for 5 iters, save a local checkpoint at iter 5 ---
+            # Run 1: train for 5 iters, save a local checkpoint at iter 5
             cfg_run1 = _make_config(
                 checkpoint_dir=checkpoint_dir,
                 local_ckpt_dir=local_ckpt_dir,
@@ -209,7 +209,7 @@ class TestLocalCheckpointing:
             pretrain(cfg_run1, forward_step)
             torch.distributed.barrier()
 
-            # --- Run 2: resume from the local checkpoint and train to iter 10 ---
+            # Run 2: resume from the local checkpoint and train to iter 10
             cb = TrainStateAssertCallback()
             cfg_run2 = _make_config(
                 checkpoint_dir=checkpoint_dir,
@@ -261,7 +261,7 @@ class TestLocalCheckpointing:
         torch.distributed.barrier()
 
         try:
-            # --- Run 1: train for 5 iters with local ckpt + most_recent_k ---
+            # Run 1: train for 5 iters with local ckpt + most_recent_k
             cfg_run1 = _make_config(
                 checkpoint_dir=checkpoint_dir,
                 local_ckpt_dir=local_ckpt_dir,
@@ -274,7 +274,7 @@ class TestLocalCheckpointing:
             pretrain(cfg_run1, forward_step)
             torch.distributed.barrier()
 
-            # --- Run 2: resume and train to iter 10 with most_recent_k ---
+            # Run 2: resume and train to iter 10 with most_recent_k
             cb = TrainStateAssertCallback()
             cfg_run2 = _make_config(
                 checkpoint_dir=checkpoint_dir,
