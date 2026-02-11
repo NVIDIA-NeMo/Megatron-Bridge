@@ -13,28 +13,23 @@
 # limitations under the License.
 
 """
-Audio-Language Model Generation Script for Qwen2-Audio.
+Audio-Language Model Generation Script.
 
-This script demonstrates how to use Qwen2-Audio models with Megatron-Bridge
+This script demonstrates how to use Audio LLM models with Megatron-Bridge
 for audio understanding tasks.
 
 Example:
   # Audio-Language generation with audio from URL:
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --audio_url="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-Audio/audio/glass-breaking-151256.mp3" \
     --prompt="What's that sound?"
 
   # Audio-Language generation with local audio file:
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --audio_path="/path/to/audio.wav" \
     --prompt="Describe what you hear in this audio."
-
-  # Text-only generation (no audio):
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
-    --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
-    --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
   uv run python examples/conversion/hf_to_megatron_generate_alm.py \
@@ -327,7 +322,8 @@ def main(args) -> None:
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+    # TODO: add attention mask
+    attention_mask = None
     generated_ids = input_ids.clone()
 
     stop_tokens = [tokenizer.eos_token_id]
@@ -388,7 +384,7 @@ def main(args) -> None:
                 .unsqueeze(0)
                 .expand_as(input_ids)
             )
-            attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+            attention_mask = None
 
             # If the generated token is the end of sequence token, stop generating
             if next_token_ids.item() in stop_tokens:
