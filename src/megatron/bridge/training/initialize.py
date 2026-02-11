@@ -131,8 +131,9 @@ def initialize_megatron(
     )
 
     # Compile dataset helpers after distributed initialization
+    # Use local rank to ensure each node compiles independently (multi-node without shared filesystem)
     if torch.distributed.is_initialized():
-        if get_rank_safe() == 0:
+        if get_local_rank_preinit() == 0:
             start_time = time.time()
             print("> compiling dataset index builder ...")
             compile_helpers()
