@@ -62,6 +62,7 @@ logger:
   log_interval: 1
   log_throughput: true
   log_throughput_to_tensorboard: true
+  log_l2_norm_grad_to_tensorboard: false
   # wandb_project: "your_own_wandb_project"
   # wandb_exp_name: "your_own_wandb_experiment_name"
 

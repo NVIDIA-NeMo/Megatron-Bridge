@@ -6,15 +6,12 @@
 # Clone Megatron-Bridge
 git clone git@github.com:NVIDIA-NeMo/Megatron-Bridge.git
 cd Megatron-Bridge/
-git remote add -f xuwchen git@github.com:xuwchen/Megatron-Bridge.git
-git checkout -b qwen3_vl xuwchen/qwen3_vl_mfsdp
 
 # Clone Megatron-LM
 cd 3rdparty/
 git clone git@github.com:NVIDIA/Megatron-LM.git
 cd Megatron-LM/
-git remote add -f xuwchen git@github.com:xuwchen/Megatron-LM.git
-git checkout -b qwen3_vl_dev xuwchen/qwen3_vl_mfsdp_dev
+git checkout -b dev origin/dev
 cd ../../
 ```
 
@@ -50,7 +47,7 @@ unset CUDA_DEVICE_MAX_CONNECTIONS
 
 ```bash
 export PYTHONPATH=${MEGATRON_BRIDGE_PATH}/src:${MEGATRON_LM_PATH}:${PYTHONPATH}
-cd ${MEGATRON_BRIDGE_PATH}/examples/recipes/qwen_vl
+cd ${MEGATRON_BRIDGE_PATH}/examples/models/vlm/qwen_vl
 python -m torch.distributed.run --nproc_per_node=8 \
     finetune_qwen_vl.py \
     --recipe qwen3_vl_30b_a3b_finetune_config \
@@ -62,7 +59,7 @@ python -m torch.distributed.run --nproc_per_node=8 \
 ```bash
 python -m torch.distributed.run --nproc_per_node=8 \
     finetune_qwen_vl.py \
-    --recipe qwen3_vl_3b_active_30b_moe_finetune_config \
+    --recipe qwen3_vl_30b_a3b_finetune_config \
     mixed_precision=null \
     model.bf16=true \
     model.params_dtype=torch.bfloat16 \
@@ -84,13 +81,14 @@ python -m torch.distributed.run --nproc_per_node=8 \
     train.global_batch_size=32 \
     train.micro_batch_size=1 \
     train.eval_iters=5 \
-    checkpoint.save=<your_cehckpoint_path> \
+    checkpoint.save=<your_checkpoint_path> \
     checkpoint.ckpt_format=fsdp_dtensor \
     dist.use_megatron_fsdp=true \
     dist.use_torch_fsdp2=false \
     logger.log_interval=1 \
     logger.log_throughput=true \
     logger.log_throughput_to_tensorboard=true \
+    logger.log_l2_norm_grad_to_tensorboard=false \
     logger.wandb_project=<your_wandb_project> \
     logger.wandb_exp_name=<your_wandb_exp_name> \
     ddp.grad_reduce_in_fp32=false \

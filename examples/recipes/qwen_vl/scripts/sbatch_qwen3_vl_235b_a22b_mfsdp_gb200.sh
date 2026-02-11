@@ -1,4 +1,17 @@
 #!/bin/bash
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 export NCCL_IB_SL=1
 export NCCL_IB_TIMEOUT=19
@@ -14,11 +27,11 @@ export USE_MNNVL=1
 unset CUDA_DEVICE_MAX_CONNECTIONS
 
 # Configuration: Set these variables before running the script
-export MEGATRON_BRIDGE_PATH=<your_megatron_bridge_path> # Path to Megatron-Bridge repository
+export MEGATRON_BRIDGE_PATH=YOUR_MEGATRON_BRIDGE_PATH # Path to Megatron-Bridge repository
 export MEGATRON_LM_PATH=${MEGATRON_BRIDGE_PATH}/3rdparty/Megatron-LM # Path to Megatron-LM repository
 export OUTPUT_PATH=${MEGATRON_BRIDGE_PATH}/../qwen3_vl_235b_a22b_output # Path for output logs and checkpoints
 export HF_HOME=${MEGATRON_BRIDGE_PATH}/../hf_home # Path to Hugging Face cache
-export CONTAINER_IMAGE=<your_container_image> # Path to .sqsh or docker image url
+export CONTAINER_IMAGE=YOUR_CONTAINER_IMAGE # Path to .sqsh or docker image url
 export WANDB=${WANDB:-1}
 export PROFILE=${PROFILE:-0}
 
@@ -60,6 +73,7 @@ PRETRAIN_ARGS=(
     logger.log_interval=1
     logger.log_throughput=true
     logger.log_throughput_to_tensorboard=true
+    logger.log_l2_norm_grad_to_tensorboard=false
     ddp.grad_reduce_in_fp32=false
     ddp.use_megatron_fsdp=true
     ddp.use_distributed_optimizer=true
@@ -67,10 +81,10 @@ PRETRAIN_ARGS=(
 )
 
 if [ "${WANDB}" = 1 ]; then
-    export WANDB_API_KEY=<your_wandb_api_key>
+    export WANDB_API_KEY=YOUR_WANDB_API_KEY # Replace with your own Wandb API key
     PRETRAIN_ARGS=(
         "${PRETRAIN_ARGS[@]}"
-        logger.wandb_project=<your_wandb_project>
+        logger.wandb_project=YOUR_WANDB_PROJECT # Replace with your own Wandb project name
         logger.wandb_exp_name=Qwen3-VL-235B-A22B-EP${EP}-MBS${MBS}GBS${GBS}-${COMMENT}
     )
 fi
@@ -87,9 +101,9 @@ if [ "${PROFILE}" = 1 ]; then
     PRETRAIN_ARGS=(
         "${PRETRAIN_ARGS[@]}"
         profiling.use_nsys_profiler=true
-	    profiling.profile_step_start=10
+        profiling.profile_step_start=10
         profiling.profile_step_end=12
-	    profiling.profile_ranks=[0]
+        profiling.profile_ranks=[0]
     )
     echo "PROFILE_CMD="
     echo $PROFILE_CMD
@@ -99,7 +113,7 @@ fi
 
 TRAINING_CMD="
 export PYTHONPATH=${MEGATRON_BRIDGE_PATH}/src:${MEGATRON_LM_PATH}:${PYTHONPATH}
-cd ${MEGATRON_BRIDGE_PATH}/examples/recipes/qwen_vl;
+cd ${MEGATRON_BRIDGE_PATH}/examples/models/vlm/qwen_vl;
 python finetune_qwen_vl.py \
     --recipe qwen3_vl_235b_a22b_finetune_config \
     ${PRETRAIN_ARGS[@]}"
@@ -112,17 +126,17 @@ mkdir -p ${SLURM_LOGS} || {
 }
 
 # Submit SLURM job
-# Note: Update SBATCH parameters below according to your cluster configuration
+# Note: Update SBATCH parameters and container mounts below according to your cluster configuration
 set +e
 sbatch <<EOF
 #!/bin/bash
 
-#SBATCH --job-name=<your_job_name>
-#SBATCH --partition=<your_partition>
+#SBATCH --job-name=YOUR_JOB_NAME
+#SBATCH --partition=YOUR_PARTITION
 #SBATCH --nodes=16
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=00:15:00
-#SBATCH --account=<your_account>
+#SBATCH --account=YOUR_ACCOUNT
 #SBATCH --exclusive
 #SBATCH --dependency=singleton
 #SBATCH --segment=16
@@ -130,7 +144,7 @@ sbatch <<EOF
 srun \
     --mpi=pmix -l \
     --container-image=${CONTAINER_IMAGE} \
-    --container-mounts=<your_container_mounts> \
+    --container-mounts=YOUR_CONTAINER_MOUNTS \
     --container-workdir=${MEGATRON_BRIDGE_PATH} \
     bash -x -c "${TRAINING_CMD}" 2>&1 | tee ${SLURM_LOGS}/\${SLURM_JOB_ID}.log
 

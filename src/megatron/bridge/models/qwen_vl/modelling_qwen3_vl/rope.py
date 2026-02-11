@@ -113,7 +113,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             seq *= 1 / self.seq_len_interpolation_factor
 
         # shape (3, bs, dim, 1)
-        inv_freq_expanded = self.inv_freq[None, None, :, None].float().to(position_ids.device).expand(3, seq.shape[1], -1, 1)
+        inv_freq_expanded = self.inv_freq[None, None, :, None].expand(3, seq.shape[1], -1, 1)
         # shape (3, bs, 1, seq_length)
         seq_expanded = seq[:, :, None, :].float().to(position_ids.device)
         # shape (3, bs, seq_length, dim)
