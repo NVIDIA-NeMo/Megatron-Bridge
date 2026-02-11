@@ -378,6 +378,7 @@ def qwen3_next_80b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3NextFinetuneKw
         "finetune_lr": 5e-6,
         "min_lr": 5e-6,
         "enable_recompute": True,
+        "packed_sequence": False,  # Sequence packing is not supported for Qwen3-Next
     }
     combined_kwargs: Qwen3NextFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     config = _qwen3_next_finetune_common(**combined_kwargs)
@@ -405,7 +406,7 @@ def _qwen3_next_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
     peft: str | PEFT | None = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int | None = None,  # Auto-select based on packed_sequence if None
