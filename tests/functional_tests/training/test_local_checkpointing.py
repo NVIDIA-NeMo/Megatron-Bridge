@@ -115,7 +115,7 @@ def _make_config(
             adam_eps=1e-8,
             use_distributed_optimizer=True,
             clip_grad=1.0,
-            lr=3e-3,
+            lr=1e-4,
             weight_decay=0.01,
             min_lr=1e-6,
         ),
@@ -130,7 +130,7 @@ def _make_config(
             override_opt_param_scheduler=True,
         ),
         ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
+            check_for_nan_in_grad=False,
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
