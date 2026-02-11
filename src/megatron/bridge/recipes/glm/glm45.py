@@ -36,6 +36,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -186,7 +187,7 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -313,7 +314,7 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1000000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -399,6 +400,7 @@ def glm45_355b_finetune_config(**user_kwargs: Unpack[GLM45FinetuneKwargs]) -> Co
         "expert_model_parallel_size": 16 if is_full_sft else 4,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+        "packed_sequence": False,  # Packed sequence is not supported for GLM 4.5
     }
     kwargs: GLM45FinetuneKwargs = {**recommended, **user_kwargs}
     return _glm45_finetune_common(**kwargs)
@@ -421,6 +423,7 @@ def glm45_air_106b_finetune_config(**user_kwargs: Unpack[GLM45FinetuneKwargs]) -
         "expert_model_parallel_size": 8 if is_full_sft else 4,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+        "packed_sequence": False,  # Packed sequence is not supported for GLM 4.5
     }
     kwargs: GLM45FinetuneKwargs = {**recommended, **user_kwargs}
     return _glm45_finetune_common(**kwargs)
@@ -442,7 +445,7 @@ def _glm45_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
@@ -522,10 +525,12 @@ def _glm45_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

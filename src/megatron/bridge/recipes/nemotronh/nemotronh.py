@@ -38,6 +38,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -134,7 +135,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -235,7 +236,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -338,7 +339,7 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -441,7 +442,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -624,7 +625,7 @@ def _nemotronh_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
     peft: str | PEFT | None = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
@@ -662,7 +663,7 @@ def _nemotronh_finetune_common(
         sequence_parallelism: Whether to use sequence parallelism.
         pretrained_checkpoint: Path to pretrained checkpoint to load from.
         peft: PEFT configuration (e.g., "lora", "dora") or PEFT object. None for full SFT. Default: "lora".
-        packed_sequence: Whether to use packed sequences. Default: False.
+        packed_sequence: Whether to use packed sequences. Default: True.
         train_iters: Total number of training iterations. Default: 1000.
         global_batch_size: Global batch size. Default: 128.
         micro_batch_size: Micro batch size. Default: 1.
@@ -746,10 +747,12 @@ def _nemotronh_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=10,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=10,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

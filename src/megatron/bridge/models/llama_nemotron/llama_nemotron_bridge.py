@@ -104,14 +104,13 @@ class LlamaNemotronBridge(MegatronModelBridge):
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
             vocab_size=hf_config.vocab_size,
         )
 
         # Handle rope scaling for Llama 3.1/3.3
         if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling:
             if hf_config.rope_scaling.get("rope_type") == "llama3":
-                provider_kwargs["scale_factor"] = hf_config.rope_scaling.get("factor", 8.0)
+                provider_kwargs["rope_scaling_factor"] = hf_config.rope_scaling.get("factor", 8.0)
 
         provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
         provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)

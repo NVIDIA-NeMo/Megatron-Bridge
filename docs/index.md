@@ -49,8 +49,16 @@ training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
+training/multi-token-prediction.md
 training/distillation.md
 training/callbacks.md
+```
+
+```{toctree}
+:caption: Model Optimization with ModelOpt
+:hidden:
+
+modelopt/quantization.md
 ```
 
 ```{toctree}
@@ -82,4 +90,5 @@ models/llm/README.md
 models/vlm/README.md
 releases/README.md
 training/README.md
+modelopt/README.md
 ```

@@ -68,7 +68,6 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
 
     # Ensure MLA is enabled
     configs["multi_latent_attention"] = True
-    configs["generation_config"] = hf_pretrained.generation_config
     configs["vocab_size"] = hf_config.vocab_size
 
     configs["rotary_base"] = MegatronModelBridge.rope_theta_from_hf(hf_config)

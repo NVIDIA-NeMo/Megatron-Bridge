@@ -58,6 +58,9 @@ def handle_profiling_step(
     Returns:
         NVTX context if nsys profiling was started at this step, None otherwise
     """
+    if config is None:
+        return None
+
     if not should_profile_rank(config, rank):
         return None
 
@@ -87,6 +90,8 @@ def handle_profiling_stop(
         pytorch_prof: PyTorch profiler instance (if using PyTorch profiler)
         nsys_nvtx_context: NVTX context from handle_profiling_step (if using nsys profiler)
     """
+    if config is None:
+        return
     if not should_profile_rank(config, rank):
         return
 

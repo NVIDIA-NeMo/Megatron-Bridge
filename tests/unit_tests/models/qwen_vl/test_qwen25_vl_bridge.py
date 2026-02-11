@@ -16,7 +16,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import GenerationConfig
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -71,7 +70,6 @@ def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
     pretrained = Mock(spec=PreTrainedVLM)
     pretrained.config = mock_hf_config
-    pretrained.generation_config = GenerationConfig()
     return pretrained
 
 
@@ -202,15 +200,6 @@ class TestQwen25VLBridgeProviderBridge:
 
         assert provider.share_embeddings_and_output_weights is True
 
-    def test_provider_bridge_generation_config(self, qwen25_vl_bridge, mock_hf_pretrained):
-        """Test provider_bridge includes generation config."""
-        custom_gen_config = GenerationConfig(max_length=2048, temperature=0.8)
-        mock_hf_pretrained.generation_config = custom_gen_config
-
-        provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
-
-        assert provider.generation_config is custom_gen_config
-
 
 class TestQwen25VLBridgeMappingRegistry:
     """Test mapping_registry method functionality."""
@@ -337,7 +326,6 @@ class TestQwen25VLBridgeEdgeCases:
         minimal_config.vision_config = Qwen2_5_VLVisionConfig()
 
         minimal_pretrained.config = minimal_config
-        minimal_pretrained.generation_config = GenerationConfig()
 
         provider = qwen25_vl_bridge.provider_bridge(minimal_pretrained)
 

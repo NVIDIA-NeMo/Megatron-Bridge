@@ -33,6 +33,8 @@ def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int):
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
     }
+
+    vp_size = 1 if vp_size is None else vp_size
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
@@ -96,7 +98,7 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
