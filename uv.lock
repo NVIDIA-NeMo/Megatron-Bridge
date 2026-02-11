@@ -25,7 +25,7 @@ overrides = [
     { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=d9b7fc5770a88af06e2e9c2bd97b550614c3a69f" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5671fd3675906cda1ade26c24a65d3dedd88eb89" },
     { name = "triton", marker = "sys_platform == 'never'" },
 ]
 
@@ -7048,8 +7048,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.12.0+d9b7fc57"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=d9b7fc5770a88af06e2e9c2bd97b550614c3a69f#d9b7fc5770a88af06e2e9c2bd97b550614c3a69f" }
+version = "2.12.0+5671fd36"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5671fd3675906cda1ade26c24a65d3dedd88eb89#5671fd3675906cda1ade26c24a65d3dedd88eb89" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
