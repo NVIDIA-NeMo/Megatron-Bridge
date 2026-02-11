@@ -69,7 +69,9 @@ def get_git_commit_info() -> Optional[str]:
         Git commit information from 'git log -1' or None if git is not available.
     """
     try:
-        result = subprocess.run(["git", "log", "-1"], capture_output=True, text=True, timeout=5, check=True)
+        result = subprocess.run(
+            ["git", "--no-pager", "log", "-1", "--oneline"], capture_output=True, text=True, timeout=5, check=True
+        )
         return result.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
         logger.debug(f"Git not available or command failed: {e}")
