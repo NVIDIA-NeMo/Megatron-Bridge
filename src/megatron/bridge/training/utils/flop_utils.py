@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
@@ -28,9 +30,23 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         """Calculate the number of attention, Mamba, MLP, and MoE layers."""
         if hasattr(cfg.model, "hybrid_override_pattern") and cfg.model.hybrid_override_pattern:
             counts = {"M": 0, "*": 0, "-": 0, "E": 0}
-            for layer_type in cfg.model.hybrid_override_pattern:
-                if layer_type in counts:
-                    counts[layer_type] += 1
+            try:
+                parse_hybrid_pattern = importlib.import_module(
+                    "megatron.core.ssm.mamba_hybrid_layer_allocation"
+                ).parse_hybrid_pattern
+                parsed = parse_hybrid_pattern(cfg.model.hybrid_override_pattern)
+                if parsed.main_pattern:
+                    for layer_type in parsed.main_pattern:
+                        if layer_type in counts:
+                            counts[layer_type] += 1
+                if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+                    for layer_type in parsed.mtp_pattern:
+                        if layer_type in counts:
+                            counts[layer_type] += parsed.mtp_num_depths
+            except (ImportError, ModuleNotFoundError):
+                for layer_type in cfg.model.hybrid_override_pattern:
+                    if layer_type in counts:
+                        counts[layer_type] += 1
             return counts["*"], counts["M"], counts["-"], counts["E"]
         else:
             num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
@@ -135,6 +151,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         shared_expert_ffn_hidden_size=2048,
         num_experts_routed_to=1,
         vocab_size=256000,
+        mtp_num_layers=0,
     ):
         """Calculate total FLOPs for the hybrid model."""
         flops_fwd = (
@@ -169,7 +186,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 moe_latent_size,
                 swiglu,
             )
-            + (2 * batch_size * seq_len * hidden_size * vocab_size)  # logits computation
+            + (2 * batch_size * seq_len * hidden_size * vocab_size * (1 + mtp_num_layers))  # logits computation
         )
         return flops_fwd * 3
 
@@ -363,6 +380,21 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     if getattr(cfg.model, "is_hybrid_model", False):
         # Calculate the number of each type of layer.
         num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers = calculate_layer_counts()
+        mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
+        if mtp_num_layers is None:
+            # When using unified hybrid patterns, infer MTP depth count from the pattern.
+            hybrid_pattern = getattr(cfg.model, "hybrid_override_pattern", None)
+            if hybrid_pattern:
+                try:
+                    parse_hybrid_pattern = importlib.import_module(
+                        "megatron.core.ssm.mamba_hybrid_layer_allocation"
+                    ).parse_hybrid_pattern
+                    parsed = parse_hybrid_pattern(hybrid_pattern)
+                    mtp_num_layers = parsed.mtp_num_depths if parsed.mtp_pattern else 0
+                except (ImportError, ModuleNotFoundError):
+                    mtp_num_layers = 0
+            else:
+                mtp_num_layers = 0
         padded_vocab_size = calculate_padded_vocab_size(
             cfg.model.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
@@ -404,6 +436,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             ),
             num_experts_routed_to=getattr(cfg.model, "moe_router_topk", 1),
             vocab_size=padded_vocab_size,
+            mtp_num_layers=mtp_num_layers,
         )
     else:
         # Compute standard Transformer model FLOPs.
