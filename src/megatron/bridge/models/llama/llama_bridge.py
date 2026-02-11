@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
+import logging
 
-import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import LlamaForCausalLM
 
@@ -25,11 +24,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
+logger = logging.getLogger(__name__)
+
+
+@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel, model_type="llama")
 class LlamaBridge(MegatronModelBridge):
     """
     Megatron Bridge for Llama Causal LM.
@@ -42,43 +44,67 @@ class LlamaBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace Llama config to Megatron GPTModelProvider.
+
+        Uses base class implementation for common conversion, then sets
+        Llama-specific config and enables RoPE scaling for Llama 3.1/3.2 models.
+
+        Args:
+            hf_pretrained: HuggingFace PreTrainedCausalLM containing the Llama config
+
+        Returns:
+            GPTModelProvider configured for Llama architecture
+        """
+        provider = super().provider_bridge(hf_pretrained)
+
+        # Llama-specific Megatron defaults
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.hidden_dropout = 0.0
+        provider.bias_activation_fusion = True
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.bias_dropout_fusion = True
+        provider.apply_rope_fusion = True
+        provider.rotary_percent = 1.0
+
+        # Enable RoPE scaling for Llama 3.1/3.2 models via Megatron Core's built-in support
         hf_config = hf_pretrained.config
-
-        if (
-            getattr(hf_config, "rope_scaling", None) is not None
-            and hf_config.rope_scaling.get("rope_type") == "llama3"
-        ):
-            # Llama 3.1/3.2 models with RoPE scaling
-            cls = partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-        else:
-            cls = LlamaModelProvider
-
-        # Extract kv_channels from head_dim if present (used by Llama Nemotron models)
-        kv_channels = getattr(hf_config, "head_dim", None)
-
-        provider = cls(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            num_query_groups=hf_config.num_key_value_heads,
-            seq_length=hf_config.max_position_embeddings,
-            rotary_base=hf_config.rope_theta,
-            kv_channels=kv_channels,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            vocab_size=hf_config.vocab_size,
-        )
+        hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if hf_rope_scaling is not None and hf_rope_scaling.get("rope_type") == "llama3":
+            provider.rope_scaling = True
+            provider.rope_scaling_factor = hf_rope_scaling.get("factor", 8.0)
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
+        """Convert Megatron GPTModelProvider config to HuggingFace Llama config dict.
+
+        Uses base class implementation, then adds RoPE scaling for Llama 3.1/3.2.
+
+        Args:
+            provider: GPTModelProvider with Llama configuration
+
+        Returns:
+            Dictionary of HuggingFace LlamaConfig parameters
+        """
+        hf_config = super(LlamaBridge, cls).megatron_to_hf_config(provider)
+
+        # Handle RoPE scaling for Llama 3.1/3.2 models
+        if provider.rope_scaling:
+            hf_config["rope_scaling"] = {
+                "rope_type": "llama3",
+                "factor": provider.rope_scaling_factor,
+                # Use Megatron Core defaults for these values
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+            }
+
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

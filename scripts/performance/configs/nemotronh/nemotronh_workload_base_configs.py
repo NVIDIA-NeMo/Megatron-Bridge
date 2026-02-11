@@ -17,7 +17,7 @@
 Config naming convention:
     {MODEL}_{SIZE}_{TASK}_CONFIG_{GPU}_{PRECISION}_{VERSION}
 
-Use --config_variant to select a variant (default: v1).
+Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
 """
 
@@ -34,7 +34,7 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
 
 
 # =============================================================================
-# NemotronH 56B Pretrain - V1 (default)
+# NemotronH 56B Pretrain - V1
 # =============================================================================
 
 NEMOTRONH_56B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(

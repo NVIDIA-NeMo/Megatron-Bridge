@@ -1598,15 +1598,13 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         return {self.hf_param: torch.cat(full_weights, dim=0)}
 
 
-class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
-    """Mapping for Mamba 1D convolution weights that handles x, B, C components.
-
-    Converts between HuggingFace's concatenated conv1d format and Megatron's
-    tensor-parallel distributed format for Mamba SSM layers.
+class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """Abstract class to handle chunked weights mapping, e.g.,
+    GDN Conv1d that handles q, k, v components, Mamba Conv1d that handles x, B, C components.
     """
 
     def __init__(self, megatron_param: str, hf_param: str):
-        """Initialize Mamba conv1d mapping.
+        """Initialize GDN conv1d mapping.
 
         Args:
             megatron_param (str): Megatron parameter name pattern.
@@ -1614,6 +1612,11 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """
         super().__init__(megatron_param=megatron_param, hf_param=hf_param)
         self._tp_mapping = ColumnParallelMapping(megatron_param, megatron_param)
+
+    @abstractmethod
+    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+        """Get shard indices for the given config."""
+        ...
 
     def hf_to_megatron(
         self,
@@ -1631,20 +1634,12 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                 assert "bias" in self.megatron_param, "Only bias and weight are supported for conv1d"
                 target_shape = (self.tp_size, -1)
 
-            d_inner = config.mamba_num_heads * config.mamba_head_dim
-            d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
-
-            # Define component indices
-            x_shard_idx = torch.arange(d_inner)
-            B_shard_idx = torch.arange(d_tot_ssm) + d_inner
-            C_shard_idx = torch.arange(d_tot_ssm) + d_inner + d_tot_ssm
+            shard_idx = self.get_shard_idx(config, local_tp=False)
 
             # Extract and reshape components
-            x_shard = hf_weights[x_shard_idx].reshape(target_shape)
-            B_shard = hf_weights[B_shard_idx].reshape(target_shape)
-            C_shard = hf_weights[C_shard_idx].reshape(target_shape)
+            sharded_weights = [hf_weights[idx].reshape(target_shape) for idx in shard_idx]
 
-            merged = torch.cat([x_shard, B_shard, C_shard], dim=1)
+            merged = torch.cat(sharded_weights, dim=1)
             merged = merged.reshape(*target_shape[1:])
         else:
             merged = None
@@ -1674,19 +1669,9 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config)
 
-        d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
-        d_tot_ssm_local = (config.mamba_state_dim * config.mamba_num_groups) // self.tp_size
+        shard_idx = self.get_shard_idx(config, local_tp=True)
 
-        # Extract local components
-        x_shard_idx = torch.arange(d_inner_local)
-        B_shard_idx = torch.arange(d_tot_ssm_local) + d_inner_local
-        C_shard_idx = torch.arange(d_tot_ssm_local) + d_inner_local + d_tot_ssm_local
-
-        local_components = [
-            megatron_weights[x_shard_idx],
-            megatron_weights[B_shard_idx],
-            megatron_weights[C_shard_idx],
-        ]
+        local_components = [megatron_weights[idx] for idx in shard_idx]
 
         # Gather each component across TP ranks
         full_weights = []
@@ -1699,6 +1684,51 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             full_weights.append(full_weight)
 
         return {self.hf_param: torch.cat(full_weights, dim=0)}
+
+
+class GDNConv1dMapping(ChunkedMapping):
+    """Mapping for GDN 1D convolution weights that handles q, k, v components.
+
+    Converts between HuggingFace's concatenated conv1d format and Megatron's
+    tensor-parallel distributed format for GDN SSM layers.
+    """
+
+    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+        """Get shard indices for the given config."""
+        qk_dim = config.linear_key_head_dim * config.linear_num_key_heads
+        v_dim = config.linear_value_head_dim * config.linear_num_value_heads
+        if local_tp:
+            qk_dim = qk_dim // self.tp_size
+            v_dim = v_dim // self.tp_size
+
+        q_shard_idx = torch.arange(qk_dim)
+        k_shard_idx = torch.arange(qk_dim) + qk_dim
+        v_shard_idx = torch.arange(v_dim) + qk_dim * 2
+
+        return [q_shard_idx, k_shard_idx, v_shard_idx]
+
+
+class MambaConv1dMapping(ChunkedMapping):
+    """Mapping for Mamba 1D convolution weights that handles x, B, C components.
+
+    Converts between HuggingFace's concatenated conv1d format and Megatron's
+    tensor-parallel distributed format for Mamba SSM layers.
+    """
+
+    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+        """Get shard indices for the given config."""
+        d_inner = config.mamba_num_heads * config.mamba_head_dim
+        d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
+        if local_tp:
+            d_inner = d_inner // self.tp_size
+            d_tot_ssm = d_tot_ssm // self.tp_size
+
+        # Extract local components
+        x_shard_idx = torch.arange(d_inner)
+        B_shard_idx = torch.arange(d_tot_ssm) + d_inner
+        C_shard_idx = torch.arange(d_tot_ssm) + d_inner + d_tot_ssm
+
+        return [x_shard_idx, B_shard_idx, C_shard_idx]
 
 
 class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
@@ -1728,7 +1758,7 @@ class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """Merge QKVZ, BA."""
         if self.tp_rank == 0:
             config = self._get_config(megatron_module)
-            merged = merge_gdn_linear_weights(config, hf_weights["qkvz"], hf_weights["ba"])
+            merged = merge_gdn_linear_weights(config, hf_weights["qkvz"], hf_weights["ba"], tp_size=self.tp_size)
         else:
             merged = None
 
@@ -1765,7 +1795,7 @@ class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             return {}
 
         packed_qkvzba = next(iter(packed_dict.values()))
-        qkvz, ba = split_gdn_linear_weights(config, packed_qkvzba)
+        qkvz, ba = split_gdn_linear_weights(config, packed_qkvzba, tp_size=self.tp_size)
 
         return {
             self.hf_param["qkvz"]: qkvz,
@@ -1810,7 +1840,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         .. code-block:: python
 
             # Create mapping for attention weights
-            mapping = QKVMapping(
+            mapping = ConcatenatedQKVMapping(
                 megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                 qkv="model.layers.*.self_attn.qkv.weight",
             )
@@ -2308,8 +2338,16 @@ def split_qkv_weights(
     return q, k, v
 
 
-def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba: torch.Tensor) -> torch.Tensor:
-    """merge gdn linear weights"""
+def merge_gdn_linear_weights(
+    provider: TransformerConfig,
+    qkvz: torch.Tensor,
+    ba: torch.Tensor,
+    tp_size: int = 1,
+) -> torch.Tensor:
+    """Merge GDN linear weights into in_proj."""
+
+    assert tp_size >= 1, f"tp_size must be greater than 0, but got {tp_size=}"
+
     hidden_size = provider.hidden_size
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
@@ -2340,37 +2378,43 @@ def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba
         dim=1,
     )
 
-    q, k, v, z, b, a = [weight.reshape(-1, hidden_size) for weight in [q, k, v, z, b, a]]
-    in_proj = torch.cat([q, k, v, z, b, a], dim=0)
+    q, k, v, z, b, a = [weight.reshape(tp_size, -1, hidden_size) for weight in [q, k, v, z, b, a]]
+    in_proj = torch.cat([q, k, v, z, b, a], dim=1)
+    in_proj = in_proj.reshape(-1, hidden_size)
 
     assert in_proj.numel() == qkvz.numel() + ba.numel(), (
-        f"QKVZBA weights are not correctly merged, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
+        f"QKVZBA weights are not correctly merged, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}, {tp_size=}"
     )
 
     return in_proj
 
 
-def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor) -> torch.Tensor:
-    """TODO: add comments"""
+def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor, tp_size: int = 1) -> torch.Tensor:
+    """Split GDN linear weights into QKVZ and BA."""
+
+    assert tp_size >= 1, f"tp_size must be greater than 0, but got {tp_size=}"
+
     hidden_size = provider.hidden_size
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
     num_qk_heads = provider.linear_num_key_heads
-    num_v_heads = provider.linear_num_value_heads
-    qk_dim = qk_head_dim * num_qk_heads
-    v_dim = v_head_dim * num_v_heads
+    num_qk_heads_local_tp = provider.linear_num_key_heads // tp_size
+    num_v_heads_local_tp = provider.linear_num_value_heads // tp_size
+    qk_dim_local_tp = qk_head_dim * num_qk_heads_local_tp
+    v_dim_local_tp = v_head_dim * num_v_heads_local_tp
 
+    in_proj = in_proj.reshape(tp_size, -1, hidden_size)
     q, k, v, z, b, a = torch.split(
         in_proj,
         [
-            qk_dim,
-            qk_dim,
-            v_dim,
-            v_dim,
-            num_v_heads,
-            num_v_heads,
+            qk_dim_local_tp,
+            qk_dim_local_tp,
+            v_dim_local_tp,
+            v_dim_local_tp,
+            num_v_heads_local_tp,
+            num_v_heads_local_tp,
         ],
-        dim=0,
+        dim=1,
     )
 
     q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
