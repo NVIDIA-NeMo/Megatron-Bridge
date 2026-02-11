@@ -153,32 +153,40 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
     """
     if image_path:
-        # Create messages with image and text
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image_url": image_path},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+        is_kimi = type(processor).__name__ == "KimiK25Processor"
 
-        # Process vision info
-        # image_inputs, video_inputs = process_vision_info(messages)
+        if is_kimi:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image_url": image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            inputs = processor(messages=messages)
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
 
-        # # Apply chat template
-        # text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            image_inputs, video_inputs = process_vision_info(messages)
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
 
-        # # Process inputs
-        # inputs = processor(
-        #     text=[text],
-        #     images=image_inputs,
-        #     videos=video_inputs,
-        #     padding=True,
-        #     return_tensors="pt",
-        # )
-        inputs = processor(messages=messages)
         return (
             inputs.input_ids,
             inputs.pixel_values,
