@@ -540,18 +540,18 @@ class CommOverlapConfig:
                 and not getattr(model_cfg, "moe_shared_expert_overlap", False)
             )
             if wgrad_in_graph_scope:
-                assert is_te_min_version(
-                    "2.12.0"
-                ), "CUDA graph with delay_wgrad_compute requires TE version >= 2.12.0."
+                assert is_te_min_version("2.12.0"), (
+                    "CUDA graph with delay_wgrad_compute requires TE version >= 2.12.0."
+                )
                 assert model_cfg.gradient_accumulation_fusion, (
                     "CUDA graph with delay_wgrad_compute requires gradient_accumulation_fusion "
                     "to be enabled. This is because default gradient accumulation does not use "
                     "static memory addresses, which breaks CUDA graph requirements."
                 )
                 if attn_scope_enabled:
-                    assert (
-                        not model_cfg.add_bias_linear and not model_cfg.add_qkv_bias
-                    ), "CUDA graph with delay_wgrad_compute does not support attention bias for now."
+                    assert not model_cfg.add_bias_linear and not model_cfg.add_qkv_bias, (
+                        "CUDA graph with delay_wgrad_compute does not support attention bias for now."
+                    )
 
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from megatron.core.transformer.enums import CudaGraphScope
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import (
