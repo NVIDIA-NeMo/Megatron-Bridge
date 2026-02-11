@@ -147,11 +147,6 @@ def add_common_quantization_args(parser: argparse.ArgumentParser) -> None:
         help="Enable KV cache quantization.",
     )
     parser.add_argument(
-        "--force-all-expert-routing",
-        action="store_true",
-        help="Forcing all experts to be routed during the calibration.",
-    )
-    parser.add_argument(
         "--trust-remote-code",
         action="store_true",
         help="Trust remote code when loading HuggingFace models.",
