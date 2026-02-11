@@ -15,6 +15,7 @@
 import logging
 import os
 import signal
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
@@ -731,14 +732,14 @@ class TrainingConfig:
 
     # ---------------- Validation config. ----------------
 
-    eval_iters: int = 100
-    """Number of iterations to run for evaluation validation/test for."""
+    eval_iters: int | None = None
+    """Number of iterations to run for evaluation validation/test for. Deprecated in favor of ValidationConfig."""
 
-    eval_interval: Optional[int] = 1000
-    """Interval between running evaluation on validation set."""
+    eval_interval: int | None = None
+    """Interval between running evaluation on validation set. Deprecated in favor of ValidationConfig."""
 
-    skip_train: bool = False
-    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
+    skip_train: bool | None = None
+    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit. Deprecated in favor of ValidationConfig."""
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
@@ -754,6 +755,23 @@ class TrainingConfig:
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
+
+
+@dataclass(kw_only=True)
+class ValidationConfig:
+    """Configuration settings related to validation during or after model training."""
+
+    eval_iters: int | None = 100
+    """Number of iterations to run for evaluation. Used for both validation and test. If not set,
+    evaluation will not run."""
+
+    eval_interval: int | None = None
+    """Interval between running evaluation on validation set. If not set, evaluation will not run
+    during training.
+    """
+
+    skip_train: bool = False
+    """If set, bypass the training loop, perform evaluation for validation/test, and exit."""
 
 
 @dataclass(kw_only=True)
@@ -1329,6 +1347,7 @@ class ConfigContainer(Container):
         default_factory=OptimizerConfigOverrideProvider
     )
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
     dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
     logger: LoggerConfig
@@ -1578,6 +1597,13 @@ class ConfigContainer(Container):
                 f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
             )
 
+        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+            raise ValueError(
+                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+                "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
+                "are required per micro-batch."
+            )
+
         if self.peft is not None:
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
@@ -1599,6 +1625,15 @@ class ConfigContainer(Container):
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
         validate_flex_dispatcher_backend(self.model)
+
+        for f in fields(ValidationConfig):
+            train_val = getattr(self.train, f.name)
+            if train_val is not None:
+                warnings.warn(
+                    f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead.",
+                    stacklevel=2,
+                )
+                setattr(self.validation, f.name, train_val)
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""

@@ -42,6 +42,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -57,6 +58,8 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         train_iters=10,
         micro_batch_size=1,
         global_batch_size=2,
+    )
+    validation_config = ValidationConfig(
         eval_interval=10,
         eval_iters=0,
     )
@@ -158,6 +161,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
 
     return ConfigContainer(
         train=train_config,
+        validation=validation_config,
         model=model_config,
         optimizer=optimizer_config,
         scheduler=scheduler_config,

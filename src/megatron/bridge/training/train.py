@@ -123,6 +123,7 @@ def train(
     config: ConfigContainer = global_state.cfg
     model_config = get_model_config(model[0])
     train_config = config.train
+    val_config = config.validation
     timers = global_state.timers
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
@@ -500,8 +501,8 @@ def train(
 
         if (
             global_state.train_state.do_valid
-            and train_config.eval_interval
-            and global_state.train_state.step % train_config.eval_interval == 0
+            and val_config.eval_interval
+            and global_state.train_state.step % val_config.eval_interval == 0
         ):
             if energy_monitor is not None:
                 energy_monitor.pause()
@@ -528,7 +529,7 @@ def train(
                 callback_manager=callback_manager,
             )
             eval_duration += timers("eval-time").elapsed()
-            eval_iterations += train_config.eval_iters
+            eval_iterations += val_config.eval_iters
             timers("eval-time").stop()
 
             if train_config.manual_gc and train_config.manual_gc_eval:

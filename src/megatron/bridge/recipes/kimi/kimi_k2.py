@@ -96,7 +96,7 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
