@@ -20,12 +20,13 @@ from typing import Any, Callable, ClassVar, Generic, Protocol, TypeVar
 
 import torch
 from megatron.core import tensor_parallel
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.module import Float16Module
 
-from megatron.bridge.models.model_provider import _print_num_params
+from megatron.bridge.models.model_provider import _ddp_wrap, _print_num_params
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -209,9 +210,12 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
     def build_distributed_models(
         self,
         pg_collection: ProcessGroupCollection,
+        ddp_config: DistributedDataParallelConfig | None = None,
+        overlap_param_gather_with_optimizer_step: bool = False,
         use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
+        data_parallel_random_init: bool = True,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
     ) -> list[ModelT]:
@@ -222,6 +226,9 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         Handles virtual pipeline parallelism, DDP wrapping, and
         mixed precision configuration.
         """
+        if wrap_with_ddp and not ddp_config:
+            raise ValueError("ddp_config is required when wrap_with_ddp is True")
+
         transformer_config: TransformerConfig | None = getattr(self._model_config, "transformer", None)
 
         def find_model_attr(attr_name):
@@ -280,9 +287,16 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         if correct_amax_history_if_needed is not None:
             correct_amax_history_if_needed(model_list)
 
-        # Apply DDP wrapping if requested
         if wrap_with_ddp:
-            model_list = self._wrap_with_ddp(model_list, pg_collection, fp16, bf16)
+            model_list = _ddp_wrap(
+                model_list,
+                data_parallel_random_init,
+                ddp_config,
+                overlap_param_gather_with_optimizer_step,
+                use_megatron_fsdp=use_megatron_fsdp,
+                use_torch_fsdp2=use_torch_fsdp2,
+                pg_collection=pg_collection,
+            )
 
         return model_list
 
@@ -324,18 +338,6 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
             model_list = [model]
 
         return model_list
-
-    def _wrap_with_ddp(
-        self,
-        models: list[ModelT],
-        pg_collection: ProcessGroupCollection,
-        fp16: bool,
-        bf16: bool,
-    ) -> list[ModelT]:
-        """Wrap models with DDP for distributed training."""
-        # TODO: impl
-        ...
-        return models
 
 
 @dataclass
