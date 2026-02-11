@@ -105,7 +105,7 @@ echo "======================================"
 mkdir -p logs
 
 # Build CLI overrides
-CLI_OVERRIDES="
+CLI_OVERRIDES=" \
     model.seq_length=$SEQ_LENGTH \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \

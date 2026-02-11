@@ -106,7 +106,7 @@ echo "======================================"
 mkdir -p logs
 
 # Build CLI overrides
-CLI_OVERRIDES="
+CLI_OVERRIDES=" \
     checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \
