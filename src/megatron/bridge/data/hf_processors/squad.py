@@ -14,14 +14,19 @@
 
 """Processing functions for Squad dataset."""
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from megatron.bridge.data.builders.hf_dataset import ProcessExampleOutput
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+
+
+if TYPE_CHECKING:
+    from megatron.core.tokenizers.text.text_tokenizer import MegatronTokenizerText
 
 
 def process_squad_example(
-    example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+    example: dict[str, Any],
+    tokenizer: Optional["MegatronTokenizerText"] = None,
+    apply_tokenizer_chat_template: bool = False,
 ) -> ProcessExampleOutput:
     """Process a single Squad example into the required format.
 
@@ -31,6 +36,7 @@ def process_squad_example(
     Args:
         example: Raw Squad example containing 'context', 'question', and 'answers'
         tokenizer: Optional tokenizer (not used in this example)
+        apply_tokenizer_chat_template: If True, apply the tokenizer's chat template to the input
 
     Returns:
         ProcessExampleOutput with formatted input/output and original answers
@@ -50,9 +56,13 @@ def process_squad_example(
     """
     # Format input as: "Context: ... Question: ... Answer:"
     _input = f"Context: {example['context']} Question: {example['question']} Answer:"
+    if apply_tokenizer_chat_template and tokenizer is not None and tokenizer.chat_template is not None:
+        _input = tokenizer.apply_chat_template([{"role": "user", "content": _input}], tokenize=False)
 
     # Use the first answer as the primary output
     _output = example["answers"]["text"][0]
+    if apply_tokenizer_chat_template and tokenizer is not None and tokenizer.chat_template is not None:
+        _output = tokenizer.apply_chat_template([{"role": "assistant", "content": _output}], tokenize=False)
 
     # Keep all original answers for evaluation purposes
     original_answers = example["answers"]["text"]
