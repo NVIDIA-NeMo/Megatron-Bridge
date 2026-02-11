@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Mapping
+
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -21,7 +23,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
+from megatron.bridge.models.deepseek.common import (
+    get_common_configs,
+    get_common_mapping_list,
+    maybe_dequantize_fp8_weight,
+)
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
@@ -43,9 +49,12 @@ class KimiK25VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        # get_common_configs expects the text config
+        # Temporarily swap to text_config for get_common_configs (which reads
+        # hf_pretrained.config), then restore the original VL config so that
+        # save_artifacts later writes the full config (including auto_map).
         hf_pretrained.config = text_config
         configs = get_common_configs(hf_pretrained)
+        hf_pretrained.config = hf_config
 
         configs["make_vocab_size_divisible_by"] = 1280
         configs["moe_router_score_function"] = "sigmoid"
@@ -78,6 +87,18 @@ class KimiK25VLBridge(MegatronModelBridge):
         )
 
         return provider
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Load HF weights, dequantizing FP8 block-wise tensors to bf16 when present."""
+        if isinstance(hf_param, str):
+            hf_weights = hf_state_dict[hf_param]
+            return maybe_dequantize_fp8_weight(hf_param, hf_weights, hf_state_dict)
+        return {
+            k: maybe_dequantize_fp8_weight(v, hf_state_dict[v], hf_state_dict)
+            for k, v in hf_param.items()
+        }
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.

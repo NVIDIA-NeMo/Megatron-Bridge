@@ -101,6 +101,17 @@ class KimiK25VLModel(MegatronModule):
             )
             self.vision_tower_config = VisionTowerConfig(config.vision_config)
             self.projector_config = ProjectorConfig(config.vision_config)
+
+            # Patch: some versions of MoonViT3dEncoder.__init__ reference
+            # self.use_deterministic_attn before setting it.  Inject a default
+            # via the class so the attribute lookup succeeds.
+            MoonViT3dEncoder = get_class_from_dynamic_module(
+                "modeling_kimi_k25.MoonViT3dEncoder",
+                config.hf_model_path,
+            )
+            if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
+                MoonViT3dEncoder.use_deterministic_attn = False
+
             self.vision_tower = MoonViT3dPretrainedModel(self.vision_tower_config)
             self.mm_projector = PatchMergerMLP(self.projector_config) # TODO: support different types of mm projector
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.

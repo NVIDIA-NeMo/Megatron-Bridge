@@ -20,7 +20,11 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
-from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
+from megatron.bridge.models.deepseek.common import (
+    get_common_configs,
+    get_common_mapping_list,
+    maybe_dequantize_fp8_weight,
+)
 from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -57,6 +61,18 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
         provider = DeepSeekV3ModelProvider(**configs)
         return provider
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Load HF weights, dequantizing FP8 block-wise tensors to bf16 when present."""
+        if isinstance(hf_param, str):
+            hf_weights = hf_state_dict[hf_param]
+            return maybe_dequantize_fp8_weight(hf_param, hf_weights, hf_state_dict)
+        return {
+            k: maybe_dequantize_fp8_weight(v, hf_state_dict[v], hf_state_dict)
+            for k, v in hf_param.items()
+        }
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = get_common_mapping_list()
