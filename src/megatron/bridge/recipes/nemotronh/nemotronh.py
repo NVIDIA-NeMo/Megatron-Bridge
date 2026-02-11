@@ -38,6 +38,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -134,7 +135,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -235,7 +236,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -338,7 +339,7 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -441,7 +442,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1_168_251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 10
+    cfg.validation.eval_interval = 10
 
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -746,10 +747,12 @@ def _nemotronh_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=10,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=10,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

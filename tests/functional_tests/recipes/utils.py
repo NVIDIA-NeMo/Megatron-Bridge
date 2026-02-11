@@ -71,8 +71,8 @@ def run_pretrain_recipe_test(
         config.logger.tensorboard_dir = str(tensorboard_dir)
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
@@ -89,7 +89,7 @@ def run_pretrain_recipe_test(
             config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100  # Minimal test samples
 
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
@@ -149,8 +149,8 @@ def run_pretrain_recipe_perf_test(
     config: ConfigContainer = config_func()
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
-    config.train.eval_interval = 5
-    config.train.eval_iters = 0  # Skip evaluation. TODO: Fix this.
+    config.validation.eval_interval = 5
+    config.validation.eval_iters = 0  # Skip evaluation. TODO: Fix this.
 
     # Standardize batch sizes for functional tests
     config.train.micro_batch_size = 1
@@ -198,6 +198,7 @@ def run_pretrain_vl_recipe_test(
     tensor_model_parallel_size: Optional[int] = None,
     pipeline_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
+    dataset_overrides: Optional[dict] = None,
     forward_step_func: Optional[Callable] = None,
 ):
     """
@@ -213,6 +214,7 @@ def run_pretrain_vl_recipe_test(
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
         pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
+        dataset_overrides: Optional mapping of dataset attribute overrides to apply
     """
     if forward_step_func is None:
         # Import locally to avoid loading VLM stack for non-VL tests
@@ -230,8 +232,8 @@ def run_pretrain_vl_recipe_test(
         )
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
@@ -247,7 +249,7 @@ def run_pretrain_vl_recipe_test(
         config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 8
 
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
@@ -268,6 +270,14 @@ def run_pretrain_vl_recipe_test(
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
                 setattr(config.model, attribute_name, attribute_value)
+
+        # Apply any dataset-specific overrides provided by the caller
+        if dataset_overrides:
+            for attribute_name, attribute_value in dataset_overrides.items():
+                setattr(config.dataset, attribute_name, attribute_value)
+
+        if config.dataset.pack_sequences_in_batch:
+            config.train.micro_batch_size = 2
 
         pretrain(config, vlm_forward_step)
 

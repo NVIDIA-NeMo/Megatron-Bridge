@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
@@ -538,10 +539,12 @@ def _gemma2_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=10,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=10,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

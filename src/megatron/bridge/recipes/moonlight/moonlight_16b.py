@@ -32,6 +32,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -201,7 +202,7 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 500_000
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
@@ -562,13 +563,15 @@ def _moonlight_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=5,
             manual_gc_eval=5,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
