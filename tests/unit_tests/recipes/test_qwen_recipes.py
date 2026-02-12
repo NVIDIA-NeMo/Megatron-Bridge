@@ -71,6 +71,7 @@ class _FakeModelCfg:
 
     def __init__(self):
         self.cross_entropy_fusion_impl = "native"
+        self.context_parallel_size = 1
 
     def finalize(self):
         # qwen3 recipe may call finalize(); make it a no-op

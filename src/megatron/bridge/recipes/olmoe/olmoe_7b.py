@@ -397,7 +397,7 @@ def _olmoe_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
