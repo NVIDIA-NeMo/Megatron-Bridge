@@ -20,6 +20,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import nemo_run as run
@@ -50,8 +51,6 @@ try:
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from .resiliency_plugins import FaultTolerancePlugin
-
-import logging
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -184,7 +183,11 @@ def main(
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    vp_size: Optional[int],
     ep_size: Optional[int],
+    etp_size: Optional[int],
+    micro_batch_size: Optional[int],
+    global_batch_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -206,6 +209,7 @@ def main(
     custom_mounts: List[str],
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
+    custom_bash_cmds: List[List[str]],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     num_gpus: int,
@@ -214,6 +218,7 @@ def main(
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
+    memory_params: Dict[str, Any],
     max_retries: int,
     dgxc_base_url: str,
     dgxc_cluster: str,
@@ -224,6 +229,7 @@ def main(
     dgxc_pvc_claim_name: str,
     dgxc_pvc_mount_path: str,
     config_variant: str = "v1",
+    gres: Optional[str] = None,
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -252,8 +258,20 @@ def main(
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
+        # Create a simple namespace with the args needed by get_exp_name_config
+        args_for_config = SimpleNamespace(
+            num_gpus=num_gpus,
+            tensor_model_parallel_size=tp_size,
+            pipeline_model_parallel_size=pp_size,
+            context_parallel_size=cp_size,
+            virtual_pipeline_model_parallel_size=vp_size,
+            expert_model_parallel_size=ep_size,
+            expert_tensor_parallel_size=etp_size,
+            micro_batch_size=micro_batch_size,
+            global_batch_size=global_batch_size,
+        )
         exp_config = get_exp_name_config(
-            args, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
         )
         exp_name = (
             wandb_experiment_name
@@ -278,7 +296,7 @@ def main(
     )
 
     if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1"})
+        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
     if not dgxc_cluster:
         executor = slurm_executor(
@@ -293,7 +311,8 @@ def main(
             custom_mounts=custom_mounts,
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
-            gres=args.gres,
+            custom_bash_cmds=custom_bash_cmds,
+            gres=gres,
             hf_token=hf_token,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
@@ -344,8 +363,8 @@ def main(
                 profile_step_end=profiling_stop_step,
                 nsys_gpu_metrics=profiling_gpu_metrics,
                 profile_ranks=profiling_ranks,
-                nsys_trace=args.nsys_trace,
-                nsys_extra_args=args.nsys_extra_args,
+                nsys_trace=nsys_trace,
+                nsys_extra_args=nsys_extra_args,
             )
         )
     if pytorch_profiler:
@@ -470,9 +489,12 @@ def main(
                 log_paths=log_paths,
                 loss_metric="lm loss",
                 timing_metric="elapsed time per iteration (ms)",
+                alloc_metric="alloc",
+                max_alloc_metric="max_alloc",
                 golden_values_path=golden_values_path,
                 convergence_config=convergence_params,
                 performance_config=performance_params,
+                memory_config=memory_params,
                 wandb_run=wandb_run,
             )
 
@@ -491,6 +513,8 @@ def main(
 
     if not is_testing_passed and error_msg is not None:
         raise AssertionError(error_msg)
+    if is_testing_passed and error_msg is not None:
+        logger.warning(error_msg)
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
@@ -539,7 +563,11 @@ if __name__ == "__main__":
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        vp_size=args.virtual_pipeline_model_parallel_size,
         ep_size=args.expert_model_parallel_size,
+        etp_size=args.expert_tensor_parallel_size,
+        micro_batch_size=args.micro_batch_size,
+        global_batch_size=args.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,
@@ -561,6 +589,7 @@ if __name__ == "__main__":
         custom_mounts=args.custom_mounts,
         custom_env_vars=args.custom_env_vars,
         custom_srun_args=args.custom_srun_args,
+        custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         num_gpus=args.num_gpus,
@@ -581,6 +610,9 @@ if __name__ == "__main__":
             "timing_threshold": args.timing_threshold,
             "skip_first_percent_time": args.skip_first_percent_time,
         },
+        memory_params={
+            "memory_threshold": args.memory_threshold,
+        },
         max_retries=args.max_retries,
         dgxc_base_url=args.dgxc_base_url,
         dgxc_cluster=args.dgxc_cluster,
@@ -591,4 +623,5 @@ if __name__ == "__main__":
         dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
         dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
         config_variant=config_variant,
+        gres=args.gres,
     )

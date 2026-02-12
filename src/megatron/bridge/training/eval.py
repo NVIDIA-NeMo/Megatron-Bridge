@@ -103,7 +103,7 @@ def evaluate(
 
     with torch.no_grad():
         if verbose:
-            print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
+            print_rank_0(f"Evaluating on {state.cfg.validation.eval_iters * eval_batch_size} samples")
 
         if (
             state.cfg.model.cuda_graph_impl == "local"
@@ -123,10 +123,10 @@ def evaluate(
             )
 
         iteration = 0
-        while iteration < state.cfg.train.eval_iters:
+        while iteration < state.cfg.validation.eval_iters:
             iteration += 1
             if verbose:
-                print_rank_0(f"Evaluating iter {iteration}/{state.cfg.train.eval_iters}")
+                print_rank_0(f"Evaluating iter {iteration}/{state.cfg.validation.eval_iters}")
 
             # Handle finetuning vs pretraining data consumption
             seq_length = state.cfg.model.seq_length  # Default for pretraining
@@ -134,18 +134,19 @@ def evaluate(
 
             if state.cfg.dataset.dataloader_type == "batch":
                 # Finetuning path: prepare batch and extract dynamic seq_length
-                eval_microbatch_iterator, seq_length = prepare_finetuning_batch(
+                eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
                     num_microbatches=eval_num_microbatches,
                     default_seq_length=state.cfg.model.seq_length,
                     seq_key="tokens",
                 )
 
+            if len(model) > 1:
                 # Convert to list of iterators for virtual pipeline parallelism
                 # With virtual PP, each model chunk needs independent access to the same microbatch
                 eval_data_iterator = make_data_iterator_list(
                     model=model,
-                    data_iterator=eval_microbatch_iterator,
+                    data_iterator=eval_data_iterator,
                 )
 
             # Don't care about timing during evaluation

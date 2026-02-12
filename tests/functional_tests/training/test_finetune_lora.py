@@ -34,6 +34,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
@@ -210,7 +211,7 @@ class TestLoRAFinetune:
             )
             # Ensure micro_batch_size is 1 for packed sequences (requirement)
             lora_cfg.train.micro_batch_size = 1
-            lora_cfg.train.eval_iters = 2
+            lora_cfg.validation.eval_iters = 2
 
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
@@ -232,11 +233,13 @@ class TestLoRAFinetune:
         """Create a training configuration."""
         return TrainingConfig(
             train_iters=train_iters,
-            eval_interval=5,
-            eval_iters=0,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
         )
+
+    def _create_validation_config(self):
+        """Create a validation configuration."""
+        return ValidationConfig(eval_interval=5, eval_iters=0)
 
     def _create_optimizer_config(self, lr=3e-3):
         """Create an optimizer configuration."""
@@ -244,7 +247,7 @@ class TestLoRAFinetune:
             optimizer="adam",
             adam_beta1=0.9,
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             use_distributed_optimizer=True,
             clip_grad=1.0,
             lr=lr,
@@ -378,6 +381,7 @@ class TestLoRAFinetune:
         return ConfigContainer(
             model=model,
             train=self._create_training_config(train_iters),
+            validation=self._create_validation_config(),
             optimizer=self._create_optimizer_config(),
             scheduler=self._create_scheduler_config(train_iters),
             ddp=self._create_ddp_config(),
@@ -413,6 +417,7 @@ class TestLoRAFinetune:
         return ConfigContainer(
             model=model,
             train=self._create_training_config(train_iters),
+            validation=self._create_validation_config(),
             optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(scheduler_iters),
             ddp=self._create_ddp_config(),
