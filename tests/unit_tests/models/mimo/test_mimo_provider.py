@@ -807,7 +807,7 @@ class TestMimoModelProviderDistributed:
         mock_device_count.return_value = 8  # Mock sufficient GPUs
         mock_set_device.return_value = None  # Mock set_device to avoid CUDA calls
         mock_is_available.return_value = True  # Mock CUDA availability
-        
+
         # Mock the stream context manager
         mock_stream_ctx.return_value.__enter__ = MagicMock(return_value=None)
         mock_stream_ctx.return_value.__exit__ = MagicMock(return_value=None)
@@ -846,9 +846,7 @@ class TestMimoModelProviderDistributed:
         )
 
         ddp_config = DistributedDataParallelConfig()
-        provider.provide_distributed_model(
-            ddp_config=ddp_config, wrap_with_ddp=True, data_parallel_random_init=True
-        )
+        provider.provide_distributed_model(ddp_config=ddp_config, wrap_with_ddp=True, data_parallel_random_init=True)
 
         # Should wrap with DDP
         assert mock_ddp.called
@@ -989,9 +987,7 @@ class TestMimoModelProviderDistributed:
 
         provider = MimoModelProvider(language_model_spec=language_spec, fp16=True)
 
-        result = provider.provide_distributed_model(
-            wrap_with_ddp=False, mixed_precision_wrapper=mock_custom_wrapper
-        )
+        result = provider.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=mock_custom_wrapper)
 
         # Should use custom wrapper instead of Float16Module
         mock_custom_wrapper.assert_called_once_with(mock_config, mock_model)
@@ -1122,7 +1118,7 @@ class TestMimoModelProviderDistributed:
         mock_device_count.return_value = 8  # Mock sufficient GPUs
         mock_set_device.return_value = None  # Mock set_device to avoid CUDA calls
         mock_is_available.return_value = True  # Mock CUDA availability
-        
+
         # Mock the stream context manager
         mock_stream_ctx.return_value.__enter__ = MagicMock(return_value=None)
         mock_stream_ctx.return_value.__exit__ = MagicMock(return_value=None)

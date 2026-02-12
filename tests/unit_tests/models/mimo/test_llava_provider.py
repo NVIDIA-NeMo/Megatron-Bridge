@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
-from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.mimo.llava_provider import LlavaMimoProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
