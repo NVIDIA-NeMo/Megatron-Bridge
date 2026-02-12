@@ -16,6 +16,7 @@ import logging
 from functools import partial
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Glm4MoeForCausalLM
@@ -27,8 +28,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.glm.glm_moe_mappings import (
+    GLMExpertDownProjMapping,
+    GLMExpertGateUpProjMapping,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 try:
@@ -99,10 +105,15 @@ class GLM45Bridge(MegatronModelBridge):
         """Override to store config before mapping_registry is called."""
         # Store config on instance for use in mapping_registry
         self._hf_config = hf_pretrained.config
+        self._hf_state_source = hf_pretrained.state.source
+        self._hf_keys = list(self._hf_state_source.get_all_keys())
         return super().build_conversion_tasks(hf_pretrained, megatron_model)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
+        use_fused_experts = self._uses_fused_experts()
+        gate_up_suffix = self._hf_expert_suffix("mlp.experts.gate_up_proj")
+        down_suffix = self._hf_expert_suffix("mlp.experts.down_proj")
 
         param_mappings = {
             # Embed
@@ -129,7 +140,6 @@ class GLM45Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.router.weight": "model.layers.*.mlp.shared_experts.gate.weight",
-            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
         }
@@ -167,13 +177,35 @@ class GLM45Bridge(MegatronModelBridge):
                     gate="model.layers.*.mlp.shared_experts.gate_proj.weight",
                     up="model.layers.*.mlp.shared_experts.up_proj.weight",
                 ),
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    gate="model.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="model.layers.*.mlp.experts.*.up_proj.weight",
-                ),
             ]
         )
+        if use_fused_experts:
+            mapping_list.extend(
+                [
+                    GLMExpertGateUpProjMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                        hf_param=f"model.layers.*.mlp.experts.gate_up_proj{gate_up_suffix}",
+                    ),
+                    GLMExpertDownProjMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                        hf_param=f"model.layers.*.mlp.experts.down_proj{down_suffix}",
+                    ),
+                ]
+            )
+        else:
+            mapping_list.extend(
+                [
+                    GatedMLPMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                        gate="model.layers.*.mlp.experts.*.gate_proj.weight",
+                        up="model.layers.*.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                        hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
+                    ),
+                ]
+            )
         # optionally add MTP mappings
         if not hasattr(self, "_hf_config"):
             logger.warning("No HF config found, skipping MTP mappings.")
@@ -237,12 +269,122 @@ class GLM45Bridge(MegatronModelBridge):
                         gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.gate_proj.weight",
                         up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.up_proj.weight",
                     ),
-                    GatedMLPMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc1.weight*",
-                        gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
-                        up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
-                    ),
                 ]
             )
+            if use_fused_experts:
+                mapping_list.extend(
+                    [
+                        GLMExpertGateUpProjMapping(
+                            megatron_param=(
+                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc1.weight*"
+                            ),
+                            hf_param=(
+                                f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.gate_up_proj"
+                                f"{gate_up_suffix}"
+                            ),
+                        ),
+                        GLMExpertDownProjMapping(
+                            megatron_param=(
+                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc2.weight*"
+                            ),
+                            hf_param=(
+                                f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.down_proj{down_suffix}"
+                            ),
+                        ),
+                    ]
+                )
+            else:
+                mapping_list.extend(
+                    [
+                        GatedMLPMapping(
+                            megatron_param=(
+                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc1.weight*"
+                            ),
+                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
+                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=(
+                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc2.weight*"
+                            ),
+                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.down_proj.weight",
+                        ),
+                    ]
+                )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def _uses_fused_experts(self) -> bool:
+        hf_keys = getattr(self, "_hf_keys", None)
+        if hf_keys:
+            if any("mlp.experts.gate_up_proj" in key for key in hf_keys) or any(
+                "mlp.experts.down_proj" in key for key in hf_keys
+            ):
+                return True
+
+        hf_source = getattr(self, "_hf_state_source", None)
+        if hf_source is not None:
+            return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
+
+        return False
+
+    def _hf_expert_suffix(self, base_name: str) -> str:
+        hf_keys = getattr(self, "_hf_keys", None) or []
+        if any(f"{base_name}.weight" in key for key in hf_keys):
+            return ".weight"
+
+        hf_source = getattr(self, "_hf_state_source", None)
+        if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
+            return ".weight"
+
+        return ""
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task,
+        converted_weights_dict: dict[str, torch.Tensor],
+        hf_state_dict,
+    ) -> dict[str, torch.Tensor]:
+        if not isinstance(task.mapping, (GLMExpertGateUpProjMapping, GLMExpertDownProjMapping)):
+            return converted_weights_dict
+
+        if not converted_weights_dict:
+            return {}
+
+        num_experts = self._hf_config.n_routed_experts
+        ep_size = parallel_state.get_expert_model_parallel_world_size()
+        experts_per_rank = num_experts // ep_size
+
+        try:
+            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
+        except ValueError:
+            return converted_weights_dict
+
+        if not hasattr(self, "hf_weights_cache"):
+            self.hf_weights_cache = {}
+
+        for key, value in converted_weights_dict.items():
+            if key not in self.hf_weights_cache:
+                self.hf_weights_cache[key] = {}
+
+            if ep_size == 1:
+                self.hf_weights_cache[key][local_expert_number] = value
+            else:
+                if value.shape[0] != ep_size:
+                    raise ValueError(f"Expected EP dim {ep_size} for {key}, got {value.shape}.")
+                for i, exp_val in enumerate(value):
+                    global_expert_number = local_expert_number + (i * experts_per_rank)
+                    self.hf_weights_cache[key][global_expert_number] = exp_val
+
+            if len(self.hf_weights_cache[key]) == num_experts:
+                merged = torch.stack([self.hf_weights_cache[key][i] for i in range(num_experts)], dim=0)
+                if key in hf_state_dict:
+                    expected = hf_state_dict[key].shape
+                    if merged.shape != expected and merged.transpose(-1, -2).shape == expected:
+                        merged = merged.transpose(-1, -2).contiguous()
+                del self.hf_weights_cache[key]
+                return {key: merged}
+
+            return {}
+
+        return {}
