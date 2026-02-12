@@ -45,7 +45,7 @@ def apply_flex_dispatcher_backend(
 
     device_properties = torch.cuda.get_device_properties(0)
     if moe_flex_dispatcher_backend == "deepep":
-        if not (device_properties.major in [8, 9] or device_properties.name in ["NVIDIA B200", "NVIDIA B300"]):
+        if not (device_properties.major in [8, 9]) or device_properties.name in ["NVIDIA B200", "NVIDIA B300"]:
             if get_rank_safe() == 0:
                 logger.warning(
                     "DeepEP is only applicable to Ampere, Hopper, and Blackwell (only B200 and B300) GPUs. Skipping DeepEP configuration."
