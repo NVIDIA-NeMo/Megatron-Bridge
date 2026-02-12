@@ -113,8 +113,8 @@ class TestQwen3VLUtils:
     def test_vision_patch_embed(self):
         """Test Qwen3VLVisionPatchEmbed forward pass with representative config."""
         config = Qwen3VLTransformerConfig(
-            hidden_size=1024,
-            num_attention_heads=4,
+            hidden_size=128,
+            num_attention_heads=2,
             patch_size=16,
             temporal_patch_size=2,
             in_channels=3,
@@ -128,6 +128,7 @@ class TestQwen3VLUtils:
         )
         out = module(hidden)
         assert out.shape == (n_patches, config.hidden_size)
+        torch.cuda.empty_cache()
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="VisionRotaryEmbedding uses CUDA")
     def test_vision_rotary_embedding(self):
@@ -143,11 +144,11 @@ class TestQwen3VLUtils:
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
         config = Qwen3VLTransformerConfig(
             num_layers=1,
-            hidden_size=1024,
-            num_attention_heads=4,
+            hidden_size=128,
+            num_attention_heads=2,
             patch_size=16,
             spatial_merge_size=2,
-            out_hidden_size=1024,
+            out_hidden_size=128,
         )
         from megatron.core.extensions.transformer_engine import (
             TEColumnParallelLinear,
@@ -165,6 +166,7 @@ class TestQwen3VLUtils:
         x = torch.randn(seqlens, config.hidden_size).cuda()
         out = merger(x)
         assert out.shape == (seqlens // config.spatial_merge_size**2, config.out_hidden_size)
+        torch.cuda.empty_cache()
         self.destroy_parallel_state()
 
     def test_split_part_by_cp_tp(self):
