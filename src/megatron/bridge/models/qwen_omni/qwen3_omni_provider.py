@@ -45,7 +45,7 @@ class Qwen3OmniMoeModelProvider(Qwen3MoEModelProvider):
 
     pretrained_model_name: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
-    # Vision-specific token IDs matching Qwen3VL MoE configuration
+    # Vision-specific token IDs matching Qwen3-Omni-MoE configuration
     # Based on HuggingFace Qwen3-Omni-MoE configs
     # Token ID for image placeholder in text
     image_token_id: int = 151655
@@ -143,7 +143,7 @@ class Qwen3OmniMoeModelProvider(Qwen3MoEModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
-        Provide a Qwen3VL MoE model instance with vision and language components.
+        Provide a Qwen3 Omni MoE model instance with vision and language components.
         """
         language_transformer_config = self
 

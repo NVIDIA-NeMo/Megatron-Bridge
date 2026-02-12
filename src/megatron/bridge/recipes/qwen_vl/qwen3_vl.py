@@ -248,7 +248,7 @@ def qwen3_omni_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "../hf-hub/Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        "hf_path": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_dtype": torch.bfloat16,

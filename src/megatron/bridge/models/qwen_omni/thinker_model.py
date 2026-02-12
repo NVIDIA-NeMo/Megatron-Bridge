@@ -7,6 +7,8 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -139,7 +141,7 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             pg_collection=pg_collection,
         )
         assert len(vision_transformer_config.vision_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), (
-            "the deepstack_visual_embeds should on the first pp-stage",
+            f"the deepstack_visual_embeds should on the first pp-stage",
             f"got {len(vision_transformer_config.vision_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
             f" {len(self.language_model.decoder.layers)} language model layers",
         )
@@ -208,7 +210,8 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
         else:
             audio_feature_lengths = None
 
-        feature_lens = audio_feature_lengths if audio_feature_lengths is not None else feature_attention_mask.sum(-1)
+        # feature_lens = audio_feature_lengths if audio_feature_lengths is not None else feature_attention_mask.sum(-1)
+        feature_lens = audio_feature_lengths
         audio_outputs = self.audio_model(
             input_features,
             feature_lens=feature_lens,
