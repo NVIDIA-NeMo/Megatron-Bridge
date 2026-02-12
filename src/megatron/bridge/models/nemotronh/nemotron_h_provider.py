@@ -54,7 +54,7 @@ class NemotronHModelProvider(MambaModelProvider):
     moe_token_dispatcher_type: str = "alltoall"
     moe_permute_fusion: bool = True
     moe_shared_expert_overlap: bool = True
-
+    moe_latent_size: int | None = None
 
 @dataclass
 class NemotronHModelProvider4B(NemotronHModelProvider):
@@ -173,6 +173,56 @@ class Nemotron3NanoProvider(NemotronHModelProvider):
     moe_router_group_topk: int = 1
 
 
+@dataclass
+class Nemotron3SuperProvider(NemotronHModelProvider):
+    """Configuration for a 3B parameter Nemotron 3 Super model."""
+
+    seq_length:int = 262144
+    num_query_groups: int = 2
+    hybrid_override_pattern: str = "MEMEMEM*EMEMEMEM*EMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEM*EMEMEMEME"
+    num_layers: int = 88
+    hidden_size: int = 4096
+    mamba_num_heads: int = 128
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 2688
+    num_attention_heads: int = 32
+    mamba_head_dim: int = 64
+    num_moe_experts: int = 512
+    moe_ffn_hidden_size: int = 2688
+    moe_shared_expert_intermediate_size: int = 5376
+    moe_router_topk: int = 22
+    moe_router_topk_scaling_factor: float = 5.0
+    moe_router_num_groups: int = 1
+    moe_router_group_topk: int = 1
+    moe_latent_size: int = 1024
+    moe_shared_expert_overlap: bool = False
+    mtp_num_layers: int = 2
+    mtp_hybrid_override_pattern: str = "*E"
+    # TODO(liding): can we remove them?
+    mtp_use_repeated_layer: bool = False
+    keep_mamba_stack_attention_linear_in_bf16: bool = False
+
+
+# TODO(liding): remove debug provider
+@dataclass
+class Nemotron3SuperDebugProvider(Nemotron3SuperProvider):
+    """Configuration for a 3B parameter Nemotron 3 Super model."""
+
+    num_query_groups: int = 2
+    hybrid_override_pattern: str = "MEM*EME"
+    num_layers: int = 7
+    hidden_size: int = 288
+    ffn_hidden_size: int = 384
+    num_attention_heads: int = 40
+    num_moe_experts: int = 128
+    moe_ffn_hidden_size: int = 2688
+    moe_router_topk: int = 6
+    moe_latent_size: int = 576
+    # TODO(liding): check mtp_num_layers
+    mtp_num_layers: int = 2
+    mtp_hybrid_override_pattern: str = "*E"
+    
 # -----------------------------------------------------------------------------
 # Deprecated aliases (to be removed in a future release)
 # -----------------------------------------------------------------------------

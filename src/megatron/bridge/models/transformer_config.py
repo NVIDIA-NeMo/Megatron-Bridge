@@ -21,6 +21,8 @@ override system while maintaining compatibility with Megatron Core's post_init b
 import copy
 from dataclasses import dataclass, fields, is_dataclass
 
+from megatron.bridge.utils.common_utils import warn_rank_0
+
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
     HeterogeneousTransformerConfig as MCoreHeterogeneousTransformerConfig,
 )
@@ -89,6 +91,9 @@ class TransformerConfig(MCoreTransformerConfig):
         """
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.tensor_model_parallel_size == 1 and self.sequence_parallel:
+            warn_rank_0("Disabling sequence parallelism because tensor model parallelism is disabled")
+            self.sequence_parallel = False
         MCoreTransformerConfig.__post_init__(self)
 
     def __deepcopy__(self, memo):

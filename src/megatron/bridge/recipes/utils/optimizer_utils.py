@@ -141,6 +141,8 @@ def distributed_fused_adam_with_cosine_annealing(
         end_weight_decay=end_weight_decay,
         weight_decay_incr_style=weight_decay_incr_style,
         lr_decay_style=lr_decay_style,
+        lr_wsd_decay_style="minus_sqrt",
+        lr_wsd_decay_iters=lr_decay_iters,
         lr_warmup_iters=lr_warmup_iters,
         lr_warmup_init=0.0,
         lr_decay_iters=lr_decay_iters,

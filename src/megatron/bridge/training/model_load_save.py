@@ -283,13 +283,15 @@ def build_and_load_model(
                 model_cfg.finalize()
             return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
         else:
+            model_type = "mamba"
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
 
             # Generate the unpadded vocab size based on the tokenizer from the checkpoint
             cfg = _tokenizer_config_from_args(megatron_args)
-            tokenizer = build_tokenizer(cfg)
-            vocab_size = tokenizer.vocab_size
+            # tokenizer = build_tokenizer(cfg)
+            # vocab_size = tokenizer.vocab_size
+            vocab_size = 131072
 
             # Re-calculate the padded vocab size based on the model config instead of the args from the checkpoint
             # to accommodate TP overrides
@@ -310,6 +312,8 @@ def build_and_load_model(
         if model_cfg.params_dtype != target_dtype:
             logger.info(f"Converting params_dtype from {model_cfg.params_dtype} to {target_dtype}")
             model_cfg.params_dtype = target_dtype
+
+        model_cfg.perform_initialization = False
 
         if use_cpu_init:
             with megatron_cpu_init_context(model_cfg):

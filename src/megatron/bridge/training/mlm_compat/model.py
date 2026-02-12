@@ -34,6 +34,7 @@ from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
     get_gpt_heterogeneous_layer_spec,
 )
 from megatron.core.models.mamba import MambaModel
+from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.transformer import MegatronModule, ModuleSpec, TransformerConfig
 from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.spec_utils import import_module
@@ -158,6 +159,43 @@ def _mamba_provider(
     assert args.spec is not None, "You must provide a valid Mamba layer spec!"
     mamba_stack_spec = import_module(args.spec)
 
+    sep = Symbols.MTP_SEPARATOR
+    if (
+        getattr(args, 'mtp_hybrid_override_pattern', None) is not None
+        and args.mtp_num_layers is not None
+        and args.mtp_num_layers > 0
+        and (args.hybrid_override_pattern is None or sep not in args.hybrid_override_pattern)
+    ):
+        main_pattern = args.hybrid_override_pattern or ''
+        mtp_pattern = args.mtp_hybrid_override_pattern
+        args.hybrid_override_pattern = main_pattern + sep + sep.join([mtp_pattern] * args.mtp_num_layers)
+        args.mtp_hybrid_override_pattern = None
+        print(f"Converted legacy MTP pattern to unified: {args.hybrid_override_pattern}")
+
+    # Infer mtp_num_layers from unified pattern
+    if args.hybrid_override_pattern and sep in args.hybrid_override_pattern:
+        parsed = parse_hybrid_pattern(args.hybrid_override_pattern)
+        if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+            inferred_mtp_num_layers = parsed.mtp_num_depths
+            if args.mtp_num_layers is None:
+                args.mtp_num_layers = inferred_mtp_num_layers
+            elif args.mtp_num_layers != inferred_mtp_num_layers:
+                print(
+                    f"--mtp-num-layers ({args.mtp_num_layers}) conflicts with "
+                    f"MTP depth count ({inferred_mtp_num_layers}) in pattern '{args.hybrid_override_pattern}'. "
+                    f"Using the inferred value ({inferred_mtp_num_layers}).",
+                    args.rank
+                )
+                args.mtp_num_layers = inferred_mtp_num_layers
+
+    # MTP validation
+    if args.mtp_num_layers:
+        assert not args.use_legacy_models, "The legacy Megatron models does not support Multi-Token Prediction (MTP)."
+        assert args.position_embedding_type == "rope" or args.position_embedding_type == "none", (
+            f"Multi-Token Prediction (MTP) is not supported with {args.position_embedding_type} position embedding type."
+            + "The supported position embedding types are rope and none."
+        )
+
     model = MambaModel(
         config=config,
         mamba_stack_spec=mamba_stack_spec,
@@ -174,7 +212,10 @@ def _mamba_provider(
         position_embedding_type=args.position_embedding_type,
         rotary_percent=args.rotary_percent,
         rotary_base=args.rotary_base,
+        vp_stage=vp_stage,
     )
+    #TOTO(liding): remove this 
+    model.mtp_process = False
 
     return model
 

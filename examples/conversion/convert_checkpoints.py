@@ -29,27 +29,31 @@ Usage examples:
   # Import a HuggingFace model to Megatron format
   uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.2-1B \
-    --megatron-path ./checkpoints/llama3_2_1b
+    --megatron-path ./checkpoints/llama3_2_1b \
+    --tp 1 --pp 1 --ep 1 --etp 1
 
   # Export a Megatron checkpoint to HuggingFace format
   uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b \
-    --hf-path ./exports/llama3_2_1b_hf
+    --hf-path ./exports/llama3_2_1b_hf \
+    --tp 1 --pp 1 --ep 1 --etp 1
 
   # Import with custom settings
   uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --torch-dtype bfloat16 \
-    --device-map auto
+    --device-map auto \
+    --tp 2 --pp 1 --ep 1 --etp 1
 
   # Export without progress bar (useful for scripting)
   uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --hf-path ./exports/custom_model_hf \
-    --no-progress
+    --no-progress \
+    --tp 1 --pp 1 --ep 1 --etp 1
 """
 
 import argparse
@@ -60,7 +64,7 @@ from typing import Optional
 import torch
 
 from megatron.bridge import AutoBridge
-
+from megatron.bridge.utils.common_utils import print_rank_0
 
 def validate_path(path: str, must_exist: bool = False) -> Path:
     """Validate and convert string path to Path object."""
@@ -87,7 +91,10 @@ def import_hf_to_megatron(
     megatron_path: str,
     torch_dtype: Optional[str] = None,
     device_map: Optional[str] = None,
-    trust_remote_code: bool = False,
+    tp: int = 1,
+    pp: int = 1,
+    ep: int = 1,
+    etp: int = 1,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -97,7 +104,10 @@ def import_hf_to_megatron(
         megatron_path: Directory path where the Megatron checkpoint will be saved
         torch_dtype: Model precision ("float32", "float16", "bfloat16")
         device_map: Device placement strategy ("auto", "cuda:0", etc.)
-        trust_remote_code: Allow custom model code execution
+        tp: Tensor parallel size
+        pp: Pipeline parallel size
+        ep: Expert parallel size
+        etp: Expert tensor parallel size
     """
     print(f"🔄 Starting import: {hf_model} -> {megatron_path}")
 
@@ -111,29 +121,44 @@ def import_hf_to_megatron(
         kwargs["device_map"] = device_map
         print(f"   Using device_map: {device_map}")
 
-    if trust_remote_code:
-        kwargs["trust_remote_code"] = trust_remote_code
-        print(f"   Trust remote code: {trust_remote_code}")
+    # Always allow custom model code execution for compatibility with community models.
+    kwargs["trust_remote_code"] = True
 
     # Import using the convenience method
     print(f"📥 Loading HuggingFace model: {hf_model}")
-    AutoBridge.import_ckpt(
-        hf_model_id=hf_model,
-        megatron_path=megatron_path,
-        **kwargs,
-    )
 
-    print(f"✅ Successfully imported model to: {megatron_path}")
+    bridge = AutoBridge.from_hf_pretrained(hf_model, **kwargs)
+
+    model_provider = bridge.to_megatron_provider(load_weights=True)
+
+    model_provider.tensor_model_parallel_size = tp
+    model_provider.pipeline_model_parallel_size = pp
+    model_provider.expert_model_parallel_size = ep
+    model_provider.expert_tensor_parallel_size = etp
+    model_provider.pipeline_dtype = torch.bfloat16
+    model_provider.sequence_parallel=False
+
+    # # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+    model_provider.finalize()
+    model_provider.initialize_model_parallel(seed=0)
+
+    # # Load the Megatron model directly
+    print_rank_0("Loading Megatron model...")
+    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    print_rank_0(megatron_model)
+
+    bridge.save_megatron_model(megatron_model, megatron_path, hf_tokenizer_path=hf_model)
+    print_rank_0(f"✅ Successfully imported model to: {megatron_path}")
 
     # Verify the checkpoint was created
     checkpoint_path = Path(megatron_path)
     if checkpoint_path.exists():
-        print("📁 Checkpoint structure:")
+        print_rank_0("📁 Checkpoint structure:")
         for item in checkpoint_path.iterdir():
             if item.is_dir():
-                print(f"   📂 {item.name}/")
+                print_rank_0(f"   📂 {item.name}/")
             else:
-                print(f"   📄 {item.name}")
+                print_rank_0(f"   📄 {item.name}")
 
 
 def export_megatron_to_hf(
@@ -204,6 +229,62 @@ def export_megatron_to_hf(
     print(f"   model = AutoModelForCausalLM.from_pretrained('{hf_path}')")
 
 
+def export_mlm_to_hf(
+    hf_model: str,
+    megatron_path: str,
+    hf_path: str,
+    show_progress: bool = True,
+    strict: bool = True,
+    tp: int = 1,
+    pp: int = 1,
+    ep: int = 1,
+    etp: int = 1,
+) -> None:
+    print_rank_0(f"🔄 Starting export: {megatron_path} -> {hf_path}")
+
+    # Validate megatron checkpoint exists
+    checkpoint_path = validate_path(megatron_path, must_exist=True)
+    print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
+
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+
+    print_rank_0("📤 Exporting to HuggingFace format...")
+    model_provider = bridge.to_megatron_provider(load_weights=False)
+    model_provider.tensor_model_parallel_size = tp
+    model_provider.pipeline_model_parallel_size = pp
+    model_provider.expert_model_parallel_size = ep
+    model_provider.expert_tensor_parallel_size = etp
+    model_provider.pipeline_dtype = torch.bfloat16
+    model_provider.sequence_parallel=False
+
+    # FIXME: This is a hack to enable cuda graph for the model.
+    model_provider.enable_cuda_graph=True
+    model_provider.use_te_rng_tracker=True
+
+    # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+    model_provider.finalize()
+    model_provider.initialize_model_parallel(seed=0, seed_kwargs={"te_rng_tracker": model_provider.use_te_rng_tracker})
+
+    # Load the Megatron model directly
+    megatron_model = bridge.load_megatron_model(megatron_path, wrap_with_ddp=False)
+
+    bridge.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
+    print_rank_0(f"✅ Successfully exported model to: {hf_path}")
+
+    # Verify the export was created
+    export_path = Path(hf_path)
+    if export_path.exists():
+        print_rank_0("📁 Export structure:")
+        for item in export_path.iterdir():
+            if item.is_dir():
+                print_rank_0(f"   📂 {item.name}/")
+            else:
+                print_rank_0(f"   📄 {item.name}")
+
+    print_rank_0("🔍 You can now load this model with:")
+    print_rank_0("   from transformers import AutoModelForCausalLM")
+    print_rank_0(f"   model = AutoModelForCausalLM.from_pretrained('{hf_path}')")
+
 def main():
     """Main function to handle command line arguments and execute conversions."""
     parser = argparse.ArgumentParser(
@@ -220,9 +301,12 @@ def main():
     import_parser.add_argument(
         "--megatron-path", required=True, help="Directory path where the Megatron checkpoint will be saved"
     )
+    import_parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
+    import_parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    import_parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
+    import_parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     import_parser.add_argument("--torch-dtype", choices=["float32", "float16", "bfloat16"], help="Model precision")
     import_parser.add_argument("--device-map", help='Device placement strategy (e.g., "auto", "cuda:0")')
-    import_parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
 
     # Export subcommand (Megatron -> HF)
     export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
@@ -233,6 +317,10 @@ def main():
     export_parser.add_argument(
         "--hf-path", required=True, help="Directory path where the HuggingFace model will be saved"
     )
+    export_parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
+    export_parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    export_parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
+    export_parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     export_parser.add_argument("--no-progress", action="store_true", help="Disable progress bar during export")
     export_parser.add_argument(
         "--not-strict", action="store_true", help="Allow source and target checkpoint to have different keys"
@@ -250,16 +338,23 @@ def main():
             megatron_path=args.megatron_path,
             torch_dtype=args.torch_dtype,
             device_map=args.device_map,
-            trust_remote_code=args.trust_remote_code,
+            tp=args.tp,
+            pp=args.pp,
+            ep=args.ep,
+            etp=args.etp,
         )
 
     elif args.command == "export":
-        export_megatron_to_hf(
+        export_mlm_to_hf(
             hf_model=args.hf_model,
             megatron_path=args.megatron_path,
             hf_path=args.hf_path,
             show_progress=not args.no_progress,
             strict=not args.not_strict,
+            tp=args.tp,
+            pp=args.pp,
+            ep=args.ep,
+            etp=args.etp,
         )
     else:
         raise RuntimeError(f"Unknown command: {args.command}")

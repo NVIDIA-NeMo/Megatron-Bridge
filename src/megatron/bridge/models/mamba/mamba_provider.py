@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import logging
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional, Union
 
 import torch
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
+from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
@@ -28,7 +30,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
-
+from megatron.bridge.utils.common_utils import print_rank_0
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +123,27 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = (
         get_default_mamba_stack_spec
     )
+    mtp_mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec], Callable[["MambaModelProvider"], ModuleSpec]] = get_default_mamba_stack_spec
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
     _pg_collection: Optional[ProcessGroupCollection] = None
+    
+    # MTP
+    mtp_num_layers: int = 0
+    mtp_hybrid_override_pattern: Optional[str] = None
+    keep_mtp_spec_in_bf16: bool = False
+
+    # Additional parameters that might be needed
+    # TODO(liding): double check these
+    use_te_rng_tracker: bool = False
+    enable_cuda_graph: bool = False
+    cuda_graph_impl: str = "none"
+    cuda_graph_scope: list[str] = field(default_factory=list)
+    # TODO(liding): does not exist in MLM training branch. added here
+    embedding_init_method_std: Optional[float] = None
+    overlap_moe_expert_parallel_comm: bool = False
+
     """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
@@ -152,6 +171,29 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             else:
                 mamba_stack_spec = mamba_stack_spec()
 
+        sep = Symbols.MTP_SEPARATOR
+        if self.mtp_hybrid_override_pattern is not None and self.mtp_num_layers > 0 and (self.hybrid_override_pattern is None or sep not in self.hybrid_override_pattern):
+            main_pattern = self.hybrid_override_pattern or ""
+            mtp_pattern = self.mtp_hybrid_override_pattern
+            hybrid_override_pattern = main_pattern + sep + sep.join([mtp_pattern] * self.mtp_num_layers)
+            print(f"Converted legacy MTP pattern to unified: {hybrid_override_pattern}")
+            self.hybrid_override_pattern = hybrid_override_pattern
+            self.mtp_hybrid_override_pattern = None
+
+        if self.hybrid_override_pattern and sep in self.hybrid_override_pattern:
+            parsed = parse_hybrid_pattern(self.hybrid_override_pattern)
+            if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+                inferred_mtp_num_layers = parsed.mtp_num_depths
+                if self.mtp_num_layers is None:
+                    self.mtp_num_layers = inferred_mtp_num_layers
+                elif self.mtp_num_layers != inferred_mtp_num_layers:
+                    print(
+                        f"--mtp-num-layers ({self.mtp_num_layers}) conflicts with "
+                        f"MTP depth count ({inferred_mtp_num_layers}) in pattern '{self.hybrid_override_pattern}'. "
+                        f"Using the inferred value ({inferred_mtp_num_layers})."
+                    )
+                    self.mtp_num_layers = inferred_mtp_num_layers
+
         assert getattr(self, "virtual_pipeline_model_parallel_size", None) is None and vp_stage is None, (
             "Virtual pipeline model parallelism is temporarily unsupported in SSM/Mamaba "
             "models due to upstream MCore MambaModel API dependency"
@@ -173,6 +215,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             hybrid_mlp_ratio=self.hybrid_mlp_ratio,
             hybrid_override_pattern=self.hybrid_override_pattern,
+            # mtp_hybrid_override_pattern=self.mtp_hybrid_override_pattern,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,

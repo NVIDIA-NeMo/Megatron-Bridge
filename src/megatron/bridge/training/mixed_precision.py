@@ -403,6 +403,17 @@ def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
+def nemotron_3_super_bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with NVFP4
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with NVFP4 mixed precision training
+    """
+    cfg = bf16_with_nvfp4_mixed()
+    cfg.first_last_layers_bf16 = True
+    cfg.num_layers_at_end_in_bf16 = 14
+    return cfg
+
 def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisionConfig:
     """Return a :class:`MixedPrecisionConfig` for *name*.
 

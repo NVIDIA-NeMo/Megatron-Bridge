@@ -553,7 +553,7 @@ class SchedulerConfig:
     lr_decay_style: Literal["constant", "linear", "cosine", "inverse-square-root", "WSD"] = "linear"
     """Learning rate decay function."""
 
-    lr_wsd_decay_style: Literal["exponential", "linear", "cosine"] = "exponential"
+    lr_wsd_decay_style: Literal["exponential", "linear", "cosine", "minus_sqrt"] = "exponential"
     """Decay style for the annealing phase of WSD"""
 
     lr_decay_iters: Optional[int] = None
@@ -1684,6 +1684,8 @@ class ConfigContainer(Container):
             # Iteration-based training
             if self.scheduler.lr_decay_iters is None:
                 self.scheduler.lr_decay_iters = self.train.train_iters
+            if self.scheduler.lr_wsd_decay_iters is None and self.scheduler.lr_decay_style == "WSD":
+                self.scheduler.lr_wsd_decay_iters = self.scheduler.lr_decay_iters
             self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
             self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
 

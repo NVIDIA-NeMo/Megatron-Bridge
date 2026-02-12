@@ -36,7 +36,7 @@ from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
     DistributedDataParallel,
     DistributedDataParallelConfig,
-    FullyShardedDataParallel,
+    # FullyShardedDataParallel,
     TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
@@ -656,7 +656,10 @@ def _create_model(
             )
         model.model_type = model_type
 
-    if not isinstance(model, list):
+    # # TODO (liding): need to remove 
+    # model.mtp_process = False
+    # model.config.mtp_num_layers = None
+    
         model = [model]
 
     # Set tensor model parallel attributes if not set.
