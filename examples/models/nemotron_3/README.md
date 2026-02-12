@@ -55,7 +55,7 @@ python -m torch.distributed.run --nproc_per_node=8 \
 
 ## Training Recipes
 
-- See: [bridge.recipes.nemotronh](../../../../docs/apidocs/bridge/bridge.recipes.nemotronh.md)
+- See: [bridge.recipes.nemotronh](../../../src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py)
 - Available recipes:
   - `nemotron_3_nano_pretrain_config`: Pretraining configuration
   - `nemotron_3_nano_finetune_config`: Finetuning configuration with PEFT support
