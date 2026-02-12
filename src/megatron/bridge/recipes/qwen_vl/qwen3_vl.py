@@ -237,6 +237,37 @@ def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
     return _qwen3_vl_common(**combined_kwargs)
 
 
+def qwen3_omni_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen/Qwen3-Omni-30B-A3B-Instruct.
+
+    This is a Mixture-of-Experts model with 128 experts and top-8 routing.
+    Recommended to use with expert parallelism (EP) for efficient training.
+    """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3VLCommonKwargs = {
+        "hf_path": "../hf-hub/Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "pipeline_dtype": torch.bfloat16,
+        "expert_model_parallel_size": 8,
+        "peft": peft_value,
+        "finetune_lr": 2e-5 if is_full_sft else 2e-4,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": True,
+        "min_lr": 2e-6,
+        "lr": 2e-5,
+        "lr_warmup_iters": 200,
+        "micro_batch_size": 1,
+        "global_batch_size": 32,
+    }
+    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_vl_common(**combined_kwargs)
+
+
 def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Qwen3-VL-235B-A22B-Instruct.
 
