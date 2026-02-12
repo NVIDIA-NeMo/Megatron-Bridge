@@ -56,6 +56,7 @@ EVAL_ITERS=10
 LR_WARMUP_ITERS=5
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
+GLOBAL_BATCH_SIZE=16
 
 # Parallelism configuration
 TP=1
@@ -122,7 +123,7 @@ CLI_OVERRIDES=" \
     model.tensor_model_parallel_size=$TP \
     model.pipeline_model_parallel_size=$PP \
     model.expert_model_parallel_size=$EP \
-    model.sequence_parallel=True
+    train.global_batch_size=$GLOBAL_BATCH_SIZE
 "
 
 # Build command
