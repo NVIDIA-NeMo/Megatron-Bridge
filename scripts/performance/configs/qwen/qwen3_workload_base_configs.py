@@ -31,7 +31,7 @@ from utils.utils import WorkloadBaseConfig
 
 BASE_QWEN3_235B_A22B_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
-    moe_flex_dispatcher_backend="deepep",
+    moe_flex_dispatcher_backend=None,
 )
 
 
