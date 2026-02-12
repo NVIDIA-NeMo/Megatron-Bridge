@@ -21,9 +21,11 @@ prerelease-mode = "allow"
 overrides = [
     { name = "cryptography", specifier = ">=43.0.0,<47" },
     { name = "mlflow", specifier = ">=3.5.0" },
+    { name = "nvidia-modelopt", specifier = "~=0.41.0" },
+    { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=6a34b6574fa6c29d9d07fdcddf9812cbb1488878" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5671fd3675906cda1ade26c24a65d3dedd88eb89" },
     { name = "triton", marker = "sys_platform == 'never'" },
 ]
 
@@ -3055,7 +3057,7 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.5.0" },
     { name = "nemo-run", marker = "extra == 'recipes'", specifier = ">=0.5.0a0,<0.6.0" },
     { name = "nvdlfw-inspect", marker = "extra == 'tensor-inspect'", specifier = "==0.2.1" },
-    { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1" },
+    { name = "nvidia-resiliency-ext", specifier = "~=0.4.1" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "open-clip-torch", specifier = ">=3.2.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -3132,7 +3134,7 @@ dev = [
     { name = "megatron-energon", extra = ["av-decode"] },
     { name = "multi-storage-client" },
     { name = "nv-grouped-gemm" },
-    { name = "nvidia-modelopt", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-modelopt" },
     { name = "nvidia-resiliency-ext" },
     { name = "nvtx" },
     { name = "onnxscript", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
@@ -7042,8 +7044,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.12.0.dev0+6a34b657"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=6a34b6574fa6c29d9d07fdcddf9812cbb1488878#6a34b6574fa6c29d9d07fdcddf9812cbb1488878" }
+version = "2.12.0+5671fd36"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5671fd3675906cda1ade26c24a65d3dedd88eb89#5671fd3675906cda1ade26c24a65d3dedd88eb89" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
