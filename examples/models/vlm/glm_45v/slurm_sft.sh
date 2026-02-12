@@ -44,10 +44,6 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
-# Before training, make sure to set WANDB_API_KEY or disable wandb logging
-# export WANDB_API_KEY=<your_wandb_api_key>
-# export WANDB_MODE=disabled
-
 # Model and training configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/GLM-4.5V
 MODEL_NAME=glm_45v
@@ -94,6 +90,8 @@ export NCCL_NVLS_ENABLE=0
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
 # export WANDB_API_KEY="your_wandb_key_here"
+# or disable wandb logging
+# export WANDB_MODE=disabled
 
 # ==============================================================================
 # Job Execution
