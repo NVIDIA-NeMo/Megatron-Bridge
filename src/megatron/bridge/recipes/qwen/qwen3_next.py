@@ -21,6 +21,7 @@ from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
 def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
@@ -182,6 +183,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
+    # Note: moe_flex_dispatcher_backend may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_flex_dispatcher_backend = (
         "deepep"  # qwen3_next has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
     )
@@ -253,7 +255,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
     cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
 
-    # MoE Overlap settings
+    # MoE Overlap settings, may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
@@ -274,6 +276,8 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     # RNG seed
     cfg.rng.seed = 5678

@@ -20,6 +20,7 @@ from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
 def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
@@ -280,7 +281,7 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-    # MoE Token Dispatcher settings
+    # MoE Token Dispatcher settings, may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = (
         "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
@@ -348,6 +349,7 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
@@ -368,6 +370,8 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -410,7 +414,7 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-    # MoE Token Dispatcher settings
+    # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = (
         "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
@@ -478,6 +482,7 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
@@ -498,6 +503,8 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -554,7 +561,7 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-    # MoE Token Dispatcher settings
+    # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = (
         "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
@@ -622,6 +629,7 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
@@ -642,6 +650,8 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -698,7 +708,7 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-    # MoE Token Dispatcher settings
+    # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = (
         "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
@@ -766,6 +776,7 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
@@ -786,5 +797,7 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
