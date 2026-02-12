@@ -3,8 +3,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from megatron.bridge.models.mimo.mimo_builder import _default_topology, build_hypercomm_grids
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig, ModuleParallelismConfig
 
@@ -116,7 +114,7 @@ class TestBuildHypercommGrids:
         mock_grid.create_pg = MagicMock(return_value=MagicMock())
         mock_grid_class.return_value = mock_grid
 
-        grids = build_hypercomm_grids(mimo_config)
+        build_hypercomm_grids(mimo_config)
 
         # Check both grids created with different shapes
         assert mock_grid_class.call_count == 2
@@ -156,7 +154,7 @@ class TestBuildHypercommGrids:
         mock_grid.create_pg = track_create_pg
         mock_grid_class.return_value = mock_grid
 
-        grids = build_hypercomm_grids(mimo_config)
+        build_hypercomm_grids(mimo_config)
 
         # Verify all dimension groups created
         assert ["tp"] in create_pg_calls
@@ -180,7 +178,7 @@ class TestBuildHypercommGrids:
         mock_grid.create_pg = MagicMock(return_value=MagicMock())
         mock_grid_class.return_value = mock_grid
 
-        grids = build_hypercomm_grids(mimo_config)
+        build_hypercomm_grids(mimo_config)
 
         # Check backend is nccl
         call_kwargs = mock_grid_class.call_args[1]
@@ -208,7 +206,7 @@ class TestBuildHypercommGrids:
         mock_grid.create_pg = MagicMock(return_value=MagicMock())
         mock_grid_class.return_value = mock_grid
 
-        grids = build_hypercomm_grids(mimo_config)
+        build_hypercomm_grids(mimo_config)
 
         # Check rank_offsets
         llm_kwargs = mock_grid_class.call_args_list[0][1]

@@ -846,7 +846,7 @@ class TestMimoModelProviderDistributed:
         )
 
         ddp_config = DistributedDataParallelConfig()
-        result = provider.provide_distributed_model(
+        provider.provide_distributed_model(
             ddp_config=ddp_config, wrap_with_ddp=True, data_parallel_random_init=True
         )
 
@@ -957,7 +957,7 @@ class TestMimoModelProviderDistributed:
             mock_wrapped = MagicMock()
             mock_float16.return_value = mock_wrapped
 
-            result = provider.provide_distributed_model(wrap_with_ddp=False)
+            provider.provide_distributed_model(wrap_with_ddp=False)
 
             # Should wrap with Float16Module for BF16
             mock_float16.assert_called_once()
@@ -1018,7 +1018,7 @@ class TestMimoModelProviderDistributed:
 
         provider = MimoModelProvider(language_model_spec=language_spec)
 
-        result = provider.provide_distributed_model(wrap_with_ddp=False, pre_wrap_hook=pre_hook)
+        provider.provide_distributed_model(wrap_with_ddp=False, pre_wrap_hook=pre_hook)
 
         # Hook should be called
         assert len(hook_called) == 1
@@ -1048,7 +1048,7 @@ class TestMimoModelProviderDistributed:
 
         provider = MimoModelProvider(language_model_spec=language_spec)
 
-        result = provider.provide_distributed_model(wrap_with_ddp=False, pre_wrap_hook=[hook1, hook2])
+        provider.provide_distributed_model(wrap_with_ddp=False, pre_wrap_hook=[hook1, hook2])
 
         # Hooks should be called in order
         assert hook_order == [1, 2]
@@ -1074,7 +1074,7 @@ class TestMimoModelProviderDistributed:
 
         provider = MimoModelProvider(language_model_spec=language_spec)
 
-        result = provider.provide_distributed_model(wrap_with_ddp=False, post_wrap_hook=post_hook)
+        provider.provide_distributed_model(wrap_with_ddp=False, post_wrap_hook=post_hook)
 
         # Hook should be called
         assert len(hook_called) == 1
@@ -1160,7 +1160,7 @@ class TestMimoModelProviderDistributed:
         )
 
         ddp_config = DistributedDataParallelConfig()
-        result = provider.provide_distributed_model(
+        provider.provide_distributed_model(
             ddp_config=ddp_config,
             wrap_with_ddp=True,
             overlap_param_gather_with_optimizer_step=True,
