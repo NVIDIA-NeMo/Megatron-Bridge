@@ -485,10 +485,8 @@ def main(
                 is_testing_passed = True
 
             if not is_testing_passed and not is_long_convergence_run:
-                if n_attempts < max_retries:
-                    logger.error(f"Starting attempt {n_attempts + 2} of {max_retries + 1} for {exp_name}")
-                n_attempts += 1
-                is_finished_experiment = False
+                n_attempts = max_retries
+                is_finished_experiment = True
 
         if is_finished_experiment and is_testing_passed:
             break
