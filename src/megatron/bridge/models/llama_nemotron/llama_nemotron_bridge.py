@@ -96,7 +96,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             num_query_groups=num_query_groups,
             seq_length=hf_config.max_position_embeddings,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(hf_config),
             kv_channels=getattr(hf_config, "head_dim", None),
             gated_linear_unit=True,  # Llama uses SwiGLU
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
@@ -110,7 +110,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         # Handle rope scaling for Llama 3.1/3.3
         if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling:
             if hf_config.rope_scaling.get("rope_type") == "llama3":
-                provider_kwargs["rope_scaling_factor"] = hf_config.rope_scaling.get("factor", 8.0)
+                provider_kwargs["rope_scaling_factor"] = self.rope_scaling_factor_from_hf(hf_config, default=8.0)
 
         provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
         provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)

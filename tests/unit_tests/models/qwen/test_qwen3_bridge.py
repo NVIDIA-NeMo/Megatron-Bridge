@@ -48,11 +48,11 @@ class TestMegatronQwen3Bridge:
             "num_hidden_layers": 28,
             "num_key_value_heads": 8,
             "rms_norm_eps": 1e-06,
-            "rope_theta": 1000000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
             "sliding_window": 4096,
             "tie_word_embeddings": True,
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.37.0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 151936,
         }
@@ -100,7 +100,7 @@ class TestMegatronQwen3Bridge:
         assert result.hidden_size == qwen3_config.hidden_size
         assert result.num_attention_heads == qwen3_config.num_attention_heads
         assert result.seq_length == qwen3_config.max_position_embeddings
-        assert result.rotary_base == qwen3_config.rope_theta
+        assert result.rotary_base == qwen3_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3, qwen3_config):
         """Test vocabulary size mapping."""
@@ -148,7 +148,7 @@ class TestMegatronQwen3Bridge:
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
         # Check position embedding
-        assert result.rotary_base == qwen3_config.rope_theta
+        assert result.rotary_base == qwen3_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_qwen3_specific_features(self, mock_pretrained_qwen3):
         """Test Qwen3-specific features."""
@@ -261,7 +261,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 3072,
                 "vocab_size": 151936,
                 "max_position_embeddings": 40960,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-06,
                 "tie_word_embeddings": True,
             },
@@ -275,7 +275,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 6144,
                 "vocab_size": 151936,
                 "max_position_embeddings": 40960,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-06,
                 "tie_word_embeddings": True,
             },
@@ -289,7 +289,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 12288,
                 "vocab_size": 151936,
                 "max_position_embeddings": 40960,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-06,
                 "tie_word_embeddings": False,
             },

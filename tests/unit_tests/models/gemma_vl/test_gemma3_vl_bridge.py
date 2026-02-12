@@ -44,6 +44,8 @@ def mock_text_config():
     config.rope_theta = 1000000.0
     config.query_pre_attn_scalar = 256
     config.rope_scaling = None
+    config.rope_parameters = None
+    config.default_theta = None
     return config
 
 
@@ -399,6 +401,8 @@ class TestGemma3VLBridgeEdgeCases:
         text_config.rope_theta = 1000000.0
         text_config.query_pre_attn_scalar = 256
         text_config.rope_scaling = None
+        text_config.rope_parameters = None
+        text_config.default_theta = None
 
         # Create minimal vision config
         vision_config = SiglipVisionConfig()

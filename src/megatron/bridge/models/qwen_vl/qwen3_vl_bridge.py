@@ -91,7 +91,7 @@ class Qwen3VLBridge(MegatronModelBridge):
             layernorm_epsilon=text_config.rms_norm_eps,
             gated_linear_unit=True,  # Qwen3 uses gated linear units
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
-            rotary_base=text_config.rope_theta,
+            rotary_base=self.rope_theta_from_hf(text_config),
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
@@ -113,7 +113,7 @@ class Qwen3VLBridge(MegatronModelBridge):
             image_token_id=getattr(hf_config, "image_token_id", 151655),
             video_token_id=getattr(hf_config, "video_token_id", 151656),
             # MRoPE configuration for multimodal position embeddings
-            mrope_section=text_config.rope_scaling.get("mrope_section", [24, 20, 20]),
+            mrope_section=getattr(text_config, "rope_scaling", {}).get("mrope_section", [24, 20, 20]),
         )
 
         # TODO: setattr use_hf_vision_model to bridge instance in a dangerous way, maybe optimize it later.
@@ -295,7 +295,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             layernorm_epsilon=text_config.rms_norm_eps,
             gated_linear_unit=True,  # Qwen3 MoE uses gated linear units
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
-            rotary_base=getattr(text_config, "rope_theta", 5000000.0),  # Default Qwen3 rope theta
+            rotary_base=self.rope_theta_from_hf(text_config),
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
