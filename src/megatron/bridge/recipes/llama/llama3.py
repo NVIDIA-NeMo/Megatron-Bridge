@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import torch
 
 from megatron.bridge import AutoBridge
@@ -1011,7 +1010,6 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
-
 def llama31_70b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Llama 3.1 70B.
 
@@ -1547,85 +1545,6 @@ def llama31_8b_sft_config() -> ConfigContainer:
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-<<<<<<< HEAD
-    # Parallelism settings
-    if is_full_sft:
-        config.model.tensor_model_parallel_size = 8
-        config.model.pipeline_model_parallel_size = 16
-        config.model.virtual_pipeline_model_parallel_size = None
-        config.model.sequence_parallel = True
-        config.peft = None
-        config.ddp = DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=False,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,
-        )
-        config.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=True, defer_embedding_wgrad_compute=True, wgrad_deferral_limit=22
-        )
-    else:
-        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
-            config.peft = default_peft_config(peft)
-            config.peft.dim = 16
-            config.peft.alpha = 32
-            config.peft.target_modules = ["linear_qkv"]
-        else:
-            config.peft = peft
-
-        config.optimizer.use_distributed_optimizer = False
-        config.model.cross_entropy_loss_fusion = False
-        config.model.tensor_model_parallel_size = 4
-        config.model.pipeline_model_parallel_size = 8
-        config.model.virtual_pipeline_model_parallel_size = 8
-        config.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-
-    config.mixed_precision = get_mixed_precision_config(config.mixed_precision)
-    config.mixed_precision.grad_reduce_in_fp32 = False
-    config.ddp.grad_reduce_in_fp32 = False
-    config.model.sequence_parallel = True
-
-    config.train.manual_gc = True
-    config.train.manual_gc_interval = 100
-    config.train.manual_gc_eval = 100
-
-    config.optimizer.use_precision_aware_optimizer = False
-
-    config.model.account_for_embedding_in_pipeline_split = True
-    config.model.account_for_loss_in_pipeline_split = True
-
-    return config
-
-
-def _llama3_finetune_common(
-    hf_path: str,
-    dir: str | None = None,
-    name: str = "default",
-    # Finetuning-specific params
-    pretrained_checkpoint: str | None = None,
-    packed_sequence: bool = True,
-    # Training params
-    train_iters: int = 1000,
-    global_batch_size: int | None = None,
-    micro_batch_size: int = 1,
-    seq_length: int | None = None,
-    eval_interval: int = 30,
-    save_interval: int = 50,
-    # Optimizer
-    finetune_lr: float = 1e-4,
-    min_lr: float = 0.0,
-    lr_warmup_iters: int = 50,
-    lr_decay_iters: int | None = None,
-    # W&B logging
-    wandb_project: str | None = None,
-    wandb_entity: str | None = None,
-    wandb_exp_name: str | None = None,
-    # Precision
-    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
-) -> ConfigContainer:
-    """Minimal common finetuning configuration.
-=======
     # Parallelism settings - SFT uses TP=2
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.tensor_model_parallel_size = 2
@@ -1700,7 +1619,6 @@ def _llama3_finetune_common(
     cfg.rng.seed = 5678
 
     return cfg
->>>>>>> Add new _sft_config, _peft_config to the original recipes
 
 
 def llama3_70b_sft_config() -> ConfigContainer:

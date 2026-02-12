@@ -835,45 +835,13 @@ def nemotronh_4b_peft_config(
 ) -> ConfigContainer:
     """Return a PEFT config for NemotronH 4B.
 
-    Default parallelism: TP=1, PP=1, SP=False
+        Default parallelism: TP=1, PP=1, SP=False
 
-    Args:
-<<<<<<< HEAD
-        model_provider: The model provider class for the specific NemotronH or Nemotron Nano v2 variant.
-        tokenizer_model: HuggingFace tokenizer model name.
-        dir: Base directory for saving logs and checkpoints.
-        name: Name of the finetuning run.
-        tensor_parallelism: Degree of tensor model parallelism.
-        pipeline_parallelism: Degree of pipeline model parallelism. Default: 1.
-        pipeline_parallelism_dtype: Data type for pipeline parallelism. Default: torch.bfloat16.
-        virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism. Default: 1.
-        sequence_parallelism: Whether to use sequence parallelism.
-        pretrained_checkpoint: Path to pretrained checkpoint to load from.
-        peft: PEFT configuration (e.g., "lora", "dora") or PEFT object. None for full SFT. Default: "lora".
-        packed_sequence: Whether to use packed sequences. Default: True.
-        train_iters: Total number of training iterations. Default: 1000.
-        global_batch_size: Global batch size. Default: 128.
-        micro_batch_size: Micro batch size. Default: 1.
-        seq_length: Sequence length. Default: 8192.
-        eval_interval: Evaluation interval in iterations. Default: 50.
-        save_interval: Checkpoint save interval in iterations. Default: 50.
-        finetune_lr: Learning rate for finetuning. Default: 1e-4.
-        min_lr: Minimum learning rate. Default: 1e-5.
-        lr_warmup_iters: Number of warmup iterations. Default: 50.
-        lr_decay_iters: Number of LR decay iterations.
-        wandb_project: Weights & Biases project name.
-        wandb_entity: Weights & Biases entity name.
-        wandb_exp_name: Weights & Biases experiment name.
-        precision_config: Precision configuration.
-        comm_overlap_config: Communication overlap configuration.
-        hf_tokenizer_kwargs: Additional kwargs for HuggingFace tokenizer (e.g., {"eos_token": "<SPECIAL_12>"}).
-=======
-        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
->>>>>>> Add new _sft_config, _peft_config to the original recipes
+        Args:
+            peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
 
-    Returns:
-        ConfigContainer with all settings pre-configured for NemotronH 4B PEFT.
+        Returns:
+            ConfigContainer with all settings pre-configured for NemotronH 4B PEFT.
     """
     cfg = _peft_common()
 
