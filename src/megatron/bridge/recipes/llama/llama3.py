@@ -1010,6 +1010,7 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
+
 def llama31_70b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Llama 3.1 70B.
 

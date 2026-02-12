@@ -835,13 +835,13 @@ def nemotronh_4b_peft_config(
 ) -> ConfigContainer:
     """Return a PEFT config for NemotronH 4B.
 
-        Default parallelism: TP=1, PP=1, SP=False
+    Default parallelism: TP=1, PP=1, SP=False
 
-        Args:
-            peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
 
-        Returns:
-            ConfigContainer with all settings pre-configured for NemotronH 4B PEFT.
+    Returns:
+        ConfigContainer with all settings pre-configured for NemotronH 4B PEFT.
     """
     cfg = _peft_common()
 
