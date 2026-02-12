@@ -16,8 +16,11 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
+# Note: Ministral 3 requires transformers version 5
+# pip install --upgrade transformers
+
 # Inference with Hugging Face checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
+torchrun --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path mistralai/Ministral-3-3B-Instruct-2512-BF16 \
     --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
     --prompt "Describe this image." \
@@ -26,7 +29,7 @@ uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf
     --pp 2
 
 # Inference with imported Megatron checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
+torchrun --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path mistralai/Ministral-3-3B-Instruct-2512-BF16 \
     --megatron_model_path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
     --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
@@ -36,7 +39,7 @@ uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf
     --pp 2
 
 # Inference with exported HF checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
+torchrun --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16-hf-export \
     --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
     --prompt "Describe this image." \
