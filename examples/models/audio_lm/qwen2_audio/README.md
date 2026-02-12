@@ -28,7 +28,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 
 ```bash
 # Run inference from converted Megatron checkpoint
-uv run python -m torch.distributed.run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
+uv run python -m torch.distributed.run examples/conversion/hf_to_megatron_generate_audio_lm.py \
   --hf_model_path "Qwen/Qwen2-Audio-7B-Instruct" \
   --megatron_model_path /workspace/models/Qwen2-Audio-7B-Instruct/iter_0000000 \
   --audio_url "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-Audio/audio/glass-breaking-151256.mp3" \

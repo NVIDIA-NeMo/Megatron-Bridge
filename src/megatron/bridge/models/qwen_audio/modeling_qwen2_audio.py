@@ -196,7 +196,7 @@ class Qwen2AudioModel(MegatronModule):
                 # Transpose to HF format [batch, seq_len, hidden]
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
-            if input_features is not None and input_ids.shape[1] != 1:
+            if input_features is not None and input_ids is not None and input_ids.shape[1] != 1:
                 # Process audio features
                 target_device = self.audio_tower.conv1.weight.device
 

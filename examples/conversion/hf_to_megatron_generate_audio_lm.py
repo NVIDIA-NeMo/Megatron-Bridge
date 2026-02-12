@@ -32,7 +32,7 @@ Example:
     --prompt="Describe what you hear in this audio."
 
   # Load from Megatron checkpoint:
-  uv run python examples/conversion/hf_to_megatron_generate_alm.py \
+  uv run python examples/conversion/hf_to_megatron_generate_audio_lm.py \
     --hf_model_path="Qwen/Qwen2-Audio-7B-Instruct" \
     --megatron_model_path="/path/to/megatron/checkpoint" \
     --audio_url="https://example.com/audio.mp3" \
@@ -437,7 +437,7 @@ if __name__ == "__main__":
         default=None,
         help="URL to the audio file for audio-language generation (optional).",
     )
-    parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
+    parser.add_argument("--trust_remote_code", action="store_true", default=None, help="if trust_remote_code")
     args = parser.parse_args()
 
     main(args)
