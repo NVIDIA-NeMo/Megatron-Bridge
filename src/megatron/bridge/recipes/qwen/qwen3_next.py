@@ -20,8 +20,8 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import bf16_mixed
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
