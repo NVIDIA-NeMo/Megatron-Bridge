@@ -113,7 +113,7 @@ class Qwen3VLBridge(MegatronModelBridge):
             image_token_id=getattr(hf_config, "image_token_id", 151655),
             video_token_id=getattr(hf_config, "video_token_id", 151656),
             # MRoPE configuration for multimodal position embeddings
-            mrope_section=text_config.rope_scaling.get("mrope_section", [24, 20, 20]),
+            mrope_section=getattr(text_config, "rope_scaling", {}).get("mrope_section", [24, 20, 20]),
         )
 
         # TODO: setattr use_hf_vision_model to bridge instance in a dangerous way, maybe optimize it later.

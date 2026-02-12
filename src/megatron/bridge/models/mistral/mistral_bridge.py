@@ -47,7 +47,7 @@ class MistralBridge(MegatronModelBridge):
 
         if getattr(hf_config, "rope_scaling", None) is not None and hf_config.rope_scaling.get("rope_type") == "yarn":
             # Apply Mistral customize rope scaling
-            cls = partial(MistralModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
+            cls = partial(MistralModelProvider, scale_factor=self.rope_scaling_factor_from_hf(hf_config, default=8.0))
         else:
             cls = MistralModelProvider
 

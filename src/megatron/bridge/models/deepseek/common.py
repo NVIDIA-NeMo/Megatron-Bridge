@@ -37,7 +37,7 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
         configs["gradient_accumulation_fusion"] = False
 
     if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling is not None:
-        configs["rotary_scaling_factor"] = hf_config.rope_scaling["factor"]
+        configs["rotary_scaling_factor"] = MegatronModelBridge.rope_scaling_factor_from_hf(hf_config)
         configs["mscale"] = hf_config.rope_scaling["mscale"]
         configs["mscale_all_dim"] = hf_config.rope_scaling["mscale_all_dim"]
     else:

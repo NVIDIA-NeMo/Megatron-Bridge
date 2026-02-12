@@ -62,6 +62,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_shared_expert_overlap = True
+        provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
