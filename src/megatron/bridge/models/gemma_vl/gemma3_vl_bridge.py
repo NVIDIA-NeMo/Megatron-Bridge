@@ -80,7 +80,7 @@ class Gemma3VLBridge(MegatronModelBridge):
         provider.eos_token_id = getattr(hf_config, "eos_token_id", 1)
         provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 255999)
         provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 256000)
-        provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 262144)
 
         # Vision projector configuration
         provider.vision_projector_config.input_size = vision_config.hidden_size
