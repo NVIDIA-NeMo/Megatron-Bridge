@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
@@ -162,7 +163,7 @@ def gemma3_1b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -274,7 +275,7 @@ def _gemma3_finetune_common(
     name: str = "default",
     # Finetuning-specific
     pretrained_checkpoint: str | None = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training hyperparameters
     train_iters: int = 100,
     global_batch_size: int | None = None,
@@ -386,13 +387,15 @@ def _gemma3_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=10,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=10,
         ),
         optimizer=opt_config,
         scheduler=scheduler,

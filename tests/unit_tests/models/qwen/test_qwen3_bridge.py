@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import GenerationConfig, Qwen2Config, Qwen3ForCausalLM
+from transformers import Qwen2Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -75,7 +75,6 @@ class TestMegatronQwen3Bridge:
         """Create a mock PreTrainedCausalLM with Qwen3 model."""
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = qwen3_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained
@@ -168,7 +167,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = qwen3_config
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -185,7 +183,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = qwen3_config
         mock_pretrained.config.torch_dtype = torch.float16  # Set config dtype to fp16
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -216,7 +213,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = config
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.float32
-        mock_pretrained.generation_config = None
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -246,15 +242,6 @@ class TestMegatronQwen3Bridge:
         # The method should calculate a reasonable divisor based on vocab size
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
-
-    def test_provider_bridge_generation_config(self, mock_pretrained_qwen3):
-        """Test that generation config is passed through."""
-        bridge = Qwen3Bridge()
-
-        result = bridge.provider_bridge(mock_pretrained_qwen3)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_qwen3.generation_config
 
 
 class TestAutoBridgeIntegration:

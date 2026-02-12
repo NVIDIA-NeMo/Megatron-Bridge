@@ -19,6 +19,7 @@ from typing import List, Optional
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -394,6 +395,20 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
     ):
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
+    if model_recipe_name == "kimi_k2":
+        if pp_size is not None or vp_size != -1:
+            try:
+                layout = _get_kimi_k2_pipeline_layout(
+                    recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                )
+                recipe.model.pipeline_model_parallel_layout = layout
+            except ValueError:
+                logger.warning(
+                    f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                )
+                recipe.model.pipeline_model_parallel_layout = None
+        if pipeline_model_parallel_layout is not None:
+            recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
@@ -417,7 +432,7 @@ def set_post_overrides(
         model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
     )
 
-    if compute_dtype == "bf16":
+    if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
 
     tp = recipe.model.tensor_model_parallel_size
@@ -429,9 +444,11 @@ def set_post_overrides(
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
+        if recipe.optimizer.optimizer != "dist_muon":
+            recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+            if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+                recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
