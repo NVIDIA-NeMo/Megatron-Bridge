@@ -281,9 +281,7 @@ def train(
                 scheduler=scheduler,
             ),
         )
-    is_any_logging_enabled = any(
-        [config.logger.tensorboard_dir, global_state.wandb_logger, global_state.mlflow_logger]
-    )
+    is_any_logging_enabled = config.logger is not None
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
