@@ -414,6 +414,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     moe_a2a_overlap=True,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
+    moe_flex_dispatcher_backend="deepep",
 )
 
 
@@ -424,6 +425,7 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=12,
     moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 
