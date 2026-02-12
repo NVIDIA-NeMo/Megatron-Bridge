@@ -189,8 +189,8 @@ run_functional_local() {
     ft_launcher \
       --rdzv_backend=c10d --rdzv_endpoint=127.0.0.1:29500 \
       --nnodes=1 --nproc-per-node=2 \
-      --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
-      --ft-param-rank_out_of_section_timeout=300 \
+      --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
+      --ft-rank_out_of_section_timeout=300 \
       --monitor-interval=5 --max-restarts=3 \
       --ft-restart-policy=min-healthy \
       -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
