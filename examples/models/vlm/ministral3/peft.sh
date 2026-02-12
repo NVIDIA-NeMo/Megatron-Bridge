@@ -18,6 +18,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 
 # Note: Ministral 3 requires transformers version 5
 # pip install --upgrade transformers
+# Commands below use torchrun instead of uv run to avoid conflicts with the virtual environment.
 
 # Before training, make sure to set WANDB_API_KEY or disable wandb logging
 # export WANDB_API_KEY=<your_wandb_api_key>

@@ -18,6 +18,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 
 # Note: Ministral 3 requires transformers version 5
 # pip install --upgrade transformers
+# Commands below use torchrun instead of uv run to avoid conflicts with the virtual environment.
 
 # Inference with Hugging Face checkpoints
 torchrun --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \

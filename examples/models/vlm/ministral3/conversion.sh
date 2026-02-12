@@ -18,6 +18,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 
 # Note: Ministral 3 requires transformers version 5
 # pip install --upgrade transformers
+# Commands below use python instead of uv run to avoid conflicts with the virtual environment.
 
 # Import HF → Megatron
 python examples/conversion/convert_checkpoints.py import \
