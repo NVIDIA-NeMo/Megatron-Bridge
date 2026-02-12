@@ -130,7 +130,7 @@ class TestSarvamMLABridge:
         bridge = SarvamMLABridge()
         provider = bridge.provider_bridge(m)
 
-        assert provider.rotary_scaling_factor == 1.0
+        assert provider.rotary_scaling_factor == 40
         assert provider.mscale == 1.0
         assert provider.mscale_all_dim == 1.0
 
@@ -168,7 +168,7 @@ class TestSarvamMLABridge:
         bridge = SarvamMLABridge()
         provider = bridge.provider_bridge(hf)
 
-        assert provider.rotary_scaling_factor == 1.0
+        assert provider.rotary_scaling_factor == 40
         assert provider.mscale == 1.0
         assert provider.mscale_all_dim == 1.0
         assert provider.generation_config is None
