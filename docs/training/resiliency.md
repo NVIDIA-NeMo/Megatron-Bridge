@@ -82,6 +82,13 @@ ft_launcher \
     your_training_script.py
 ```
 
+> **Note**: For local testing or non-Slurm environments, you must set the `GROUP_RANK` environment variable before launching `ft_launcher`:
+> ```bash
+> export GROUP_RANK=0  # For single-node runs
+> ft_launcher ...
+> ```
+> This is required because `ft_launcher` uses `use_infra_group_rank=True` by default, which expects either `SLURM_PROCID` or `GROUP_RANK` to be set.
+
 ### Configuration Options
 
 The fault tolerance system can be configured through {py:class}`bridge.training.config.FaultToleranceConfig`:

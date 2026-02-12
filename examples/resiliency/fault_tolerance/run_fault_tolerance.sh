@@ -98,6 +98,9 @@ fi
 # Reduce torch distributed noise
 export TORCH_CPP_LOG_LEVEL="${TORCH_CPP_LOG_LEVEL:-error}"
 
+# Set GROUP_RANK for single-node runs (required by use_infra_group_rank)
+export GROUP_RANK=0
+
 echo "Running Fault Tolerance Example"
 echo "  GPUs: ${NPROC_PER_NODE}"
 echo "  Iterations: ${TRAIN_ITERS}"

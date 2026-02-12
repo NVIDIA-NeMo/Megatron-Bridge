@@ -186,6 +186,7 @@ run_functional_local() {
   if command -v ft_launcher >/dev/null 2>&1; then
     echo "[functional] Inprocess restart with ft_launcher"
     export TORCH_CPP_LOG_LEVEL="error"
+    export GROUP_RANK=0
     ft_launcher \
       --rdzv_backend=c10d --rdzv_endpoint=127.0.0.1:29500 \
       --nnodes=1 --nproc-per-node=2 \

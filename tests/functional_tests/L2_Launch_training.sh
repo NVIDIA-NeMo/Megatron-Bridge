@@ -23,10 +23,13 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage
 # Run inprocess restart tests with ft_launcher if available
 if command -v ft_launcher >/dev/null 2>&1; then
     echo "ft_launcher found, running inprocess restart tests..."
-    
+
     # Set torch log level to reduce noise for inprocess restart tests
     export TORCH_CPP_LOG_LEVEL="error"
-    
+
+    # Set GROUP_RANK for single-node runs (required by use_infra_group_rank)
+    export GROUP_RANK=0
+
     uv run ft_launcher \
       --rdzv_backend=c10d --rdzv_endpoint=127.0.0.1:29500 \
       --nnodes=1 --nproc-per-node=2 \
