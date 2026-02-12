@@ -143,7 +143,7 @@ def initialize_megatron(
                 ),
                 flush=True,
             )
-        torch.distributed.barrier()
+        # torch.distributed.barrier()
 
     return result
 
