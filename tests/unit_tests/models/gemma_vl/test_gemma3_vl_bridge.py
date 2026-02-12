@@ -203,7 +203,7 @@ class TestGemma3VLBridgeProviderBridge:
 
         # Should use defaults
         assert provider.vision_start_token_id == 255999
-        assert provider.image_token_id == 151655  # Default from bridge
+        assert provider.image_token_id == 262144  # Default from bridge
 
     def test_provider_bridge_with_rope_scaling(self, gemma3_vl_bridge, mock_hf_pretrained):
         """Test provider_bridge with RoPE scaling configuration."""
