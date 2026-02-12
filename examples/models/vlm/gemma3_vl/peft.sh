@@ -16,6 +16,10 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
+# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# export WANDB_API_KEY=<your_wandb_api_key>
+# export WANDB_MODE=disabled
+
 # Common configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-3-4b-it
 MODEL_NAME=gemma3_vl_4b

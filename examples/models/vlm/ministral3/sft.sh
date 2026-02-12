@@ -19,6 +19,10 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # Note: Ministral 3 requires transformers version 5
 # pip install --upgrade transformers
 
+# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# export WANDB_API_KEY=<your_wandb_api_key>
+# export WANDB_MODE=disabled
+
 # Common configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16
 MODEL_NAME=ministral3_3b
