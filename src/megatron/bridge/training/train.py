@@ -50,7 +50,6 @@ from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
-from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -205,6 +204,8 @@ def train(
             global_state._nvrx_straggler_manager = None
 
     num_microbatches = get_num_microbatches()
+    eval_duration = 0.0
+    eval_iterations = 0
 
     prof = None
     nsys_nvtx_context = None  # NVTX context for nsys profiling
@@ -266,9 +267,6 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
-    num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
-    p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
-    dp_size = pg_collection.dp.size()
 
     if should_fire(callback_manager, "on_train_start"):
         callback_manager.fire(
@@ -281,9 +279,6 @@ def train(
                 scheduler=scheduler,
             ),
         )
-    is_any_logging_enabled = any(
-        [config.logger.tensorboard_dir, global_state.wandb_logger, global_state.mlflow_logger]
-    )
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -384,7 +379,6 @@ def train(
             global_state,
             pg_collection,
             forward_backward_func,
-            p2p_communicator,
         )
 
         fault_tolerance.on_training_step_end(global_state)
@@ -455,6 +449,7 @@ def train(
         if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
+        dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
@@ -463,49 +458,46 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = num_floating_point_operations_model * batch_size
+        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(config, batch_size)
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if is_any_logging_enabled:
-            if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
-                loss_scale = optimizer.get_loss_scale().item()
+        if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
+            loss_scale = optimizer.get_loss_scale().item()
+        else:
+            loss_scale = 1.0
+        params_norm = None
+
+        if config.logger.log_params_norm:
+            params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
+        learning_rate = None
+        decoupled_learning_rate = None
+        for param_group in optimizer.param_groups:
+            if len(param_group) == 0:
+                continue
+            if param_group["is_decoupled_lr"]:
+                decoupled_learning_rate = param_group["lr"]
             else:
-                loss_scale = 1.0
-            params_norm = None
-
-            if config.logger.log_params_norm:
-                params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
-
-            learning_rate = None
-            decoupled_learning_rate = None
-            for param_group in optimizer.param_groups:
-                if len(param_group) == 0:
-                    continue
-                if param_group["is_decoupled_lr"]:
-                    decoupled_learning_rate = param_group["lr"]
-                else:
-                    learning_rate = param_group["lr"]
-
-            report_memory_flag = training_log(
-                loss_dict,
-                total_loss_dict,
-                learning_rate,
-                decoupled_learning_rate,
-                loss_scale,
-                report_memory_flag,
-                skipped_iter,
-                grad_norm,
-                params_norm,
-                num_zeros_in_grad,
-                config,
-                global_state,
-                history_wct,
-                model,
-                log_max_attention_logit,
-            )
+                learning_rate = param_group["lr"]
+        report_memory_flag = training_log(
+            loss_dict,
+            total_loss_dict,
+            learning_rate,
+            decoupled_learning_rate,
+            loss_scale,
+            report_memory_flag,
+            skipped_iter,
+            grad_norm,
+            params_norm,
+            num_zeros_in_grad,
+            config,
+            global_state,
+            history_wct,
+            model,
+            log_max_attention_logit,
+        )
 
         if (
             global_state.train_state.do_valid
@@ -536,6 +528,8 @@ def train(
                 non_loss_data_func=non_loss_data_func,
                 callback_manager=callback_manager,
             )
+            eval_duration += timers("eval-time").elapsed()
+            eval_iterations += val_config.eval_iters
             timers("eval-time").stop()
 
             if train_config.manual_gc and train_config.manual_gc_eval:
@@ -652,7 +646,6 @@ def train_step(
     global_state: GlobalState,
     pg_collection: ProcessGroupCollection,
     forward_backward_func: Callable,
-    p2p_communicator: P2PCommunicator,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -704,6 +697,7 @@ def train_step(
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
@@ -712,11 +706,9 @@ def train_step(
                 seq_key="tokens",
             )
 
-        # Forward-backward pass.
-        # Convert to list of iterators for virtual pipeline parallelism
-        # With virtual PP, each model chunk needs independent access to the same microbatch.
-        if len(model) > 1:
-            # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
+            # Forward-backward pass.
+            # Convert to list of iterators for virtual pipeline parallelism
+            # With virtual PP, each model chunk needs independent access to the same microbatch
             forward_backward_data_iterator = make_data_iterator_list(
                 model=model,
                 data_iterator=forward_backward_data_iterator,
@@ -734,6 +726,7 @@ def train_step(
             adjust_tensor_shapes_fn = None
 
         # Forward pass.
+        p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -769,14 +762,10 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    if train_config.check_optimizer_step_success:
-        update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
-
+    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
-    if not train_config.skip_sync_grad_norm_across_mp:
-        grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
-
+    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
     if optim_config.log_num_zeros_in_grad:
         num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
 
