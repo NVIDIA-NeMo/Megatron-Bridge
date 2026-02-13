@@ -332,7 +332,6 @@ def qwen3_next_80b_a3b_pretrain_config_gb200(
     cfg = qwen3_next_80b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     set_qwen3_next_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -357,7 +356,6 @@ def qwen3_next_80b_a3b_pretrain_config_b300(
     cfg = qwen3_next_80b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     set_qwen3_next_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -382,7 +380,6 @@ def qwen3_next_80b_a3b_pretrain_config_b200(
     cfg = qwen3_next_80b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     set_qwen3_next_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -407,7 +404,6 @@ def qwen3_next_80b_a3b_pretrain_config_gb300(
     cfg = qwen3_next_80b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     set_qwen3_next_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -432,7 +428,6 @@ def qwen3_next_80b_a3b_pretrain_config_h100(
     cfg = qwen3_next_80b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-    cfg.model.moe_token_dispatcher_type = "alltoall"
 
     set_qwen3_next_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
