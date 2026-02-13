@@ -146,6 +146,7 @@ class Qwen3VLModel(MegatronModule):
                 vision_patch_merger_spec,
                 pre_process=True,
                 post_process=True,
+                pg_collection=pg_collection,
             )
 
         self.language_model = Qwen3VLGPTModel(
