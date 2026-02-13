@@ -684,6 +684,12 @@ class TrainingConfig:
     check_weight_hash_across_dp_replicas_interval: Optional[int] = None
     """Interval to check weight hashes are same across DP replicas. If not specified, weight hashes not checked."""
 
+    check_optimizer_step_success: bool = True
+    """Checks optimizer.step() succeeded at each training step ."""
+
+    skip_sync_grad_norm_across_mp: bool = False
+    """Skips syncing the grad norm across the model parallel group."""
+
     train_sync_interval: Optional[int] = None
     """Training CPU-GPU synchronization interval, to ensure that CPU is not running too far ahead of GPU."""
 
@@ -962,8 +968,9 @@ class LoggerConfig:
     to progress.txt file in checkpoint directory.
     """
 
-    timing_log_level: Literal[0, 1, 2] = 0
+    timing_log_level: Literal[-1, 0, 1, 2] = 0
     """Granularity level to measure and report timing.
+    -1: To disable timing logging as the timer start from 0 and above.
     0: report only iteration time and make sure timing does not introduce extra overhead.
     1: report timing for operations that are executed very limited times (basically once) during each iteration
         (such as gradient all-reduce)
@@ -1595,6 +1602,13 @@ class ConfigContainer(Container):
                 f"(currently {packed_sequence_size}) \n"
                 f"For details please visit "
                 f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
+            )
+
+        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+            raise ValueError(
+                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+                "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
+                "are required per micro-batch."
             )
 
         if self.peft is not None:

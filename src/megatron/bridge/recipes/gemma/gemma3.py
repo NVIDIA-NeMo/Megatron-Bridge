@@ -275,7 +275,7 @@ def _gemma3_finetune_common(
     name: str = "default",
     # Finetuning-specific
     pretrained_checkpoint: str | None = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training hyperparameters
     train_iters: int = 100,
     global_batch_size: int | None = None,
