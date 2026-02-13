@@ -52,6 +52,7 @@ import inspect
 from typing import Callable
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
@@ -59,7 +60,6 @@ from megatron.bridge.training.llava_step import forward_step as llava_forward_st
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
-from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 
 
 STEP_FUNCTIONS: dict[str, Callable] = {
