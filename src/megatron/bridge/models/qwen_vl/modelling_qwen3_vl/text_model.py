@@ -88,6 +88,7 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_interleaved=self.config.rotary_interleaved,
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             rotary_base=rotary_base,
+            cp_group=self.pg_collection.cp,
         )
         self.mrope_section = self.config.mrope_section
         assert self.mrope_section is not None, (

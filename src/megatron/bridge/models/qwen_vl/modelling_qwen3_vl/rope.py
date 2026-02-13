@@ -52,6 +52,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         rotary_interleaved: bool = False,
         seq_len_interpolation_factor: Optional[float] = None,
         rotary_base: int = 10000,
+        cp_group: torch.distributed.ProcessGroup = None,
     ) -> None:
         super().__init__()
 
@@ -69,6 +70,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # default mrope section is [24, 20, 20], if no mrope section is provided, use default mrope section
         self.mrope_section = [24, 20, 20]
+        assert cp_group is not None, "cp_group is required"
+        self.cp_group = cp_group
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -127,10 +130,10 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
-        if parallel_state.get_context_parallel_world_size() > 1 and not self.is_thd_format:
+        if self.cp_group.size() > 1 and not self.is_thd_format:
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
-            emb = get_pos_emb_on_this_cp_rank(emb, 0, parallel_state.get_context_parallel_group())
+            emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
         return emb
 
 
