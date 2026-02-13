@@ -271,6 +271,7 @@ def train(
                 scheduler=scheduler,
             ),
         )
+<<<<<<< Updated upstream
     is_any_logging_enabled = config.logger is not None
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
@@ -282,6 +283,11 @@ def train(
         param_sync_func = model_config.param_sync_func
         model_config.param_sync_func = None
         pre_hook_enabled = False
+=======
+    is_any_logging_enabled = any(
+        [config.logger.tensorboard_dir, config.logger.wandb_project, config.logger.mlflow_experiment]
+    )
+>>>>>>> Stashed changes
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
