@@ -59,11 +59,13 @@ from megatron.bridge.training.llava_step import forward_step as llava_forward_st
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 
 
 STEP_FUNCTIONS: dict[str, Callable] = {
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
+    "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
 }
 
