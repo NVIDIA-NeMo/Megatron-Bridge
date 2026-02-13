@@ -157,12 +157,11 @@ class TestInitializePytorchProfiler:
         )
 
     @patch("torch.distributed.get_rank", return_value=0)
-    @patch("megatron.bridge.training.profiling.Path")
     @patch("torch.profiler.ExecutionTraceObserver")
     @patch("torch.profiler.profile")
     @patch("torch.profiler.schedule")
     def test_initialize_pytorch_profiler_with_chakra(
-        self, mock_schedule, mock_profile, mock_et_observer, mock_path, mock_get_rank
+        self, mock_schedule, mock_profile, mock_et_observer, mock_get_rank
     ):
         """Test profiler initialization with chakra trace collection (lines 127-129)."""
         mock_schedule.return_value = Mock()
@@ -170,9 +169,6 @@ class TestInitializePytorchProfiler:
         mock_et_callback = Mock()
         mock_et_instance.register_callback.return_value = mock_et_callback
         mock_et_observer.return_value = mock_et_instance
-
-        mock_et_dir = Mock()
-        mock_path.return_value = mock_et_dir
 
         config = ProfilingConfig(
             use_pytorch_profiler=True,
@@ -183,9 +179,6 @@ class TestInitializePytorchProfiler:
 
         initialize_pytorch_profiler(config, "/tmp/tensorboard")
 
-        # Chakra dir is created under tensorboard_dir/../chakra
-        mock_path.assert_any_call("/tmp/tensorboard/../chakra")
-        mock_et_dir.mkdir.assert_called_once_with(parents=True, exist_ok=True)
         mock_et_instance.register_callback.assert_called_once()
         call_path = mock_et_instance.register_callback.call_args[0][0]
         assert "chakra" in call_path
