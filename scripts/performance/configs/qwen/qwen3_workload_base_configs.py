@@ -408,20 +408,24 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = QWEN3_30B_A3B_PRETRAIN_CONFIG_B20
 QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=16,
+    global_batch_size=1024,
     pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=12,
     moe_a2a_overlap=True,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess"],
+    moe_flex_dispatcher_backend="deepep",
 )
 
 
 QWEN3_30B_A3B_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=16,
+    global_batch_size=1024,
     pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=12,
     moe_a2a_overlap=True,
+    moe_flex_dispatcher_backend="deepep",
 )
 
 
