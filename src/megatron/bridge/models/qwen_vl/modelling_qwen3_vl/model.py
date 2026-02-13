@@ -368,9 +368,8 @@ class Qwen3VLModel(MegatronModule):
             if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
             if packed_seq_params is not None:
-                assert attention_mask is not None, (
-                    "attention_mask is required for compute position and split by cp and sp"
-                )
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
