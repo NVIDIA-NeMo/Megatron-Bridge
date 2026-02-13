@@ -103,9 +103,6 @@ class Qwen3VLBridge(MegatronModelBridge):
         provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
         provider.mrope_section = text_config.rope_scaling.get("mrope_section", [24, 20, 20])
 
-        # TODO: setattr use_hf_vision_model to bridge instance in a dangerous way, maybe optimize it later.
-        setattr(self, "use_hf_vision_model", provider.use_hf_vision_model)
-
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
