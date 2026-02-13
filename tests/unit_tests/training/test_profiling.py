@@ -156,6 +156,78 @@ class TestInitializePytorchProfiler:
             repeat=1,
         )
 
+    @patch("torch.distributed.get_rank", return_value=0)
+    @patch("megatron.bridge.training.profiling.Path")
+    @patch("torch.profiler.ExecutionTraceObserver")
+    @patch("torch.profiler.profile")
+    @patch("torch.profiler.schedule")
+    def test_initialize_pytorch_profiler_with_chakra(
+        self, mock_schedule, mock_profile, mock_et_observer, mock_path, mock_get_rank
+    ):
+        """Test profiler initialization with chakra trace collection (lines 127-129)."""
+        mock_schedule.return_value = Mock()
+        mock_et_instance = Mock()
+        mock_et_callback = Mock()
+        mock_et_instance.register_callback.return_value = mock_et_callback
+        mock_et_observer.return_value = mock_et_instance
+
+        mock_et_dir = Mock()
+        mock_path.return_value = mock_et_dir
+
+        config = ProfilingConfig(
+            use_pytorch_profiler=True,
+            profile_step_start=1,
+            profile_step_end=4,
+            pytorch_profiler_collect_chakra=True,
+        )
+
+        initialize_pytorch_profiler(config, "/tmp/tensorboard")
+
+        # Chakra dir is created under tensorboard_dir/../chakra
+        mock_path.assert_any_call("/tmp/tensorboard/../chakra")
+        mock_et_dir.mkdir.assert_called_once_with(parents=True, exist_ok=True)
+        mock_et_instance.register_callback.assert_called_once()
+        call_path = mock_et_instance.register_callback.call_args[0][0]
+        assert "chakra" in call_path
+        assert "rank-0.json.gz" in call_path
+
+        # Profiler receives the execution trace observer
+        call_kwargs = mock_profile.call_args.kwargs
+        assert call_kwargs["execution_trace_observer"] is mock_et_callback
+
+    @patch("torch.distributed.get_rank", return_value=2)
+    @patch("megatron.bridge.training.profiling.Path")
+    @patch("torch.profiler.profile")
+    @patch("torch.profiler.schedule")
+    def test_initialize_pytorch_profiler_trace_handler(self, mock_schedule, mock_profile, mock_path, mock_get_rank):
+        """Test that on_trace_ready handler creates torch_profile dir and exports trace (lines 136-138)."""
+        mock_schedule.return_value = Mock()
+        mock_profiler_instance = Mock()
+        mock_profile.return_value = mock_profiler_instance
+
+        mock_profile_dir = Mock()
+        mock_profile_dir.__str__ = Mock(return_value="/tmp/torch_profile")
+        mock_path.return_value = mock_profile_dir
+
+        config = ProfilingConfig(
+            use_pytorch_profiler=True,
+            profile_step_start=0,
+            profile_step_end=3,
+        )
+
+        initialize_pytorch_profiler(config, "/tmp/tb")
+
+        # Get the on_trace_ready callback passed to the profiler
+        trace_handler = mock_profile.call_args.kwargs["on_trace_ready"]
+        mock_p = Mock()
+
+        trace_handler(mock_p)
+
+        # trace_handler creates profile_dir and calls export_chrome_trace
+        mock_path.assert_any_call("/tmp/tb/../torch_profile")
+        mock_profile_dir.mkdir.assert_called_once_with(parents=True, exist_ok=True)
+        mock_p.export_chrome_trace.assert_called_once_with("/tmp/torch_profile/rank-2.json.gz")
+
 
 class TestStartNsysProfiler:
     """Tests for start_nsys_profiler function."""
