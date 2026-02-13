@@ -467,7 +467,7 @@ def train(
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if config.logger.skip_train_metrics_log:
+        if not config.logger.skip_train_metrics_log:
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 loss_scale = optimizer.get_loss_scale().item()
             else:
