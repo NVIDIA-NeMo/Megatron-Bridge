@@ -1239,8 +1239,17 @@ def checkpoint_and_decide_exit(
 
             return True
 
-    # Exit based on iterations.
-    if state.cfg.train.exit_interval and state.train_state.step % state.cfg.train.exit_interval == 0:
+    # Exit based on iterations or phase transitions.
+    # Phase transitions trigger exit to rebuild dataloaders with new data mixtures.
+    should_exit_interval = (
+        state.cfg.train.exit_interval and state.train_state.step % state.cfg.train.exit_interval == 0
+    )
+    should_exit_phase_transition = (
+        state.cfg.train.phase_transition_iterations
+        and state.train_state.step in state.cfg.train.phase_transition_iterations
+    )
+
+    if should_exit_interval or should_exit_phase_transition:
         if state.cfg.checkpoint.save and not saved_checkpoint:
             save_checkpoint_and_time(
                 state,
@@ -1251,7 +1260,12 @@ def checkpoint_and_decide_exit(
                 checkpointing_context,
                 train_data_iterator=train_data_iterator,
             )
-        barrier_and_log(f"exiting program at iteration {state.train_state.step}")
+        exit_reason = (
+            f"phase transition at iteration {state.train_state.step}"
+            if should_exit_phase_transition
+            else f"iteration {state.train_state.step}"
+        )
+        barrier_and_log(f"exiting program at {exit_reason}")
 
         return True
 
