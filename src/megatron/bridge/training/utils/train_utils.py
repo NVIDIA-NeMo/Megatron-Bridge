@@ -30,7 +30,7 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.training.config import ConfigContainer, TrainingConfig
+from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
@@ -74,6 +74,100 @@ MEMORY_KEYS: dict[str, str] = {
     "num_alloc_retries": "mem-alloc-retires",
     "allocation.all.current": "mem-allocated-count",
 }
+
+
+def _is_packing_enabled(config: ConfigContainer) -> bool:
+    """Check if sequence packing is enabled in the configuration.
+
+    Args:
+        config: The main configuration container.
+
+    Returns:
+        bool: True if sequence packing is enabled, False otherwise.
+    """
+    dataset_config = config.dataset
+    if not isinstance(dataset_config, FinetuningDatasetConfig):
+        return False
+    if dataset_config.packed_sequence_specs is None:
+        return False
+    return dataset_config.packed_sequence_specs.packed_sequence_size > 0
+
+
+def get_packed_sequence_size(config: ConfigContainer) -> int:
+    """Get total packed sequence size for tokens/sec calculations.
+
+    Use this for linear throughput metrics (tokens/sec, samples/sec).
+    Each packed sample contains packed_sequence_size tokens.
+
+    Args:
+        config: The training configuration container.
+
+    Returns:
+        The packed_sequence_size if packing is enabled, otherwise seq_length.
+    """
+    if _is_packing_enabled(config):
+        return config.dataset.packed_sequence_specs.packed_sequence_size
+    return config.dataset.seq_length
+
+
+def get_effective_seq_length_for_tflops(config: ConfigContainer) -> int:
+    """Get effective sequence length for TFLOP/s calculations.
+
+    Attention FLOPs scale quadratically with sequence length. When multiple
+    sequences are packed into a single bin, we must account for the fact
+    that attention is computed per-sequence, not across the entire packed bin.
+
+    Formula: effective_seq = packed_sequence_size / avg_sequences_per_bin
+
+    Example:
+        - 4 sequences of 1024 tokens packed into 4096 total
+        - avg_sequences_per_bin = 4
+        - effective_seq = 4096 / 4 = 1024
+        - Attention FLOPs computed as 4 * 1024^2 (correct)
+        - NOT as 4096^2 (4x overestimate)
+
+    Args:
+        config: The training configuration container.
+
+    Returns:
+        The effective sequence length accounting for packing ratio.
+    """
+    if not _is_packing_enabled(config):
+        return config.dataset.seq_length
+
+    packing = config.dataset.packed_sequence_specs
+    packed_size = packing.packed_sequence_size
+    base_seq_len = config.dataset.seq_length
+
+    # Use explicitly configured avg_sequences_per_bin if available
+    avg_seqs = packing.avg_sequences_per_bin
+
+    if avg_seqs is None or avg_seqs <= 0:
+        # Fallback: estimate from packed_size / base_seq_length
+        # This assumes sequences are roughly uniform length (close to seq_length)
+        avg_seqs = packed_size / base_seq_len
+        print_rank_0(
+            f"[Throughput] avg_sequences_per_bin not configured. "
+            f"Estimating {avg_seqs:.2f} sequences/bin from "
+            f"packed_size({packed_size}) / seq_length({base_seq_len}). "
+            f"Set avg_sequences_per_bin for more accurate TFLOP/s metrics."
+        )
+
+    return int(packed_size / avg_seqs)
+
+
+# Backwards compatibility alias
+def get_effective_seq_length(config: ConfigContainer) -> int:
+    """Get the effective sequence length for throughput calculations.
+
+    .. deprecated::
+        Use get_packed_sequence_size() for tokens/sec metrics or
+        get_effective_seq_length_for_tflops() for FLOP calculations.
+
+    This function returns packed_sequence_size for backwards compatibility,
+    which is correct for tokens/sec but may overestimate TFLOP/s.
+    """
+    return get_packed_sequence_size(config)
 
 
 def param_is_not_shared(param: nn.Parameter) -> bool:
@@ -482,7 +576,7 @@ def training_log(
             throughput_report = report_throughput(
                 iteration=iteration,
                 train_config=train_config,
-                seq_length=config.dataset.seq_length,
+                seq_length=get_effective_seq_length(config),
                 history_wct=history_wct,
                 window_size=logger_config.throughput_window_size,
             )
@@ -505,7 +599,7 @@ def training_log(
             runtime_report = report_runtime(
                 train_state=train_state,
                 start_time=global_state.start_time,
-                seq_length=config.dataset.seq_length,
+                seq_length=get_effective_seq_length(config),
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )
@@ -651,7 +745,10 @@ def training_log(
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
         # Calculate GPU utilization
-        num_flops = num_floating_point_operations(config, batch_size)
+        # Use effective seq length for TFLOP/s to account for packing ratio
+        num_flops = num_floating_point_operations(
+            config, batch_size, seq_length_override=get_effective_seq_length_for_tflops(config)
+        )
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
         print_rank_0(
             f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
