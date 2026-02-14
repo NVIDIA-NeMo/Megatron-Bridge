@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 import inspect
 import math
 import os
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import torch
 import torch.nn as nn
 from megatron.core.num_microbatches_calculator import get_num_microbatches
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
@@ -1095,3 +1097,13 @@ def maybe_inject_state(
         return partial(forward_step_func, state)
     else:
         return forward_step_func
+
+
+def is_rank_in_pg(pg_collection: ProcessGroupCollection) -> bool:
+    """Check if the current rank is in the process group collection."""
+    current_rank = get_rank_safe()
+    for field in dataclasses.fields(pg_collection):
+        pg = getattr(pg_collection, field.name, None)
+        if pg and current_rank in torch.distributed.get_process_group_ranks(pg):
+            return True
+    return False

@@ -90,7 +90,7 @@ class Qwen3VLModel(MegatronModule):
         self.post_process = post_process
         self.add_encoder = add_encoder
         self.add_decoder = add_decoder
-
+        print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.__init__(), self.config.use_dist_train: {self.config.use_dist_train}, self.add_encoder: {self.add_encoder}, self.add_decoder: {self.add_decoder}")
         self.encoder_hidden_state = None
         self.vision_model = None
         self.language_model = None
