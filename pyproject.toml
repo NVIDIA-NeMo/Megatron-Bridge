@@ -124,6 +124,9 @@ megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 recipes = [
     "nemo-run",
 ]
+parquet = [
+    "pyarrow>=14.0.0",
+]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
 ]
