@@ -27,9 +27,19 @@ from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
-
 from megatron.bridge.models import Qwen3ModelProvider, Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+from megatron.core.transformer.cuda_graphs import CudaGraphScope
+from copy import deepcopy
+
+
+def _convert_cuda_graph_scope_to_enum(scope_list: List[str]) -> List[CudaGraphScope]:
+    """Convert string list to CudaGraphScope enum list."""
+    if not scope_list:
+        return []
+    return [CudaGraphScope[scope] for scope in scope_list]
 
 
 @dataclass
@@ -107,7 +117,14 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
 
     bias_activation_fusion: bool = True  # Fuse swiglu bias and activation
 
-    use_hf_vision_model: bool = False
+    # Vision encoder CUDA graph settings
+    # Set to "transformer_engine" to enable TE CUDA graph for vision encoder
+    vision_cuda_graph_impl: str = "none"
+    # CUDA graph scope for vision encoder (e.g., ["attn"] for attention only)
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
+    # If None, calculated from num_position_embeddings / spatial_merge_size^2
+    max_vision_cuda_graph_seq_length: Optional[int] = None
 
     vision_dp_when_cp: bool = False
 
@@ -253,6 +270,15 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     freeze_vision_projection: bool = False
     language_max_sequence_length: int = 2048
 
+    # Vision encoder CUDA graph settings
+    # Set to "transformer_engine" to enable TE CUDA graph for vision encoder
+    vision_cuda_graph_impl: str = "none"
+    # CUDA graph scope for vision encoder (e.g., ["attn"] for attention only)
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
+    # If None, calculated from num_position_embeddings / spatial_merge_size^2
+    max_vision_cuda_graph_seq_length: Optional[int] = None
+
     # QK layernorm is already True in Qwen3MoEModelProvider, no need to redefine
 
     # These are typically set in the base class but documented here for clarity
@@ -280,8 +306,35 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         """
         language_transformer_config = self
 
-        # handle vision config inside model initialization
+        # Qwen3-VL uses M-RoPE (multi-dimensional rotary position embeddings) with a custom
+        # apply_rotary_pos_emb_absolute() that is incompatible with the fused RoPE kernel.
+        # Force this off regardless of any external overrides (e.g., perf script defaults).
+        language_transformer_config.apply_rope_fusion = False
+
+        # Convert language model's cuda_graph_scope from strings to enums if needed
+        if hasattr(language_transformer_config, 'cuda_graph_scope') and language_transformer_config.cuda_graph_scope:
+            if isinstance(language_transformer_config.cuda_graph_scope[0], str):
+                language_transformer_config.cuda_graph_scope = _convert_cuda_graph_scope_to_enum(
+                    language_transformer_config.cuda_graph_scope
+                )
+
+        # Create vision transformer config - placeholder for future use
+        # vision_transformer_config = deepcopy(self)
         hf_vision_config = self.vision_config
+
+        vision_transformer_config = get_vision_model_config(hf_vision_config, deepcopy(language_transformer_config))
+        vision_transformer_config.pipeline_model_parallel_size = 1
+        vision_transformer_config.first_pipeline_num_layers = None
+
+        # Apply vision encoder CUDA graph settings
+        vision_transformer_config.cuda_graph_impl = self.vision_cuda_graph_impl
+        # Convert string scope list to CudaGraphScope enums
+        vision_transformer_config.cuda_graph_scope = _convert_cuda_graph_scope_to_enum(
+            self.vision_cuda_graph_scope
+        ) if self.vision_cuda_graph_scope else []
+        # Set max sequence length for vision CUDA graphs
+        vision_transformer_config.max_vision_cuda_graph_seq_length = self.max_vision_cuda_graph_seq_length
+
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=True,
@@ -290,6 +343,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         )
 
         # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
+        # Note: vision_transformer_layer_spec and vision_patch_merger_spec are created
+        # internally by Qwen3VLModel.__init__ when pre_process=True
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
