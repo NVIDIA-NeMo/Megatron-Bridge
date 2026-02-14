@@ -17,7 +17,7 @@ from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.checkpointing import CheckpointSaveContext
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -134,7 +134,7 @@ def _pretrain(
     train_data_iterator = setup_output.train_data_iterator
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
-    ckpt_context = setup_output.checkpointing_context
+    checkpoint_manager = setup_output.checkpoint_manager
     pg_collection = setup_output.pg_collection
 
     # TRAINING
@@ -148,7 +148,7 @@ def _pretrain(
                 train_data_iterator,
                 valid_data_iterator,
                 state,
-                ckpt_context,
+                checkpoint_manager,
                 pg_collection,
                 callback_manager=callback_manager,
             )
@@ -156,14 +156,15 @@ def _pretrain(
         barrier_and_log("after training is done")
         ckpt_config = config.checkpoint
         if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
-            save_checkpoint(
-                state,
-                model,
-                optimizer,
-                scheduler,
-                state.train_state.floating_point_operations_so_far,
-                ckpt_context,
-                train_data_iterator=train_data_iterator,
+            checkpoint_manager.save(
+                CheckpointSaveContext(
+                    state=state,
+                    model=model,
+                    optimizer=optimizer,
+                    opt_param_scheduler=scheduler,
+                    num_floating_point_operations_so_far=int(state.train_state.floating_point_operations_so_far),
+                    train_data_iterator=train_data_iterator,
+                )
             )
 
     else:
@@ -200,7 +201,7 @@ def _pretrain(
             is_test=True,
         )
 
-    _finish_train(state)
+    _finish_train(state, checkpoint_manager)
     _maybe_destroy_process_group(should_destroy_process_group)
 
 
