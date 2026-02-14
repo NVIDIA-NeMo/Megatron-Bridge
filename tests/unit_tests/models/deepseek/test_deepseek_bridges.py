@@ -122,6 +122,23 @@ class TestDeepSeekV2Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
+    def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v2):
+        mock_pretrained_v2.config.q_lora_rank = None
+        bridge = DeepSeekV2Bridge()
+
+        provider_kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v2.config)
+
+        assert "q_lora_rank" in provider_kwargs
+        assert provider_kwargs["q_lora_rank"] is None
+
+    def test_provider_bridge_preserves_none_q_lora_rank(self, mock_pretrained_v2):
+        mock_pretrained_v2.config.q_lora_rank = None
+        bridge = DeepSeekV2Bridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_v2)
+
+        assert provider.q_lora_rank is None
+
 
 class TestDeepSeekV3Bridge:
     """Test cases for DeepSeekV3Bridge."""
@@ -221,6 +238,23 @@ class TestDeepSeekV3Bridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.q_lora_rank = None
+        bridge = DeepSeekV3Bridge()
+
+        provider_kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v3.config)
+
+        assert "q_lora_rank" in provider_kwargs
+        assert provider_kwargs["q_lora_rank"] is None
+
+    def test_provider_bridge_preserves_none_q_lora_rank(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.q_lora_rank = None
+        bridge = DeepSeekV3Bridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_v3)
+
+        assert provider.q_lora_rank is None
 
     def test_export_injects_inv_freq_for_layer(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
