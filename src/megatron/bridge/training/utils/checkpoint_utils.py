@@ -14,7 +14,6 @@
 
 import logging
 import os
-import posixpath
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -32,6 +31,9 @@ from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_saf
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
 CONFIG_FILE = "run_config.yaml"
+
+_ITER_PREFIX: str = "iter_"
+_ITER_PREFIX_LEN: int = len(_ITER_PREFIX)
 
 logger = logging.getLogger(__name__)
 _RUNTIME_ONLY_TARGETS = frozenset({"megatron.core.timers.Timers"})
@@ -135,14 +137,38 @@ def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
     return os.path.join(checkpoints_path, "latest_checkpointed_iteration.txt")
 
 
-def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
-    """Check if a checkpoint directory exists.
+def is_iteration_directory(path: str) -> bool:
+    """Check if a path is a specific iteration checkpoint directory.
+
+    Iteration directories follow the naming convention ``iter_<digits>`` where
+    digits is one or more numeric characters (e.g., ``iter_0000005``, ``iter_123``,
+    ``iter_1000000000``). The standard format from ``get_checkpoint_name`` is
+    ``iter_{:07d}`` (7 zero-padded digits), but this function accepts any digit count
+    for flexibility with custom or legacy checkpoints.
 
     Args:
-        checkpoints_path: Path to the potential checkpoint directory.
+        path: Path to check.
 
     Returns:
-        True if the path exists, False otherwise.
+        True if the path basename matches the iteration directory pattern.
+    """
+    basename = os.path.basename(path.rstrip(os.sep))
+    if not basename.startswith(_ITER_PREFIX):
+        return False
+    suffix = basename[_ITER_PREFIX_LEN:]
+    # Accept any non-empty sequence of digits (flexible for various iteration formats)
+    return len(suffix) > 0 and suffix.isdigit()
+
+
+def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
+    """Check if a checkpoint directory contains valid checkpoint files.
+
+    Args:
+        checkpoints_path: Path to the potential checkpoint directory. Can be either
+            a top-level checkpoint directory or a specific iteration directory.
+
+    Returns:
+        True if the path contains valid checkpoint files, False otherwise.
     """
     if checkpoints_path is None:
         return False
@@ -161,6 +187,47 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
         return os.path.isfile(path)
 
 
+def resolve_checkpoint_path(path: str | os.PathLike[str]) -> str:
+    """Resolve a checkpoint path to a specific iteration directory.
+
+    This utility handles both:
+    - Top-level checkpoint directories: Resolves to the latest iteration
+    - Specific iteration directories: Returns the path as-is after validation
+
+    Args:
+        path: Path to a checkpoint. Can be either:
+            - A top-level checkpoint directory containing ``iter_*`` subdirectories
+            - A specific iteration directory (e.g., ``/path/to/checkpoint/iter_0000005``)
+
+    Returns:
+        The full path to the resolved iteration directory.
+
+    Raises:
+        FileNotFoundError: If path doesn't exist or no iteration checkpoints found
+            in a top-level directory.
+        NotADirectoryError: If the path exists but is not a directory.
+    """
+    path_str = str(path)
+
+    # Validate path exists and is a directory
+    exists, is_dir = _path_exists_and_is_dir(path_str)
+    if not exists:
+        raise FileNotFoundError(f"Checkpoint path does not exist: {path_str}")
+    if not is_dir:
+        raise NotADirectoryError(f"Checkpoint path must be a directory: {path_str}")
+
+    # If already an iteration directory, return as-is
+    if is_iteration_directory(path_str):
+        return path_str
+
+    # Find latest iteration in top-level directory
+    iter_dirs = _list_iteration_directories(path_str)
+    if not iter_dirs:
+        raise FileNotFoundError(f"No iteration checkpoints found in: {path_str}")
+
+    return _get_latest_iteration_path(iter_dirs)
+
+
 def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
     """
     Infer the HuggingFace model identifier recorded in a Megatron Bridge checkpoint.
@@ -174,69 +241,29 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
         The HuggingFace model identifier/path if present, otherwise ``None``.
 
     Raises:
-        FileNotFoundError: If the provided path does not exist.
+        FileNotFoundError: If the provided path does not exist, or if ``path`` is a
+            top-level checkpoint directory that contains no ``iter_*`` subdirectories.
         NotADirectoryError: If the provided path is not a directory.
     """
-    use_msc = MultiStorageClientFeature.is_enabled()
+    path_str = str(path)
 
-    if use_msc:
-        msc = MultiStorageClientFeature.import_package()
-        path_obj = msc.Path(str(path))
+    # First check: does the path exist?
+    exists, is_dir = _path_exists_and_is_dir(path_str)
+    if not exists:
+        raise FileNotFoundError(f"Checkpoint path '{path}' does not exist.")
+    if not is_dir:
+        raise NotADirectoryError(f"Checkpoint path '{path}' must be a directory.")
 
-        if not path_obj.exists():
-            raise FileNotFoundError(f"Checkpoint path '{path_obj}' does not exist.")
-        if not path_obj.is_dir():
-            raise NotADirectoryError(f"Checkpoint path '{path_obj}' must be a directory.")
+    # Try to find run_config.yaml - check given path first, then resolve to iteration
+    run_config_path = os.path.join(path_str, CONFIG_FILE)
+    if not file_exists(run_config_path):
+        resolved_path = resolve_checkpoint_path(path_str)
+        run_config_path = os.path.join(resolved_path, CONFIG_FILE)
 
-        def make_run_config_candidate(base: msc.Path) -> str:
-            return posixpath.join(str(base), CONFIG_FILE)
+    if not file_exists(run_config_path):
+        return None
 
-        def list_iter_dirs(base: msc.Path) -> list[tuple[str, msc.Path]]:
-            entries: list[tuple[str, msc.Path]] = []
-            for child in base.iterdir():
-                if child.is_dir() and child.name.startswith("iter_"):
-                    entries.append((child.name, child))
-            return entries
-
-        candidate_path = path_obj
-    else:
-        checkpoint_path = Path(path)
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Checkpoint path '{checkpoint_path}' does not exist.")
-        if not checkpoint_path.is_dir():
-            raise NotADirectoryError(f"Checkpoint path '{checkpoint_path}' must be a directory.")
-
-        def make_run_config_candidate(base: Path) -> str:
-            return str(base / CONFIG_FILE)
-
-        def list_iter_dirs(base: Path) -> list[tuple[str, Path]]:
-            return [
-                (child.name, child) for child in base.iterdir() if child.is_dir() and child.name.startswith("iter_")
-            ]
-
-        candidate_path = checkpoint_path
-
-    run_config_candidate = make_run_config_candidate(candidate_path)
-
-    if not file_exists(run_config_candidate):
-        iter_dirs = list_iter_dirs(candidate_path)
-        if not iter_dirs:
-            return None
-
-        def _iter_key(item: tuple[str, object]) -> int:
-            directory_name = item[0]
-            try:
-                return int(directory_name.replace("iter_", ""))
-            except ValueError:
-                return -1
-
-        _, candidate_path = max(iter_dirs, key=_iter_key)
-        run_config_candidate = make_run_config_candidate(candidate_path)
-
-        if not file_exists(run_config_candidate):
-            return None
-
-    run_config = read_run_config(run_config_candidate)
+    run_config = read_run_config(run_config_path)
     if not isinstance(run_config, dict):
         return None
 
@@ -379,3 +406,74 @@ def _sanitize_run_config_object(obj: Any) -> Any:
     if isinstance(obj, list):
         return [_sanitize_run_config_object(item) for item in obj]
     return obj
+
+
+def _list_iteration_directories(path: str) -> list[tuple[str, str]]:
+    """List valid iteration directories in a checkpoint directory.
+
+    Args:
+        path: Path to a checkpoint directory.
+
+    Returns:
+        List of (name, full_path) tuples for valid iteration directories.
+    """
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_obj = msc.Path(str(path))
+        return [
+            (child.name, str(child))
+            for child in path_obj.iterdir()
+            if child.is_dir() and is_iteration_directory(child.name)
+        ]
+    else:
+        checkpoint_path = Path(path)
+        return [
+            (child.name, str(child))
+            for child in checkpoint_path.iterdir()
+            if child.is_dir() and is_iteration_directory(child.name)
+        ]
+
+
+def _get_latest_iteration_path(iter_dirs: list[tuple[str, str]]) -> str:
+    """Get the path to the latest iteration from a list of iteration directories.
+
+    Args:
+        iter_dirs: List of (name, full_path) tuples from ``_list_iteration_directories``.
+
+    Returns:
+        The full path to the directory with the highest iteration number.
+
+    Raises:
+        ValueError: If iter_dirs is empty.
+    """
+    if not iter_dirs:
+        raise ValueError("Cannot get latest iteration from empty list")
+
+    def _iteration_number(item: tuple[str, str]) -> int:
+        # Extract iteration number from "iter_XXXXXXX" format
+        return int(item[0][_ITER_PREFIX_LEN:])
+
+    _, latest_path = max(iter_dirs, key=_iteration_number)
+    return latest_path
+
+
+def _path_exists_and_is_dir(path: str) -> tuple[bool, bool]:
+    """Check if path exists and is a directory.
+
+    Args:
+        path: Path to check.
+
+    Returns:
+        Tuple of (exists, is_directory).
+    """
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_obj = msc.Path(str(path))
+        if not path_obj.exists():
+            return False, False
+        return True, path_obj.is_dir()
+    else:
+        p = Path(path)
+        if not p.exists():
+            return False, False
+        return True, p.is_dir()
