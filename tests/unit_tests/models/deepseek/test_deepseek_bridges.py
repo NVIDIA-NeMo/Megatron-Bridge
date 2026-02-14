@@ -238,7 +238,7 @@ class TestDeepSeekV3Bridge:
         expected = 1.0 / (
             mock_pretrained_v3.config.rope_theta
             ** (
-                torch.arange(0, mock_pretrained_v3.config.qk_rope_head_dim, 2, dtype=torch.float32)
+                torch.arange(0, mock_pretrained_v3.config.qk_rope_head_dim, 1, dtype=torch.float32)
                 / mock_pretrained_v3.config.qk_rope_head_dim
             )
         )
