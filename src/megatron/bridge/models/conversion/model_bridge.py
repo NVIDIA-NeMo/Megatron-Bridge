@@ -358,17 +358,20 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Map config fields using CONFIG_MAPPING
         # Supports dot notation for nested dict access (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in self.CONFIG_MAPPING:
+            has_value = False
+            value = None
             if "." in hf_name:
                 # Nested dict access: "parent.child" -> getattr(config, parent).get(child)
                 parts = hf_name.split(".", 1)
                 parent = getattr(hf_config, parts[0], None)
                 if parent is not None and isinstance(parent, dict):
-                    value = parent.get(parts[1])
-                else:
-                    value = None
+                    if parts[1] in parent:
+                        value = parent[parts[1]]
+                        has_value = True
             else:
                 value = getattr(hf_config, hf_name, None)
-            if value is not None:
+                has_value = hasattr(hf_config, hf_name)
+            if has_value:
                 provider_kwargs[megatron_name] = value
 
         # Extract rotary_base via compat function (handles both legacy rope_theta
