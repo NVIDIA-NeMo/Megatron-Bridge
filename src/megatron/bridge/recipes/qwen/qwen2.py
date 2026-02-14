@@ -1123,7 +1123,7 @@ def _qwen2_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Union[str, PEFT, None] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 100,
     global_batch_size: Optional[int] = None,

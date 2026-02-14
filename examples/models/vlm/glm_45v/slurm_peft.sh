@@ -90,6 +90,8 @@ export NCCL_NVLS_ENABLE=0
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
 # export WANDB_API_KEY="your_wandb_key_here"
+# or disable wandb logging
+# export WANDB_MODE=disabled
 
 # ==============================================================================
 # Job Execution

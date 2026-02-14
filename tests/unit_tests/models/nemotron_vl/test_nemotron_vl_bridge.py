@@ -34,9 +34,18 @@ def mock_llm_config():
     cfg.num_attention_heads = 40
     cfg.num_key_value_heads = 8
     cfg.initializer_range = 0.02
-    cfg.layer_norm_epsilon = 1e-5
+    cfg.rms_norm_eps = 1e-5  # CONFIG_MAPPING uses rms_norm_eps -> layernorm_epsilon
     cfg.vocab_size = 262144
     cfg.max_position_embeddings = 131072
+    cfg.hidden_act = "relu2"
+    # Set MLA-specific fields to None (these are auto-mapped in CONFIG_MAPPING)
+    cfg.q_lora_rank = None
+    cfg.kv_lora_rank = None
+    cfg.qk_nope_head_dim = None
+    cfg.qk_rope_head_dim = None
+    cfg.v_head_dim = None
+    cfg.num_nextn_predict_layers = None
+    cfg.rope_scaling = None
     return cfg
 
 
