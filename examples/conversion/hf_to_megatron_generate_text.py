@@ -174,6 +174,9 @@ def main(args) -> None:
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
+        # Disable grad_scale_func for inference (not needed and causes errors with MoE models)
+        if hasattr(m, "config") and m.config is not None:
+            m.config.grad_scale_func = None
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
