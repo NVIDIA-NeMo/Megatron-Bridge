@@ -22,50 +22,45 @@ except ImportError as e:
 import os
 
 import torch
-from megatron.core import dist_checkpointing
 from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
+from megatron.bridge.training.utils.checkpoint_utils import (
+    _get_latest_iteration_path,
+    _list_iteration_directories,
+    is_iteration_directory,
+)
+
 
 def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
-    """Get the path to use for ModelOpt operations (handles iteration directories)."""
+    """Get the path to use for ModelOpt operations.
+
+    ModelOpt state can be stored either at the root level or inside an iteration
+    directory. This function returns the best path to look for modelopt_state:
+    - If the path is already an iteration directory, use it
+    - If iteration directories exist, use the latest one
+    - Otherwise, use the root path (modelopt_state might be at root level)
+
+    Args:
+        checkpoint_path: Path to a checkpoint directory.
+
+    Returns:
+        The path where modelopt_state is most likely to be found.
+    """
     if not checkpoint_path or not os.path.isdir(checkpoint_path):
         return checkpoint_path
 
-    # Check for iter_* folders
-    try:
-        iter_folders = [
-            f
-            for f in os.listdir(checkpoint_path)
-            if os.path.isdir(os.path.join(checkpoint_path, f)) and f.startswith("iter_")
-        ]
-    except (OSError, FileNotFoundError):
-        # Directory doesn't exist or can't be accessed
+    if is_iteration_directory(checkpoint_path):
         return checkpoint_path
 
-    if iter_folders:
-        # Find the folder with the largest iteration number from state dict
-        latest_iter_num = -1
-        latest_iter_folder = None
+    # Check for iteration directories - use latest if any exist
+    iter_dirs = _list_iteration_directories(checkpoint_path)
+    if iter_dirs:
+        return _get_latest_iteration_path(iter_dirs)
 
-        for folder in iter_folders:
-            folder_path = os.path.join(checkpoint_path, folder)
-            try:
-                state_dict = dist_checkpointing.load_common_state_dict(folder_path)
-                if state_dict is not None:
-                    iter_num = state_dict.get("iteration", 0)
-                    if iter_num > latest_iter_num:
-                        latest_iter_num = iter_num
-                        latest_iter_folder = folder
-            except Exception:
-                # Skip checkpoints that fail to load
-                continue
-
-        if latest_iter_folder is not None:
-            return os.path.join(checkpoint_path, latest_iter_folder)
-
-    return checkpoint_path  # No iteration dirs, use root
+    # No iterations found - modelopt_state might be at root level
+    return checkpoint_path
 
 
 def has_modelopt_state(checkpoint_path: str) -> bool:

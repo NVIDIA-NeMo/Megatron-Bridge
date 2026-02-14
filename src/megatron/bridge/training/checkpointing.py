@@ -73,6 +73,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     read_run_config,
     read_train_state,
+    resolve_checkpoint_path,
 )
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
@@ -1298,6 +1299,429 @@ def _load_model_weights_from_checkpoint(
         torch.distributed.barrier()
 
 
+def _load_fsdp_dtensor_state_dict(
+    checkpoint_path: str,
+    state_dict: dict[str, Any],
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Load a state dict from an FSDP DTensor checkpoint using PyTorch DCP.
+
+    Args:
+        checkpoint_path: Full path to the checkpoint directory.
+        state_dict: Pre-built state dict with DTensor placeholders to load into.
+        strict: If True, require exact key match. If False, allow partial loading.
+
+    Returns:
+        The loaded state dict (modified in-place).
+    """
+    fs_storage_reader = torch.distributed.checkpoint.FileSystemReader(checkpoint_path)
+
+    if not strict:
+        state_dict_metadata = fs_storage_reader.read_metadata().state_dict_metadata
+        print_diff_in_state_dicts(state_dict_metadata, state_dict)
+
+    planner = torch.distributed.checkpoint.default_planner.DefaultLoadPlanner(allow_partial_load=not strict)
+    torch.distributed.checkpoint.load_state_dict(
+        state_dict=state_dict,
+        storage_reader=fs_storage_reader,
+        planner=planner,
+    )
+    return state_dict
+
+
+def _convert_dtensor_state_dict_to_full(state_dict: StateDict) -> StateDict:
+    """Convert a state dict containing DTensors to one with full (unsharded) tensors.
+
+    Args:
+        state_dict: State dict potentially containing DTensor values.
+
+    Returns:
+        State dict with all DTensors converted to regular tensors via full_tensor().
+    """
+    try:
+        from torch.distributed.tensor import DTensor
+    except ImportError:
+        # No DTensor available, return as-is
+        return state_dict
+
+    def _convert_value(value: Any) -> Any:
+        if isinstance(value, DTensor):
+            return value.full_tensor()
+        elif isinstance(value, dict):
+            return {k: _convert_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [_convert_value(v) for v in value]
+        return value
+
+    return _convert_value(state_dict)
+
+
+def _merge_swiglu_keys(state_dict: dict[str, Any]) -> dict[str, Any]:
+    """Merge split SWiGLU keys back into combined keys for export.
+
+    FSDP DTensor checkpoints store SWiGLU weights as separate _w and _v keys.
+    This function merges them back into the original combined format expected
+    by HuggingFace models.
+
+    Args:
+        state_dict: State dict with split SWiGLU keys (e.g., linear_fc1.weight_w, linear_fc1.weight_v)
+
+    Returns:
+        State dict with merged SWiGLU keys (e.g., linear_fc1.weight)
+    """
+    import re
+
+    if "model" not in state_dict:
+        return state_dict
+
+    model_state = state_dict["model"]
+    merged_state = {}
+
+    # Find all _w keys and their corresponding _v keys
+    w_keys = [k for k in model_state.keys() if k.endswith("_w")]
+
+    processed_keys = set()
+    for w_key in w_keys:
+        base_key = w_key[:-2]  # Remove '_w' suffix
+        v_key = f"{base_key}_v"
+
+        if v_key in model_state:
+            # Check if this is a SWiGLU key (linear_fc1.weight or linear_fc1.bias)
+            if re.search(r"linear_fc1\.(weight|bias)", base_key):
+                # Merge _w and _v tensors along dim 0
+                w_tensor = model_state[w_key]
+                v_tensor = model_state[v_key]
+                merged_tensor = torch.cat([w_tensor, v_tensor], dim=0)
+                merged_state[base_key] = merged_tensor
+                processed_keys.add(w_key)
+                processed_keys.add(v_key)
+
+    # Copy non-SWiGLU keys as-is
+    for key, value in model_state.items():
+        if key not in processed_keys:
+            merged_state[key] = value
+
+    state_dict["model"] = merged_state
+    return state_dict
+
+
+def _load_fsdp_dtensor_for_export(checkpoint_path: str, model: MegatronModule) -> StateDict:
+    """Load FSDP DTensor checkpoint for export without requiring FSDP wrapping.
+
+    FSDP DTensor checkpoints store tensors as sharded DTensors. To load them without
+    FSDP wrapping, we:
+    1. Create DTensor placeholders with Shard(0) placement on a device mesh
+    2. Load using PyTorch DCP (handles resharding from training world_size to export world_size)
+    3. Gather each DTensor to get full tensors
+    4. Post-process SWiGLU keys (merge _w and _v back together)
+
+    This approach mirrors how checkpoint_inspector.py handles format conversion,
+    and works for both single-process export (world_size=1) and multi-GPU scenarios.
+
+    Args:
+        checkpoint_path: Full path to the iteration checkpoint directory.
+        model: The model instance (not wrapped with FSDP).
+
+    Returns:
+        State dict with full tensors suitable for export to HuggingFace format.
+    """
+    import re
+
+    from megatron.core.utils import get_model_config
+    from torch.distributed import DeviceMesh
+    from torch.distributed.checkpoint.metadata import TensorStorageMetadata
+    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor.placement_types import Shard
+
+    # Check if model uses SWiGLU for key mapping
+    model_config = get_model_config(model)
+    is_swiglu = (
+        getattr(model_config, "gated_linear_unit", False) and getattr(model_config, "activation_func", None) is F.silu
+    )
+    print_rank_0(f"[_load_fsdp_dtensor_for_export] SWiGLU enabled: {is_swiglu}")
+
+    # Create a device mesh for DTensor operations
+    # Works with gloo backend (CPU) or nccl backend (GPU)
+    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+    backend = torch.distributed.get_backend() if torch.distributed.is_initialized() else "gloo"
+    device_type = "cuda" if torch.cuda.is_available() and backend == "nccl" else "cpu"
+    print_rank_0(
+        f"[_load_fsdp_dtensor_for_export] Creating device mesh: world_size={world_size}, device_type={device_type}"
+    )
+    device_mesh = DeviceMesh(device_type, list(range(world_size)))
+
+    # Read checkpoint metadata
+    fs_reader = torch.distributed.checkpoint.FileSystemReader(checkpoint_path)
+    metadata = fs_reader.read_metadata()
+
+    # Debug: show sample checkpoint keys
+    ckpt_keys = list(metadata.state_dict_metadata.keys())
+    print_rank_0(f"[_load_fsdp_dtensor_for_export] Checkpoint has {len(ckpt_keys)} keys")
+    model_ckpt_keys = [k for k in ckpt_keys if k.startswith("model.")]
+    print_rank_0(f"[_load_fsdp_dtensor_for_export] Sample checkpoint model keys: {model_ckpt_keys[:5]}")
+
+    # Create state dict with DTensor placeholders using Shard(0) placement
+    # PyTorch DCP will handle resharding from the original training world_size
+    state_dict: dict[str, Any] = {}
+    model_key_count = 0
+
+    for key, tensor_meta in metadata.state_dict_metadata.items():
+        if isinstance(tensor_meta, TensorStorageMetadata):
+            shape = tuple(tensor_meta.size)
+            dtype = tensor_meta.properties.dtype
+            # Use torch.distributed.tensor.empty to create sharded DTensor placeholder
+            state_dict[key] = torch.distributed.tensor.empty(
+                shape,
+                dtype=dtype,
+                device_mesh=device_mesh,
+                placements=[Shard(0)],
+            )
+            if key.startswith("model."):
+                model_key_count += 1
+
+    print_rank_0(
+        f"[_load_fsdp_dtensor_for_export] Created {len(state_dict)} DTensor placeholders ({model_key_count} model keys)"
+    )
+
+    # Load using PyTorch DCP - handles resharding automatically
+    print_rank_0(f"[_load_fsdp_dtensor_for_export] Loading checkpoint from {checkpoint_path}")
+    planner = torch.distributed.checkpoint.default_planner.DefaultLoadPlanner(allow_partial_load=True)
+    torch.distributed.checkpoint.load_state_dict(
+        state_dict=state_dict,
+        storage_reader=fs_reader,
+        planner=planner,
+    )
+    print_rank_0("[_load_fsdp_dtensor_for_export] Checkpoint loaded successfully")
+
+    # Convert DTensors to full tensors and reorganize structure
+    result: dict[str, Any] = {"model": {}}
+    swiglu_w_keys: dict[str, torch.Tensor] = {}
+    swiglu_v_keys: dict[str, torch.Tensor] = {}
+
+    for key, value in state_dict.items():
+        if not key.startswith("model."):
+            continue
+
+        # Convert DTensor to full tensor
+        if isinstance(value, DTensor):
+            # full_tensor() gathers all shards to reconstruct the complete tensor
+            tensor = value.full_tensor()
+        else:
+            tensor = value
+
+        # Strip "model." prefix
+        # Note: checkpoint keys are already normalized by state_dict_for_save_checkpoint()
+        # which unwraps Float16Module and DDP wrappers automatically
+        model_key = key[len("model.") :]
+
+        if is_swiglu:
+            # Check for SWiGLU split keys
+            if model_key.endswith("_w"):
+                base_key = model_key[:-2]  # Remove _w suffix
+                if re.search(r"linear_fc1\.(weight|bias)$", base_key):
+                    swiglu_w_keys[base_key] = tensor
+                    continue
+            elif model_key.endswith("_v"):
+                base_key = model_key[:-2]  # Remove _v suffix
+                if re.search(r"linear_fc1\.(weight|bias)$", base_key):
+                    swiglu_v_keys[base_key] = tensor
+                    continue
+
+        result["model"][model_key] = tensor
+
+    # Merge SWiGLU keys back together
+    if is_swiglu:
+        merged_count = 0
+        for base_key in swiglu_w_keys:
+            if base_key in swiglu_v_keys:
+                w_tensor = swiglu_w_keys[base_key]
+                v_tensor = swiglu_v_keys[base_key]
+                # Concatenate w and v along dim 0 to reconstruct the original weight
+                merged = torch.cat([w_tensor, v_tensor], dim=0)
+                result["model"][base_key] = merged
+                merged_count += 1
+        print_rank_0(f"[_load_fsdp_dtensor_for_export] Merged {merged_count} SWiGLU key pairs")
+
+    print_rank_0(f"[_load_fsdp_dtensor_for_export] Final state dict has {len(result['model'])} model keys")
+
+    # Debug: print some sample keys
+    sample_keys = list(result["model"].keys())[:5]
+    print_rank_0(f"[_load_fsdp_dtensor_for_export] Sample output keys: {sample_keys}")
+
+    return result
+
+
+def _load_model_weights_fsdp_dtensor(
+    model: list[MegatronModule],
+    checkpoint_path: str,
+    strict: bool = True,
+    return_state_dict: bool = False,
+) -> Optional[StateDict]:
+    """Load model weights from an FSDP DTensor checkpoint.
+
+    This is a simplified loading path for FSDP DTensor checkpoints that only loads
+    model weights without optimizer state, RNG state, or iteration tracking.
+
+    Handles two scenarios:
+    1. **FSDP-wrapped model**: Uses standard preprocessing with sharded state dict
+    2. **Non-FSDP model (export/conversion)**: Loads full tensors directly via PyTorch DCP
+
+    For multi-GPU scenarios without FSDP wrapping (e.g., online conversion within a
+    distributed job), each rank will independently reconstruct the complete tensors
+    from the sharded checkpoint files. This is redundant but ensures all ranks have
+    identical state. The caller should handle any rank-specific logic (e.g., only
+    rank 0 writes to disk for export).
+
+    Args:
+        model: The model(s) to load weights into.
+        checkpoint_path: Full path to the iteration checkpoint directory.
+        strict: Whether to enforce strict state dict loading.
+        return_state_dict: If True, return the state dict instead of loading into model.
+
+    Returns:
+        If return_state_dict is True, returns the model state dict with full tensors.
+        Otherwise returns None.
+    """
+    if not HAVE_MEGATRON_FSDP:
+        raise RuntimeError(
+            "Megatron FSDP is required but not available for loading FSDP DTensor checkpoints. "
+            "Please install megatron-core with FSDP support."
+        )
+
+    model_list = unwrap_model(model)
+    model_instance = model_list[0]
+
+    # Check if model is FSDP-wrapped by looking for the 'module' attribute
+    # that FSDP wrapping adds. If not wrapped, use the export path which
+    # doesn't require FSDP-specific parameter attributes.
+    is_fsdp_wrapped = hasattr(model_instance, "module")
+
+    if return_state_dict or not is_fsdp_wrapped:
+        # For export mode or non-FSDP-wrapped models, use the specialized path
+        # that doesn't require FSDP-specific attributes on model parameters.
+        # This handles SWiGLU key merging as post-processing instead of preprocessing.
+        print_rank_0(f"[_load_model_weights_fsdp_dtensor] Using export path (is_fsdp_wrapped={is_fsdp_wrapped})")
+
+        # Debug: print model's expected keys
+        model_keys = list(model_instance.state_dict().keys())[:5]
+        print_rank_0(f"[_load_model_weights_fsdp_dtensor] Model expects keys like: {model_keys}")
+
+        state_dict = _load_fsdp_dtensor_for_export(checkpoint_path, model_instance)
+
+        if return_state_dict:
+            return state_dict
+
+        # Debug: compare keys
+        loaded_keys = set(state_dict["model"].keys())
+        expected_keys = set(model_instance.state_dict().keys())
+        missing = expected_keys - loaded_keys
+        unexpected = loaded_keys - expected_keys
+        if missing:
+            print_rank_0(f"[_load_model_weights_fsdp_dtensor] Missing keys (sample): {list(missing)[:5]}")
+        if unexpected:
+            print_rank_0(f"[_load_model_weights_fsdp_dtensor] Unexpected keys (sample): {list(unexpected)[:5]}")
+
+        # Load the state dict into the model
+        _load_model_state_dict(model_instance, state_dict["model"], strict)
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        return None
+
+    # For loading into FSDP-wrapped model, use the standard preprocessing path
+    # Build model sharded state dict and preprocess for FSDP DTensor format
+    model_state_dict = model_instance.sharded_state_dict()
+    state_dict = {"model": model_state_dict}
+    state_dict = preprocess_fsdp_dtensor_state_dict(None, state_dict, model_instance)
+
+    # Load using PyTorch DCP
+    state_dict = _load_fsdp_dtensor_state_dict(checkpoint_path, state_dict)
+
+    # Load the state dict into the model
+    _load_model_state_dict(model_instance, state_dict["model"], strict)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
+def load_model_weights(
+    model: list[MegatronModule],
+    checkpoint_path: str,
+    *,
+    fully_parallel_load: bool = False,
+    strict: bool = True,
+    return_state_dict: bool = False,
+) -> Optional[StateDict]:
+    """Load only model weights from a checkpoint.
+
+    Simple API for loading pretrained model weights without optimizer state,
+    RNG state, or iteration tracking. Supports both ``torch_dist`` and ``fsdp_dtensor``
+    checkpoint formats.
+
+    This function automatically:
+    - Resolves top-level checkpoint directories to the latest iteration
+    - Detects the checkpoint format
+    - Loads only model weights (no optimizer, RNG, or training state)
+
+    Multi-GPU Behavior:
+        For ``torch_dist`` format with FSDP-wrapped models, each rank loads its shard.
+        For ``fsdp_dtensor`` format with non-FSDP models (e.g., export/conversion),
+        each rank independently reconstructs complete tensors from the sharded
+        checkpoint files. This enables online conversion within distributed jobs
+        where the model is not FSDP-wrapped.
+
+    Args:
+        model: The model(s) to load weights into.
+        checkpoint_path: Path to checkpoint. Can be either:
+            - A top-level checkpoint directory (loads latest iteration)
+            - A specific iteration directory (e.g., ``/path/to/checkpoint/iter_0000005``)
+        fully_parallel_load: Apply full load parallelization across data parallel ranks.
+            Only supported for ``torch_dist`` format; ignored for other formats.
+        strict: Whether to enforce strict state dict loading.
+        return_state_dict: If True, return the state dict instead of loading into model.
+
+    Returns:
+        If return_state_dict is True, returns the model state dict.
+        Otherwise returns None.
+
+    Raises:
+        FileNotFoundError: If no valid checkpoint is found at the path.
+        NotImplementedError: If the checkpoint format is not supported.
+
+    Example:
+        >>> # Load from a specific iteration
+        >>> load_model_weights(model, "/checkpoints/iter_0000005")
+
+        >>> # Load latest checkpoint from a directory
+        >>> load_model_weights(model, "/checkpoints")
+
+        >>> # Get state dict for export
+        >>> state_dict = load_model_weights(model, "/checkpoints", return_state_dict=True)
+    """
+    # Resolve to specific iteration directory
+    resolved_path = resolve_checkpoint_path(checkpoint_path)
+    ckpt_format = _get_checkpoint_format(resolved_path)
+
+    if ckpt_format == "torch_dist":
+        return _load_model_weights_from_checkpoint(
+            resolved_path,
+            model,
+            fully_parallel_load=fully_parallel_load,
+            strict=strict,
+            return_state_dict=return_state_dict,
+        )
+    elif ckpt_format == "fsdp_dtensor":
+        if fully_parallel_load:
+            print_rank_0("Warning: fully_parallel_load is not supported for fsdp_dtensor format, ignoring")
+        return _load_model_weights_fsdp_dtensor(
+            model, resolved_path, strict=strict, return_state_dict=return_state_dict
+        )
+    else:
+        raise NotImplementedError(
+            f"Checkpoint format '{ckpt_format}' is not supported for load_model_weights. "
+            f"Supported formats: 'torch_dist', 'fsdp_dtensor'"
+        )
+
+
 def load_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
@@ -2243,24 +2667,8 @@ def _load_fsdp_dtensor_base_checkpoint(
     state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
-    fs_storage_reader = torch.distributed.checkpoint.FileSystemReader(checkpoint_name)
-
-    # Configure partial loading based on strict_fsdp_dtensor_load setting
-    allow_partial_load = not getattr(ckpt_cfg, "strict_fsdp_dtensor_load", False)
-    if allow_partial_load:
-        state_dict_metadata = fs_storage_reader.read_metadata().state_dict_metadata
-        rank = torch.distributed.get_rank()
-        import time as _time
-
-        _time.sleep(rank * 0.001)  # Prevent log overlap across ranks
-        print_diff_in_state_dicts(state_dict_metadata, state_dict)
-
-    planner = torch.distributed.checkpoint.default_planner.DefaultLoadPlanner(allow_partial_load=allow_partial_load)
-    torch.distributed.checkpoint.load_state_dict(
-        state_dict=state_dict,
-        storage_reader=fs_storage_reader,
-        planner=planner,
-    )
+    strict = getattr(ckpt_cfg, "strict_fsdp_dtensor_load", False)
+    state_dict = _load_fsdp_dtensor_state_dict(checkpoint_name, state_dict, strict=strict)
 
     # Restore raw state dicts to maintain original structure for the rest of the load process
     if raw_optimizer_state_dict is not None:

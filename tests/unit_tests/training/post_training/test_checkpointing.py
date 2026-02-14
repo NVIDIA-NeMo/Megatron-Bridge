@@ -45,7 +45,14 @@ def _write_modelopt_common_state(modelopt_state_dir: Path, states):
 
 
 class TestGetModeloptCheckpointPath:
-    """Test _get_modelopt_checkpoint_path helper function."""
+    """Test _get_modelopt_checkpoint_path helper function.
+
+    This function finds the best path for ModelOpt state by:
+    - Returning the path as-is if not a directory, empty, or None
+    - Returning the path as-is if it's already an iteration directory
+    - Finding the latest iteration directory based on folder name
+    - Falling back to the original path if no iterations found
+    """
 
     def test_returns_path_when_no_directory(self):
         """Test that it returns the original path when it's not a directory."""
@@ -73,20 +80,15 @@ class TestGetModeloptCheckpointPath:
             result = _get_modelopt_checkpoint_path(str(checkpoint_path))
             assert result == str(checkpoint_path)
 
-    def test_returns_latest_iter_folder_with_single_iter(self):
+    def test_returns_iter_folder_when_single_iter(self):
         """Test that it returns the iter_* folder when only one exists."""
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = Path(temp_dir)
             iter_folder = checkpoint_path / "iter_0000100"
             iter_folder.mkdir()
 
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-                mock_load.return_value = {"iteration": 100}
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                assert result == str(iter_folder)
-                mock_load.assert_called_once_with(str(iter_folder))
+            result = _get_modelopt_checkpoint_path(str(checkpoint_path))
+            assert result == str(iter_folder)
 
     def test_returns_latest_iter_folder_with_multiple_iters(self):
         """Test that it returns the folder with the highest iteration number."""
@@ -100,157 +102,21 @@ class TestGetModeloptCheckpointPath:
             iter_folder_200.mkdir()
             iter_folder_150.mkdir()
 
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
+            result = _get_modelopt_checkpoint_path(str(checkpoint_path))
+            assert result == str(iter_folder_200)
 
-                def load_side_effect(path):
-                    if "iter_0000100" in path:
-                        return {"iteration": 100}
-                    elif "iter_0000200" in path:
-                        return {"iteration": 200}
-                    elif "iter_0000150" in path:
-                        return {"iteration": 150}
-                    return None
-
-                mock_load.side_effect = load_side_effect
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                assert result == str(iter_folder_200)
-                assert mock_load.call_count == 3
-
-    def test_handles_exception_during_state_dict_load(self):
-        """Test that it skips checkpoints that fail to load and continues."""
+    def test_returns_path_when_already_iteration_directory(self):
+        """Test that it returns the path as-is when it's already an iteration directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = Path(temp_dir)
-            iter_folder_100 = checkpoint_path / "iter_0000100"
-            iter_folder_200 = checkpoint_path / "iter_0000200"
-            iter_folder_corrupted = checkpoint_path / "iter_0000150"
+            iter_folder = checkpoint_path / "iter_0000100"
+            iter_folder.mkdir()
 
-            iter_folder_100.mkdir()
-            iter_folder_200.mkdir()
-            iter_folder_corrupted.mkdir()
-
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-
-                def load_side_effect(path):
-                    if "iter_0000100" in path:
-                        return {"iteration": 100}
-                    elif "iter_0000200" in path:
-                        return {"iteration": 200}
-                    elif "iter_0000150" in path:
-                        # Simulate a corrupted checkpoint
-                        raise RuntimeError("Failed to load checkpoint")
-                    return None
-
-                mock_load.side_effect = load_side_effect
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                # Should still return the highest valid iteration (200)
-                assert result == str(iter_folder_200)
-                assert mock_load.call_count == 3
-
-    def test_returns_original_path_when_all_iters_fail_to_load(self):
-        """Test that it returns the original path when all iter folders fail to load."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = Path(temp_dir)
-            iter_folder_100 = checkpoint_path / "iter_0000100"
-            iter_folder_200 = checkpoint_path / "iter_0000200"
-
-            iter_folder_100.mkdir()
-            iter_folder_200.mkdir()
-
-            # Mock the dist_checkpointing.load_common_state_dict to always fail
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-                mock_load.side_effect = RuntimeError("Failed to load checkpoint")
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                # Should return the original path since no valid checkpoint was found
-                assert result == str(checkpoint_path)
-                assert mock_load.call_count == 2
-
-    def test_handles_state_dict_without_iteration_key(self):
-        """Test that it handles state dicts without 'iteration' key (defaults to 0)."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = Path(temp_dir)
-            iter_folder_100 = checkpoint_path / "iter_0000100"
-            iter_folder_no_iter = checkpoint_path / "iter_0000050"
-
-            iter_folder_100.mkdir()
-            iter_folder_no_iter.mkdir()
-
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-
-                def load_side_effect(path):
-                    if "iter_0000100" in path:
-                        return {"iteration": 100}
-                    elif "iter_0000050" in path:
-                        # State dict without iteration key
-                        return {"model": "data"}
-                    return None
-
-                mock_load.side_effect = load_side_effect
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                # Should return iter_0000100 since it has the highest iteration
-                assert result == str(iter_folder_100)
-                assert mock_load.call_count == 2
-
-    def test_handles_state_dict_returning_none(self):
-        """Test that it handles when load_common_state_dict returns None."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = Path(temp_dir)
-            iter_folder_100 = checkpoint_path / "iter_0000100"
-            iter_folder_none = checkpoint_path / "iter_0000200"
-
-            iter_folder_100.mkdir()
-            iter_folder_none.mkdir()
-
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-
-                def load_side_effect(path):
-                    if "iter_0000100" in path:
-                        return {"iteration": 100}
-                    elif "iter_0000200" in path:
-                        # Return None
-                        return None
-                    return None
-
-                mock_load.side_effect = load_side_effect
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                # Should return iter_0000100 since iter_0000200 returned None
-                assert result == str(iter_folder_100)
-                assert mock_load.call_count == 2
-
-    def test_handles_oserror_during_listdir(self):
-        """Test that it returns original path when OSError occurs during listdir."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = Path(temp_dir)
-
-            # Mock os.listdir to raise OSError
-            with patch("megatron.bridge.training.post_training.checkpointing.os.listdir") as mock_listdir:
-                mock_listdir.side_effect = OSError("Permission denied")
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                assert result == str(checkpoint_path)
-
-    def test_handles_filenotfounderror_during_listdir(self):
-        """Test that it returns original path when FileNotFoundError occurs."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            checkpoint_path = Path(temp_dir)
-
-            # Mock os.listdir to raise FileNotFoundError
-            with patch("megatron.bridge.training.post_training.checkpointing.os.listdir") as mock_listdir:
-                mock_listdir.side_effect = FileNotFoundError("Directory not found")
-
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                assert result == str(checkpoint_path)
+            result = _get_modelopt_checkpoint_path(str(iter_folder))
+            assert result == str(iter_folder)
 
     def test_handles_iter_folders_mixed_with_files(self):
-        """Test that it only considers directories starting with iter_, not files."""
+        """Test that it only considers directories matching iter_XXXXXXX format."""
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = Path(temp_dir)
             iter_folder = checkpoint_path / "iter_0000100"
@@ -260,51 +126,60 @@ class TestGetModeloptCheckpointPath:
             iter_file = checkpoint_path / "iter_0000200.txt"
             iter_file.touch()
 
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-                mock_load.return_value = {"iteration": 100}
+            # Create a folder with wrong format (should be ignored)
+            wrong_format = checkpoint_path / "iter_123"
+            wrong_format.mkdir()
 
-                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
-                # Should only consider the directory, not the file
-                assert result == str(iter_folder)
-                # Should only be called once (for the directory, not the file)
-                mock_load.assert_called_once_with(str(iter_folder))
+            result = _get_modelopt_checkpoint_path(str(checkpoint_path))
+            # Should only consider the valid iteration directory
+            assert result == str(iter_folder)
+
+    def test_ignores_invalid_iter_folder_formats(self):
+        """Test that it ignores folders not matching iter_XXXXXXX (7 digits) format."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_path = Path(temp_dir)
+
+            # Create folders with invalid formats
+            (checkpoint_path / "iter_1").mkdir()  # Too few digits
+            (checkpoint_path / "iter_12345678").mkdir()  # Too many digits
+            (checkpoint_path / "iter_abcdefg").mkdir()  # Non-numeric
+            (checkpoint_path / "iteration_0000001").mkdir()  # Wrong prefix
+
+            # Only this one is valid
+            valid_iter = checkpoint_path / "iter_0000050"
+            valid_iter.mkdir()
+
+            result = _get_modelopt_checkpoint_path(str(checkpoint_path))
+            assert result == str(valid_iter)
 
 
 class TestPostTrainingCheckpointUtilities:
     """Test utility functions for post-training checkpoint management."""
 
-    @pytest.mark.parametrize(
-        "checkpoint_path,modelopt_exists,expected",
-        [
-            ("/checkpoints", True, True),
-            ("/checkpoints", False, False),
-            ("/nonexistent", False, False),
-        ],
-    )
-    def test_has_modelopt_state(self, checkpoint_path, modelopt_exists, expected):
-        """Test modelopt state detection."""
-        if modelopt_exists and checkpoint_path != "/nonexistent":
-            with tempfile.TemporaryDirectory() as temp_dir:
-                checkpoint_dir = Path(temp_dir)
-                modelopt_state_path = checkpoint_dir / "modelopt_state"
-                modelopt_state_path.mkdir()
+    def test_has_modelopt_state_at_root(self):
+        """Test modelopt state detection when modelopt_state is at root level."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_dir = Path(temp_dir)
+            modelopt_state_path = checkpoint_dir / "modelopt_state"
+            modelopt_state_path.mkdir()
 
-                _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 1})])
+            _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 1})])
 
-                result = has_modelopt_state(str(checkpoint_dir))
-                assert result == expected
-        else:
-            if checkpoint_path == "/nonexistent":
-                result = has_modelopt_state(checkpoint_path)
-                assert result == expected
-            else:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    checkpoint_dir = Path(temp_dir)
-                    # Don't create modelopt_state folder
+            result = has_modelopt_state(str(checkpoint_dir))
+            assert result is True
 
-                    result = has_modelopt_state(str(checkpoint_dir))
-                    assert result == expected
+    def test_has_modelopt_state_missing(self):
+        """Test modelopt state detection when modelopt_state doesn't exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_dir = Path(temp_dir)
+            # Don't create modelopt_state folder
+            result = has_modelopt_state(str(checkpoint_dir))
+            assert result is False
+
+    def test_has_modelopt_state_nonexistent_path(self):
+        """Test modelopt state detection with nonexistent path."""
+        result = has_modelopt_state("/nonexistent/path")
+        assert result is False
 
     def test_has_modelopt_state_file_instead_of_dir(self):
         """Test when modelopt_state exists but is a file, not a directory."""
@@ -317,21 +192,19 @@ class TestPostTrainingCheckpointUtilities:
             result = has_modelopt_state(str(checkpoint_path))
             assert result is False
 
-    @patch("megatron.bridge.training.post_training.checkpointing.torch.load")
-    @patch("megatron.bridge.training.post_training.checkpointing.os.path.isdir")
-    def test_has_modelopt_state_with_mock(self, mock_isdir, mock_torch_load):
-        """Test has_modelopt_state with mocked os.path.isdir and torch.load."""
-        mock_isdir.return_value = True
-        mock_torch_load.return_value = {"modelopt_state_dict": [("quantization", {"foo": "bar"})]}
+    def test_has_modelopt_state_in_iteration_dir(self):
+        """Test has_modelopt_state when modelopt_state is in an iteration directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_dir = Path(temp_dir)
+            iter_dir = checkpoint_dir / "iter_0000100"
+            iter_dir.mkdir()
 
-        result = has_modelopt_state("/fake/checkpoint/path")
-        assert result is True
-        # has_modelopt_state calls isdir twice:
-        # 1. In _get_modelopt_checkpoint_path() to check if checkpoint_path exists
-        # 2. In has_modelopt_state() to check if modelopt_state subfolder exists
-        assert mock_isdir.call_count == 2
-        mock_isdir.assert_any_call("/fake/checkpoint/path")
-        mock_isdir.assert_any_call("/fake/checkpoint/path/modelopt_state")
+            modelopt_state_path = iter_dir / "modelopt_state"
+            modelopt_state_path.mkdir()
+            _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 1})])
+
+            result = has_modelopt_state(str(checkpoint_dir))
+            assert result is True
 
     def test_has_modelopt_state_with_none_path(self):
         """Test has_modelopt_state with None checkpoint path."""
@@ -386,12 +259,8 @@ class TestPostTrainingCheckpointUtilities:
             modelopt_state_path.mkdir()
             _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 1})])
 
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-                mock_load.return_value = {"iteration": 100}
-
-                result = has_modelopt_state(str(checkpoint_path))
-                assert result is True
+            result = has_modelopt_state(str(checkpoint_path))
+            assert result is True
 
     def test_has_modelopt_state_with_iter_folders_no_modelopt_state(self):
         """Test has_modelopt_state when iter_* folders exist but no modelopt_state."""
@@ -401,12 +270,8 @@ class TestPostTrainingCheckpointUtilities:
             iter_folder.mkdir()
             # Don't create modelopt_state folder
 
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-                mock_load.return_value = {"iteration": 100}
-
-                result = has_modelopt_state(str(checkpoint_path))
-                assert result is False
+            result = has_modelopt_state(str(checkpoint_path))
+            assert result is False
 
     def test_has_modelopt_state_with_multiple_iter_folders(self):
         """Test has_modelopt_state finds modelopt_state in the latest iter folder."""
@@ -423,20 +288,8 @@ class TestPostTrainingCheckpointUtilities:
             modelopt_state_path.mkdir()
             _write_modelopt_common_state(modelopt_state_path, [("quantization", {"value": 2})])
 
-            # Mock the dist_checkpointing.load_common_state_dict
-            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-
-                def load_side_effect(path):
-                    if "iter_0000100" in path:
-                        return {"iteration": 100}
-                    elif "iter_0000200" in path:
-                        return {"iteration": 200}
-                    return None
-
-                mock_load.side_effect = load_side_effect
-
-                result = has_modelopt_state(str(checkpoint_path))
-                assert result is True
+            result = has_modelopt_state(str(checkpoint_path))
+            assert result is True
 
 
 class TestLoadModeloptState:
