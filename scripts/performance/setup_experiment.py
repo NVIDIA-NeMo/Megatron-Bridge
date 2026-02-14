@@ -487,6 +487,7 @@ def main(
             if not is_long_convergence_run:
                 n_attempts = max_retries
                 is_finished_experiment = True
+                break
 
         if is_finished_experiment and is_testing_passed:
             break
