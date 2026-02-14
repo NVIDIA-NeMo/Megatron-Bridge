@@ -949,6 +949,9 @@ class LoggerConfig:
 
     # ---------------- Logging config. ----------------
 
+    skip_train_metrics_log: bool = False
+    """Skips logging of training metrics to all logging backends and to the console as well."""
+
     log_interval: int = 100
     """Report loss and timing interval."""
 
