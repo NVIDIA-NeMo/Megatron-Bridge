@@ -26,6 +26,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_model_config
+from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -101,6 +102,16 @@ def evaluate(
     eval_batch_size = state.cfg.train.global_batch_size
     eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
 
+    if not state.cfg.dist.use_decentralized_pg:
+        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+            model,
+            seq_length=state.cfg.model.seq_length,
+            micro_batch_size=state.cfg.train.micro_batch_size,
+            decoder_seq_length=state.cfg.model.seq_length,
+        )
+    else:
+        adjust_tensor_shapes_fn = None
+
     with torch.no_grad():
         if verbose:
             print_rank_0(f"Evaluating on {state.cfg.validation.eval_iters * eval_batch_size} samples")
@@ -172,6 +183,7 @@ def evaluate(
                 seq_length=seq_length,
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
+                adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
                 p2p_communicator=p2p_communicator,
                 pg_collection=pg_collection,
             )

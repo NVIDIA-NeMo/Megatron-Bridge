@@ -119,13 +119,9 @@ class Qwen3VLModel(MegatronModule):
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
-        # These attributes are needed to check if the vision model should be frozen.
-        self.freeze_vision_model = False
-
         if self.pre_process:
             if language_transformer_config.use_hf_vision_model:
                 raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
-            # use megatron vision model
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
             vision_patch_merger_spec = PatchMergerSubmodules(
                 patch_norm=TENorm,
@@ -372,9 +368,8 @@ class Qwen3VLModel(MegatronModule):
             if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
             if packed_seq_params is not None:
-                assert attention_mask is not None, (
-                    "attention_mask is required for compute position and split by cp and sp"
-                )
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
                 input_ids_thd, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )

@@ -41,6 +41,36 @@ QWEN3_VL_FINETUNE_RECIPES = [
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
     ),
+    (
+        qwen3_vl_8b_finetune_config,
+        "qwen3_vl_8b_finetune",
+        {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 1,
+        },
+        {
+            "freeze_language_model": False,
+            "freeze_vision_model": False,
+            "freeze_vision_projection": False,
+            "num_layers": 4,
+            "deepstack_visual_indexes": [0, 1, 2],
+            "recompute_granularity": "full",
+            "recompute_method": "uniform",
+            "recompute_num_layers": 1,
+        },
+    ),
+    (
+        qwen3_vl_8b_finetune_config,
+        "qwen3_vl_8b_finetune",
+        {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 1,
+        },
+        {
+            "num_layers": 4,
+            "deepstack_visual_indexes": [0, 1, 2],
+        },
+    ),
 ]
 
 QWEN3_VL_FINETUNE_PACKED_RECIPES = [
