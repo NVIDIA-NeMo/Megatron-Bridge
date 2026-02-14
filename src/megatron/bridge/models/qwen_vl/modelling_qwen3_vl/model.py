@@ -142,6 +142,7 @@ class Qwen3VLModel(MegatronModule):
                 vision_patch_merger_spec,
                 pre_process=True,
                 post_process=True,
+                pg_collection=pg_collection,
             )
 
         self.language_model = Qwen3VLGPTModel(
@@ -175,6 +176,16 @@ class Qwen3VLModel(MegatronModule):
             assert self.config.calculate_per_token_loss, (
                 "Qwen3-VL model only supports context parallelism with calculate_per_token_loss enabled"
             )
+
+        # Expose position_embedding_type, rotary_pos_emb, and decoder for CUDA graph helper compatibility
+        # The CUDA graph helper expects model.position_embedding_type, model.rotary_pos_emb, and model.decoder,
+        # but in Qwen3VL these are nested under language_model. This provides direct access.
+        # Expose these attributes for CUDA graph helper compatibility only when CUDA graph is enabled
+        cuda_graph_enabled = getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        if cuda_graph_enabled:
+            self.position_embedding_type = self.language_model.position_embedding_type
+            self.rotary_pos_emb = self.language_model.rotary_pos_emb
+            self.decoder = self.language_model.decoder
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
