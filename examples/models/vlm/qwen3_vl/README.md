@@ -113,6 +113,13 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor 
 
 W&B report coming soon.
 
+
+### Sequence-Packed Parameter-Efficient Fine-Tuning (PEFT) with LoRA
+
+See the [seq_packing.sh](seq_packing.sh) script for LoRA fine-tuning with sequence-packing.
+
+W&B report coming soon.
+
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
 ## Evaluation
