@@ -508,8 +508,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Map config fields using CONFIG_MAPPING (reverse direction)
         # Supports dot notation for nested dict building (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in cls.CONFIG_MAPPING:
+            has_value = hasattr(provider, megatron_name)
             value = getattr(provider, megatron_name, None)
-            if value is not None:
+            if has_value:
                 if "." in hf_name:
                     # Nested dict: "parent.child" -> hf_config["parent"]["child"] = value
                     parts = hf_name.split(".", 1)
@@ -527,8 +528,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             hf_config["rope_scaling"]["rope_type"] = "yarn"
 
             for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
+                has_value = hasattr(provider, megatron_key)
                 value = getattr(provider, megatron_key, None)
-                if value is not None:
+                if has_value:
                     hf_config["rope_scaling"][hf_key] = value
 
             yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)

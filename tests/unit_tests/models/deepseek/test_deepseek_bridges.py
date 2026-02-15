@@ -139,6 +139,16 @@ class TestDeepSeekV2Bridge:
 
         assert provider.q_lora_rank is None
 
+    def test_megatron_to_hf_config_preserves_none_q_lora_rank(self, mock_pretrained_v2):
+        mock_pretrained_v2.config.q_lora_rank = None
+        bridge = DeepSeekV2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v2)
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert "q_lora_rank" in hf_config
+        assert hf_config["q_lora_rank"] is None
+
 
 class TestDeepSeekV3Bridge:
     """Test cases for DeepSeekV3Bridge."""
@@ -255,6 +265,16 @@ class TestDeepSeekV3Bridge:
         provider = bridge.provider_bridge(mock_pretrained_v3)
 
         assert provider.q_lora_rank is None
+
+    def test_megatron_to_hf_config_preserves_none_q_lora_rank(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.q_lora_rank = None
+        bridge = DeepSeekV3Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v3)
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert "q_lora_rank" in hf_config
+        assert hf_config["q_lora_rank"] is None
 
     def test_export_injects_inv_freq_for_layer(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
