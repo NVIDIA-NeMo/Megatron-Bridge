@@ -85,6 +85,8 @@ class Qwen3VLModel(MegatronModule):
         pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+        self.vision_embeds = None
+        self.deepstack_feature_lists = None
         self.language_transformer_config = language_transformer_config
 
         language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
@@ -127,7 +129,7 @@ class Qwen3VLModel(MegatronModule):
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
-        if self.add_encoder:
+        if self.pre_process:
             if language_transformer_config.use_hf_vision_model:
                 raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
@@ -144,7 +146,9 @@ class Qwen3VLModel(MegatronModule):
             megatron_vision_transformer_config.pipeline_model_parallel_size = 1
             megatron_vision_transformer_config.first_pipeline_num_layers = None
             self.vision_transformer_config = megatron_vision_transformer_config
+            print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.__init__(), self.vision_transformer_config.deepstack_visual_indexes: {self.vision_transformer_config.deepstack_visual_indexes}")
 
+        if self.add_encoder:
             self.vision_model = Qwen3VLVisionModel(
                 megatron_vision_transformer_config,
                 vision_transformer_layer_spec,
@@ -196,11 +200,14 @@ class Qwen3VLModel(MegatronModule):
     def set_input_tensor(self, input_tensor: List[Dict[str, torch.Tensor]]):
         """Set input tensor for pipeline parallelism.
         """
+        if input_tensor is None or len(input_tensor) == 0 or input_tensor[0] is None:
+            print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.set_input_tensor(), input_tensor is None or len(input_tensor) == 0 or input_tensor[0] is None")
+            return
         if self.config.use_dist_train:
-            print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.set_input_tensor()")
-            assert isinstance(input_tensor, list), "Input tensor must be a list"
-            assert len(input_tensor) == 1, "Input tensor must be a list of length 1"
-            assert isinstance(input_tensor[0], dict), "Input tensor[0] must be a dictionary"
+            print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.set_input_tensor(), input_tensor: {input_tensor}")
+            assert isinstance(input_tensor, list), "Input tensor must be a list, but got {type(input_tensor)}"
+            assert len(input_tensor) == 1, "Input tensor must be a list of length 1, but got {len(input_tensor)}"
+            assert isinstance(input_tensor[0], dict), "Input tensor[0] must be a dictionary, but got {type(input_tensor[0])}"
             input_dict = input_tensor[0]
 
             if 'vision_module' in input_dict:
@@ -356,10 +363,15 @@ class Qwen3VLModel(MegatronModule):
                             hidden_states=vision_data,
                             grid_thw=vision_grid_thw,
                         )
+                        vision_module_output = deepstack_feature_lists
+                        vision_module_output.append(vision_embeds)
+                        vision_module_output_tensor = torch.cat(vision_module_output, dim=0)
+                        output_vision_module = {'vision_module': vision_module_output_tensor}                         
                         print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.forward(), after vision_model.forward(), vision_embeds.shape: {vision_embeds.shape}")
                     else:
                         vision_embeds = self.vision_embeds
                         deepstack_feature_lists = self.deepstack_feature_lists                        
+                        print(f"for debug, rank {torch.distributed.get_rank()} in Qwen3VLModel.forward(), vision_model is None, vision_embeds.shape: {vision_embeds.shape}")
                 else:
                     vision_embeds = torch.zeros(
                         (0, self.language_model.config.hidden_size),
@@ -375,10 +387,7 @@ class Qwen3VLModel(MegatronModule):
                                 dtype=torch.bfloat16,
                             )
                         )
-                vision_module_output = deepstack_feature_lists
-                vision_module_output.append(vision_embeds)
-                vision_module_output_tensor = torch.cat(vision_module_output, dim=0)
-                output_vision_module = {'vision_module': vision_module_output_tensor}                        
+                                       
                 if cp_size > 1 and self.config.vision_dp_when_cp:
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
@@ -530,5 +539,8 @@ class Qwen3VLModel(MegatronModule):
             **kwargs,
         )
         torch.cuda.nvtx.range_pop()
+        if self.config.use_dist_train:
+            if not is_pp_last_stage(self.pg_collection.pp):
+                return {'language_module': output}
 
         return output
