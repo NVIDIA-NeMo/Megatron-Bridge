@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping
+from typing import Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -116,6 +116,12 @@ class MimoBridge(Qwen2Bridge):
 
     @staticmethod
     def _swap_input_proj_halves(weight: torch.Tensor) -> torch.Tensor:
+        if weight.ndim < 2:
+            raise ValueError(
+                f"Expected tensor with at least 2 dimensions for input_proj weight, got shape {weight.shape}"
+            )
+        if weight.shape[1] % 2 != 0:
+            raise ValueError(f"Expected even dimension at dim=1 for input_proj weight, got shape {weight.shape}")
         first_half, second_half = weight.chunk(2, dim=1)
         return torch.cat((second_half, first_half), dim=1)
 
@@ -130,9 +136,9 @@ class MimoBridge(Qwen2Bridge):
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
-        converted_weights_dict: Dict[str, torch.Tensor],
+        converted_weights_dict: dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         converted_weights_dict = super().maybe_modify_converted_hf_weight(
             task,
             converted_weights_dict,
