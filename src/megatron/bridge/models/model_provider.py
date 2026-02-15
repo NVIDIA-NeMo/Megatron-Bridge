@@ -583,13 +583,20 @@ def get_model(
             model_module.cuda(torch.cuda.current_device())
 
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
-
-        # Maintain expert bias in float32 wrapped in Float16Module
+        # Save expert bias in float32 to avoid precision loss during conversion
+        keep_in_fp32 = []
         for model_module in model:
             for submodule in model_module.modules():
                 if hasattr(submodule, "_maintain_float32_expert_bias"):
-                    submodule._maintain_float32_expert_bias()
+                    expert_bias = getattr(submodule, "expert_bias", None)
+                    if expert_bias is not None:
+                        keep_in_fp32.append((submodule, expert_bias.data.clone()))
+
+        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
+
+        # Restore expert bias to float32
+        for submodule, fp32_data in keep_in_fp32:
+            submodule.expert_bias.data = fp32_data
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
