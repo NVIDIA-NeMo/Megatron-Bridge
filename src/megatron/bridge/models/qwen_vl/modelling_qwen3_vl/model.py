@@ -354,6 +354,14 @@ class Qwen3VLModel(MegatronModule):
                     vision_grid_thw = collapse_thw(vision_grid_thw)
                 if vision_data.shape[0] > 0:
                     if self.vision_model is not None:
+                        if self.config.use_dist_train:
+                            assert cp_size == 1, "currently, dist train does not support context parallelism for encoder"
+                            num_chunks = self.config.dist_train_vision_chunk_size
+                            chunk_idx = self.pg_collection.dp.rank() % num_chunks
+                            vision_data_chunks = torch.chunk(vision_data, chunks=num_chunks, dim=0)
+                            vision_data = vision_data_chunks[chunk_idx]
+                            vision_grid_thw_chunks = torch.chunk(vision_grid_thw, chunks=num_chunks, dim=0)
+                            vision_grid_thw = vision_grid_thw_chunks[chunk_idx]
                         vision_embeds, deepstack_feature_lists = self.vision_model(
                             hidden_states=vision_data,
                             grid_thw=vision_grid_thw,
