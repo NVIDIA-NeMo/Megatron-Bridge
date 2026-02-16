@@ -67,6 +67,17 @@ def get_vision_model_config(hf_config, megatron_config=None):
         add_bias_linear=True,
         add_qkv_bias=True,
     )
+    if megatron_config.vision_model_type == "vit_2b":
+        hf_config.depth = 45
+        hf_config.hidden_size = 1536
+        hf_config.num_heads = 16
+        hf_config.intermediate_size = 8960
+        hf_config.patch_size = 16
+        hf_config.spatial_merge_size = 2
+        if hasattr(hf_config, "head_dim"):
+            hf_config.head_dim = 96
+    else:
+        assert megatron_config.vision_model_type is None, ValueError(f"support only vit_2b, but got {config.vision_model_type}")
 
     # apply text model config to vision model config
     config.recompute_granularity = megatron_config.recompute_granularity

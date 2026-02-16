@@ -198,6 +198,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     _pg_collection: Optional[ProcessGroupCollection] = None
 
+    # vision model type will be used to override the vision model config.
+    # if None, the vision model config will be used as is.
+    # currently, only vit_2b is supported.
+    vision_model_type: Optional[str] = None
+
     # parameters for DistTrain
     use_dist_train: bool = False
     dist_train_vision_chunk_size: Optional[int] = 1
