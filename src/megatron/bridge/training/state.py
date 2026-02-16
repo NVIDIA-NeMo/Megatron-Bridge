@@ -234,7 +234,13 @@ class GlobalState:
                 if logger_cfg.mlflow_run_name == "":
                     raise ValueError("Please specify the mlflow_run_name for MLFlow logging!")
 
-                import mlflow
+                try:
+                    import mlflow
+                except ModuleNotFoundError as exc:
+                    raise ModuleNotFoundError(
+                        "MLFlow logging is configured, but the 'mlflow' package is not installed. "
+                        "Install it via pip install mlflow or uv add mlflow"
+                    ) from exc
 
                 # set tracking URI
                 if logger_cfg.mlflow_tracking_uri:
