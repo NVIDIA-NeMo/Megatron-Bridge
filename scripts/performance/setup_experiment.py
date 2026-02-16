@@ -51,8 +51,6 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
     from .resiliency_plugins import FaultTolerancePlugin
 
-import logging
-
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
@@ -215,6 +213,7 @@ def main(
     golden_values_path: str,
     convergence_params: Dict[str, Any],
     performance_params: Dict[str, Any],
+    memory_params: Dict[str, Any],
     max_retries: int,
     dgxc_base_url: str,
     dgxc_cluster: str,
@@ -465,36 +464,38 @@ def main(
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
 
-            if wandb_run:
-                is_testing_passed, error_msg = calc_convergence_and_performance(
-                    model_family_name=model_family_name,
-                    model_recipe_name=model_recipe_name,
-                    assets_dir=os.path.join(job_dir, exp_name),
-                    log_paths=log_paths,
-                    loss_metric="lm loss",
-                    timing_metric="elapsed time per iteration (ms)",
-                    golden_values_path=golden_values_path,
-                    convergence_config=convergence_params,
-                    performance_config=performance_params,
-                    wandb_run=wandb_run,
-                )
+            is_testing_passed, error_msg = calc_convergence_and_performance(
+                model_family_name=model_family_name,
+                model_recipe_name=model_recipe_name,
+                assets_dir=os.path.join(job_dir, exp_name),
+                log_paths=log_paths,
+                loss_metric="lm loss",
+                timing_metric="elapsed time per iteration (ms)",
+                alloc_metric="alloc",
+                max_alloc_metric="max_alloc",
+                golden_values_path=golden_values_path,
+                convergence_config=convergence_params,
+                performance_config=performance_params,
+                memory_config=memory_params,
+                wandb_run=wandb_run,
+            )
 
+            if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
-            else:
-                is_testing_passed = True
 
-            if not is_testing_passed and not is_long_convergence_run:
-                if n_attempts < max_retries:
-                    logger.error(f"Starting attempt {n_attempts + 2} of {max_retries + 1} for {exp_name}")
-                n_attempts += 1
-                is_finished_experiment = False
+            if not is_long_convergence_run:
+                n_attempts = max_retries
+                is_finished_experiment = True
+                break
 
         if is_finished_experiment and is_testing_passed:
             break
 
     if not is_testing_passed and error_msg is not None:
         raise AssertionError(error_msg)
+    if is_testing_passed and error_msg is not None:
+        logger.warning(error_msg)
 
     if not is_finished_experiment:
         raise Exception("Megatron-Bridge CI test job failed")
@@ -585,6 +586,9 @@ if __name__ == "__main__":
         performance_params={
             "timing_threshold": args.timing_threshold,
             "skip_first_percent_time": args.skip_first_percent_time,
+        },
+        memory_params={
+            "memory_threshold": args.memory_threshold,
         },
         max_retries=args.max_retries,
         dgxc_base_url=args.dgxc_base_url,
