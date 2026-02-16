@@ -95,7 +95,7 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size > 0:
             from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
 
-            if not self.train_path_packed.is_file():
+            if not self._packed_path_exists(self.train_path_packed):
                 print_rank_0(f"Preparing packed training data at {self.train_path_packed}")
                 prepare_packed_sequence_data(
                     input_path=self.train_path,
@@ -107,9 +107,11 @@ class FinetuningDatasetBuilder:
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
                     pad_seq_to_mult=self._pad_seq_to_mult,
+                    num_tokenizer_workers=self.packed_sequence_specs.num_tokenizer_workers,
+                    save_format=self.packed_sequence_specs.packed_sequence_format,
                 )
 
-            if self.do_validation and not self.validation_path_packed.is_file():
+            if self.do_validation and not self._packed_path_exists(self.validation_path_packed):
                 print_rank_0(f"Preparing packed validation data at {self.validation_path_packed}")
                 prepare_packed_sequence_data(
                     input_path=self.validation_path,
@@ -121,6 +123,8 @@ class FinetuningDatasetBuilder:
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
                     pad_seq_to_mult=self._pad_seq_to_mult,
+                    num_tokenizer_workers=self.packed_sequence_specs.num_tokenizer_workers,
+                    save_format=self.packed_sequence_specs.packed_sequence_format,
                 )
 
     def build(self) -> list[Optional[Any]]:
@@ -155,6 +159,7 @@ class FinetuningDatasetBuilder:
         train_ds = self._create_dataset(
             self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
             pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
+            pack_save_format=None if self.packed_sequence_size <= 0 else self.packed_sequence_specs.packed_sequence_format,
             max_num_samples=self.max_train_samples,
             **self.dataset_kwargs,
         )
@@ -163,6 +168,7 @@ class FinetuningDatasetBuilder:
             valid_ds = self._create_dataset(
                 self.validation_path if self.packed_sequence_size <= 0 else self.validation_path_packed,
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
+                pack_save_format=None if self.packed_sequence_size <= 0 else self.packed_sequence_specs.packed_sequence_format,
                 is_test=True,
                 **self.dataset_kwargs,
             )
@@ -184,6 +190,7 @@ class FinetuningDatasetBuilder:
         self,
         path: Union[str, Path],
         pack_metadata_path: Optional[Union[str, Path]] = None,
+        pack_save_format: Optional[str] = None,
         is_test: bool = False,
         **kwargs: Any,
     ) -> Optional[Any]:
@@ -200,9 +207,14 @@ class FinetuningDatasetBuilder:
         """
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
-            path_exists = msc.Path(path).exists()
+            if pack_save_format == "mmap":
+                path_exists = msc.Path(str(path) + '.idx.npy').is_file() and msc.Path(str(path) + '.bin').is_file()
+            else: path_exists = msc.Path(path).exists()
         else:
-            path_exists = Path(path).exists()
+            if pack_save_format == "mmap":
+                path_exists = Path(str(path) + '.idx.npy').is_file() and Path(str(path) + '.bin').is_file()
+            else:
+                path_exists = Path(path).exists()
 
         if not path_exists:
             print_rank_0(f"Warning: Dataset path {path} does not exist")
@@ -283,7 +295,7 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size > 0:
             if self.packed_sequence_specs.packed_train_data_path is not None:
                 return self.packed_sequence_specs.packed_train_data_path
-            return self.default_pack_path / f"training_{self.packed_sequence_size}.npy"
+            return self.default_pack_path / f"training_{self.packed_sequence_size}.{self.packed_sequence_specs.packed_sequence_format}"
         else:
             raise ValueError("`train_path_packed` invalid since packed sequence size is not specified.")
 
@@ -303,7 +315,7 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size > 0:
             if self.packed_sequence_specs.packed_val_data_path is not None:
                 return self.packed_sequence_specs.packed_val_data_path
-            return self.default_pack_path / f"validation_{self.packed_sequence_size}.npy"
+            return self.default_pack_path / f"validation_{self.packed_sequence_size}.{self.packed_sequence_specs.packed_sequence_format}"
         else:
             raise ValueError("`validation_path_packed` invalid since packed sequence size is not specified.")
 
@@ -340,3 +352,8 @@ class FinetuningDatasetBuilder:
             return tokenizer_model_name
         else:
             return f"unknown_tokenizer_{hash(self.tokenizer)}"
+
+    def _packed_path_exists(self, path: Path) -> bool:
+        if self.packed_sequence_specs.packed_sequence_format == "mmap":
+            return path.with_suffix(path.suffix + '.idx.npy').is_file() and path.with_suffix(path.suffix + '.bin').is_file()
+        return path.is_file()
