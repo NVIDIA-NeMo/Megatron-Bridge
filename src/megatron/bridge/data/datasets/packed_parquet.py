@@ -263,6 +263,37 @@ def resolve_packed_parquet_paths(spec: str | Path) -> list[str]:
     return _resolve_parquet_paths(str(spec))
 
 
+def write_packed_parquet(
+    rows: list[dict],
+    output_path: str | Path,
+    row_group_size: int = 500,
+) -> None:
+    """Write packed sequence data to a Parquet file.
+
+    Args:
+        rows: List of dicts with keys 'input_ids', 'loss_mask', 'seq_start_id'.
+              This is the output format of fill_packing_strategy().
+        output_path: Path to write the Parquet file.
+        row_group_size: Number of rows per row group (default 500).
+    """
+    pa, pq = _lazy_import_pyarrow()
+
+    table = pa.table({
+        "input_ids": [row["input_ids"] for row in rows],
+        "loss_mask": [row["loss_mask"] for row in rows],
+        "seq_start_id": [row["seq_start_id"] for row in rows],
+    })
+
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        buf = pa.BufferOutputStream()
+        pq.write_table(table, buf, row_group_size=row_group_size)
+        with msc.open(str(output_path), "wb") as f:
+            f.write(buf.getvalue().to_pybytes())
+    else:
+        pq.write_table(table, str(output_path), row_group_size=row_group_size)
+
+
 class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
     """Dataset for packed sequences stored in Parquet format.
 

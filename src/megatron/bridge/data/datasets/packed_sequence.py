@@ -13,6 +13,7 @@
 # limitations under the License.
 import json
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -174,11 +175,18 @@ def prepare_packed_sequence_data(
     output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
 
     # save output data
-    if MultiStorageClientFeature.is_enabled():
-        msc = MultiStorageClientFeature.import_package()
-        msc.numpy.save(output_path, output_data)
+    output_path_str = str(output_path)
+    if output_path_str.lower().endswith((".parquet", ".pq")):
+        from megatron.bridge.data.datasets.packed_parquet import write_packed_parquet
+
+        write_packed_parquet(output_data, output_path)
     else:
-        np.save(output_path, output_data)
+        # Legacy .npy format
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            msc.numpy.save(output_path, output_data)
+        else:
+            np.save(output_path, output_data)
 
     # save packing metadata, packing_metadata is appended to the packing file if it exists
     if output_metadata_path is not None:
@@ -278,6 +286,12 @@ class PackedSequenceSpecs:
 
         # Check if it's an .npy file (legacy format)
         if path_str.lower().endswith(".npy"):
+            warnings.warn(
+                f"The .npy packed sequence format is deprecated and will be removed in the next release. "
+                f"Please use packed parquet format instead. Path: {path_str}",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
                 path_obj = msc.Path(path_str)

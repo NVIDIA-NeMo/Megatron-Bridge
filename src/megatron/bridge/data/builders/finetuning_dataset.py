@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import warnings
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -100,56 +101,69 @@ class FinetuningDatasetBuilder:
 
         Skips preparation if:
         - packed_sequence_size <= 0 (packing disabled)
-        - train/val paths are already packed parquet specs (externally prepared)
-        - train/val .npy files already exist
+        - packed data files already exist (parquet or legacy .npy)
         """
         if self.packed_sequence_size <= 0:
             return
 
         from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
 
-        # Skip if train path is already a packed parquet spec (externally prepared)
-        if is_packed_parquet_spec(str(self.train_path_packed)):
-            print_rank_0(
-                f"Skipping packed training data preparation - using externally prepared "
-                f"packed parquet: {self.train_path_packed}"
-            )
-        elif not self._packed_path_exists(self.train_path_packed):
-            print_rank_0(f"Preparing packed training data at {self.train_path_packed}")
-            prepare_packed_sequence_data(
-                input_path=self.train_path,
-                output_path=self.train_path_packed,
-                packed_sequence_size=self.packed_sequence_size,
-                tokenizer=self.tokenizer,
-                max_seq_length=self.seq_length,
-                seed=self.seed,
-                output_metadata_path=self.pack_metadata,
-                dataset_kwargs=self.dataset_kwargs,
-                pad_seq_to_mult=self._pad_seq_to_mult,
-            )
+        self._prepare_packed_split(
+            split_name="training",
+            packed_path=self.train_path_packed,
+            input_path=self.train_path,
+        )
 
         if not self.do_validation:
             return
 
-        # Skip if val path is already a packed parquet spec (externally prepared)
-        if is_packed_parquet_spec(str(self.validation_path_packed)):
-            print_rank_0(
-                f"Skipping packed validation data preparation - using externally prepared "
-                f"packed parquet: {self.validation_path_packed}"
+        self._prepare_packed_split(
+            split_name="validation",
+            packed_path=self.validation_path_packed,
+            input_path=self.validation_path,
+        )
+
+    def _prepare_packed_split(
+        self,
+        split_name: str,
+        packed_path: Union[str, Path],
+        input_path: Path,
+    ) -> None:
+        """Prepare a single packed data split if it doesn't already exist.
+
+        Args:
+            split_name: Name of the split (for logging).
+            packed_path: Output path for the packed data.
+            input_path: Input path to the raw dataset.
+        """
+        from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
+
+        if self._packed_path_exists(packed_path):
+            print_rank_0(f"Skipping packed {split_name} data preparation - already exists: {packed_path}")
+            return
+
+        packed_path_str = str(packed_path)
+        if packed_path_str.lower().endswith(".npy"):
+            warnings.warn(
+                "Automatic .npy packed sequence preparation is deprecated and will be removed in the next release. "
+                "Please use packed parquet format instead.",
+                DeprecationWarning,
+                stacklevel=3,
             )
-        elif not self._packed_path_exists(self.validation_path_packed):
-            print_rank_0(f"Preparing packed validation data at {self.validation_path_packed}")
-            prepare_packed_sequence_data(
-                input_path=self.validation_path,
-                output_path=self.validation_path_packed,
-                packed_sequence_size=self.packed_sequence_size,
-                tokenizer=self.tokenizer,
-                max_seq_length=self.seq_length,
-                seed=self.seed,
-                output_metadata_path=self.pack_metadata,
-                dataset_kwargs=self.dataset_kwargs,
-                pad_seq_to_mult=self._pad_seq_to_mult,
-            )
+            return
+
+        print_rank_0(f"Preparing packed {split_name} data at {packed_path}")
+        prepare_packed_sequence_data(
+            input_path=input_path,
+            output_path=packed_path,
+            output_metadata_path=self.pack_metadata,
+            packed_sequence_size=self.packed_sequence_size,
+            tokenizer=self.tokenizer,
+            max_seq_length=self.seq_length,
+            seed=self.seed,
+            dataset_kwargs=self.dataset_kwargs,
+            pad_seq_to_mult=self._pad_seq_to_mult,
+        )
 
     def _packed_path_exists(self, path: Union[str, Path]) -> bool:
         """Check if a packed data path exists.
@@ -352,7 +366,7 @@ class FinetuningDatasetBuilder:
 
     @property
     def train_path_packed(self) -> Path:
-        """Path to the packed training dataset file (.npy).
+        """Path to the packed training dataset file.
 
         Determined by `packed_sequence_specs` or defaults based on the
         `default_pack_path` and `packed_sequence_size`.
@@ -366,13 +380,13 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size > 0:
             if self.packed_sequence_specs.packed_train_data_path is not None:
                 return self.packed_sequence_specs.packed_train_data_path
-            return self.default_pack_path / f"training_{self.packed_sequence_size}.npy"
+            return self.default_pack_path / f"training_{self.packed_sequence_size}.idx.parquet"
         else:
             raise ValueError("`train_path_packed` invalid since packed sequence size is not specified.")
 
     @property
     def validation_path_packed(self) -> Path:
-        """Path to the packed validation dataset file (.npy).
+        """Path to the packed validation dataset file.
 
         Determined by `packed_sequence_specs` or defaults based on the
         `default_pack_path` and `packed_sequence_size`.
@@ -386,7 +400,7 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size > 0:
             if self.packed_sequence_specs.packed_val_data_path is not None:
                 return self.packed_sequence_specs.packed_val_data_path
-            return self.default_pack_path / f"validation_{self.packed_sequence_size}.npy"
+            return self.default_pack_path / f"validation_{self.packed_sequence_size}.idx.parquet"
         else:
             raise ValueError("`validation_path_packed` invalid since packed sequence size is not specified.")
 
