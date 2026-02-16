@@ -4,11 +4,11 @@ Thanks for your interest in contributing to Megatron-Bridge!
 
 ## 🛠️ Setting Up Your Environment
 
+### Development Environment
+
 You can either follow the steps below to set up the environment from scratch, or use the [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags), which provides a pre-built environment and makes these steps unnecessary.
 
-### Development Container
-
-For containerized development, use our Dockerfile for building your own container:
+**Build and run the Docker container**:
 
 ```bash
 docker build \
@@ -17,7 +17,7 @@ docker build \
     .
 ```
 
-Start your container:
+To start a shell in the container to interactively run/develop:
 
 ```bash
 docker run --rm -it -w /workdir -v $(pwd):/opt/Megatron-Bridge \
@@ -26,19 +26,195 @@ docker run --rm -it -w /workdir -v $(pwd):/opt/Megatron-Bridge \
   megatron-bridge
 ```
 
-## 📝 Writing tests
+If you are using VSCode/Cursor you can also use Dev Containers. Here's a devcontainer.json to get you started:
+
+```jsonc
+{
+    "name": "megatron-bridge-dev",
+    "image": "megatron-bridge:latest",
+    "runArgs": [
+        "--gpus",
+        "all",
+        "--ulimit",
+        "memlock=-1",
+        "--ulimit",
+        "stack=67108864",
+        "--shm-size=24g",
+        "--privileged",
+        "--pid=host"
+    ]
+
+    // NOTE: Here is an example of how you can set up some common mounts, environment variables, and set up your shell.
+    //       Feel free to adapt to your development workflow and remember to replace the paths with your username.
+
+    //"mounts": [
+    //    {"source": "/home/yourusername", "target": "/home/yourusername", "type": "bind"},
+    //    {"source": "/home/yourusername/.ssh", "target": "/root/yourusername-ssh", "type": "bind"}
+    //],
+    //"containerEnv": {
+    //    "HF_TOKEN_PATH": "/home/yourusername/.cache/huggingface/token",
+    //    "HF_HOME": "/home/yourusername/.cache/huggingface",
+    //    "HF_DATASETS_CACHE": "/home/yourusername/.cache/huggingface/datasets",
+    //    "WANDB_API_KEY": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    //},
+    // // This (1) marks all directories safe (2) copies in ssh keys (3) sources user's bashrc file
+    //"postStartCommand": "git config --global --add safe.directory '*' && cp -r /root/yourusername-ssh/* /root/.ssh/ && source /home/yourusername/.bashrc"
+}
+```
+
+## 🔄 Making Changes
+
+### Workflow: For External Contributors (Fork Required)
+
+If you're an external contributor, you'll need to fork the repository:
+
+1. **Create a fork**: Click the "Fork" button on the [GitHub repository page](https://github.com/NVIDIA-NeMo/Megatron-Bridge) or follow this [direct link to fork](https://github.com/NVIDIA-NeMo/Megatron-Bridge/fork)
+
+2. **Clone your fork**:
+   ```bash
+   git clone https://github.com/YOUR-USERNAME/Megatron-Bridge megatron-bridge
+   cd megatron-bridge
+   ```
+
+3. **Add upstream remote** to keep your fork updated:
+   ```bash
+   git remote add upstream https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+   ```
+
+4. **Install pre-commit**:
+   ```bash
+   # Requires `uv` to be installed
+   uv run --group dev pre-commit install
+   ```
+
+5. **Keep your fork updated** before starting new work:
+   ```bash
+   git fetch upstream
+   git checkout main
+   git merge upstream/main
+   git push origin main
+   ```
+
+6. **Create a new branch** for your changes:
+   ```bash
+   git checkout main
+   git switch -c your-feature-name
+   ```
+
+7. **Make your changes and commit** them:
+   ```bash
+   git add .
+   git commit --signoff -m "Your descriptive commit message"
+   ```
+
+   We require signing commits with `--signoff` (or `-s` for short). See [Signing Your Work](#signing-your-work) for details.
+
+8. **Push to your fork**:
+   ```bash
+   git push origin your-feature-name
+   ```
+
+9. **Create a pull request** from your fork's branch to the main repository's `main` branch through the GitHub web interface.
+
+### Workflow: For NVIDIA Contributors (Direct Access)
+
+If you have write access to the repository (NVIDIA contributors):
+
+1. **Clone the repository** directly:
+   ```bash
+   git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge megatron-bridge
+   cd megatron-bridge
+   ```
+
+2. **Install pre-commit** from the project root directory:
+   ```bash
+   # Requires `uv` to be installed
+   uv run --group dev pre-commit install
+   ```
+
+3. **Create a new branch** for your changes:
+   ```bash
+   git switch -c your-feature-name
+   ```
+
+4. **Make your changes and commit** them:
+   ```bash
+   git add .
+   git commit --signoff -m "Your descriptive commit message"
+   ```
+
+5. **Push your branch** to the repository:
+   ```bash
+   git push origin your-feature-name
+   ```
+
+6. **Create a pull request** from your branch to the `main` branch.
+
+## 📋 Commit and PR Title Format
+
+Format your commit messages and PR titles as:
+
+```text
+[{modules}] {type}: {description}
+```
+
+**Modules** (use the most relevant ones, separate multiple with `,`):
+- `model` - Model implementations and bridges
+- `recipe` - Training recipes
+- `training` - Training loop and utilities
+- `data` - Data loading and processing
+- `ckpt` - Checkpoint conversion and saving
+- `peft` - Parameter-efficient fine-tuning (LoRA, etc.)
+- `perf` - Performance optimizations
+- `ci` - CI/CD configuration
+- `doc` - Documentation
+- `test` - Tests
+- `build` - Build system and dependencies
+- `misc` - Other changes
+
+**Types**:
+- `feat` - New feature
+- `fix` - Bug fix
+- `refactor` - Code refactoring without changing functionality
+- `chore` - Maintenance tasks
+- `test` - Adding or updating tests
+
+**Breaking Changes**: If your PR breaks any API (CLI arguments, config, function signature, etc.), add `[BREAKING]` to the beginning of the title.
+
+**Examples**:
+```text
+[model] feat: Add Qwen3 model bridge
+[recipe, doc] feat: Add Llama 3.1 70B recipe with documentation
+[ckpt] fix: Handle missing keys in HF checkpoint conversion
+[BREAKING][training] refactor: Change optimizer config structure
+[ci, build] chore: Update ruff version
+```
+
+## 📝 Writing Tests
 
 We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and functional tests.
 
-Unit tests aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.  
-Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if no one matches.
+**Unit tests** aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.
+Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if none matches.
 
-Functional tests are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.Run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
+**Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
 
-## 📦 Dependencies management
+### Functional Test Launcher Scripts
 
-We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.  
-On a weekly basis, the CI attemps an update of the lock file to test against upstream dependencies.
+Functional tests that take longer to run should be placed in a `L2_Launch_*.sh` launcher script inside the [`tests/functional_tests/`](tests/functional_tests/) folder. These launcher scripts allow CI to run test groups in parallel, significantly reducing overall pipeline time.
+
+When adding a new `L2_Launch_*.sh` file, you **must** also update [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the `cicd-functional-tests` job matrix. Add a new entry under `matrix.include`, for example:
+
+```yaml
+- script: L2_Launch_your_new_test
+```
+
+Without this step, your new launcher script will not be picked up by CI.
+
+## 📦 Dependencies Management
+
+We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.
+On a weekly basis, the CI attempts an update of the lock file to test against upstream dependencies.
 
 New required dependencies can be added by `uv add $DEPENDENCY`.
 
@@ -68,9 +244,10 @@ uv run ruff format .
 
 Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
 
-### 📝 Documentation
 
-**Important**: All new key features (ex: enabling a new inference optimized library, enabling a new deployment option) must include documentation update (either a new doc or updating an existing one). This document update should:
+## 📄 Documentation Requirement
+
+**Important**: All new key features (e.g., enabling a new model, enabling a new parallelism strategy) must include documentation update (either a new doc or updating an existing one). This document update should:
 
 - Explain the motivation and purpose of the feature
 - Outline the technical approach and architecture
@@ -86,11 +263,11 @@ Quality documentation is essential for both the usability of Megatron-Bridge and
 
 ## ✨ Code Quality
 
-- Follow the existing code style and conventions
+- Follow the existing code style and conventions (see [CODING_GUIDELINES.md](CODING_GUIDELINES.md))
 - Write tests for new features
 - Update documentation to reflect your changes
 - Ensure all tests pass before submitting a PR
-- Do not add arbitrary defaults for configs, be as explicit as possible.
+- Do not add arbitrary defaults for configs, be as explicit as possible
 
 ## ✍️ Signing Your Work
 
@@ -183,6 +360,6 @@ You can find the commit SHA in several ways:
 - Run `git log --oneline -1` in your local repository
 - Check the commit details in your Git client
 
-## Contributing Models
+## 🤖 Contributing Models
 
 Please see our [documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html) for a detailed guide on contributing new models.

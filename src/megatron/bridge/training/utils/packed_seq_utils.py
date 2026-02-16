@@ -43,6 +43,8 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     cu_seqlens_argmin = batch.get("cu_seqlens_argmin")
     cu_seqlens_unpadded_argmin = batch.get("cu_seqlens_unpadded_argmin")
 
+    # note: if argmin is not pre-computed in the dataloader, torch.argmin here will incur a
+    # device-to-host synchronization, which can slow down training
     if cu_seqlens_argmin is not None:
         cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
     else:
@@ -56,14 +58,23 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
 
     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
 
-    # When unpadded lengths are available, use them for q/kv and keep padded
-    # offsets for kernels that support padded variants.
-    return PackedSeqParams(
-        cu_seqlens_q=cu_seqlens_unpadded if cu_seqlens_unpadded is not None else cu_seqlens_padded,
-        cu_seqlens_kv=cu_seqlens_unpadded if cu_seqlens_unpadded is not None else cu_seqlens_padded,
-        cu_seqlens_q_padded=cu_seqlens_padded,
-        cu_seqlens_kv_padded=cu_seqlens_padded,
-        max_seqlen_q=max_seqlen,
-        max_seqlen_kv=max_seqlen,
-        qkv_format="thd",
-    )
+    # When cu_seqlens_unpadded is present (pad_seq_to_mult > 1), pass both unpadded and padded
+    # for proper THD CP support. Otherwise, just use cu_seqlens_padded to avoid slower TE kernel.
+    if cu_seqlens_unpadded is not None:
+        return PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_unpadded,
+            cu_seqlens_kv=cu_seqlens_unpadded,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+            qkv_format="thd",
+        )
+    else:
+        return PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_padded,
+            cu_seqlens_kv=cu_seqlens_padded,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
+            qkv_format="thd",
+        )

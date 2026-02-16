@@ -66,7 +66,7 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V1 = replace(
     num_gpus=128,
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
-    context_parallel_size=2,
+    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     global_batch_size=64,
     cuda_graph_impl="local",
@@ -109,12 +109,13 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V1 = replace(
     BASE_LLAMA31_405B_CONFIG,
     num_gpus=128,
     tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=2,
-    virtual_pipeline_model_parallel_size=4,
+    pipeline_model_parallel_size=16,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=8,
     global_batch_size=64,
-    cuda_graph_impl="local",
+    cuda_graph_impl="none",
     cuda_graph_scope="full_iteration",
+    recompute_num_layers=1,
 )
 
 
@@ -181,10 +182,11 @@ LLAMA31_405B_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
     BASE_LLAMA31_405B_CONFIG,
     num_gpus=128,
     tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=2,
-    virtual_pipeline_model_parallel_size=4,
+    pipeline_model_parallel_size=16,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=8,
     global_batch_size=64,
+    recompute_num_layers=1,
 )
 
 LLAMA31_405B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
@@ -222,9 +224,9 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
 
 LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_CS_V1,
-    tensor_model_parallel_size=2,
+    tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
-    context_parallel_size=2,
+    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     num_gpus=256,
     global_batch_size=1536,
@@ -242,9 +244,9 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
 
 LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V1,
-    tensor_model_parallel_size=2,
     num_gpus=256,
     global_batch_size=1536,
+    cuda_graph_impl="none",
 )
 
 
@@ -281,9 +283,8 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = replace(
 LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V1,
     num_gpus=256,
-    pipeline_model_parallel_size=16,
-    context_parallel_size=1,
     global_batch_size=1536,
+    recompute_num_layers=None,
 )
 
 

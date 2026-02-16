@@ -77,10 +77,17 @@ When directly using the configuration, you must launch your training script usin
 ft_launcher \
     --rdzv_backend=c10d --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
     --nnodes=${NUM_NODES} --nproc-per-node=${NUM_GPUS_PER_NODE} \
-    --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
-    --ft-param-rank_out_of_section_timeout=300 \
+    --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
+    --ft-rank_out_of_section_timeout=300 \
     your_training_script.py
 ```
+
+> **Note**: For local testing or non-Slurm environments, you must set the `GROUP_RANK` environment variable before launching `ft_launcher`:
+> ```bash
+> export GROUP_RANK=0  # For single-node runs
+> ft_launcher ...
+> ```
+> This is required because `ft_launcher` uses `use_infra_group_rank=True` by default, which expects either `SLURM_PROCID` or `GROUP_RANK` to be set.
 
 ### Configuration Options
 
@@ -441,6 +448,7 @@ config.rerun_state_machine = RerunStateMachineConfig(
     rerun_mode="validate_results",  # or "report_determinism_stats" or "disabled"
     check_for_nan_in_loss=True,
     check_for_spiky_loss=False,
+    spiky_loss_factor=10.0,  # Adjust for your model architecture
     error_injection_rate=0,  # For testing only
     error_injection_type="transient_error",
 )
@@ -453,6 +461,7 @@ config.rerun_state_machine = RerunStateMachineConfig(
 | `rerun_mode` | `str` | `"disabled"` | Operating mode: `"disabled"`, `"validate_results"`, or `"report_determinism_stats"` |
 | `check_for_nan_in_loss` | `bool` | `True` | Check for NaN values in loss |
 | `check_for_spiky_loss` | `bool` | `False` | Check for unexpectedly large loss values |
+| `spiky_loss_factor` | `float` | `10.0` | Factor for spiky loss detection. Loss is flagged if it exceeds this multiple of max observed loss. Larger models may need higher values (e.g., 15-20 for 70B+). |
 | `error_injection_rate` | `int` | `0` | Rate for injecting test errors (testing only) |
 | `error_injection_type` | `str` | `"transient_error"` | Type of error to inject for testing |
 
