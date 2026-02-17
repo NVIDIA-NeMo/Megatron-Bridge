@@ -16,6 +16,7 @@ from typing import List, Optional, Union
 
 import torch
 import torch.distributed
+from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
@@ -120,6 +121,7 @@ def _expose_decoder_from_language_model(model):
     if hasattr(current, "language_model"):
         language_model = current.language_model
         current.decoder = language_model.decoder
+        current.vocab_size = language_model.vocab_size
 
 
 def setup_inference_wrapper(
@@ -128,6 +130,7 @@ def setup_inference_wrapper(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
     inference_max_seq_length: int = 8192,
+    inference_max_batch_size: int = 4,
 ):
     """Set up inference wrapper for the model"""
     config = model.config
@@ -148,7 +151,12 @@ def setup_inference_wrapper(
     else:
         raise ValueError(f"Unknown model config: {config}")
 
-    inference_wrapped_model = wrapper_cls(mcore_model)
+    inference_wrapped_model = wrapper_cls(mcore_model,
+        inference_context=StaticInferenceContext(
+            max_batch_size=inference_max_batch_size,
+            max_sequence_length=inference_max_seq_length,
+        ),
+    )
 
     return inference_wrapped_model
 
