@@ -24,8 +24,7 @@
 #   1. Modify the #SBATCH directives below for your cluster
 #   2. Set CONTAINER_IMAGE to your container path
 #   3. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
-#   4. Optional: set PACK_SEQUENCE=true in this script to enable packed sequence
-#   5. Submit: sbatch slurm_peft.sh
+#   4. Submit: sbatch slurm_peft.sh
 # ==============================================================================
 
 #SBATCH --job-name=nemotron3-lora
@@ -60,11 +59,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 GLOBAL_BATCH_SIZE=16
 
-# Packed sequence: true to enable --packed_sequence; false to disable
-PACK_SEQUENCE=false
-
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry
-# Each config runs in sequence; TP*PP*EP*CP must equal total GPUs for that run.
 PARALLELISM_CONFIGS=("4,1,8,1,True" "2,2,8,1,True" "2,1,8,2,True")
 
 # Container image (required)
@@ -136,12 +131,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP"
     echo "======================================"
 
-    if [ "$(echo "$PACK_SEQUENCE" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-        PACKED_SEQ_SUFFIX=_packed_seq
-    else
-        PACKED_SEQ_SUFFIX=
-    fi
-
     # Build CLI overrides for this config
     CLI_OVERRIDES=" \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -150,29 +139,26 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         train.micro_batch_size=$MICRO_BATCH_SIZE \
         train.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP}${PACKED_SEQ_SUFFIX} \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP}${PACKED_SEQ_SUFFIX} \
+        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
         model.expert_model_parallel_size=$EP \
         model.sequence_parallel=$SP \
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
-        train.global_batch_size=$GLOBAL_BATCH_SIZE
+        train.global_batch_size=$GLOBAL_BATCH_SIZE \
+        dataset.packed_sequence_specs.pad_seq_to_mult=$((CP * 2)) \
+        dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
+        dataset.seq_length=$SEQ_LENGTH \
+        model.seq_length=$SEQ_LENGTH
     "
-    if [ "$(echo "$PACK_SEQUENCE" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-        CLI_OVERRIDES="$CLI_OVERRIDES dataset.packed_sequence_specs.pad_seq_to_mult=$((CP * 2))"
-    fi
 
     CMD="python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
     CMD="$CMD --peft_scheme lora"
-    if [ "$(echo "$PACK_SEQUENCE" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
-        CMD="$CMD --packed_sequence"
-    fi
-    CMD="$CMD --seq_length $SEQ_LENGTH"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
 

@@ -40,12 +40,6 @@ Usage:
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
-    With packed sequences and custom sequence length:
-        torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe llama32_1b_pretrain_config \
-            --packed_sequence \
-            --seq_length 2048
-
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
 
@@ -118,36 +112,17 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=None,
         help="PEFT scheme to use: 'lora', 'dora', or None.",
     )
-    parser.add_argument(
-        "--packed_sequence",
-        action="store_true",
-        default=False,
-        help="Enable packed sequence training (default: False)",
-    )
-    parser.add_argument(
-        "--seq_length",
-        type=int,
-        default=None,
-        help="Sequence length for training",
-    )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
 
 
-def load_recipe(
-    recipe_name: str,
-    peft_scheme: str | None,
-    packed_sequence: bool = False,
-    seq_length: int | None = None,
-) -> ConfigContainer:
+def load_recipe(recipe_name: str, peft_scheme: str | None) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
 
     Args:
         recipe_name: Full recipe function name (e.g., 'llama32_1b_pretrain_config')
         peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
-        packed_sequence: Enable packed sequence training (default: False)
-        seq_length: Sequence length for training (optional)
 
     Returns:
         ConfigContainer from calling the recipe
@@ -164,34 +139,22 @@ def load_recipe(
 
     config_builder = getattr(recipes, recipe_name)
 
-    # Inspect the recipe's signature to determine which arguments it accepts
+    # Check if the recipe accepts a 'peft' argument
     try:
         sig = inspect.signature(config_builder)
         params = sig.parameters
-        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-
-        accepts_peft = "peft" in params or has_var_keyword
-        accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
-        accepts_seq_length = "seq_length" in params or has_var_keyword
+        accepts_peft = "peft" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
     except (ValueError, TypeError):
-        # If signature inspection fails, fallback conservatively
-        accepts_peft = True  # peft is widely supported, try passing it
-        accepts_packed_sequence = False  # new parameter, don't pass if unsure
-        accepts_seq_length = False  # new parameter, don't pass if unsure
+        # If signature inspection fails, fall back to try/except
+        accepts_peft = True
 
-    # Build kwargs dynamically based on what the recipe accepts
-    kwargs = {}
     if accepts_peft:
-        kwargs["peft"] = peft_scheme
-    if accepts_packed_sequence and packed_sequence:
-        kwargs["packed_sequence"] = packed_sequence
-    if accepts_seq_length and seq_length is not None:
-        kwargs["seq_length"] = seq_length
-
-    try:
-        return config_builder(**kwargs)
-    except TypeError:
-        # Fallback if the kwargs are not accepted despite signature inspection
+        try:
+            return config_builder(peft=peft_scheme)
+        except TypeError:
+            # Fallback if peft is not accepted despite signature inspection
+            return config_builder()
+    else:
         return config_builder()
 
 
@@ -217,12 +180,7 @@ def main() -> None:
     """Run GPT training (pretrain or finetune)."""
     args, cli_overrides = parse_args()
 
-    config: ConfigContainer = load_recipe(
-        args.recipe,
-        args.peft_scheme,
-        args.packed_sequence,
-        args.seq_length,
-    )
+    config: ConfigContainer = load_recipe(args.recipe, args.peft_scheme)
 
     config = process_config_with_overrides(
         config,
