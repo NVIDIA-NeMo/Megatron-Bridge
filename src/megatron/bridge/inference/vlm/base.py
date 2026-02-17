@@ -151,7 +151,8 @@ def setup_inference_wrapper(
     else:
         raise ValueError(f"Unknown model config: {config}")
 
-    inference_wrapped_model = wrapper_cls(mcore_model,
+    inference_wrapped_model = wrapper_cls(
+        mcore_model,
         inference_context=StaticInferenceContext(
             max_batch_size=inference_max_batch_size,
             max_sequence_length=inference_max_seq_length,
