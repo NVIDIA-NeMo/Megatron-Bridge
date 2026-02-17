@@ -204,6 +204,13 @@ class DistributedInitConfig:
     global parallel state (mpu) variables. When True, parallel groups are obtained from
     the pg_collection object rather than the global megatron.core.parallel_state module."""
 
+    create_all_gather_group: bool = False
+    """Create separate all-gather process groups for AG/RS overlap optimization.
+    When True, creates separate process groups for all-gather operations, enabling
+    overlap between all-gather (forward pass) and reduce-scatter (backward pass)
+    communications in FSDP training. This improves training performance by hiding
+    communication latency."""
+
 
 @dataclass
 class RerunStateMachineConfig:
