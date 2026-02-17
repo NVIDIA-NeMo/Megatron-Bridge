@@ -1,0 +1,445 @@
+---
+title: "Nemotron H and Nemotron Nano v2"
+description: ""
+---
+
+[Nemotron H](https://huggingface.co/collections/nvidia/nemotron-h) and [Nemotron Nano v2](https://huggingface.co/collections/nvidia/nvidia-nemotron-v2) are families of **hybrid SSM-Attention models** from **NVIDIA** that combine Mamba (State Space Model) layers with traditional attention layers. These models achieve strong performance while maintaining computational efficiency through their hybrid architecture.
+
+The Nemotron H family includes models from 4B to 56B parameters with 8K context length, while Nemotron Nano v2 models (9B and 12B) are optimized for edge deployment with extended 128K context support.
+
+## Model Families
+
+### Nemotron H
+- **4B**: 52 layers, 3072 hidden size, 8K context
+- **8B**: 52 layers, 4096 hidden size, 8K context  
+- **47B**: 98 layers, 8192 hidden size, 8K context
+- **56B**: 118 layers, 8192 hidden size, 8K context
+
+### Nemotron Nano v2
+- **9B**: 56 layers, 4480 hidden size, 128K context
+- **12B**: 62 layers, 5120 hidden size, 128K context
+
+All models are supported via the Bridge system with specialized configurations for hybrid SSM-Attention architecture.
+
+## Model Architecture
+
+### Common Features Across All Models
+- **Architecture**: Hybrid SSM-Attention (Mamba + Multi-Query Attention)
+- **SSM**: Mamba-2 selective state space layers
+- **Attention**: Multi-query attention with QK LayerNorm and RoPE
+- **Activation**: Squared ReLU (SwiGLU in FFN)
+- **Normalization**: RMSNorm
+- **Position Embedding**: RoPE (Rotary Position Embeddings)
+- **Hybrid Pattern**: Configurable layer-wise mixing of Mamba ("M") and Attention ("*") layers
+
+### Nemotron H 4B Specifications
+- **Parameters**: 4B
+- **Layers**: 52 (Hybrid pattern: `M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-`)
+- **Hidden size**: 3072
+- **FFN hidden size**: 12288
+- **Attention heads**: 32 query heads, 8 key-value groups
+- **KV channels**: 128
+- **Mamba heads**: 112
+- **Mamba head dim**: 64
+- **Mamba state dim**: 128
+- **Context Length**: 8K tokens
+
+### Nemotron H 8B Specifications
+- **Parameters**: 8B
+- **Layers**: 52 (Hybrid pattern: `M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-`)
+- **Hidden size**: 4096
+- **FFN hidden size**: 21504
+- **Attention heads**: 32 query heads, 8 key-value groups
+- **KV channels**: 128
+- **Mamba heads**: 128
+- **Mamba head dim**: 64
+- **Mamba state dim**: 128
+- **Context Length**: 8K tokens
+
+### Nemotron H 47B Specifications
+- **Parameters**: 47B
+- **Layers**: 98
+- **Hidden size**: 8192
+- **FFN hidden size**: 30720
+- **Attention heads**: 64 query heads, 8 key-value groups
+- **KV channels**: 128
+- **Mamba heads**: 256
+- **Mamba head dim**: 64
+- **Mamba state dim**: 256
+- **Context Length**: 8K tokens
+
+### Nemotron H 56B Specifications
+- **Parameters**: 56B
+- **Layers**: 118
+- **Hidden size**: 8192
+- **FFN hidden size**: 32768
+- **Attention heads**: 64 query heads, 8 key-value groups
+- **KV channels**: 128
+- **Mamba heads**: 256
+- **Mamba head dim**: 64
+- **Mamba state dim**: 256
+- **Context Length**: 8K tokens
+
+### Nemotron Nano 9B v2 Specifications
+- **Parameters**: 9B
+- **Layers**: 56 (Hybrid pattern: `M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-`)
+- **Hidden size**: 4480
+- **FFN hidden size**: 15680
+- **Attention heads**: 40 query heads, 8 key-value groups
+- **KV channels**: 128
+- **Mamba heads**: 128
+- **Mamba head dim**: 80
+- **Mamba state dim**: 128
+- **Context Length**: 128K tokens
+- **Vocab size**: 131,072
+
+### Nemotron Nano 12B v2 Specifications
+- **Parameters**: 12B
+- **Layers**: 62 (Hybrid pattern: `M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-`)
+- **Hidden size**: 5120
+- **FFN hidden size**: 20480
+- **Attention heads**: 40 query heads, 8 key-value groups
+- **KV channels**: 128
+- **Mamba heads**: 128
+- **Mamba head dim**: 80
+- **Mamba state dim**: 128
+- **Context Length**: 128K tokens
+- **Vocab size**: 131,072
+
+## Key Features
+
+### Hybrid SSM-Attention Architecture
+- **Mamba Layers (M)**: State space model layers for efficient long-range modeling
+- **Attention Layers (*)**: Standard multi-query attention for complex reasoning
+- **Configurable Pattern**: Each model has a predefined hybrid pattern balancing efficiency and performance
+
+### Advanced Optimizations
+- **Squared ReLU Activation**: Enhanced non-linearity for better gradient flow
+- **QK LayerNorm**: Applies LayerNorm to query and key projections for training stability
+- **RoPE**: Rotary Position Embeddings with base 10000
+- **Multi-Query Attention**: Efficient attention with shared key-value heads
+- **Selective State Space**: Mamba-2 architecture with selective gating
+
+### Extended Context (Nano v2)
+- **128K Context Window**: Nemotron Nano v2 models support up to 128K tokens
+- **Efficient Long-Range Modeling**: Hybrid architecture optimized for long sequences
+
+## Conversion with 🤗 Hugging Face
+
+### Load HF → Megatron
+
+#### Nemotron H Models
+```python
+from megatron.bridge import AutoBridge
+
+# Example: Nemotron H 8B
+bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+provider = bridge.to_megatron_provider()
+
+# Configure parallelism before instantiating the model
+provider.tensor_model_parallel_size = 2
+provider.pipeline_model_parallel_size = 1
+provider.context_parallel_size = 1
+provider.sequence_parallel = True
+
+provider.finalize()
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+
+# Other models:
+# bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-4B-Base-8K", trust_remote_code=True)
+# bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-47B-Base-8K", trust_remote_code=True)
+# bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-56B-Base-8K", trust_remote_code=True)
+```
+
+#### Nemotron Nano v2 Models
+```python
+from megatron.bridge import AutoBridge
+
+# Example: Nemotron Nano 9B v2
+bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base", trust_remote_code=True)
+provider = bridge.to_megatron_provider()
+
+# Configure parallelism
+provider.tensor_model_parallel_size = 2
+provider.pipeline_model_parallel_size = 1
+provider.context_parallel_size = 1
+provider.sequence_parallel = True
+
+provider.finalize()
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+
+# For instruct variant:
+# bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-Nano-9B-v2", trust_remote_code=True)
+
+# For 12B model:
+# bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base", trust_remote_code=True)
+```
+
+### Export Megatron → HF
+```python
+# Convert from a Megatron checkpoint directory to HF format
+bridge.export_ckpt(
+    megatron_path="/results/nemotronh_8b/checkpoints/iter_0500000",
+    hf_path="./nemotronh-8b-hf-export",
+)
+```
+
+## Examples
+
+- Checkpoint conversion: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Training scripts: [examples/models/train_any_basic.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/train_any_basic.py)
+
+## Finetuning Recipes
+
+### Nemotron H 4B Finetuning
+
+#### LoRA Finetuning
+```python
+from megatron.bridge.recipes.nemotronh import nemotronh_4b_finetune_config
+
+cfg = nemotronh_4b_finetune_config(
+    tokenizer_path="nvidia/Nemotron-H-4B-Base-8K",
+    name="nemotronh_4b_lora",
+    pretrained_checkpoint="path/to/nemotronh/4b/checkpoint",
+    peft="lora",  # or "dora" for DoRA
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=1e-4,
+)
+```
+
+#### Full Supervised Finetuning (SFT)
+```python
+cfg = nemotronh_4b_finetune_config(
+    tokenizer_path="nvidia/Nemotron-H-4B-Base-8K",
+    name="nemotronh_4b_sft",
+    pretrained_checkpoint="path/to/nemotronh/4b/checkpoint",
+    peft=None,  # Full supervised finetuning
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=5e-6,  # Lower LR for full SFT
+)
+```
+
+### Nemotron H 8B Finetuning
+
+```python
+from megatron.bridge.recipes.nemotronh import nemotronh_8b_finetune_config
+
+# LoRA finetuning
+cfg = nemotronh_8b_finetune_config(
+    tokenizer_path="nvidia/Nemotron-H-8B-Base-8K",
+    name="nemotronh_8b_lora",
+    pretrained_checkpoint="path/to/nemotronh/8b/checkpoint",
+    peft="lora",
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=1e-4,
+)
+```
+
+### Nemotron H 47B Finetuning
+
+```python
+from megatron.bridge.recipes.nemotronh import nemotronh_47b_finetune_config
+
+# LoRA finetuning (recommended for 47B)
+cfg = nemotronh_47b_finetune_config(
+    tokenizer_path="nvidia/Nemotron-H-47B-Base-8K",
+    name="nemotronh_47b_lora",
+    pretrained_checkpoint="path/to/nemotronh/47b/checkpoint",
+    peft="lora",
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=1e-4,
+) 
+```
+
+### Nemotron H 56B Finetuning
+
+```python
+from megatron.bridge.recipes.nemotronh import nemotronh_56b_finetune_config
+
+# LoRA finetuning (recommended for 56B)
+cfg = nemotronh_56b_finetune_config(
+    tokenizer_path="nvidia/Nemotron-H-56B-Base-8K",
+    name="nemotronh_56b_lora",
+    pretrained_checkpoint="path/to/nemotronh/56b/checkpoint",
+    peft="lora",
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=1e-4,
+)
+```
+
+### Nemotron Nano 9B v2 Finetuning
+
+```python
+from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_finetune_config
+
+# LoRA finetuning
+cfg = nemotron_nano_9b_v2_finetune_config(
+    tokenizer_path="nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base",
+    name="nano_9b_v2_lora",
+    pretrained_checkpoint="path/to/nano/9b/v2/checkpoint",
+    peft="lora",
+    train_iters=1000,
+    global_batch_size=128,
+    seq_length=2048,  # Can use up to 128K
+    finetune_lr=1e-4,
+)
+```
+
+### Nemotron Nano 12B v2 Finetuning
+
+```python
+from megatron.bridge.recipes.nemotronh import nemotron_nano_12b_v2_finetune_config
+
+# LoRA finetuning
+cfg = nemotron_nano_12b_v2_finetune_config(
+    tokenizer_path="nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base",
+    name="nano_12b_v2_lora",
+    pretrained_checkpoint="path/to/nano/12b/v2/checkpoint",
+    peft="lora",
+    train_iters=1000,
+    global_batch_size=128,
+    seq_length=2048,  # Can use up to 128K
+    finetune_lr=1e-4,
+)
+```
+
+## Default Configurations
+
+### Nemotron H Models
+
+#### 4B - LoRA (1 node, 8 GPUs)
+- TP=1, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: False
+- Precision: BF16 mixed
+- Optimized for single-GPU finetuning
+
+#### 4B - Full SFT (1 node, 8 GPUs)
+- TP=1, PP=1, CP=1, LR=5e-6
+- Sequence Parallel: False
+- Precision: BF16 mixed
+
+#### 8B - LoRA (1 node, 8 GPUs)
+- TP=1, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: False
+- Precision: BF16 mixed
+
+#### 8B - Full SFT (1 node, 8 GPUs)
+- TP=2, PP=1, CP=1, LR=5e-6
+- Sequence Parallel: True
+- Precision: BF16 mixed
+
+#### 47B - LoRA (2+ nodes)
+- TP=4, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: False
+- Precision: FP8 hybrid (recommended)
+
+#### 47B - Full SFT (4+ nodes)
+- TP=8, PP=1, CP=1, LR=5e-6
+- Sequence Parallel: True
+- Precision: FP8 hybrid
+
+#### 56B - LoRA (2+ nodes)
+- TP=4, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: False
+- Precision: FP8 hybrid (recommended)
+
+#### 56B - Full SFT (4+ nodes)
+- TP=8, PP=1, CP=1, LR=5e-6
+- Sequence Parallel: True
+- Precision: FP8 hybrid
+
+### Nemotron Nano v2 Models
+
+#### 9B - LoRA (1 node, 8 GPUs)
+- TP=2, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: True
+- Precision: BF16 mixed
+- Context: Up to 128K tokens
+
+#### 9B - Full SFT (1 node, 8 GPUs)
+- TP=2, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: True
+- Precision: BF16 mixed
+
+#### 12B - LoRA (2 nodes, 16 GPUs)
+- TP=4, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: True
+- Precision: FP8 hybrid (recommended)
+- Context: Up to 128K tokens
+
+#### 12B - Full SFT (2 nodes, 16 GPUs)
+- TP=4, PP=1, CP=1, LR=1e-4
+- Sequence Parallel: True
+- Precision: FP8 hybrid
+
+## API Reference
+
+### Nemotron H
+- Nemotron H recipes: [bridge.recipes.nemotronh](/../../apidocs/bridge/bridge.recipes.nemotronh)
+- Nemotron H model providers: [bridge.models.nemotronh](/../../apidocs/bridge/bridge.models.nemotronh)
+
+### Nemotron Nano v2
+- Nemotron Nano v2 recipes: [bridge.recipes.nemotronh.nemotron_nano_v2](/../../apidocs/bridge/bridge.recipes.nemotronh)
+- Nemotron Nano v2 model providers: [bridge.models.nemotronh.NemotronNanoModelProvider9Bv2](/../../apidocs/bridge/bridge.models.nemotronh)
+
+## Performance Optimizations
+
+### Memory Efficiency
+- **Selective Recomputation**: Reduces activation memory for larger models
+- **Sequence Parallelism**: Distributes sequence dimension across GPUs (enabled for 8B+)
+- **Context Parallelism**: Support for ultra-long sequences (Nano v2)
+- **Manual GC**: Aggressive garbage collection for stable memory usage
+- **Precision-aware optimizer**: BF16/FP8 gradients with FP32 master weights
+
+### Compute Efficiency
+- **Mamba-2 Optimizations**: Efficient selective state space computations
+- **Hybrid Architecture**: Balanced mix of Mamba and Attention layers
+- **Squared ReLU**: Efficient activation function with good gradient properties
+- **RoPE Fusion**: Optional optimization for position embeddings
+- **Multi-Query Attention**: Reduced KV cache memory and compute
+
+### Hybrid Pattern Optimization
+The hybrid override pattern determines which layers use Mamba (M) vs Attention (*):
+- **Mamba layers**: Fast, memory-efficient, good for long-range dependencies
+- **Attention layers**: Better for complex reasoning and multi-token relationships
+- **Optimal patterns**: Pre-configured per model size based on extensive experimentation
+
+## Pipeline Parallelism Layouts
+
+Nemotron H models support several PP configurations with pre-defined layouts:
+- **PP=1**: No pipelining (default for most configurations)
+- **PP=2**: Supported with symmetric layer splits
+- **PP=4**: Supported for larger models (47B, 56B)
+- **VP (Virtual Pipeline)**: Supported for reducing pipeline bubbles
+
+## Hugging Face Model Cards
+
+### Nemotron H Models
+- **4B Base**: [nvidia/Nemotron-H-4B-Base-8K](https://huggingface.co/nvidia/Nemotron-H-4B-Base-8K)
+- **8B Base**: [nvidia/Nemotron-H-8B-Base-8K](https://huggingface.co/nvidia/Nemotron-H-8B-Base-8K)
+- **47B Base**: [nvidia/Nemotron-H-47B-Base-8K](https://huggingface.co/nvidia/Nemotron-H-47B-Base-8K)
+- **56B Base**: [nvidia/Nemotron-H-56B-Base-8K](https://huggingface.co/nvidia/Nemotron-H-56B-Base-8K)
+
+### Nemotron Nano v2 Models
+- **9B Base**: [nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base](https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base)
+- **9B Instruct**: [nvidia/NVIDIA-Nemotron-Nano-9B-v2](https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2)
+- **12B Base**: [nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base](https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base)
+- **12B Instruct**: [nvidia/NVIDIA-Nemotron-Nano-12B-v2](https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2)
+
+## Technical Resources
+
+### Research Papers
+- **Nemotron Technical Report**: [arXiv:2508.14444](https://arxiv.org/abs/2508.14444)
+- **Mamba-2**: [Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality](https://arxiv.org/abs/2405.21060)
+
+## Related Documentation
+
+- Recipe usage and customization: [Recipe usage](/../../recipe-usage)
+- Training configuration: [Configuration overview](/../../training/config-container-overview)
+- Training entry points: [Entry points](/../../training/entry-points)
+- PEFT methods (LoRA, DoRA): [PEFT Guide](/../../training/peft)

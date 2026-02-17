@@ -1,0 +1,216 @@
+---
+title: "Quantization"
+description: ""
+---
+
+This guide covers model quantization in Megatron Bridge using NVIDIA ModelOpt, including post-training quantization (PTQ) and quantization-aware training (QAT).
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Post-Training Quantization (PTQ)](#post-training-quantization-ptq)
+- [Quantization-Aware Training (QAT)](#quantization-aware-training-qat)
+
+## Overview
+
+Quantization is an effective model optimization technique that compresses models by reducing precision from high-precision formats (FP16/BF16) to lower-precision formats (NVFP4, FP8, INT8, INT4). Quantization with Model Optimizer can compress model size by 2x-4x, speeding up inference while preserving model quality.
+
+In Megatron Bridge, quantization is enabled by NVIDIA Model Optimizer (ModelOpt) — a library to quantize and compress deep learning models for optimized inference on GPUs. Model Optimizer enables highly performant quantization formats including FP8, INT8, INT4, and NVFP4, and supports advanced algorithms such as SmoothQuant and AWQ with easy-to-use Python APIs.
+
+### Quantization Methods
+
+Megatron Bridge supports two quantization approaches:
+
+#### Post-Training Quantization (PTQ)
+
+PTQ reduces model precision after training to improve inference efficiency without requiring retraining. This is the fastest approach and works well for most models.
+
+**Process:**
+1. Load a pretrained model checkpoint
+2. Calibrate the model using a small dataset (typically 128-512 samples) to obtain scaling factors
+3. Produce a quantized checkpoint
+
+#### Quantization-Aware Training (QAT)
+
+Quantization Aware Training (QAT) helps to improve the model accuracy beyond post training quantization (PTQ). QAT can further preserve model accuracy at low precisions (e.g., INT4, or FP4 in NVIDIA Blackwell platform).
+
+**Process:**
+
+1. Train/fine-tune the model in the original precision without quantization
+2. Quantize the model from step 1 with `mtq.quantize()`
+3. Train/fine-tune the quantized model with a small learning rate (e.g., 1e-5 for Adam optimizer)
+
+> **Note**: Step 3 is the actual 'Quantization Aware Training' step. The optimal hyperparameter setting for QAT can vary depending on the model and training dataset.
+
+> **Note**: QAT without the original precision training/fine-tuning (i.e., skipping Step 1) gives worse accuracy. Therefore, un-quantized original precision training/fine-tuning followed by QAT is recommended for best accuracy.
+
+---
+
+## Post-Training Quantization (PTQ)
+
+PTQ quantizes a pretrained model by running calibration with a small dataset to compute scaling factors. The complete workflow includes: quantize → resume and generate → export.
+
+### Quantize
+
+Use the `examples/quantization/quantize.py` script for LLM PTQ:
+
+```bash
+torchrun --nproc_per_node 2 examples/quantization/quantize.py \
+    --hf-model-id meta-llama/Llama-3.2-1B \
+    --export-quant-cfg fp8 \
+    --tp 2 \
+    --megatron-save-path ./llama3_2_1b_fp8
+```
+
+Use the `examples/quantization/quantize_vlm.py` script for VLM PTQ:
+
+```bash
+torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
+    --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
+    --export-quant-cfg fp8 \
+    --megatron-save-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
+    --tp 4 \
+    --etp 4 \
+    --pp 2 \
+    --calib-size 256
+```
+
+**Key Arguments:**
+- `--hf-model-id` - HuggingFace model ID or local path
+- `--export-quant-cfg` - Quantization format (`fp8`, `nvfp4`, etc.)
+- `--megatron-save-path` - Output checkpoint path
+- `--tp` - Tensor parallelism size
+- `--pp` - Pipeline parallelism size
+- `--ep` - Expert parallelism for MoE models
+- `--etp` - Expert tensor parallelism for MoE models
+- `--calib-size` - Calibration samples for quantization (default: 512)
+
+### Resume and Generate
+
+Resume the quantized checkpoint and test with text generation using `examples/quantization/ptq_generate.py` for LLM:
+
+```bash
+torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py \
+    --hf-model-id meta-llama/Llama-3.2-1B \
+    --megatron-load-path ./llama3_2_1b_fp8 \
+    --tp 2
+```
+
+Resume the quantized checkpoint and test with text generation using `examples/quantization/ptq_generate_vlm.py` for VLM:
+
+```bash
+torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
+    --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
+    --megatron-load-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
+    --tp 8 \
+    --ep 8 \
+    --image-path ./demo.jpeg \
+    --prompts "Describe this image."
+```
+
+**Key Arguments:**
+- `--megatron-load-path` - Path to quantized checkpoint
+- `--hf-model-id` - HuggingFace model ID or local path (for tokenizer)
+- `--image-path` - Path to the input image file used for visual-language model prompt generation
+- `--prompts` - Test prompts
+
+### Export
+
+Export the quantized checkpoint to unified HuggingFace format using `examples/quantization/export.py`:
+
+```bash
+torchrun --nproc_per_node 2 examples/quantization/export.py \
+    --hf-model-id meta-llama/Llama-3.2-1B \
+    --megatron-load-path ./llama3_2_1b_fp8 \
+    --export-dir ./llama3_2_1b_fp8_hf \
+    --pp 2 \
+    --dtype bfloat16
+```
+
+**Key Arguments:**
+- `--export-dir` - Output directory for unified HuggingFace checkpoint
+- `--dtype` - Export data type
+
+### Supported Models For PTQ
+
+| Model | fp8 | nvfp4 |
+|-------|-----|-------|
+| Llama-3.2-1B | ✅ | ✅ |
+| Qwen3-8B | ✅ | ✅ |
+| Qwen3-30B-A3B | ✅ | ✅ |
+| Nemotron-H-8B-Base-8K | ✅ | ✅ |
+| Qwen3-VL-8B-Instruct | ✅ | ✅ |
+| Qwen3-VL-30B-A3B-Instruct | ✅ | ✅ |
+
+---
+
+## Quantization-Aware Training (QAT)
+
+In QAT, a model quantized using `mtq.quantize()` can be directly fine-tuned with the original training pipeline. During QAT, the scaling factors inside quantizers are frozen and the model weights are fine-tuned.
+
+### Complete QAT Workflow
+
+#### Step 1: Create Initial Quantized Checkpoint (PTQ)
+
+```bash
+torchrun --nproc_per_node 8 examples/quantization/quantize.py \
+    --hf-model-id meta-llama/Meta-Llama-3-8B \
+    --export-quant-cfg fp8 \
+    --tp 8 \
+    --megatron-save-path /models/llama3_8b_fp8_init
+```
+
+#### Step 2: Configure Training
+
+Create a YAML configuration file (e.g., `conf/my_qat_config.yaml`):
+
+```yaml
+model:
+  tensor_model_parallel_size: 4
+  gradient_accumulation_fusion: False
+
+train:
+  train_iters: 20
+  global_batch_size: 8
+  eval_iters: 0 
+
+scheduler:
+  lr_warmup_iters: 10
+
+logger:
+  log_interval: 1
+
+checkpoint:
+  pretrained_checkpoint: /models/llama3_8b_fp8_init
+  save_interval: 20
+  finetune: true
+```
+
+#### Step 3: Run QAT Training
+
+Use `examples/quantization/pretrain_quantized_llama3_8b.py`:
+
+```bash
+python pretrain_quantized_llama3_8b.py \
+  --nproc-per-node=4 \
+  --config-file=conf/my_qat_config.yaml \
+  --hf-path=meta-llama/Meta-Llama-3-8B
+```
+
+**Configuration Overrides:**
+
+You can also use command-line overrides:
+
+```bash
+torchrun pretrain_quantized_llama3_8b.py \
+    --nproc_per_node 4 \
+    model.tensor_model_parallel_size=4 \
+    model.gradient_accumulation_fusion=False \
+    checkpoint.pretrained_checkpoint=/models/llama3_8b_fp8_init
+```
+
+### Supported Models For QAT
+
+| Model | Support |
+|-------|---------|
+| Meta-Llama-3-8B | ✅ |

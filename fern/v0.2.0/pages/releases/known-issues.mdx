@@ -1,0 +1,15 @@
+---
+title: "Known Issues"
+description: ""
+---
+
+This page lists known issues and limitations in the current release.
+
+## 25.11
+
+- Deepseek V3 on H100 has an issue when using DeepEP and fails with `RuntimeError: DeepEP error: timeout (dispatch CPU)`.
+- MODEL_TFLOP/s/GPU is printed as 0 to stdout for all Hybrid models, such as Nemotron-H 56B.
+
+## 25.09
+
+- **Pretraining DeepSeek in subchannel FP8 precision is not working.** Pretraining DeepSeek with current scaling FP8 is a workaround, but MTP loss does not converge.
