@@ -286,14 +286,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
     # YARN rope scaling field mapping for GPT models: (hf_rope_scaling_key, megatron_yarn_param)
     # These are only applied when rope_scaling.type == "yarn" and provider is GPTModelProvider
-    # Uses yarn_ prefix (e.g., yarn_mscale, yarn_rotary_scaling_factor)
     YARN_ROPE_SCALING_MAPPING = [
-        ("factor", "yarn_rotary_scaling_factor"),
-        ("original_max_position_embeddings", "yarn_original_max_position_embeddings"),
-        ("beta_fast", "yarn_beta_fast"),
-        ("beta_slow", "yarn_beta_slow"),
-        ("mscale", "yarn_mscale"),
-        ("mscale_all_dim", "yarn_mscale_all_dim"),
+        ("factor", "rotary_scaling_factor"),
     ]
 
     # MLA rope scaling field mapping: (hf_rope_scaling_key, megatron_mla_param)
