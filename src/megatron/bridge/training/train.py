@@ -1357,6 +1357,18 @@ def _dummy_train_step(
                         _ = next(train_data_iterator)
 
 
+def _try_copy_main_params(optimizer: MegatronOptimizer) -> None:
+    """Try to copy main params to param buffer for mxfp8 with grad buffer reuse.
+    Args:
+        optimizer: The optimizer instance
+    """
+    # Note: FSDP's DistributedOptimizer doesn't have shard_fp32_from_float16_groups,
+    # so we check for this attribute before calling _copy_main_params_to_param_buffer
+    if (isinstance(optimizer, DistributedOptimizer) and
+        hasattr(optimizer, "shard_fp32_from_float16_groups")):
+        optimizer._copy_main_params_to_param_buffer()
+
+
 def _handle_mxfp8_param_buffer_copy(
     optimizer: MegatronOptimizer,
     model: list[MegatronModule],
@@ -1385,9 +1397,12 @@ def _handle_mxfp8_param_buffer_copy(
         # Check if forward_pre_hook is enabled by checking if hooks are registered.
         forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
         if forward_pre_hook_enabled:
-            for optim_instance in optimizer.chained_optimizers:
-                if isinstance(optim_instance, DistributedOptimizer):
-                    optim_instance._copy_main_params_to_param_buffer()
+            # Handle both ChainedOptimizer and direct DistributedOptimizer cases.
+            if hasattr(optimizer, "chained_optimizers"):
+                for optim_instance in optimizer.chained_optimizers:
+                    _try_copy_main_params(optim_instance)
+            else:
+                _try_copy_main_params(optimizer)
 
 
 def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
