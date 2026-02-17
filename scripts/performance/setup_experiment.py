@@ -503,7 +503,7 @@ def main(
                 wandb.teardown(exit_code=int(not is_testing_passed))
 
             if not is_long_convergence_run:
-                n_attempts = max_retries
+                n_attempts = max_retries + 1
                 is_finished_experiment = True
 
         if is_finished_experiment and is_testing_passed:

@@ -561,13 +561,13 @@ def calc_convergence_and_performance(
                 str(step): {
                     loss_metric: current_train_loss[str(step)],
                     timing_metric: current_iter_time[str(step)],
+                    "GPU utilization": current_gpu_util[str(step)],
                 }
                 for step in current_train_loss.keys()
             },
             **{
                 alloc_metric: current_alloc,
                 max_alloc_metric: current_max_alloc,
-                "GPU utilization": current_gpu_util,
             },
         ),
         golden_values_path=next_golden_values_path,
