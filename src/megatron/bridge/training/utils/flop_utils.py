@@ -183,6 +183,28 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         num_query_groups = (
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
+
+        # Use exact LoRA FLOPs formula when LoRA PEFT is enabled.
+        is_lora = cfg.peft is not None and "lora" in cfg.peft.__class__.__name__.lower()
+        if is_lora:
+            common = (
+                12
+                * batch_size
+                * cfg.model.seq_length
+                * cfg.model.num_layers
+                * cfg.model.hidden_size
+                * cfg.model.hidden_size
+            )
+            attention_flops = common * (
+                1
+                + (num_query_groups / cfg.model.num_attention_heads)
+                + (0.5 * cfg.model.seq_length / cfg.model.hidden_size)
+            )
+            mlp_flops = common * ((cfg.model.ffn_hidden_size / cfg.model.hidden_size) * 1.5)
+            embedding_flops = common * (
+                cfg.model.vocab_size / (2 * cfg.model.num_layers * cfg.model.hidden_size)
+            )
+            return (2.0 / 3.0) * (attention_flops + mlp_flops + embedding_flops)
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.
@@ -240,7 +262,10 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         #       architectures implemented in this codebase (e.g., h->ffn_h GEMM and ffn_h->h GEMM
         #       in MLP layer).
         # - 2x: A GEMM of a m*n tensor with a n*k tensor requires 2mnk floating-point operations.
-        expansion_factor = 3 * 2 * 2
+        # Note: LoRA uses 2x multiplier (forward + dgrad only) which is handled separately above.
+        # All other cases (including non-LoRA PEFT) use 3x (forward + wgrad + dgrad).
+        training_multiplier = 3
+        expansion_factor = training_multiplier * 2 * 2
 
         if cfg.model.multi_latent_attention:
             """
@@ -271,7 +296,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     + 1
                 )
             self_attn_term = (
-                3
+                training_multiplier
                 * 2  # fwd(1) + bwd(2) *FMA
                 * num_layers
                 * (
@@ -344,7 +369,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 # Self Attention
                 + self_attn_term
                 # MTP norms and proj
-                + 3
+                + training_multiplier
                 * 2
                 * mtp_num_layers
                 * (
@@ -354,7 +379,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     + 2 * cfg.model.hidden_size * cfg.model.hidden_size
                 )
                 # Logit.
-                + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
+                + training_multiplier * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
             )
         )
         return total_floating_point_operations
