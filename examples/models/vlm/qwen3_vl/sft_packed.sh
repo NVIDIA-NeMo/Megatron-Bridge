@@ -16,7 +16,11 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
-# Test Seq Packing configurations for LoRA finetuning on the dense model
+# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# export WANDB_API_KEY=<your_wandb_api_key>
+# export WANDB_MODE=disabled
+
+# Test Seq Packing configurations for full finetuning on the dense model
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 MODEL_NAME=qwen3_vl_8b
 DATASET_NAME=cord_v2
@@ -39,11 +43,10 @@ PARALLELISM_CONFIGS=("1,1,1,1" "1,1,1,2" "1,1,1,4")
 for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
     for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP <<< "$par_config"
-        echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
-        python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+        echo "Running full finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
+        uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
             --recipe ${MODEL_NAME}_finetune_config \
             --step_func qwen3_vl_step \
-            --peft_scheme lora \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
             model.seq_length=$SEQ_LENGTH \
             train.train_iters=$TRAIN_ITERS \
@@ -53,10 +56,10 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             optimizer.lr=$LR \
             optimizer.min_lr=$MIN_LR \
             scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-            checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_seq_pack_${pack_config}_cp${CP} \
+            checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_seq_pack_${pack_config}_cp${CP} \
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
-            logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_seq_pack_${pack_config}_cp${CP} \
+            logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_seq_pack_${pack_config}_cp${CP} \
             dataset.maker_name=make_${DATASET_NAME}_dataset \
             dataset.seq_length=$SEQ_LENGTH \
             dataset.pack_sequences_in_batch=$pack_config \
@@ -71,7 +74,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
 done
 
 
-# Test Seq Packing configurations for LoRA finetuning on the MoE model
+# Test Seq Packing configurations for full finetuning on the MoE model
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-30B-A3B-Instruct
 MODEL_NAME=qwen3_vl_30b_a3b
 DATASET_NAME=cord_v2
@@ -94,11 +97,10 @@ PARALLELISM_CONFIGS=("8,1,1,1" "4,1,1,2" "2,1,1,4")
 for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
     for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP <<< "$par_config"
-        echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
-        python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+        echo "Running full finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
+        uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
             --recipe ${MODEL_NAME}_finetune_config \
             --step_func qwen3_vl_step \
-            --peft_scheme lora \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
             model.seq_length=$SEQ_LENGTH \
             train.train_iters=$TRAIN_ITERS \
@@ -108,10 +110,10 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             optimizer.lr=$LR \
             optimizer.min_lr=$MIN_LR \
             scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-            checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_seq_pack_${pack_config}_ep${EP}_cp${CP} \
+            checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_seq_pack_${pack_config}_ep${EP}_cp${CP} \
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
-            logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_seq_pack_${pack_config}_ep${EP}_cp${CP} \
+            logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_seq_pack_${pack_config}_ep${EP}_cp${CP} \
             dataset.maker_name=make_${DATASET_NAME}_dataset \
             dataset.seq_length=$SEQ_LENGTH \
             dataset.pack_sequences_in_batch=$pack_config \
