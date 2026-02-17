@@ -529,7 +529,11 @@ _LLAMA3_70B_SFT_CONFIG_GB200 = replace(
     cuda_graph_scope="mlp",
 )
 
-LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1 = _LLAMA3_70B_SFT_CONFIG_GB200
+LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1 = replace(  # 2% perf improvement
+    _LLAMA3_70B_SFT_CONFIG_GB200,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=10,
+)
 LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1 = replace(  # 15% perf improvement
     _LLAMA3_70B_SFT_CONFIG_GB200,
     tensor_model_parallel_size=1,
