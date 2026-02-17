@@ -184,7 +184,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        # Use exact LoRA FLOPs formula when LoRA PEFT is enabled.
         is_lora = cfg.peft is not None and "lora" in cfg.peft.__class__.__name__.lower()
         if is_lora:
             common = (
