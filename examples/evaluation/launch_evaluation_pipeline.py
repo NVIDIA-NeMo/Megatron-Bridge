@@ -115,10 +115,7 @@ def main(args):
         bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh \
             {args.megatron_checkpoint} \
             {args.num_replicas} \
-            {args.num_gpus} \
-            {args.tensor_model_parallel_size} \
-            {args.pipeline_model_parallel_size} \
-            {args.context_model_parallel_size} | tee -a deploy.log & \
+            {args.num_gpus}| tee -a deploy.log & \
         sleep 120; \
         bash /opt/Megatron-Bridge/examples/evaluation/eval.sh \
             {args.output_dir} \
