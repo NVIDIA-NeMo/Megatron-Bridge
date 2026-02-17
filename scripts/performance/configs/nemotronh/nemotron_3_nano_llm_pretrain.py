@@ -35,12 +35,11 @@ def nemotron_3_nano_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_nano",
         gpu="gb300",
-        compute_dtype="FP8_CS",
+        compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
     )
@@ -58,12 +57,11 @@ def nemotron_3_nano_pretrain_config_gb200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB200, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_nano",
         gpu="gb200",
-        compute_dtype="FP8_CS",
+        compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
     )
@@ -81,12 +79,11 @@ def nemotron_3_nano_pretrain_config_b300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """B300, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_nano",
         gpu="b300",
-        compute_dtype="FP8_CS",
+        compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
     )
@@ -104,12 +101,11 @@ def nemotron_3_nano_pretrain_config_b200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """B200, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_nano",
         gpu="b200",
-        compute_dtype="FP8_CS",
+        compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
     )
@@ -127,12 +123,11 @@ def nemotron_3_nano_pretrain_config_h100(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """H100, baseline config."""
-    # NemotronH currently only has FP8_CS base configs
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
         model_recipe_name="nemotron_3_nano",
         gpu="h100",
-        compute_dtype="FP8_CS",
+        compute_dtype=precision.upper(),
         task="pretrain",
         config_variant=config_variant,
     )
