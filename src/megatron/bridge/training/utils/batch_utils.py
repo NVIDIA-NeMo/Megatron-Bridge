@@ -150,15 +150,18 @@ def get_batch_on_this_tp_rank(
         }
 
     # Broadcast any extra keys (e.g. packed-sequence metadata) that are not
-    # covered by the fixed-shape direct broadcasts above.
-    extra = {k: v for k, v in data.items() if k not in batch} if is_tp_rank0 else None
-    obj_list = [extra]
-    torch.distributed.broadcast_object_list(obj_list, src=tp_ranks[0], group=tp_group)
-    extra = obj_list[0]
-    for key, val in extra.items():
-        if isinstance(val, torch.Tensor):
-            batch[key] = val.cuda(non_blocking=True)
-        else:
-            batch[key] = val
+    # covered by the fixed-shape direct broadcasts above.  A lightweight
+    # boolean flag is broadcast first so the heavy broadcast_object_list call
+    # is skipped entirely when there are no extra keys (common case).
+    has_extra = [bool({k for k in data if k not in batch}) if is_tp_rank0 else False]
+    torch.distributed.broadcast_object_list(has_extra, src=tp_ranks[0], group=tp_group)
+    if has_extra[0]:
+        extra = [{k: v for k, v in data.items() if k not in batch} if is_tp_rank0 else None]
+        torch.distributed.broadcast_object_list(extra, src=tp_ranks[0], group=tp_group)
+        for key, val in extra[0].items():
+            if isinstance(val, torch.Tensor):
+                batch[key] = val.cuda(non_blocking=True)
+            else:
+                batch[key] = val
 
     return batch

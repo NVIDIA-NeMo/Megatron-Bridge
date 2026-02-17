@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from dataclasses import fields
 from typing import Any, Callable, Dict, Optional, Type, Union
 
@@ -38,7 +40,7 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-def is_dataset_built_on_rank(pg_collection: Optional[ProcessGroupCollection] = None) -> bool:
+def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection | None = None) -> bool:
     """Determines whether the dataset should be built on the current rank.
 
     Datasets are typically built only on the first and last pipeline stages
