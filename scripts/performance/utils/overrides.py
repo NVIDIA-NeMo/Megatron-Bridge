@@ -19,6 +19,7 @@ from typing import List, Optional
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -71,9 +72,7 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     return recipe
 
 
-def _set_megatron_fsdp_overrides(
-    recipe: ConfigContainer, use_megatron_fsdp: bool = False, nccl_ub: bool = False
-) -> ConfigContainer:
+def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: bool = False) -> ConfigContainer:
     """Set the Megatron FSDP overrides."""
     if not use_megatron_fsdp:
         return
@@ -83,10 +82,6 @@ def _set_megatron_fsdp_overrides(
     recipe.ddp.keep_fp8_transpose_cache = False
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
-
-    if nccl_ub:
-        recipe.ddp.nccl_ub = True
-        recipe.ddp.fsdp_manual_registration = True
 
     recipe.model.init_model_with_meta_device = True
     recipe.model.gradient_accumulation_fusion = True
@@ -210,7 +205,8 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
 
-    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp, nccl_ub=settings.nccl_ub)
+    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp)
+    _set_nccl_ub_overrides(cfg, nccl_ub=settings.nccl_ub)
     _set_cuda_graph_overrides(
         cfg,
         cuda_graph_impl=settings.cuda_graph_impl,
@@ -248,9 +244,24 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     return recipe
 
 
+def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> ConfigContainer:
+    """Set the NCCL UB overrides."""
+    if nccl_ub:
+        recipe.ddp.nccl_ub = True
+        # The current version of NCCL does not support the AVG operation for reductions with symmetric kernels.
+        # To enable symmetric kernels, average_in_collective must be disabled.
+        recipe.ddp.average_in_collective = False
+
+    if recipe.ddp.use_megatron_fsdp and recipe.ddp.nccl_ub:
+        recipe.ddp.fsdp_manual_registration = True
+
+    return recipe
+
+
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
-    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
+    _set_nccl_ub_overrides(recipe, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
         cuda_graph_impl=args.cuda_graph_impl,
@@ -384,6 +395,20 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
     ):
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
+    if model_recipe_name == "kimi_k2":
+        if pp_size is not None or vp_size != -1:
+            try:
+                layout = _get_kimi_k2_pipeline_layout(
+                    recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                )
+                recipe.model.pipeline_model_parallel_layout = layout
+            except ValueError:
+                logger.warning(
+                    f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                )
+                recipe.model.pipeline_model_parallel_layout = None
+        if pipeline_model_parallel_layout is not None:
+            recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
@@ -407,7 +432,7 @@ def set_post_overrides(
         model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
     )
 
-    if compute_dtype == "bf16":
+    if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
 
     tp = recipe.model.tensor_model_parallel_size
@@ -419,9 +444,11 @@ def set_post_overrides(
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
+        if recipe.optimizer.optimizer != "dist_muon":
+            recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+            if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+                recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:

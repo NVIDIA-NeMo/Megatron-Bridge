@@ -115,7 +115,13 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+
+    return output_tensor, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -246,6 +252,10 @@ def main(args) -> None:
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+
+    # TEMP FIX for inference failure when mtp_num_layers is not None
+    for m in model:
+        m.config.mtp_num_layers = None
 
     model = [m.cuda() for m in model]
     for m in model:

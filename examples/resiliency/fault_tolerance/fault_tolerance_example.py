@@ -44,8 +44,8 @@ Usage:
     uv run ft_launcher \\
         --rdzv_backend=c10d --rdzv_endpoint=127.0.0.1:29500 \\
         --nnodes=1 --nproc-per-node=2 \\
-        --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \\
-        --ft-param-rank_out_of_section_timeout=300 \\
+        --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \\
+        --ft-rank_out_of_section_timeout=300 \\
         examples/resiliency/fault_tolerance/fault_tolerance_example.py
 
     # With fault simulation:
@@ -150,7 +150,7 @@ def create_config(
         fp16=False,
         adam_beta1=0.9,
         adam_beta2=0.95,
-        adam_eps=1e-5,
+        adam_eps=1e-8,
         use_distributed_optimizer=True,
         clip_grad=1.0,
         lr=1e-4,
