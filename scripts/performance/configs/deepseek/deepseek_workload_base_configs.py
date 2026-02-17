@@ -80,7 +80,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1 = replace(
     moe_a2a_overlap=False,
     recompute_modules=["mla_up_proj"],
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["moe_router", "moe_preprocess"],
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
@@ -120,7 +120,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=1024,
-    tensor_model_parallel_size=4,  # TODO: TP=2 is OOM. Resolve it and revert it to recover perf
+    tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -128,6 +128,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1 = replace(
     recompute_modules=["mla_up_proj", "mlp"],
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
+    pp_layout="Et|(tt|)*30mL",
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V1
@@ -189,7 +190,11 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V2 = replace(
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_CS_V2,
+    virtual_pipeline_model_parallel_size=2,
+    pp_layout=None,
+)
 
 
 # =============================================================================

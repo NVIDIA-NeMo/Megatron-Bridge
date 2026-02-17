@@ -33,6 +33,8 @@ def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int):
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
     }
+
+    vp_size = 1 if vp_size is None else vp_size
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+from megatron.core.activations import squared_relu
 
 from megatron.bridge.models import ColumnParallelMapping, RowParallelMapping
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -29,7 +29,12 @@ from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLMo
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
 
 
-@MegatronModelBridge.register_bridge(source="NemotronH_Nano_VL_V2", target=NemotronVLModel)
+@MegatronModelBridge.register_bridge(
+    source="NemotronH_Nano_VL_V2",
+    target=NemotronVLModel,
+    provider=NemotronNano12Bv2VLModelProvider,
+    model_type="nemotron_vl",
+)
 class NemotronVLBridge(MegatronModelBridge):
     """Conversion utilities between HF Nemotron-VL and Megatron-Core format."""
 
@@ -39,25 +44,26 @@ class NemotronVLBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronNano12Bv2VLModelProvider:  # type: ignore[override]
         hf_config = hf_pretrained.config
+        llm_config = hf_config.llm_config
 
-        provider = NemotronNano12Bv2VLModelProvider(
-            num_layers=hf_config.llm_config.num_hidden_layers,
-            hidden_size=hf_config.llm_config.hidden_size,
-            ffn_hidden_size=hf_config.llm_config.intermediate_size,
-            num_attention_heads=hf_config.llm_config.num_attention_heads,
-            num_query_groups=getattr(
-                hf_config.llm_config, "num_key_value_heads", hf_config.llm_config.num_attention_heads // 2
-            ),
-            init_method_std=hf_config.llm_config.initializer_range,
-            layernorm_epsilon=getattr(hf_config.llm_config, "layer_norm_epsilon", 1e-5),
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.llm_config.vocab_size),
-            share_embeddings_and_output_weights=getattr(hf_config.llm_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.llm_config.vocab_size,
-            seq_length=hf_config.llm_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-        )
+        # Use base class helper for common config mapping
+        provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
+
+        # Handle vocab size divisibility
+        provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
+
+        provider = NemotronNano12Bv2VLModelProvider(**provider_kwargs)
+
+        # Nemotron VL-specific settings
+        # Note: Most defaults come from the provider class hierarchy (NemotronNano12Bv2Provider)
+        provider.scatter_embedding_sequence_parallel = False
+        provider.attention_softmax_in_fp32 = True
+
+        # Override fields that should use NemotronH provider's specialized defaults
+        # instead of HF config values
+        provider.activation_func = squared_relu  # Nemotron uses squared_relu, not HF's hidden_act
+        provider.autocast_dtype = None  # Not set in original code
+
         return provider
 
     # ------------------------------------------------------------------

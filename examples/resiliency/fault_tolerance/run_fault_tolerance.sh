@@ -98,6 +98,9 @@ fi
 # Reduce torch distributed noise
 export TORCH_CPP_LOG_LEVEL="${TORCH_CPP_LOG_LEVEL:-error}"
 
+# Set GROUP_RANK for single-node runs (required by use_infra_group_rank)
+export GROUP_RANK=0
+
 echo "Running Fault Tolerance Example"
 echo "  GPUs: ${NPROC_PER_NODE}"
 echo "  Iterations: ${TRAIN_ITERS}"
@@ -120,8 +123,8 @@ uv run ft_launcher \
     --rdzv_endpoint="127.0.0.1:${MASTER_PORT}" \
     --nnodes=1 \
     --nproc-per-node="${NPROC_PER_NODE}" \
-    --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
-    --ft-param-rank_out_of_section_timeout=300 \
+    --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
+    --ft-rank_out_of_section_timeout=300 \
     --monitor-interval=5 \
     --max-restarts="${MAX_RESTARTS}" \
     "${SCRIPT}" ${SCRIPT_ARGS}
