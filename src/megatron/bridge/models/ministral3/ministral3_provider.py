@@ -95,8 +95,6 @@ class Ministral3ModelProvider(MistralModelProvider):
     yarn_beta_fast: float = 32.0
     yarn_beta_slow: float = 1.0
     yarn_correction_range_round_to_int: bool = False
-    yarn_mscale: Optional[float] = 1.0
-    yarn_mscale_all_dim: Optional[float] = 1.0  # todo llama_4_scaling_beta
 
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
