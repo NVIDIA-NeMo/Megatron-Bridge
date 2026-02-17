@@ -31,7 +31,7 @@ def set_nemotron_3_nano_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def nemotronh_3_nano_pretrain_config_gb300(
+def nemotron_3_nano_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
