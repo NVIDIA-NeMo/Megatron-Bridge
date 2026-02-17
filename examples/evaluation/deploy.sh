@@ -19,4 +19,5 @@ python \
   --num_replicas "$NUM_REPLICAS" \
   --tensor_model_parallel_size "$TP" \
   --pipeline_model_parallel_size "$PP" \
-  --context_parallel_size "$CP" 
+  --context_parallel_size "$CP" \
+  --expert_model_parallel_size "1"
