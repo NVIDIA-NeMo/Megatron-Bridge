@@ -10,14 +10,12 @@ You can follow the examples below, which use Python scripts (useful for preproce
 
 ---
 
-
 ## Dataset Overview
 
 - The dataset is organized into **10 global shards**: `global-shard_01_of_10` … `global-shard_10_of_10`.  
 - Each global shard contains **10 local shards**: `local-shard_0_of_10` … `local-shard_9_of_10`.  
 - Each local shard contains ~280 compressed JSONL files: `*.jsonl.zst`.  
 - Total dataset size: **~722 GB compressed**, **~2.1T decompressed**.
-
 
 ## Downloading Dataset
 
@@ -33,11 +31,11 @@ python3 download.py \
 ```
 
 **Parameters:**
+
 - `--token` — Hugging Face token for authentication.
 - `--num_workers` — Number of parallel downloads; higher is faster.
 - `--path_to_save` — Target directory for saving the dataset.
 - `--patterns` — Subset of dataset to download. Ignore this param to download the full dataset.
-
 
 ## Decompressing Dataset
 
@@ -59,7 +57,6 @@ python3 decompress.py \
   --num_workers 32
 ```
 
-
 ## Merging Files
 
 This merges all decompressed `.jsonl` files from `/data/dclm/decompressed` into single `.jsonl` file to avoid hundreds of small `.jsonl` files before the preprocessing stage.
@@ -70,7 +67,6 @@ python3 merge.py \
   --source_dir /data/dclm/decompressed \
   --remove_small_files
 ```
-
 
 ## Data Shuffling
 
@@ -83,13 +79,14 @@ python3 shuffle.py \
   --num_workers 16
 ```
 
-
 ## Preprocessing to bin/idx format
 
 This step will convert the merged `.jsonl` files into a `bin/idx` format for training. It requires Megatron-LM to be installed:
 
 ```bash
-# Install Megatron Core with required dependencies
+# Use the pre-installed megatron-core version if running inside the NeMo Framework container.
+
+# Otherwise, install Megatron Core with required dependencies
 pip install megatron-core
 pip install --no-build-isolation transformer-engine[pytorch]
 

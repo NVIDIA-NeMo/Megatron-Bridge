@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, create_sft_dataset
+from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_sft_dataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 
 
@@ -172,8 +173,9 @@ class TestChatPreprocess:
         """Test chat preprocessing with tool schemas."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
-        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer = mock_hf_tokenizer
         mock_tokenizer.eos_id = 2
+        mock_tokenizer.legacy = False
 
         mock_hf_tokenizer.chat_template = "{{ messages }}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
@@ -448,67 +450,6 @@ class TestCreateSFTDataset:
         mock_packed_class.assert_called_once()
 
 
-class TestTokenizerSpaceSensitive:
-    """Test cases for space_sensitive attribute on tokenizers."""
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_hf_tokenizer_computes_space_sensitive(self, mock_get_rank, mock_hf_class):
-        """Test that _HuggingFaceTokenizer computes space_sensitive attribute."""
-        from megatron.bridge.training.tokenizers.config import TokenizerConfig
-        from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-
-        # Create a realistic mock tokenizer
-        mock_instance = MagicMock()
-
-        # Mock tokenize method to simulate space-sensitive tokenizer
-        def mock_tokenize(text, **kwargs):
-            if text == "x y":
-                return [1, 2, 3]  # Different from x + y
-            elif text == "x":
-                return [1]
-            elif text == "y":
-                return [2]
-            return []
-
-        mock_instance.tokenize = mock_tokenize
-        mock_instance.space_sensitive = True  # This should be set by __init__
-        mock_hf_class.return_value = mock_instance
-
-        config = TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="gpt2",
-            legacy_tokenizer=True,
-        )
-
-        tokenizer = build_tokenizer(config)
-
-        # Verify space_sensitive is set
-        assert hasattr(tokenizer, "space_sensitive")
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer._SentencePieceTokenizer")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_sentencepiece_tokenizer_has_space_sensitive(self, mock_get_rank, mock_sp_class):
-        """Test that _SentencePieceTokenizer has space_sensitive attribute."""
-        from megatron.bridge.training.tokenizers.config import TokenizerConfig
-        from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-
-        mock_instance = MagicMock()
-        mock_instance.space_sensitive = True
-        mock_sp_class.return_value = mock_instance
-
-        config = TokenizerConfig(
-            tokenizer_type="SentencePieceTokenizer",
-            tokenizer_model="tokenizer.model",
-            legacy_tokenizer=True,
-        )
-
-        tokenizer = build_tokenizer(config)
-
-        # Verify space_sensitive is set
-        assert hasattr(tokenizer, "space_sensitive")
-
-
 class TestPackedDatasetNaNFix:
     """Test cases for NaN fix in packed dataset collate_fn."""
 
@@ -542,49 +483,6 @@ class TestPackedDatasetNaNFix:
 
         # This is the key: when padding_gap > dataset_max_seqlen,
         # using padding_gap prevents NaNs in attention kernel
-
-
-class TestChatTemplateOverrideWarning:
-    """Test cases for chat template override warning."""
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer.print_rank_0")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_warning_on_chat_template_override(self, mock_get_rank, mock_print):
-        """Test that warning is printed when overwriting existing chat template."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
-
-        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
-            mock_hf_tok = MagicMock()
-            mock_hf_tok.chat_template = "existing_template"  # Has existing template
-            mock_hf_tok.get_vocab.return_value = {"test": 1}
-            mock_from_pretrained.return_value = mock_hf_tok
-
-            # Create tokenizer with chat_template override
-            tokenizer = _HuggingFaceTokenizer("gpt2", chat_template="new_template")
-
-            # Verify warning was printed
-            mock_print.assert_called_once()
-            assert "overwriting" in mock_print.call_args[0][0].lower()
-
-            # Verify template was set
-            assert tokenizer._tokenizer.chat_template == "new_template"
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer.print_rank_0")
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_no_warning_when_no_existing_template(self, mock_get_rank, mock_print):
-        """Test that no warning when setting template on tokenizer without one."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
-
-        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
-            mock_hf_tok = MagicMock()
-            mock_hf_tok.chat_template = None  # No existing template
-            mock_hf_tok.get_vocab.return_value = {"test": 1}
-            mock_from_pretrained.return_value = mock_hf_tok
-
-            _HuggingFaceTokenizer("gpt2", chat_template="new_template")
-
-            # No warning should be printed
-            mock_print.assert_not_called()
 
 
 class TestOutputOriginalText:
@@ -870,65 +768,6 @@ class TestTruncationWithChatTemplates:
             assert result["loss_mask"].sum().item() > 0
 
 
-class TestSpaceSensitiveInDataset:
-    """Test that space_sensitive attribute is used correctly in dataset."""
-
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
-    def test_dataset_uses_space_sensitive_attribute(self, mock_dataset_class):
-        """Test that dataset's _separate_template uses tokenizer.space_sensitive."""
-        mock_dataset = MagicMock()
-        mock_dataset.__len__.return_value = 10
-        mock_dataset_class.return_value = mock_dataset
-
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.eos_id = 2
-        mock_tokenizer.bos_id = 1
-        mock_tokenizer.text_to_ids = MagicMock(return_value=[1, 2, 3])
-
-        # Set space_sensitive to False
-        mock_tokenizer.space_sensitive = False
-
-        from megatron.bridge.data.datasets.sft import GPTSFTDataset
-
-        dataset = GPTSFTDataset(
-            file_path="test.jsonl",
-            tokenizer=mock_tokenizer,
-            max_seq_length=512,
-            prompt_template="{input} {output}",
-            label_key="output",  # Match the prompt template
-            truncation_field="input",  # Match a key in the prompt template
-        )
-
-        # Call _separate_template which uses space_sensitive
-        template_values = ["input_text", "output_text"]
-        template_strings, template_keys = dataset._separate_template(template_values)
-
-        # Verify it ran without error (space_sensitive was accessible)
-        assert template_strings is not None
-        assert template_keys is not None
-
-
-class TestChatTemplateFormat:
-    """Test that chat_template_format is set correctly."""
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_chat_template_format_set_to_jinja(self, mock_get_rank):
-        """Test that chat_template_format is set to 'jinja'."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
-
-        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
-            mock_hf_tok = MagicMock()
-            mock_hf_tok.chat_template = None
-            mock_hf_tok.get_vocab.return_value = {"test": 1}
-            mock_from_pretrained.return_value = mock_hf_tok
-
-            tokenizer = _HuggingFaceTokenizer("gpt2", chat_template="custom_template")
-
-            # Verify chat_template_format was set
-            assert hasattr(tokenizer._tokenizer, "chat_template_format")
-            assert tokenizer._tokenizer.chat_template_format == "jinja"
-
-
 class TestContextAnswerSplit:
     """Test context and answer splitting logic in _chat_preprocess."""
 
@@ -1004,24 +843,41 @@ class TestLegacyPreprocessReturnsLossMask:
         assert "mask=mask" not in source or "loss_mask" in source
 
 
+def _create_minimal_packed_dataset(tokenizer_eos_id: int = 0):
+    """Utility helper to instantiate GPTSFTPackedDataset without touching disk."""
+    dataset = GPTSFTPackedDataset.__new__(GPTSFTPackedDataset)
+    dataset.pad_to_max_length = False
+    dataset.max_seq_length = 32
+    dataset.pad_seq_length_to_mult = 1
+    dataset._pad_seq_to_mult = 2  # Used in collate_fn for cu_seqlens_unpadded check (must be > 1 to compute)
+    dataset.ceil_to_power_2 = False
+    dataset.tokenizer = SimpleNamespace(eos_id=tokenizer_eos_id)
+    dataset.answer_only_loss = False
+    dataset.return_cu_seqlen = True
+    dataset.pad_cu_seqlens = False
+    dataset.pack_metadata = []
+    return dataset
+
+
 class TestEOSIndexFixInPackedDataset:
     """Test EOS index fix for cu_seqlens_unpadded calculation."""
 
     def test_eos_index_logic_uses_shape_check(self):
-        """Test that EOS index logic uses shape[0] > 1 check (not .any())."""
-        # Verify the code uses the correct logic from NeMo PR #14437
-        import inspect
+        """Ensure cu_seqlens_unpadded handles sequences with <2 EOS tokens."""
+        dataset = _create_minimal_packed_dataset()
+        batch = [
+            {
+                "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.ones(5, dtype=np.int64),
+            }
+        ]
 
-        from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+        processed = dataset.collate_fn(batch)
+        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
 
-        # Get the collate_fn source code
-        source = inspect.getsource(GPTSFTPackedDataset.collate_fn)
-
-        # Verify it uses eos_idx[0][1] (second EOS) and shape[0] > 1
-        assert "eos_idx[0][1]" in source
-        assert "shape[0] > 1" in source
-        # Should NOT use eos_idx[0][0] or .any()
-        assert "eos_idx[0][0]" not in source
+        # Expect a single non-EOS token tracked without indexing errors.
+        assert cu_unpadded == [0, 1]
 
 
 class TestPackedChatDatasetIntegration:
@@ -1158,20 +1014,24 @@ class TestCuSeqlensUnpaddedCalculation:
     """Test cu_seqlens_unpadded calculation with EOS fix."""
 
     def test_cu_seqlens_unpadded_calculation_uses_correct_eos(self):
-        """Test that cu_seqlens_unpadded calculation uses correct EOS logic."""
-        # Code inspection test to verify the fix from NeMo PR #14437
-        import inspect
+        """Ensure cu_seqlens_unpadded honors the tokenizer's EOS id."""
+        dataset = _create_minimal_packed_dataset(tokenizer_eos_id=999)
+        batch = [
+            {
+                "input_ids": np.array(
+                    [5, 999, 999, 999, 1, 3, 999, 999, 999, 4],
+                    dtype=np.int64,
+                ),
+                "seq_boundaries": [0, 5, 10],
+                "loss_mask": np.ones(10, dtype=np.int64),
+            }
+        ]
 
-        from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+        processed = dataset.collate_fn(batch)
+        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
 
-        # Get the collate_fn source
-        source = inspect.getsource(GPTSFTPackedDataset.collate_fn)
-
-        # Should calculate seqlen_unpadded using second EOS
-        assert "seqlen_unpadded" in source
-        assert "eos_idx[0][1]" in source  # Uses second EOS
-        # The calculation should be: eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1
-        assert ".shape[0] > 1" in source
+        # Each non-EOS token contributes exactly once despite EOS padding.
+        assert cu_unpadded == [0, 1, 2]
 
 
 class TestBackwardCompatibilityLossMask:
@@ -1209,109 +1069,6 @@ class TestBackwardCompatibilityLossMask:
 
             # Should have loss_mask
             assert "loss_mask" in result
-
-
-class TestComputeSpaceSensitiveHelper:
-    """Test the _compute_space_sensitive helper function."""
-
-    def test_compute_space_sensitive_detects_difference(self):
-        """Test that _compute_space_sensitive returns True when tokenization differs."""
-        from megatron.bridge.training.tokenizers.tokenizer import _compute_space_sensitive
-
-        mock_tokenizer = MagicMock()
-        # Mock space-sensitive behavior
-        mock_tokenizer.tokenize.side_effect = lambda text: (
-            [1, 2, 3] if text == "x y" else [1] if text == "x" else [2] if text == "y" else []
-        )
-
-        result = _compute_space_sensitive(mock_tokenizer, default=False)
-
-        assert result is True  # Should detect difference
-
-    def test_compute_space_sensitive_no_difference(self):
-        """Test that _compute_space_sensitive returns False when tokenization is same."""
-        from megatron.bridge.training.tokenizers.tokenizer import _compute_space_sensitive
-
-        mock_tokenizer = MagicMock()
-        # Mock non-space-sensitive behavior (same result)
-        mock_tokenizer.tokenize.side_effect = lambda text: (
-            [1, 2] if text == "x y" else [1] if text == "x" else [2] if text == "y" else []
-        )
-
-        result = _compute_space_sensitive(mock_tokenizer, default=True)
-
-        assert result is False  # Should detect no difference
-
-    def test_compute_space_sensitive_fallback_on_exception(self):
-        """Test that _compute_space_sensitive returns default when tokenize raises exception."""
-        from megatron.bridge.training.tokenizers.tokenizer import _compute_space_sensitive
-
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.tokenize.side_effect = Exception("Tokenization failed")
-
-        # Test with default=True
-        result_true = _compute_space_sensitive(mock_tokenizer, default=True)
-        assert result_true is True
-
-        # Test with default=False
-        result_false = _compute_space_sensitive(mock_tokenizer, default=False)
-        assert result_false is False
-
-
-class TestSpaceSensitiveComputation:
-    """Test space_sensitive attribute computation in tokenizers."""
-
-    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
-    def test_hf_tokenizer_computes_space_sensitive_correctly(self, mock_get_rank):
-        """Test that HF tokenizer correctly computes space_sensitive."""
-        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
-
-        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
-            mock_hf_tok = MagicMock()
-            mock_hf_tok.get_vocab.return_value = {"x": 1, "y": 2}
-
-            # Mock tokenization to simulate space-sensitive tokenizer
-            def mock_call(text, **kwargs):
-                mock_result = MagicMock()
-                if text == "x y":
-                    mock_result.input_ids = [1, 2, 3]  # Different
-                elif text == "x":
-                    mock_result.input_ids = [1]
-                elif text == "y":
-                    mock_result.input_ids = [2]
-                else:
-                    mock_result.input_ids = []
-                return mock_result
-
-            mock_hf_tok.__call__ = mock_call
-            mock_from_pretrained.return_value = mock_hf_tok
-
-            tokenizer = _HuggingFaceTokenizer("gpt2")
-
-            # Should compute space_sensitive as True
-            assert hasattr(tokenizer, "space_sensitive")
-            assert tokenizer.space_sensitive is True
-
-    def test_sentencepiece_tokenizer_space_sensitive_fallback(self):
-        """Test that SentencePiece defaults to True if computation fails."""
-        from megatron.bridge.training.tokenizers.tokenizer import _SentencePieceTokenizer
-
-        with patch("sentencepiece.SentencePieceProcessor") as mock_sp:
-            mock_sp_instance = MagicMock()
-            mock_sp_instance.bos_id.return_value = 1
-            mock_sp_instance.eos_id.return_value = 2
-            mock_sp_instance.pad_id.return_value = 0
-            mock_sp_instance.get_piece_size.return_value = 1000
-            mock_sp_instance.id_to_piece = MagicMock(side_effect=lambda i: f"<{i}>")
-
-            # Make tokenize fail to test fallback
-            mock_sp_instance.encode_as_ids.side_effect = Exception("Test error")
-            mock_sp.return_value = mock_sp_instance
-
-            tokenizer = _SentencePieceTokenizer("test.model")
-
-            # Should fallback to True
-            assert tokenizer.space_sensitive is True
 
 
 class TestPackedDatasetWithChatTemplateEdgeCases:

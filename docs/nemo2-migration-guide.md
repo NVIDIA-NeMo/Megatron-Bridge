@@ -26,7 +26,7 @@ Megatron Bridge offers model providers that directly map to NeMo 2.0 model confi
 ### Supported Model Families
 
 Megatron Bridge supports the following model families with preset providers:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaProvider`
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight

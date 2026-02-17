@@ -124,6 +124,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -151,6 +152,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 this will override all hooks registered via `register_post_wrap_hook`.
             mixed_precision_wrapper: A module wrapper (e.g., `Float16Module`) applied when fp16/bf16
                 is enabled. If None, no mixed precision wrapper is applied.
+            pg_collection: Optional pre-initialized ProcessGroupCollection. If provided, skips
+                model parallel initialization and uses the provided collection directly.
+                This is used when `use_decentralized_pg=True` in the distributed config.
 
         Returns:
             A list containing the wrapped model instance.
@@ -166,10 +170,13 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
-        if not parallel_state.is_initialized():
-            print("Model parallel not initialized, initializing...")
-            self.initialize_model_parallel(seed=0)
-        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        # If pg_collection is provided (e.g., from use_decentralized_pg=True),
+        # use it directly. Otherwise, initialize model parallel state and get pg_collection from MPU.
+        if pg_collection is None:
+            if not parallel_state.is_initialized():
+                print("Model parallel not initialized, initializing...")
+                self.initialize_model_parallel(seed=0)
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         # Providers (GPT, Mamba, Gemma, etc.) expect pg_collection on self for PP/TP role checks.
         setattr(self, "_pg_collection", pg_collection)
 
@@ -576,7 +583,20 @@ def get_model(
             model_module.cuda(torch.cuda.current_device())
 
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
+        # Save expert bias in float32 to avoid precision loss during conversion
+        keep_in_fp32 = []
+        for model_module in model:
+            for submodule in model_module.modules():
+                if hasattr(submodule, "_maintain_float32_expert_bias"):
+                    expert_bias = getattr(submodule, "expert_bias", None)
+                    if expert_bias is not None:
+                        keep_in_fp32.append((submodule, expert_bias.data.clone()))
+
         model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
+
+        # Restore expert bias to float32
+        for submodule, fp32_data in keep_in_fp32:
+            submodule.expert_bias.data = fp32_data
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)

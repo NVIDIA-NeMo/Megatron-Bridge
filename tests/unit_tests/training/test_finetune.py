@@ -80,7 +80,7 @@ class TestFinetune:
                 # This should not raise an AssertionError
                 finetune(container, mock_forward_step_func)
                 # Verify that pretrain was called with the correct arguments
-                mock_pretrain.assert_called_once_with(container, mock_forward_step_func)
+                mock_pretrain.assert_called_once_with(container, mock_forward_step_func, callbacks=None)
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -108,6 +108,6 @@ class TestFinetune:
                 # This should not raise an AssertionError
                 finetune(container, mock_forward_step_func)
                 # Verify that pretrain was called with the correct arguments
-                mock_pretrain.assert_called_once_with(container, mock_forward_step_func)
+                mock_pretrain.assert_called_once_with(container, mock_forward_step_func, callbacks=None)
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
