@@ -149,4 +149,16 @@ def get_batch_on_this_tp_rank(
             "position_ids": position_ids,
         }
 
+    # Broadcast any extra keys (e.g. packed-sequence metadata) that are not
+    # covered by the fixed-shape direct broadcasts above.
+    extra = {k: v for k, v in data.items() if k not in batch} if is_tp_rank0 else None
+    obj_list = [extra]
+    torch.distributed.broadcast_object_list(obj_list, src=tp_ranks[0], group=tp_group)
+    extra = obj_list[0]
+    for key, val in extra.items():
+        if isinstance(val, torch.Tensor):
+            batch[key] = val.cuda(non_blocking=True)
+        else:
+            batch[key] = val
+
     return batch

@@ -15,6 +15,7 @@
 from dataclasses import fields
 from typing import Any, Callable, Dict, Optional, Type, Union
 
+from megatron.core import parallel_state
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
@@ -37,17 +38,27 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection) -> bool:
+def is_dataset_built_on_rank(pg_collection: Optional[ProcessGroupCollection] = None) -> bool:
     """Determines whether the dataset should be built on the current rank.
 
     Datasets are typically built only on the first and last pipeline stages
     and the first tensor parallel rank to save memory and avoid redundancy.
 
+    Args:
+        pg_collection: Process group collection. When provided, uses the
+            explicit process groups. When ``None``, falls back to the global
+            parallel state, which allows this function to be passed directly
+            as a zero-argument callable to ``BlendedMegatronDatasetBuilder``.
+
     Returns:
         True if the dataset should be built on the current rank, False otherwise.
     """
-    return (is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)) and (
-        pg_collection.tp.rank() == 0
+    if pg_collection is not None:
+        return (is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)) and (
+            pg_collection.tp.rank() == 0
+        )
+    return (parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()) and (
+        parallel_state.get_tensor_model_parallel_rank() == 0
     )
 
 
@@ -76,9 +87,11 @@ def pretrain_train_valid_test_datasets_provider(
 
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
-    # Build the dataset on all ranks for TP-replicated loading
+    broadcast_data = getattr(dataset_config, "broadcast_data_across_tp", False)
+    is_built_on_rank = is_dataset_built_on_rank if broadcast_data else (lambda: True)
+
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-        dataset_type, train_val_test_num_samples, lambda: True, dataset_config
+        dataset_type, train_val_test_num_samples, is_built_on_rank, dataset_config
     ).build()
 
     print_rank_0("> finished creating GPT datasets ...")
