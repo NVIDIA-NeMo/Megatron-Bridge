@@ -191,6 +191,8 @@ def qwen25_vl_72b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
 
+def qwen25_omni_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
+    pass
 
 def _qwen25_vl_common(
     hf_path: str,
