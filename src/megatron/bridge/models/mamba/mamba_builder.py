@@ -15,14 +15,22 @@
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Literal, override
 
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.enums import ModelType
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer import MegatronModule, ModuleSpec
+from megatron.core.transformer.module import Float16Module
 
-from megatron.bridge.models.common import ModelBuilder, ModelConfig
+from megatron.bridge.models.common import (
+    ModelBuilder,
+    ModelConfig,
+    ModelT,
+    unimodal_build_distributed_models,
+)
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
@@ -192,4 +200,38 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             post_process=post_process or is_pp_last_stage(pg_collection.pp),
             pg_collection=pg_collection,
             vp_stage=vp_stage,
+        )
+
+    def build_distributed_models(
+        self,
+        pg_collection: ProcessGroupCollection,
+        ddp_config: DistributedDataParallelConfig | None = None,
+        overlap_param_gather_with_optimizer_step: bool = False,
+        use_megatron_fsdp: bool = False,
+        use_torch_fsdp2: bool = False,
+        wrap_with_ddp: bool = True,
+        data_parallel_random_init: bool = True,
+        mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+        model_type: ModelType = ModelType.encoder_or_decoder,
+    ) -> list[ModelT]:
+        """Build model stages and wrap for distributed training.
+
+        Handles virtual pipeline parallelism, DDP wrapping, and
+        mixed precision configuration.
+        """
+        # TODO (@maanug): handle pre/post wrap hooks
+
+        transformer_config = self._model_config.transformer
+        return unimodal_build_distributed_models(
+            self.build_model,
+            transformer_config,
+            pg_collection,
+            ddp_config,
+            overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp,
+            use_torch_fsdp2,
+            wrap_with_ddp,
+            data_parallel_random_init,
+            mixed_precision_wrapper,
+            model_type,
         )

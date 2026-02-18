@@ -18,16 +18,11 @@ from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, Callable, ClassVar, Generic, Protocol, TypeVar
 
-import torch
-from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.module import Float16Module
-
-from megatron.bridge.models.model_provider import _ddp_wrap, _print_num_params
-from megatron.bridge.models.transformer_config import TransformerConfig
 
 
 try:
@@ -219,125 +214,8 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
     ) -> list[ModelT]:
-        """Build model stages and wrap for distributed training.
-
-        This default implementation only intends to support decoder-only models.
-
-        Handles virtual pipeline parallelism, DDP wrapping, and
-        mixed precision configuration.
-        """
-        if wrap_with_ddp and not ddp_config:
-            raise ValueError("ddp_config is required when wrap_with_ddp is True")
-
-        transformer_config: TransformerConfig | None = getattr(self._model_config, "transformer", None)
-
-        def find_model_attr(attr_name):
-            """Look for an attribute in both self._model_config and transformer_config."""
-            attr_value = getattr(self._model_config, attr_name, None)
-            if attr_value is None:
-                getattr(transformer_config, attr_name, None)
-            return attr_value
-
-        # TODO (@maanug): handle pre/post wrap hooks
-
-        # Get VP size from model config if available
-        vp_size = find_model_attr("virtual_pipeline_model_parallel_size")
-        init_model_with_meta_device = find_model_attr("init_model_with_meta_device") or False
-        if init_model_with_meta_device:
-            with torch.device("meta"):
-                model_list = self._build_model_stages(pg_collection, vp_size)
-        else:
-            model_list = self._build_model_stages(pg_collection, vp_size)
-
-        # Set tensor model parallel attributes if not set.
-        # Only parameters that are already tensor model parallel have these
-        # attributes set for them. We should make sure the default attributes
-        # are set for all params so the optimizer can use them.
-        for model_module in model_list:
-            for param in model_module.parameters():
-                tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
-
-        _print_num_params(model_list, pg_collection=pg_collection)
-
-        # GPU allocation.
-        # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
-        # in the fully_shard function of FSDP2 instead.
-        use_cpu_initialization = find_model_attr("use_cpu_initialization") or False
-        if not use_torch_fsdp2 and not use_cpu_initialization and not init_model_with_meta_device:
-            for model_module in model_list:
-                model_module.cuda(torch.cuda.current_device())
-
-        fp16 = find_model_attr("fp16") or False
-        bf16 = find_model_attr("bf16") or False
-        if (fp16 or bf16) and mixed_precision_wrapper is not None:
-            model_list = [mixed_precision_wrapper(transformer_config, model_module) for model_module in model_list]
-
-            # Maintain expert bias in float32 wrapped in Float16Module
-            for model_module in model_list:
-                for submodule in model_module.modules():
-                    if hasattr(submodule, "_maintain_float32_expert_bias"):
-                        submodule._maintain_float32_expert_bias()
-
-        # Materialize tensors on meta device (GPU allocation) if not using FSDP2 and not using Megatron FSDP.
-        if init_model_with_meta_device and not use_torch_fsdp2 and not use_megatron_fsdp:
-            model_list = [
-                to_empty_if_meta_device(model_module, device=torch.device("cuda")) for model_module in model_list
-            ]
-
-        if correct_amax_history_if_needed is not None:
-            correct_amax_history_if_needed(model_list)
-
-        if wrap_with_ddp:
-            model_list = _ddp_wrap(
-                model_list,
-                data_parallel_random_init,
-                ddp_config,
-                overlap_param_gather_with_optimizer_step,
-                use_megatron_fsdp=use_megatron_fsdp,
-                use_torch_fsdp2=use_torch_fsdp2,
-                pg_collection=pg_collection,
-            )
-
-        return model_list
-
-    def _build_model_stages(
-        self,
-        pg_collection: ProcessGroupCollection,
-        vp_size: int | None,
-        model_type: ModelType = ModelType.encoder_or_decoder,
-    ) -> list[ModelT]:
-        """Build virtual pipeline stages if using virtual pipeline parallelism."""
-        from megatron.core.pipeline_parallel.utils import (
-            is_pp_first_stage,
-            is_pp_last_stage,
-            is_vp_first_stage,
-            is_vp_last_stage,
-        )
-
-        pp_group = pg_collection.pp
-        if pp_group.size() > 1 and vp_size is not None:
-            # Create multiple model stages for virtual pipeline
-            model_list = []
-            for i in range(vp_size):
-                pre_process = is_vp_first_stage(vp_stage=i, vp_size=vp_size) and is_pp_first_stage(pp_group)
-                post_process = is_vp_last_stage(vp_stage=i, vp_size=vp_size) and is_pp_last_stage(pp_group)
-                model = self.build_model(
-                    pg_collection,
-                    pre_process=pre_process,
-                    post_process=post_process,
-                    vp_stage=i,
-                )
-                model.model_type = model_type
-                model_list.append(model)
-        else:
-            # Single stage, no VP
-            pre_process = is_pp_first_stage(pp_group)
-            post_process = is_pp_last_stage(pp_group)
-            model = self.build_model(pg_collection, pre_process=pre_process, post_process=post_process)
-            model.model_type = model_type
-            model_list = [model]
-
-        return model_list
+        """Build model stages and wrap for distributed training."""
+        ...
 
 
 class ModelProvider(Generic[ModelT]):
@@ -413,29 +291,3 @@ class ModelProvider(Generic[ModelT]):
             fp16=fp16,
             bf16=bf16,
         )
-
-
-def to_empty_if_meta_device(module: torch.nn.Module, *, device: torch.device, recurse=True):
-    """Move tensors to device if not meta device; otherwise materialize with empty_like().
-
-    Officially, torch suggests to_empty() for meta device materialization. Under the hood,
-    torch.empty_like() is applied to all parameters or buffers (see _apply). This may
-    accidently overwrite buffers with precomputed values during construction. Given the
-    goal is to only materialize those tensors on meta device, this function checks the
-    device first and only move the tensor to the destination if it is not on meta device.
-
-    Args:
-        module: The target module to apply this transformation.
-        device: The desired device of the parameters
-            and buffers in this module.
-        recurse: Whether parameters and buffers of submodules should
-            be recursively moved to the specified device.
-    """
-
-    def _empty_like_if_meta(tensor: torch.Tensor, *, device: torch.device):
-        if tensor.device == torch.device("meta"):
-            return torch.empty_like(tensor, device=device)
-        else:
-            return tensor.to(device)
-
-    return module._apply(lambda t: _empty_like_if_meta(t, device=device), recurse=recurse)

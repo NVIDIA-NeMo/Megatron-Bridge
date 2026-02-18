@@ -20,3 +20,4 @@ from megatron.bridge.models.common.base import (
     ModelT,
     Serializable,
 )
+from megatron.bridge.models.common.unimodal import build_virtual_pipeline_stages, unimodal_build_distributed_models
