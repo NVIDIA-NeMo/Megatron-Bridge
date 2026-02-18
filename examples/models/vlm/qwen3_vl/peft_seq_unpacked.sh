@@ -16,6 +16,10 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
+# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# export WANDB_API_KEY=<your_wandb_api_key>
+# export WANDB_MODE=disabled
+
 # Common configurations for dense model finetuning
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 MODEL_NAME=qwen3_vl_8b
@@ -37,10 +41,11 @@ PARALLELISM_CONFIGS=("2,1" "1,2")
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
     
-    echo "Running full finetuning with TP=$TP, PP=$PP"
+    echo "Running LoRA finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
-        --step_func vlm_step \
+        --step_func qwen3_vl_step \
+        --peft_scheme lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \
         train.train_iters=$TRAIN_ITERS \
@@ -50,10 +55,10 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_tp${TP}_pp${PP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP} \
+        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP} \
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
@@ -76,16 +81,17 @@ LR_WARMUP_ITERS=10
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
-# EP/TP/PP/SP combinations: "EP,TP,PP,SP" configurations
-PARALLELISM_CONFIGS=("8,1,1,False" "1,4,2,False" "2,2,2,True")
+# EP/TP/PP combinations: "EP,TP,PP" configurations
+PARALLELISM_CONFIGS=("8,1,1" "4,1,1" "2,1,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r EP TP PP SP <<< "$config"
+    IFS=',' read -r EP TP PP <<< "$config"
 
-    echo "Running full finetuning with EP=$EP, TP=$TP, PP=$PP, SP=$SP"
+    echo "Running LoRA finetuning with EP=$EP, TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
-        --step_func vlm_step \
+        --step_func qwen3_vl_step \
+        --peft_scheme lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \
         train.train_iters=$TRAIN_ITERS \
@@ -95,14 +101,13 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_ep${EP}_tp${TP}_pp${PP}_sp_${SP} \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_ep${EP}_tp${TP}_pp${PP}  \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_ep${EP}_tp${TP}_pp${PP}_sp_${SP} \
+        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_ep${EP}_tp${TP}_pp${PP} \
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
         model.expert_model_parallel_size=$EP \
         model.tensor_model_parallel_size=$TP \
-        model.pipeline_model_parallel_size=$PP \
-        model.sequence_parallel=$SP
+        model.pipeline_model_parallel_size=$PP
 done
