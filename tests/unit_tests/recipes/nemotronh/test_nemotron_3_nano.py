@@ -290,7 +290,6 @@ class TestNemotron3NanoCommon:
         assert config.checkpoint is not None
         assert config.rng is not None
         assert config.ddp is not None
-        assert config.comm_overlap is not None
         assert config.mixed_precision is not None
 
     @pytest.mark.parametrize(

@@ -271,7 +271,7 @@ def train(
                 scheduler=scheduler,
             ),
         )
-    is_any_logging_enabled = config.logger is not None
+
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -467,7 +467,7 @@ def train(
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if is_any_logging_enabled:
+        if not config.logger.skip_train_metrics_log:
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 loss_scale = optimizer.get_loss_scale().item()
             else:
