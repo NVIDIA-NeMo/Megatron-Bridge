@@ -112,7 +112,7 @@ def get_workload_base_config(
                 versioned_config_name,
                 fallback_versioned_config_name,
             )
-            logger.info(f"{workload_base_config}")
+            logger.debug(f"Default {workload_base_config}")
             return workload_base_config
 
     # Fallback to non-versioned config name for backward compatibility

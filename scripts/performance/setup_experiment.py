@@ -57,7 +57,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
