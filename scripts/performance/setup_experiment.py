@@ -403,7 +403,7 @@ def main(
     error_msg = None
     n_attempts = 0
     exp_name = (
-        exp_name[:37] if dgxc_cluster is not None else exp_name
+        exp_name[:33] if dgxc_cluster is not None else exp_name
     )  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
     while n_attempts <= max_retries:
@@ -502,11 +502,9 @@ def main(
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
 
-            if not is_testing_passed and not is_long_convergence_run:
-                if n_attempts < max_retries:
-                    logger.error(f"Starting attempt {n_attempts + 2} of {max_retries + 1} for {exp_name}")
-                n_attempts += 1
-                is_finished_experiment = False
+            if not is_long_convergence_run:
+                n_attempts = max_retries + 1
+                is_finished_experiment = True
 
         if is_finished_experiment and is_testing_passed:
             break

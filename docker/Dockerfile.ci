@@ -32,8 +32,9 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
-COPY 3rdparty/Megatron-LM/pyproject.toml /opt/Megatron-Bridge/3rdparty/Megatron-LM/
+COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false

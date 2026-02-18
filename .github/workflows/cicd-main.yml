@@ -407,6 +407,7 @@ jobs:
           - script: L2_Launch_quantization_aware_training
           - script: L2_Launch_quantization_export
           - script: L2_Launch_recipes_llama_cuda_graphs
+          - script: L2_Launch_utils
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
