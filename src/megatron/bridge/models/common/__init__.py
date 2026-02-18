@@ -16,7 +16,6 @@ from megatron.bridge.models.common.base import (
     BuildConfigT,
     ModelBuilder,
     ModelConfig,
-    ModelProvider,
     ModelT,
     Serializable,
     compose_hooks,
