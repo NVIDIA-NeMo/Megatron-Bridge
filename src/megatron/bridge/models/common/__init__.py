@@ -19,5 +19,6 @@ from megatron.bridge.models.common.base import (
     ModelProvider,
     ModelT,
     Serializable,
+    compose_hooks,
 )
 from megatron.bridge.models.common.unimodal import build_virtual_pipeline_stages, unimodal_build_distributed_models

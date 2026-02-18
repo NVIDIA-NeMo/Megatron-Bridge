@@ -180,6 +180,8 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
 
     def __init__(self, model_config: ModelConfig):
         self._model_config = model_config
+        self._pre_wrap_hooks = []
+        self._post_wrap_hooks = []
 
     @abc.abstractmethod
     def build_model(
@@ -216,6 +218,70 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
     ) -> list[ModelT]:
         """Build model stages and wrap for distributed training."""
         ...
+
+    def register_pre_wrap_hook(
+        self,
+        hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+        prepend: bool = False,
+    ) -> None:
+        """Registers a hook to be executed before the model is wrapped.
+
+        When the hooks are executed is left up to the implementation of child class.
+
+        The hook should be a callable that accepts a list of `MegatronModule` instances
+        and returns a (potentially modified) list of `MegatronModule` instances.
+
+        Args:
+            hook: The hook to register.
+            prepend: If True, the hook is inserted at the beginning of the execution
+                chain. Otherwise, it is appended to the end.
+        """
+        if prepend:
+            self._pre_wrap_hooks.insert(0, hook)
+        else:
+            self._pre_wrap_hooks.append(hook)
+
+    def register_post_wrap_hook(
+        self,
+        hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+        prepend: bool = False,
+    ) -> None:
+        """Registers a hook to be executed after the model is wrapped.
+
+        When the hooks are executed is left up to the implementation of child class.
+
+        The hook should be a callable that accepts a list of `MegatronModule` instances
+        and returns a (potentially modified) list of `MegatronModule` instances.
+
+        Args:
+            hook: The hook to register.
+            prepend: If True, the hook is inserted at the beginning of the execution
+                chain. Otherwise, it is appended to the end.
+        """
+        if prepend:
+            self._post_wrap_hooks.insert(0, hook)
+        else:
+            self._post_wrap_hooks.append(hook)
+
+
+def compose_hooks(
+    hooks: list[Callable[[list[MegatronModule]], list[MegatronModule]]],
+) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
+    """Utility to compose pre/post-wrap hooks into a single function, preserving order.
+
+    Args:
+        hooks: the list of hooks.
+
+    Returns:
+        A single function that executes all functions in `hooks`.
+    """
+
+    def composed_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+        for hook in hooks:
+            model = hook(model)
+        return model
+
+    return composed_hook
 
 
 class ModelProvider(Generic[ModelT]):

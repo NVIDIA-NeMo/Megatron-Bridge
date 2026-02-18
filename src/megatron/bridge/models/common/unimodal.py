@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 from typing import Any, Callable
 
@@ -49,6 +53,7 @@ def unimodal_build_distributed_models(
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = True,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
     model_type: ModelType = ModelType.encoder_or_decoder,
 ):
     """Build model stages and wrap for distributed training.
@@ -68,6 +73,15 @@ def unimodal_build_distributed_models(
             model_list = build_virtual_pipeline_stages(build_model_func, pg_collection, vp_size)
     else:
         model_list = build_virtual_pipeline_stages(build_model_func, pg_collection, vp_size)
+
+    # Apply pre wrap hooks
+    if not callable(pre_wrap_hook):
+        raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
+    _model = pre_wrap_hook(model_list)
+    if _model is not None:
+        model_list = _model
+    else:
+        logger.warning("Final pre wrap hook returned None, skipping pre wrap hooks.")
 
     # Set tensor model parallel attributes if not set.
     # Only parameters that are already tensor model parallel have these

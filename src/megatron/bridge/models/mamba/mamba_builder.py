@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Literal, override
 
@@ -29,10 +30,14 @@ from megatron.bridge.models.common import (
     ModelBuilder,
     ModelConfig,
     ModelT,
+    compose_hooks,
     unimodal_build_distributed_models,
 )
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+logger = logging.getLogger(__name__)
 
 
 def transformer_engine_mamba_stack_spec() -> ModuleSpec:
@@ -219,10 +224,9 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
         Handles virtual pipeline parallelism, DDP wrapping, and
         mixed precision configuration.
         """
-        # TODO (@maanug): handle pre/post wrap hooks
-
         transformer_config = self._model_config.transformer
-        return unimodal_build_distributed_models(
+        composed_pre_wrap_hook = compose_hooks(self._pre_wrap_hooks)
+        model_list = unimodal_build_distributed_models(
             self.build_model,
             transformer_config,
             pg_collection,
@@ -233,5 +237,15 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             wrap_with_ddp,
             data_parallel_random_init,
             mixed_precision_wrapper,
+            composed_pre_wrap_hook,
             model_type,
         )
+
+        composed_post_wrap_hook = compose_hooks(self._post_wrap_hooks)
+        _model = composed_post_wrap_hook(model_list)
+        if _model is not None:
+            model_list = _model
+        else:
+            logger.warning("Final post wrap hook returned None, skipping post wrap hooks.")
+
+        return model_list
