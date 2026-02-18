@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Callable, ClassVar, Literal
+from typing import Any, Callable, ClassVar, Literal, override
 
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
@@ -101,6 +101,26 @@ class MambaModelConfig(ModelConfig):
     )
     vocab_size: int | None = None
     should_pad_vocab: bool = False
+
+    @override
+    def __getattr__(self, name: str, /) -> Any:
+        if hasattr(self.transformer, name):
+            return getattr(self.transformer, name)
+        elif hasattr(self, name):
+            return self.name
+        else:
+            raise AttributeError(f"Neither MambaModelConfig nor TransformerConfig has any attribute {name}.")
+
+    @override
+    def __setattr__(self, name: str, value: Any, /) -> None:
+        if hasattr(self.transformer, name):
+            setattr(self.transformer, name, value)
+        elif hasattr(self, name):
+            super().__setattr__(name, value)
+        else:
+            raise AttributeError(
+                f"Cannot set {name}={value}. Neither MambaModelConfig nor TransformerConfig has any attribute {name}."
+            )
 
 
 class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
