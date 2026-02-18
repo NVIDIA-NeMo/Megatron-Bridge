@@ -184,26 +184,44 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        is_lora = cfg.peft is not None and "lora" in cfg.peft.__class__.__name__.lower()
+        peft_scheme = cfg.peft.__class__.__name__.lower() if cfg.peft is not None else ""
+        is_lora = "lora" in peft_scheme
         if is_lora:
-            common = (
-                12
-                * batch_size
-                * cfg.model.seq_length
-                * cfg.model.num_layers
-                * cfg.model.hidden_size
-                * cfg.model.hidden_size
+            num_tokens = getattr(cfg.dataset, "avg_tokens_per_row", None)
+            if num_tokens is None:
+                num_tokens = batch_size * cfg.model.seq_length
+            avg_seq_len_sq_row = getattr(cfg.dataset, "avg_seq_len_sq_row", None)
+            if avg_seq_len_sq_row is None:
+                avg_seq_len_sq_row = num_tokens * cfg.model.seq_length
+            lora_factor = 2.0 / 3.0
+            mft_per_step = (
+                batch_size
+                * (
+                    (
+                        lora_factor
+                        * (
+                            (num_tokens * cfg.model.hidden_size * cfg.model.hidden_size)
+                            + (
+                                2
+                                * num_tokens
+                                * cfg.model.hidden_size
+                                * cfg.model.hidden_size
+                                * num_query_groups
+                                / cfg.model.num_attention_heads
+                            )
+                            + (num_tokens * cfg.model.hidden_size * cfg.model.hidden_size)
+                            + (2 * num_tokens * cfg.model.hidden_size * cfg.model.ffn_hidden_size)
+                            + (num_tokens * cfg.model.hidden_size * cfg.model.ffn_hidden_size)
+                        )
+                        + (2 * avg_seq_len_sq_row * cfg.model.hidden_size)
+                    )
+                    * cfg.model.num_layers
+                    + cfg.model.vocab_size * cfg.model.hidden_size * num_tokens * lora_factor
+                )
+                * 2
+                * 3
             )
-            attention_flops = common * (
-                1
-                + (num_query_groups / cfg.model.num_attention_heads)
-                + (0.5 * cfg.model.seq_length / cfg.model.hidden_size)
-            )
-            mlp_flops = common * ((cfg.model.ffn_hidden_size / cfg.model.hidden_size) * 1.5)
-            embedding_flops = common * (
-                cfg.model.vocab_size / (2 * cfg.model.num_layers * cfg.model.hidden_size)
-            )
-            return (2.0 / 3.0) * (attention_flops + mlp_flops + embedding_flops)
+            return mft_per_step
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.
