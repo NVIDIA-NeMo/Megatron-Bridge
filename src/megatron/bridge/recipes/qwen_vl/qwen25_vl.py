@@ -925,3 +925,204 @@ def qwen25_vl_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     return cfg
+
+
+# =============================================================================
+# Qwen2.5-Omni 7B configurations (HF: Qwen/Qwen2.5-Omni-7B-Instruct)
+# =============================================================================
+def _qwen25_omni_7b_full_sft_config() -> ConfigContainer:
+    """Full SFT preset for Qwen2.5-Omni 7B (TP=4, sequence parallel on)."""
+    cfg = _sft_common_vlm()
+    hf_path = "Qwen/Qwen2.5-Omni-7B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=5e-6,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.mixed_precision = "bf16_mixed"
+    return cfg
+
+
+def _qwen25_omni_7b_peft_branch(peft_scheme: str | PEFT) -> ConfigContainer:
+    """PEFT preset for Qwen2.5-Omni 7B (TP=1)."""
+    cfg = _peft_common_vlm()
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        cfg.peft = default_peft_config(peft_scheme)
+    else:
+        cfg.peft = peft_scheme
+    hf_path = "Qwen/Qwen2.5-Omni-7B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=1e-4,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.mixed_precision = "bf16_mixed"
+    return cfg
+
+
+def qwen25_omni_7b_finetune_config(peft_scheme: str | PEFT | None = None) -> ConfigContainer:
+    """Fine-tuning entry point for Qwen2.5-Omni 7B (full SFT vs PEFT).
+
+    - ``peft_scheme`` is ``None`` or ``"none"`` → full SFT (TP=4, sequence parallel).
+    - Otherwise → PEFT (``"lora"``, ``"dora"``, or a :class:`~megatron.bridge.peft.base.PEFT` instance).
+    """
+    is_full_sft = peft_scheme is None or (
+        isinstance(peft_scheme, str) and peft_scheme.lower() == "none"
+    )
+    if is_full_sft:
+        return _qwen25_omni_7b_full_sft_config()
+    return _qwen25_omni_7b_peft_branch(peft_scheme)
+
+
+def qwen25_omni_7b_pretrain_config() -> ConfigContainer:
+    """Pre-training style preset: freeze language + vision towers, train projection (Omni 7B)."""
+    cfg = _sft_common_vlm()
+    hf_path = "Qwen/Qwen2.5-Omni-7B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = True
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = False
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=5e-6,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.mixed_precision = "bf16_mixed"
+    return cfg
