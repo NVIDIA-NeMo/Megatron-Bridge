@@ -178,6 +178,10 @@ def create_packing_strategy(
     min_packed_seqlen = min(packed_seq_lens)
     packing_efficiency = sum(packed_seq_lens) / len(packed_seq_lens) / pack_size * 100
 
+    num_rows = len(assignments)
+    total_tokens = sum(sum(row) for row in assignments)
+    total_seq_len_sq = sum(sum(l * l for l in row) for row in assignments)
+
     packing_metadata = {
         "dataset_max_seqlen": max_seqlen,
         "max_samples_per_bin": max_samples_per_bin,
@@ -185,6 +189,9 @@ def create_packing_strategy(
         "packing_efficiency": round(packing_efficiency, 2),
         "pack_size": pack_size,
         "min_packed_seqlen": min_packed_seqlen,
+        "num_rows": num_rows,
+        "total_tokens": total_tokens,
+        "total_seq_len_sq": total_seq_len_sq,
     }
 
     logger.debug("Packed sequence lengths:")

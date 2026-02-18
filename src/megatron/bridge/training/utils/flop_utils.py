@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+from pathlib import Path
+
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
@@ -188,9 +191,31 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         is_lora = "lora" in peft_scheme
         if is_lora:
             num_tokens = getattr(cfg.dataset, "avg_tokens_per_row", None)
+            avg_seq_len_sq_row = getattr(cfg.dataset, "avg_seq_len_sq_row", None)
+
+            # If not set manually, try to load from packing metadata (packed LoRA training).
+            if num_tokens is None or avg_seq_len_sq_row is None:
+                packed_specs = getattr(cfg.dataset, "packed_sequence_specs", None)
+                if packed_specs is not None:
+                    metadata_path = getattr(packed_specs, "packed_metadata_path", None)
+                    if metadata_path is not None and Path(metadata_path).exists():
+                        with open(metadata_path) as f:
+                            metadata = json.load(f)
+                        # Convention: train metadata is the first entry in the list.
+                        train_meta = metadata[0] if metadata else {}
+                        total_tokens = train_meta.get("total_tokens")
+                        total_seq_len_sq = train_meta.get("total_seq_len_sq")
+                        num_rows = train_meta.get("num_rows")
+                        if total_tokens is not None and total_seq_len_sq is not None and num_rows is not None:
+                            gbs = cfg.train.global_batch_size
+                            count = (num_rows // gbs) * gbs
+                            if num_tokens is None:
+                                num_tokens = total_tokens / count
+                            if avg_seq_len_sq_row is None:
+                                avg_seq_len_sq_row = total_seq_len_sq / count
+
             if num_tokens is None:
                 num_tokens = batch_size * cfg.model.seq_length
-            avg_seq_len_sq_row = getattr(cfg.dataset, "avg_seq_len_sq_row", None)
             if avg_seq_len_sq_row is None:
                 avg_seq_len_sq_row = num_tokens * cfg.model.seq_length
             lora_factor = 2.0 / 3.0
