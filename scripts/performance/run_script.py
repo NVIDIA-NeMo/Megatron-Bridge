@@ -25,7 +25,6 @@ from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
