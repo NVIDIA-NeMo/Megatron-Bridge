@@ -21,27 +21,41 @@ Reference: https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Thinking
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
-    Qwen3OmniMoeThinkerConfig,
-    Qwen3OmniMoeTalkerConfig,
     Qwen3OmniMoeCode2WavConfig,
+    Qwen3OmniMoeTalkerConfig,
     Qwen3OmniMoeTextConfig,
+    Qwen3OmniMoeThinkerConfig,
 )
 
 from megatron.bridge.models import Qwen3MoEModelProvider
-from megatron.bridge.models.qwen_omni.modelling_qwen3_omni import Qwen3OmniMoeModel
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniMoeModel
 
 
 @dataclass
 class Qwen3OmniMoeModelProvider(Qwen3MoEModelProvider):
+    """
+    Base model provider for Qwen3 Omni Moe Models.
+    Inherits language model configuration from Qwen3MoeModelProvider.
+
+    Key MoE Parameters (inherited from Qwen3MoEModelProvider):
+    - num_moe_experts: Number of total experts (default 128)
+    - moe_router_topk: Number of experts selected per token (default 8)
+    - moe_router_load_balancing_type: Load balancing strategy (default "aux_loss")
+    - moe_aux_loss_coeff: Auxiliary loss coefficient (default 1e-3)
+    - moe_grouped_gemm: Use grouped GEMM for efficiency (default True)
+
+    Note: num_query_groups in parent class corresponds to num_key_value_heads in HF config.
+    """
+
     thinker_config: Qwen3OmniMoeThinkerConfig = field(default_factory=lambda: Qwen3OmniMoeThinkerConfig())
-    talker_config: Optional[Qwen3OmniMoeTalkerConfig] = None
-    code2wav_config: Optional[Qwen3OmniMoeCode2WavConfig] = None
-    hf_text_config: Optional[Qwen3OmniMoeTextConfig] = None
+    talker_config: Qwen3OmniMoeTalkerConfig | None = None
+    code2wav_config: Qwen3OmniMoeCode2WavConfig | None = None
+    hf_text_config: Qwen3OmniMoeTextConfig | None = None
 
     pretrained_model_name: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
@@ -112,11 +126,13 @@ class Qwen3OmniMoeModelProvider(Qwen3MoEModelProvider):
 
     # Freeze options for fine-tuning scenarios
     # Whether to freeze language model weights
-    freeze_language_model: bool = True
+    freeze_language_model: bool = False
     # Whether to freeze vision encoder weights
-    freeze_vision_model: bool = True
+    freeze_vision_model: bool = False
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
+    # Whether ro freeze audio model weights
+    freeze_audio_model: bool = False
     language_max_sequence_length: int = 2048
 
     # QK layernorm is already True in Qwen3MoEModelProvider, no need to redefine
@@ -152,7 +168,7 @@ class Qwen3OmniMoeModelProvider(Qwen3MoEModelProvider):
         thinker_config = self.thinker_config
         talker_config = self.talker_config
         code2wav_config = self.code2wav_config
-    
+
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=True,
@@ -164,20 +180,26 @@ class Qwen3OmniMoeModelProvider(Qwen3MoEModelProvider):
         model = Qwen3OmniMoeModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            thinker_transformer_config = thinker_config,
-            talker_transformer_config = talker_config,
-            code2wav_transformer_config = code2wav_config,
+            thinker_transformer_config=thinker_config,
+            talker_transformer_config=talker_config,
+            code2wav_transformer_config=code2wav_config,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
         )
 
         # Apply freeze options if any are enabled for fine-tuning
-        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
+        if (
+            self.freeze_language_model
+            or self.freeze_vision_model
+            or self.freeze_vision_projection
+            or self.freeze_audio_model
+        ):
             model.freeze(
                 freeze_language_model=self.freeze_language_model,
                 freeze_vision_model=self.freeze_vision_model,
                 freeze_vision_projection=self.freeze_vision_projection,
+                freeze_audio_model=self.freeze_audio_model,
             )
 
         return model

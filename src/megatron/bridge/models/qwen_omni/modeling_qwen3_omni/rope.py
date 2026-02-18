@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-from typing import Optional
-
 import torch
 
 
@@ -37,6 +34,7 @@ def get_llm_pos_ids_for_vision(
     grid_hs: list[torch.Tensor],
     grid_ws: list[torch.Tensor],
 ):
+    """get llm position ids"""
     llm_pos_ids_list = []
     llm_grid_h = grid_hs[vision_idx] // spatial_merge_size
     llm_grid_w = grid_ws[vision_idx] // spatial_merge_size
@@ -57,13 +55,13 @@ def get_rope_index(
     vision_start_token_id: int,
     audio_start_token_id: int,
     position_id_per_seconds: int,
-    input_ids: Optional[torch.LongTensor] = None,
-    image_grid_thw: Optional[torch.LongTensor] = None,
-    video_grid_thw: Optional[torch.LongTensor] = None,
-    attention_mask: Optional[torch.Tensor] = None,
+    input_ids: torch.LongTensor | None = None,
+    image_grid_thw: torch.LongTensor | None = None,
+    video_grid_thw: torch.LongTensor | None = None,
+    attention_mask: torch.Tensor | None = None,
     use_audio_in_video: bool = False,
-    audio_seqlens: Optional[torch.LongTensor] = None,
-    second_per_grids: Optional[torch.Tensor] = None,
+    audio_seqlens: torch.LongTensor | None = None,
+    second_per_grids: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Calculate the 3D rope index based on image and video's temporal, height and width in LLM.
@@ -100,9 +98,7 @@ def get_rope_index(
             llm_pos_ids_list: list = []
             st = 0
             remain_images, remain_videos, remain_audios = image_nums, video_nums, audio_nums
-            multimodal_nums = (
-                image_nums + audio_nums if use_audio_in_video else image_nums + video_nums + audio_nums
-            )
+            multimodal_nums = image_nums + audio_nums if use_audio_in_video else image_nums + video_nums + audio_nums
             for _ in range(multimodal_nums):
                 st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
                 if (image_token_id in input_tokens or video_token_id in input_tokens) and (
@@ -198,13 +194,9 @@ def get_rope_index(
                             llm_pos_ids_list.append(audio_llm_pos_ids[:, audio_data_index : audio_data_index + 1])
                             audio_data_index += 1
                     if video_data_index < video_llm_pos_ids.shape[-1]:
-                        llm_pos_ids_list.append(
-                            video_llm_pos_ids[:, video_data_index : video_llm_pos_ids.shape[-1]]
-                        )
+                        llm_pos_ids_list.append(video_llm_pos_ids[:, video_data_index : video_llm_pos_ids.shape[-1]])
                     if audio_data_index < audio_llm_pos_ids.shape[-1]:
-                        llm_pos_ids_list.append(
-                            audio_llm_pos_ids[:, audio_data_index : audio_llm_pos_ids.shape[-1]]
-                        )
+                        llm_pos_ids_list.append(audio_llm_pos_ids[:, audio_data_index : audio_llm_pos_ids.shape[-1]])
                     video_len = video_grid_thw[video_idx].prod() // (spatial_merge_size**2)
 
                     st += int(text_len + bos_len + audio_len + video_len + eos_len)
@@ -222,7 +214,7 @@ def get_rope_index(
                 llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
             llm_positions = torch.cat([item.float() for item in llm_pos_ids_list], dim=1).reshape(3, -1)
-            
+
             position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
             mrope_position_deltas.append(llm_positions.max() + 1 - len(input_ids))
         mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
@@ -239,4 +231,3 @@ def get_rope_index(
         mrope_position_deltas = max_position_ids + 1 - torch.sum(attention_mask, dim=-1, keepdim=True)
 
         return position_ids, mrope_position_deltas
-

@@ -13,33 +13,31 @@
 # limitations under the License.
 
 import torch
-from typing import Optional
-
-from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core import InferenceParams, mpu, tensor_parallel
+from megatron.core import InferenceParams
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
-    Qwen3OmniMoeThinkerConfig,
-    Qwen3OmniMoeTalkerConfig,
     Qwen3OmniMoeCode2WavConfig,
+    Qwen3OmniMoeTalkerConfig,
+    Qwen3OmniMoeThinkerConfig,
 )
 
-from megatron.bridge.models.qwen_omni.thinker_model import Qwen3OmniMoeThinkerModel
-from megatron.bridge.models.qwen_omni.transformer_config import Qwen3OmniTransformerConfig
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import Qwen3OmniMoeThinkerModel
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import Qwen3OmniTransformerConfig
 
 
 class Qwen3OmniMoeModel(MegatronModule):
-    """Qwen3 Omni Moe Model.
-    """
+    """Qwen3 Omni Moe Model."""
+
     def __init__(
         self,
         language_transformer_config: Qwen3OmniTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         thinker_transformer_config: Qwen3OmniMoeThinkerConfig,
-        talker_transformer_config: Optional[Qwen3OmniMoeTalkerConfig] = None,
-        code2wav_transformer_config: Optional[Qwen3OmniMoeCode2WavConfig] = None,
+        talker_transformer_config: Qwen3OmniMoeTalkerConfig | None = None,
+        code2wav_transformer_config: Qwen3OmniMoeCode2WavConfig | None = None,
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -73,9 +71,10 @@ class Qwen3OmniMoeModel(MegatronModule):
 
     def freeze(
         self,
-        freeze_language_model: bool,
-        freeze_vision_model: bool,
-        freeze_vision_projection: bool,
+        freeze_language_model: bool = False,
+        freeze_vision_model: bool = False,
+        freeze_vision_projection: bool = False,
+        freeze_audio_model: bool = False,
     ):
         """Freeze model modules.
 
@@ -83,13 +82,15 @@ class Qwen3OmniMoeModel(MegatronModule):
 
         Args:
             freeze_language_model (bool): Freeze the language model module.
-            freeze_vision_model (bool): Freeze the vision model module (patch_embed, blocks, pos_embed).
+            freeze_vision_model (bool): Freeze the vision model module.
             freeze_vision_projection (bool): Freeze the vision projection modules (merger and deepstack_merger_list).
+            freeze_audio_model (bool): Freeze the audio model module.
         """
         return self.thinker.freeze(
             freeze_language_model,
             freeze_vision_model,
-            freeze_vision_projection
+            freeze_vision_projection,
+            freeze_audio_model,
         )
 
     def forward(
@@ -113,6 +114,7 @@ class Qwen3OmniMoeModel(MegatronModule):
         feature_attention_mask=None,
         audio_feature_lengths=None,
         cp_img_num: list[int] = None,
+        images_padded: list[bool] = None,
         use_audio_in_video=None,
         video_second_per_grid=None,
         **kwargs,
@@ -136,6 +138,7 @@ class Qwen3OmniMoeModel(MegatronModule):
             feature_attention_mask=feature_attention_mask,
             audio_feature_lengths=audio_feature_lengths,
             cp_img_num=cp_img_num,
+            images_padded=images_padded,
             use_audio_in_video=use_audio_in_video,
             video_second_per_grid=video_second_per_grid,
             **kwargs,
