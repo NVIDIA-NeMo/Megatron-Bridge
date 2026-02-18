@@ -29,7 +29,6 @@ from megatron.core.transformer.module import Float16Module
 from megatron.bridge.models.common import (
     ModelBuilder,
     ModelConfig,
-    ModelT,
     compose_hooks,
     unimodal_build_distributed_models,
 )
@@ -88,10 +87,20 @@ def get_default_mamba_stack_spec(config: "MambaModelConfig") -> ModuleSpec:
 
 @dataclass(kw_only=True)
 class MambaModelConfig(ModelConfig):
-    """Complete configuration for a Mamba model. Contains a TransformerConfig.
+    """Configuration for a Megatron Core Mamba (SSM) model.
 
-    This is a pure data container with no behavior - just configuration values.
-    All the logic for using these values lives in the `MambaModelBuilder`.
+    This is purely a configuration object. All model construction
+    logic lives in ``MambaModelBuilder``.
+
+    Contains a ``TransformerConfig`` alongside Mamba-specific parameters. Attributes
+    on the embedded ``transformer`` config are accessible directly on this object
+    via ``__getattr__``/``__setattr__`` proxying.
+
+    Supports hybrid SSM/attention architectures via ``hybrid_attention_ratio``,
+    ``hybrid_mlp_ratio``, and ``hybrid_override_pattern``.
+
+    Note:
+        ``vocab_size`` must be set before passing this config to ``MambaModelBuilder``.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.mamba.MambaModelBuilder"
@@ -140,12 +149,14 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
     """Builder to construct Megatron Core Mamba models.
 
     Example:
-        >>> # model_config is MCore TransformerConfig for GPT
         >>> transformer_cfg = TransformerConfig(num_layers=32, hidden_size=4096, ...)
         >>> model_cfg = MambaModelConfig(transformer=transformer_cfg, vocab_size=32000, seq_length=2048, ...)
         >>>
-        >>> # Build model
+        >>> # Single stage (e.g. inference)
         >>> model = MambaModelBuilder(model_cfg).build_model(pg_collection)
+        >>>
+        >>> # Distributed training
+        >>> models = MambaModelBuilder(model_cfg).build_distributed_models(pg_collection)
     """
 
     def __init__(self, model_config: MambaModelConfig):
@@ -158,6 +169,20 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
         post_process: bool | None = None,
         vp_stage: int | None = None,
     ) -> MCoreMambaModel:
+        """Build a single ``MCoreMambaModel`` stage.
+
+        Args:
+            pg_collection: Process groups for distributed training
+            pre_process: Include embedding layer
+            post_process: Include output layer
+            vp_stage: Virtual pipeline stage
+
+        Returns:
+            The constructed model
+
+        Note:
+            Virtual pipeline model parallelism is not supported for Mamba models.
+        """
         mamba_stack_spec = self._model_config.mamba_stack_spec
         if not isinstance(mamba_stack_spec, ModuleSpec):
             # Check if the function accepts config parameter
@@ -218,11 +243,23 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
         data_parallel_random_init: bool = True,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
-    ) -> list[ModelT]:
+    ) -> list[MCoreMambaModel]:
         """Build model stages and wrap for distributed training.
 
-        Handles virtual pipeline parallelism, DDP wrapping, and
-        mixed precision configuration.
+        Args:
+            pg_collection: Model communication process groups.
+            ddp_config: DistributedDataParallel configuration
+            overlap_param_gather_with_optimizer_step: Whether to overlap parameter
+                gather with optimizer step.
+            use_megatron_fsdp: Whether to use Megatron FSDP
+            use_torch_fsdp2: Whether to use Torch FSDP 2.0
+            wrap_with_ddp: Set to False to skip the DDP/FSDP wrapper.
+            data_parallel_random_init: Whether to use data parallel random initialization
+            mixed_precision_wrapper: Mixed precision wrapper, e.g. ``Float16Module``
+            model_type: Deprecated flag, only used for backwards compatibility.
+
+        Returns:
+            List of model stages.
         """
         transformer_config = self._model_config.transformer
         composed_pre_wrap_hook = compose_hooks(self._pre_wrap_hooks)

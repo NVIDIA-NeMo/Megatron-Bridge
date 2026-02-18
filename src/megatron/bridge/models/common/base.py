@@ -46,16 +46,28 @@ class Serializable(Protocol):
 
 @dataclass
 class ModelConfig(abc.ABC, Serializable):
-    """Abstract base class for model build configurations.
+    """Abstract base class for model configurations.
 
-    Each model type (GPT, T5, Mamba, etc.) has its own build config subclass.
-    The build config contains:
-    1. Builder path (serializable string) to link to the correct builder
-    2. Model-specific parameters not in TransformerConfig
-    3. HuggingFace metadata for checkpoint conversion
+    Each model type (GPT, T5, Mamba, etc.) defines a concrete subclass with its
+    own model-specific parameters. This class is a pure data container - all model
+    construction logic lives in the corresponding ``ModelBuilder`` subclass.
 
-    Each subclass must define `builder` as a ClassVar string pointing to
-    the appropriate ModelBuilder subclass path.
+    Subclasses must define:
+        - ``builder``: a ``ClassVar[str]`` with the full import path to the
+          associated ``ModelBuilder`` (e.g.
+          ``'megatron.bridge.models.mamba.MambaModelBuilder'``).
+
+    Subclasses may also embed nested configs (e.g. ``TransformerConfig``) and
+    proxy attribute access to them via ``__getattr__``/``__setattr__`` overrides.
+
+    Serialization:
+        Use ``to_dict()`` to serialize to a plain dict (includes a ``_target_`` key
+        for class resolution and a ``_builder_`` key for builder resolution).
+        Use ``from_dict()`` to reconstruct an instance from such a dict.
+
+    Builder resolution:
+        Call ``get_builder_cls()`` to dynamically import and return the builder
+        class identified by the ``builder`` ClassVar.
     """
 
     # === Builder Metadata (Serializable) ===
@@ -76,8 +88,8 @@ class ModelConfig(abc.ABC, Serializable):
     """Generation configuration."""
 
     def get_builder_cls(self) -> type:
-        """Get the appropriate builder instance for this config.
-        Dynamically imports and instantiates the builder from the string path.
+        """Get the appropriate builder type for this config.
+        Dynamically imports the builder from the string path.
         """
         module_path, class_name = self.builder.rsplit(".", 1)
         module = importlib.import_module(module_path)
@@ -125,7 +137,7 @@ class ModelConfig(abc.ABC, Serializable):
             data: Dictionary with _target_ and config fields
 
         Returns:
-            Instance of the appropriate ModelBuildConfig subclass
+            Instance of the appropriate ModelConfig subclass
         """
 
         def _from_dict(subdata):
@@ -164,11 +176,15 @@ BuildConfigT = TypeVar("BuildConfigT", bound=ModelConfig)
 class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
     """Abstract base class for model builders.
 
-    A builder takes configuration(s) and produces model instances.
+    A builder takes a ``ModelConfig`` and produces distributed model instances -
+    either a single pipeline stage via ``build_model()``, or a list of stages
+    wrapped for distributed training via ``build_distributed_models()``.
 
     Each builder subclass should:
-    1. Implement build_model() for the specific model type
-    2. Be linked to its corresponding ModelBuildConfig via the builder string
+    1. Implement ``build_model()`` for the specific model type
+    2. Implement ``build_distributed_models()`` to handle virtual pipeline parallelism,
+       DDP/FSDP wrapping, and pre/post-wrap hook execution
+    3. Be linked to its corresponding ``ModelConfig`` via the ``builder`` ClassVar
 
     Builders are factory objects, therefore any state saved in __init__ should not be modified
     and only used to build the model.
@@ -216,7 +232,23 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
     ) -> list[ModelT]:
-        """Build model stages and wrap for distributed training."""
+        """Build model stages and wrap for distributed training.
+
+        Args:
+            pg_collection: Model communication process groups.
+            ddp_config: DistributedDataParallel configuration
+            overlap_param_gather_with_optimizer_step: Whether to overlap parameter gather with optimizer step
+            use_megatron_fsdp: Whether to use Megatron FSDP
+            use_torch_fsdp2: Whether to use Torch FSDP 2.0
+            wrap_with_ddp: Set to False to skip DDP wrapper
+            data_parallel_random_init: Whether to use data parallel random initialization
+            mixed_precision_wrapper: Mixed precision wrapper, e.g. ``Float16Module``
+            model_type: Deprecated flag, only used for backwards compatibility.
+
+        Returns:
+            List of model stages. If the model does not support virtual pipeline parallelism,
+                this function should still return a single-item list.
+        """
         ...
 
     def register_pre_wrap_hook(
@@ -268,6 +300,8 @@ def compose_hooks(
     hooks: list[Callable[[list[MegatronModule]], list[MegatronModule]]],
 ) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
     """Utility to compose pre/post-wrap hooks into a single function, preserving order.
+
+    If `hooks` is empty, the returned function is an identity operation.
 
     Args:
         hooks: the list of hooks.

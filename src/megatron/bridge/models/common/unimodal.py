@@ -33,8 +33,6 @@ from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.models.common.base import ModelT
-
 
 try:
     from megatron.core.fp8_utils import correct_amax_history_if_needed
@@ -55,13 +53,37 @@ def unimodal_build_distributed_models(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
     model_type: ModelType = ModelType.encoder_or_decoder,
-):
+) -> list[MegatronModule]:
     """Build model stages and wrap for distributed training.
 
-    Shared helper for GPT and Mamba models which follow the same logic for building VP stages.
+    Shared helper for unimodal models (GPT, Mamba, etc.) that share the same procedure
+    for distributed model initialization. Performs the following steps in order:
 
-    Handles virtual pipeline parallelism, DDP wrapping, and
-    mixed precision configuration.
+    1. Build virtual pipeline stages (one per VP rank, or a single stage if no VP)
+    2. Apply ``pre_wrap_hook``
+    3. Set tensor model parallel attributes on all parameters
+    4. Move model to GPU (unless using FSDP2 or CPU/meta-device initialization)
+    5. Apply mixed precision wrapper (e.g. ``Float16Module``)
+    6. Materialize meta-device tensors if ``init_model_with_meta_device`` is set
+    7. Optionally wrap with DDP/FSDP
+
+    Args:
+        build_model_func: Callable that builds a single model stage (e.g. ``ModelBuilder.build_model``).
+        transformer_config: TransformerConfig; used for VP size, precision, and device placement.
+        pg_collection: Model communication process groups.
+        ddp_config: DistributedDataParallel configuration. Required when ``wrap_with_ddp=True``.
+        overlap_param_gather_with_optimizer_step: Whether to overlap parameter gather with optimizer step.
+        use_megatron_fsdp: Whether to use Megatron FSDP.
+        use_torch_fsdp2: Whether to use Torch FSDP 2.0.
+        wrap_with_ddp: Set to False to skip the DDP/FSDP wrapper.
+        data_parallel_random_init: Whether to broadcast parameters from data-parallel rank 0.
+        mixed_precision_wrapper: Mixed precision wrapper applied per model stage, e.g. ``Float16Module``.
+            Pass ``None`` to skip.
+        pre_wrap_hook: Hook applied to the model stage list before any wrapping.
+        model_type: Deprecated flag, only used for backwards compatibility.
+
+    Returns:
+        List of model stages, wrapped and ready for distributed training.
     """
     if wrap_with_ddp and not ddp_config:
         raise ValueError("ddp_config is required when wrap_with_ddp is True")
@@ -134,6 +156,7 @@ def _print_num_params(model: list[MegatronModule], pg_collection: ProcessGroupCo
 
     Args:
         model: List of model modules to count parameters from
+        pg_collection: Model communication process groups.
     """
     if (pg_collection.dp.rank() == 0) and (pg_collection.cp.rank() == 0):
         print(
@@ -150,7 +173,7 @@ def _wrap_with_mp_wrapper(
     model_list: list[MegatronModule],
     transformer_config: TransformerConfig,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
-):
+) -> list[MegatronModule]:
     fp16 = transformer_config.fp16
     bf16 = transformer_config.bf16
     if (fp16 or bf16) and mixed_precision_wrapper is not None:
@@ -179,11 +202,13 @@ def _ddp_wrap(
 
     Args:
         model: List of model modules to wrap
-        use_torch_fsdp2: Whether to use PyTorch FSDP v2 instead of DDP
         data_parallel_random_init: Whether to broadcast parameters from rank 0
         ddp_config: Configuration for distributed data parallel
         overlap_param_gather_with_optimizer_step: Whether to disable bucketing
             for overlapping parameter gathering with optimizer step
+        use_megatron_fsdp: Whether to use Megatron FSDP.
+        use_torch_fsdp2: Whether to use PyTorch FSDP v2 instead of DDP
+        pg_collection: Model communication process groups.
 
     Returns:
         list[MegatronModule]: List of DDP/FSDP wrapped model modules
@@ -231,19 +256,17 @@ def build_virtual_pipeline_stages(
     pg_collection: ProcessGroupCollection,
     vp_size: int | None,
     model_type: ModelType = ModelType.encoder_or_decoder,
-) -> list[ModelT]:
+) -> list[MegatronModule]:
     """Build virtual pipeline stages if using virtual pipeline parallelism.
 
-    Shared helper for GPT and Mamba models which follow the same logic for building VP stages.
-
     Args:
-        build_model_func: Function from `ModelBuilder` that builds a single stage of the model.
+        build_model_func: Function from ``ModelBuilder`` that builds a single stage of the model.
         pg_collection: Model communication process groups.
-        vp_size: virtual pipeline parallel size.
+        vp_size: Virtual pipeline parallel size. If ``None`` or PP size is 1, a single stage is built.
         model_type: Deprecated flag, only used for backwards compatibility.
 
     Returns:
-        A list of virtual pipeline stages.
+        List of model stages. Contains one entry per VP rank, or a single entry if VP is not enabled.
     """
     from megatron.core.pipeline_parallel.utils import (
         is_pp_first_stage,
