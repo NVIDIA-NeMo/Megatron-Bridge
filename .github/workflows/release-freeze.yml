@@ -51,7 +51,6 @@ jobs:
   bump-docs-versions:
     needs: [code-freeze]
     runs-on: ubuntu-latest
-    environment: main
     env:
       VERSION: ${{ needs.code-freeze.outputs.release-branch }}
       DRY_RUN: ${{ inputs.dry-run }}
