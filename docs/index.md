@@ -77,7 +77,6 @@ apidocs/index.rst
 :hidden:
 
 releases/software-versions.md
-releases/changelog.md
 releases/known-issues.md
 ```
 
