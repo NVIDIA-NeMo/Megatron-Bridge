@@ -47,8 +47,8 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
 
-class Qwen3VLCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Qwen3 VL MoE recipe helpers."""
+class Qwen3OmniCommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen3 Omni MoE recipe helpers."""
 
     # Core identifiers
     hf_path: str
@@ -96,6 +96,7 @@ class Qwen3VLCommonKwargs(TypedDict, total=False):
     freeze_language_model: bool
     freeze_vision_model: bool
     freeze_vision_projection: bool
+    freeze_audio_model: bool
     # Dataset configuration
     dataset_type: Optional[str]
     image_folder: Optional[str]
@@ -105,31 +106,13 @@ class Qwen3VLCommonKwargs(TypedDict, total=False):
     finetune_lr: float
 
 
-def qwen3_vl_8b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen3-VL 8B Instruct.
+def qwen3_omni_moe_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3OmniCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3-Omni-30B-A3B-Instruct.
 
-    See `_qwen3_vl_common` for the full list of parameters.
+    See `_qwen3_omni_common` for the full list of parameters.
     """
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
-        "tensor_model_parallel_size": 4,
-        "pipeline_model_parallel_size": 1,
-        "expert_model_parallel_size": 1,
-        "freeze_language_model": True,
-        "freeze_vision_model": True,
-        "freeze_vision_projection": False,
-    }
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
-
-
-def qwen3_vl_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen3-VL-30B-A3B-Instruct.
-
-    See `_qwen3_vl_common` for the full list of parameters.
-    """
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    recommended_kwargs: Qwen3OmniCommonKwargs = {
+        "hf_path": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_dtype": torch.bfloat16,
@@ -137,95 +120,33 @@ def qwen3_vl_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
         "freeze_language_model": False,
         "freeze_vision_model": False,
         "freeze_vision_projection": False,
+        "freeze_audio_model": False,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
+    combined_kwargs: Qwen3OmniCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_omni_common(**combined_kwargs)
 
 
-def qwen3_vl_235b_a22b_pretrain_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen3-VL-235B-A22B-Instruct.
-
-    See `_qwen3_vl_common` for the full list of parameters.
-    """
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 8,
-        "pipeline_dtype": torch.bfloat16,
-        "expert_model_parallel_size": 8,
-        "account_for_embedding_in_pipeline_split": True,
-        "account_for_loss_in_pipeline_split": True,
-        "freeze_language_model": False,
-        "freeze_vision_model": False,
-        "freeze_vision_projection": False,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
-
-
-def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL 8B Instruct.
-
-    Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
-    - Full SFT: TP=4, PP=1, LR=1e-5
-
-    See `_qwen3_vl_common` for the full list of parameters.
-    """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
-
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
-        "tensor_model_parallel_size": 4 if is_full_sft else 1,
-        "pipeline_model_parallel_size": 1,
-        "pipeline_dtype": torch.bfloat16,
-        "expert_model_parallel_size": 1,
-        "peft": peft_value,
-        "finetune_lr": 1e-5 if is_full_sft else 1e-4,
-        "freeze_language_model": True,
-        "freeze_vision_model": True,
-        "freeze_vision_projection": False,
-        "min_lr": 1e-6,
-        "lr": 1e-5,
-        "lr_warmup_iters": 200,
-        "micro_batch_size": 1,
-        "global_batch_size": 32,
-    }
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
-
-
-def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL-30B-A3B-Instruct.
+def qwen3_omni_moe_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3OmniCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen3-Omni-30B-A3B-Instruct.
 
     This is a Mixture-of-Experts model with 128 experts and top-8 routing.
     Recommended to use with expert parallelism (EP) for efficient training.
 
-    Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=2e-4
-    - Full SFT: TP=1, PP=1, EP=8, LR=2e-5
-
-    See `_qwen3_vl_common` for the full list of parameters.
+    See `_qwen3_Omni_common` for the full list of parameters.
     """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    recommended_kwargs: Qwen3OmniCommonKwargs = {
+        "hf_path": "../hf-hub/Qwen/Qwen3-Omni-30B-A3B-Instruct",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_dtype": torch.bfloat16,
         "expert_model_parallel_size": 8,
-        "peft": peft_value,
-        "finetune_lr": 2e-5 if is_full_sft else 2e-4,
+        "finetune_lr": 2e-5,
         "freeze_language_model": True,
         "freeze_vision_model": True,
         "freeze_vision_projection": False,
+        "freeze_audio_model": True,
         "min_lr": 2e-6,
         "lr": 2e-5,
         "lr_warmup_iters": 200,
@@ -233,49 +154,11 @@ def qwen3_vl_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs])
         "global_batch_size": 32,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
+    combined_kwargs: Qwen3OmniCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_omni_common(**combined_kwargs)
 
 
-def qwen3_vl_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen3-VL-235B-A22B-Instruct.
-
-    This is a Mixture-of-Experts model with 128 experts and top-8 routing.
-    Recommended to use with expert parallelism (EP) for efficient training.
-
-    Default configuration: 4 nodes, 32 GPUs total
-    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=2e-4
-    - Full SFT: TP=4, PP=1, EP=8, LR=2e-5
-
-    See `_qwen3_vl_common` for the full list of parameters.
-    """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
-
-    recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-        "tensor_model_parallel_size": 4 if is_full_sft else 1,
-        "pipeline_model_parallel_size": 1,
-        "pipeline_dtype": torch.bfloat16,
-        "expert_model_parallel_size": 8,
-        "expert_tensor_parallel_size": 1,
-        "peft": peft_value,
-        "finetune_lr": 2e-5 if is_full_sft else 2e-4,
-        "freeze_language_model": True,
-        "freeze_vision_model": True,
-        "freeze_vision_projection": False,
-        "min_lr": 2e-6,
-        "lr": 2e-5,
-        "lr_warmup_iters": 200,
-        "micro_batch_size": 1,
-        "global_batch_size": 32,
-    }
-    combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen3_vl_common(**combined_kwargs)
-
-
-def _qwen3_vl_common(
+def _qwen3_omni_common(
     hf_path: str,
     dir: Optional[str] = None,
     name: str = "default",
@@ -321,6 +204,7 @@ def _qwen3_vl_common(
     freeze_language_model: bool = True,
     freeze_vision_model: bool = True,
     freeze_vision_projection: bool = False,
+    freeze_audio_model: bool = True,
     # Dataset configuration
     dataset_type: Optional[str] = None,
     image_folder: Optional[str] = None,
@@ -330,7 +214,7 @@ def _qwen3_vl_common(
     finetune_lr: Optional[float] = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for Qwen3 MoE models using a given HuggingFace path.
+    Create a pre-training configuration for Qwen3 Omni MoE models using a given HuggingFace path.
 
     Args:
         hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B").
@@ -370,6 +254,7 @@ def _qwen3_vl_common(
         freeze_language_model (bool): Whether to freeze the language model.
         freeze_vision_model (bool): Whether to freeze the vision model.
         freeze_vision_projection (bool): Whether to freeze the vision projection.
+        freeze_audio_model (bool): Whether to freeze the audio model.
         dataset_type (Optional[str]): Type of dataset to use.
         image_folder (Optional[str]): Path to image folder.
         tokenizer_model (Optional[str]): Path to tokenizer model.
@@ -397,6 +282,7 @@ def _qwen3_vl_common(
     model_cfg.freeze_language_model = freeze_language_model
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection
+    model_cfg.freeze_audio_model = freeze_audio_model
 
     apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
 

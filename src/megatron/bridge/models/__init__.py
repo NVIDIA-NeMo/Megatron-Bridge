@@ -177,6 +177,11 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider72B,
     Qwen25ModelProvider500M,
 )
+from megatron.bridge.models.qwen_omni import (
+    Qwen3OmniMoeBridge,
+    Qwen3OmniMoeModel,
+    Qwen3OmniMoeModelProvider,
+)
 from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
     Qwen25VLModel,
@@ -188,11 +193,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLModelProvider,
     Qwen3VLMoEBridge,
     Qwen3VLMoEModelProvider,
-)
-from megatron.bridge.models.qwen_omni import (
-    Qwen3OmniMoeBridge,
-    Qwen3OmniMoeModel,
-    Qwen3OmniMoeModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 

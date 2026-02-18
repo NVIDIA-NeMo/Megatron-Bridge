@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniMoeModel
-from megatron.bridge.models.qwen_omni.qwen3_omni_bridge import Qwen3OmniMoeBridge
-from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniMoeModelProvider
+# Qwen3 models
+from .qwen3_omni_moe import (
+    qwen3_omni_moe_30b_a3b_finetune_config,
+    qwen3_omni_moe_30b_a3b_pretrain_config,
+)
 
 
 __all__ = [
-    "Qwen3OmniMoeModel",
-    "Qwen3OmniMoeBridge",
-    "Qwen3OmniMoeModelProvider",
+    # Qwen3-Omni-Moe pretrain configs
+    "qwen3_omni_moe_30b_a3b_pretrain_config",
+    # Qwen3-Omni-Moe finetune configs
+    "qwen3_omni_moe_30b_a3b_finetune_config",
 ]

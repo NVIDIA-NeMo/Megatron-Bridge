@@ -12,47 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 import torch
-from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import Qwen3OmniMoeThinkerConfig as Qwen3OmniMoeThinkerConfigHF
-from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import Qwen3OmniMoeAudioEncoder as Qwen3OmniMoeAudioEncoderHF
-
+from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.extensions.transformer_engine import (
     TEColumnParallelLinear,
     TENorm,
     TERowParallelLinear,
 )
-from megatron.core import InferenceParams, mpu, tensor_parallel
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
+from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
+    Qwen3OmniMoeThinkerConfig as Qwen3OmniMoeThinkerConfigHF,
+)
+from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
+    Qwen3OmniMoeAudioEncoder as Qwen3OmniMoeAudioEncoderHF,
+)
 
-from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
-    split_deepstack_embs,
-    reorganize_inputs,
-    PatchMergerSubmodules,
-)
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import Qwen3OmniTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
-from megatron.bridge.models.qwen_omni.transformer_config import Qwen3OmniTransformerConfig
-from megatron.bridge.models.qwen_omni.utils import get_rope_index
-from megatron.bridge.models.qwen_omni.context_parallel_utils import (
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
-    qwen3vl_parallel_split,
-    get_vision_parallel_data,
-    split_data_cp_rank,
+    PatchMergerSubmodules,
     collapse_thw,
+    get_vision_cp_data,
+    qwen3vl_cp_split,
+    reorganize_inputs,
+    split_data_cp_rank,
+    split_deepstack_embs,
 )
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 class Qwen3OmniMoeThinkerModel(MegatronModule):
-    """Qwen3 Omni Moe Thinker Model.
-    """
+    """Qwen3 Omni Moe Thinker Model."""
 
     def __init__(
         self,
@@ -67,6 +66,8 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
         pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+
+        language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -89,6 +90,21 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
         # This attribute is needed to check if an all-reduce is required
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
+        # process groups
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+        assert hasattr(self.pg_collection, "embd"), (
+            "pg_collection must have a embd. In previous version, it used default "
+            "`parallel_state.default_embedding_ranks` to create the process group."
+            "If you are using the default process group, please use"
+            "`parallel_state.get_embedding_group()` "
+            "If you don't need embd_group, you need to explicitly set it to None."
+        )
+        self.embd_group = pg_collection.embd
+        self.vp_stage = None
+        self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
         if self.pre_process:
             if language_transformer_config.use_hf_vision_model:
@@ -120,9 +136,6 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             self.audio_model = Qwen3OmniMoeAudioEncoderHF._from_config(vision_transformer_config.audio_config)
             # Ensure HF audio tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.audio_model)
-            if torch.cuda.is_available():
-                self.vision_model = self.vision_model.to("cuda")
-                self.audio_model = self.audio_model.to("cuda")
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -140,8 +153,10 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             scatter_embedding_sequence_parallel=False,
             pg_collection=pg_collection,
         )
-        assert len(vision_transformer_config.vision_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), (
-            f"the deepstack_visual_embeds should on the first pp-stage",
+        assert len(vision_transformer_config.vision_config.deepstack_visual_indexes) < len(
+            self.language_model.decoder.layers
+        ), (
+            "the deepstack_visual_embeds should on the first pp-stage",
             f"got {len(vision_transformer_config.vision_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
             f" {len(self.language_model.decoder.layers)} language model layers",
         )
@@ -169,9 +184,10 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
 
     def freeze(
         self,
-        freeze_language_model: bool,
-        freeze_vision_model: bool,
-        freeze_vision_projection: bool,
+        freeze_language_model: bool = False,
+        freeze_vision_model: bool = False,
+        freeze_vision_projection: bool = False,
+        freeze_audio_model: bool = False,
     ):
         """Freeze model modules.
 
@@ -181,6 +197,7 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             freeze_language_model (bool): Freeze the language model module.
             freeze_vision_model (bool): Freeze the vision model module.
             freeze_vision_projection (bool): Freeze the vision projection modules.
+            freeze_audio_model (bool): Freeze the audio model module.
         """
         modules = []
 
@@ -194,6 +211,9 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             modules.append(self.vision_model.decoder.deepstack_merger_list)
             modules.append(self.vision_model.merger)
 
+        if freeze_audio_model and self.audio_model is not None:
+            modules.append(self.audio_model)
+
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
@@ -201,8 +221,8 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
     def get_audio_features(
         self,
         input_features: torch.FloatTensor,
-        feature_attention_mask: Optional[torch.LongTensor] = None,
-        audio_feature_lengths: Optional[torch.LongTensor] = None,
+        feature_attention_mask: torch.LongTensor | None = None,
+        audio_feature_lengths: torch.LongTensor | None = None,
     ):
         if feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
@@ -217,7 +237,7 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             feature_lens=feature_lens,
         )
 
-        return audio_outputs.last_hidden_state 
+        return audio_outputs.last_hidden_state
 
     def forward(
         self,
@@ -240,6 +260,7 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
         feature_attention_mask=None,
         audio_feature_lengths=None,
         cp_img_num: list[int] = None,
+        images_padded: list[bool] = None,
         use_audio_in_video=None,
         video_second_per_grid=None,
         **kwargs,
@@ -251,8 +272,9 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
         vision_data = None
         vision_mask = None
         deepstack_feature_lists = None
-        cp_size = mpu.get_context_parallel_world_size()
-        parallel_size = mpu.get_tensor_and_context_parallel_world_size()
+
+        cp_rank = self.pg_collection.cp.rank()
+        cp_size = self.pg_collection.cp.size()
 
         if self.pre_process:
             vision_data, vision_grid_thw, vision_mask = reorganize_inputs(
@@ -270,22 +292,22 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
 
             vision_embeds = None
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                if parallel_size > 1:
+                if cp_size > 1:
                     if cp_img_num is None:
-                        vision_data, vision_grid_thw, cp_img_num = (
-                            qwen3vl_parallel_split(
-                                parallel_size,
-                                vision_data,
-                                vision_grid_thw,
-                            )
-                        )
-                    vision_data, vision_grid_thw, seqlen_on_parallel_ranks = (
-                        get_vision_parallel_data(
+                        assert images_padded is None
+                        vision_data, vision_grid_thw, cp_img_num, images_padded = qwen3vl_cp_split(
+                            cp_size,
                             vision_data,
                             vision_grid_thw,
-                            self.square_merge_size,
-                            cp_img_num,
                         )
+                    vision_data, vision_grid_thw, seqlen_on_cp_ranks = get_vision_cp_data(
+                        vision_data,
+                        vision_grid_thw,
+                        self.square_merge_size,
+                        cp_img_num,
+                        images_padded,
+                        cp_rank,
+                        cp_size,
                     )
                     vision_grid_thw = collapse_thw(vision_grid_thw)
 
@@ -310,22 +332,22 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
                             )
                         )
 
-                if parallel_size > 1:
+                if cp_size > 1:
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
-                        seqlen_on_parallel_ranks,
-                        mpu.get_tensor_and_context_parallel_group(),
+                        seqlen_on_cp_ranks,
+                        self.pg_collection.cp,
                     )
                     for i in range(len(deepstack_feature_lists)):
                         deepstack_feature_lists[i] = AllGatherVisionEmbeddings.apply(
                             deepstack_feature_lists[i],
-                            seqlen_on_parallel_ranks,
-                            mpu.get_tensor_and_context_parallel_group(),
+                            seqlen_on_cp_ranks,
+                            self.pg_collection.cp,
                         )
 
             audio_embeds = None
             if input_features is not None:
-                audio_features = self.get_audio_features(
+                audio_embeds = self.get_audio_features(
                     input_features,
                     feature_attention_mask=feature_attention_mask,
                     audio_feature_lengths=audio_feature_lengths,
@@ -345,8 +367,8 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
                     combined_embeddings[audio_mask] = audio_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
-            if combined_embeddings is not None and cp_size > 1:
-                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0)
+            if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
@@ -371,7 +393,7 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
                 attention_mask=attention_mask,
-                use_audio_in_video = use_audio_in_video,
+                use_audio_in_video=use_audio_in_video,
                 audio_seqlens=audio_feature_lengths,
                 second_per_grids=video_second_per_grid,
             )
@@ -382,10 +404,10 @@ class Qwen3OmniMoeThinkerModel(MegatronModule):
             visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
                 visual_pos_masks,
                 deepstack_visual_embeds,
-                tp_size=mpu.get_tensor_model_parallel_world_size(),
-                tp_rank=mpu.get_tensor_model_parallel_rank(),
-                cp_size = cp_size,
-                cp_rank=mpu.get_context_parallel_rank(),
+                tp_size=self.pg_collection.tp.size(),
+                tp_rank=self.pg_collection.tp.rank(),
+                cp_size=cp_size,
+                cp_rank=self.pg_collection.cp.rank(),
                 sequence_parallel=self.config.sequence_parallel,
             )
 

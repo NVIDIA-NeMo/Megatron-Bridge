@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
@@ -50,6 +50,6 @@ class Qwen3OmniTransformerConfig(TransformerConfig):
     vision_start_token_id: int = 151652
     audio_start_token_id: int = 151669
     position_id_per_seconds: int = 13
-    hf_text_config: Optional[Qwen3VLTextConfig] = None
+    hf_text_config: Qwen3VLTextConfig | None = None
     vision_dp_when_cp: bool = False
     use_hf_vision_model: bool = False

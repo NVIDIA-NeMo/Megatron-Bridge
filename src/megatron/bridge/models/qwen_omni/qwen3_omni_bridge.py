@@ -16,7 +16,6 @@ import torch
 from transformers import Qwen3OmniMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.qwen_omni.modelling_qwen3_omni import Qwen3OmniMoeModel
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
@@ -26,19 +25,53 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniMoeModel
 from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniMoeModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3OmniMoeForConditionalGeneration, target=Qwen3OmniMoeModel)
 class Qwen3OmniMoeBridge(MegatronModelBridge):
+    """
+    Megatron Bridge for Qwen3-Omni-Moe Conditional Generation.
+
+    This bridge handles the conversion between HuggingFace Qwen3OmniMoeForConditionalGeneration
+    and Megatron-Core Qwen3OmniMoeModel formats, including weight mappings and
+    configuration translation for Omni Moe models.
+
+    The weight mappings handle:
+    1. Standard language model mappings (embeddings, layer norms, output)
+    2. Vision model mappings
+    3. QKV mappings with QK layernorm
+    4. MoE-specific mappings:
+        - Router weights for expert selection
+        - Expert MLPs (multiple experts per layer)
+        - Pre-MLP layernorm
+    5. Deepstack visual merger mappings
+    6. Audio model mappings
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Omni-30B-A3B-Instruct")
+        >>> provider = bridge.to_megatron_provider()
+    """
+
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3OmniMoeModelProvider:
+        """
+        Create a Qwen3OmniMoeModelProvider from a HuggingFace pretrained model.
+
+        Args:
+            hf_pretrained: HuggingFace pretrained VLM model
+
+        Returns:
+            Qwen3OmniMoeModelProvider configured with the HF model's parameters
+        """
         hf_config = hf_pretrained.config
         thinker_config = hf_config.thinker_config
         talker_config = hf_config.talker_config
         code2wav_config = hf_config.code2wav_config
-        
+
         text_config = thinker_config.text_config
-        model_dtype=self.dtype_from_hf(thinker_config, default=torch.float32)
+        model_dtype = self.dtype_from_hf(thinker_config, default=torch.float32)
 
         provider = Qwen3OmniMoeModelProvider(
             thinker_config=thinker_config,
@@ -98,13 +131,14 @@ class Qwen3OmniMoeBridge(MegatronModelBridge):
 
         The MoE mappings include:
         1. Standard language model mappings (embeddings, layer norms, output)
-        2. Vision model mappings (same as dense model)
+        2. Vision model mappings
         3. QKV mappings with QK layernorm
         4. MoE-specific mappings:
            - Router weights for expert selection
            - Expert MLPs (multiple experts per layer)
            - Pre-MLP layernorm
         5. Deepstack visual merger mappings
+        6. Audio model mappings
 
         Returns:
             MegatronMappingRegistry with all MoE parameter mappings
