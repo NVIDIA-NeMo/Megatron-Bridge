@@ -23,6 +23,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+
+logging.basicConfig(level=logging.INFO)
+
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
 
@@ -57,7 +60,6 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
