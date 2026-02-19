@@ -123,23 +123,30 @@ class MambaModelConfig(ModelConfig):
 
     @override
     def __getattr__(self, name: str, /) -> Any:
-        if hasattr(self.transformer, name):
-            return getattr(self.transformer, name)
-        elif hasattr(self, name):
-            return self.name
-        else:
-            raise AttributeError(f"Neither MambaModelConfig nor TransformerConfig has any attribute {name}.")
+        # __getattr__ is only called when normal attribute lookup has already failed,
+        # so use object.__getattribute__ to fetch `transformer` without recursing.
+        try:
+            transformer = object.__getattribute__(self, "transformer")
+        except AttributeError:
+            raise AttributeError(f"MambaModelConfig has no attribute '{name}'")
+        if hasattr(transformer, name):
+            return getattr(transformer, name)
+        raise AttributeError(f"Neither MambaModelConfig nor TransformerConfig has any attribute '{name}'.")
 
     @override
     def __setattr__(self, name: str, value: Any, /) -> None:
-        if hasattr(self.transformer, name):
-            setattr(self.transformer, name, value)
-        elif hasattr(self, name):
+        # Use object.__getattribute__ to avoid triggering __getattr__ while
+        # `transformer` may not yet exist (e.g. during dataclass __init__).
+        try:
+            transformer = object.__getattribute__(self, "transformer")
+        except AttributeError:
+            # `transformer` not yet initialised; store the attribute on self.
             super().__setattr__(name, value)
+            return
+        if hasattr(transformer, name):
+            setattr(transformer, name, value)
         else:
-            raise AttributeError(
-                f"Cannot set {name}={value}. Neither MambaModelConfig nor TransformerConfig has any attribute {name}."
-            )
+            super().__setattr__(name, value)
 
 
 class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
