@@ -36,26 +36,12 @@ jobs:
         run: echo "date=$(date +%F)" | tee -a "$GITHUB_OUTPUT"
 
   update-lockfile:
-    environment: main
     runs-on: linux-amd64-cpu16
     needs: [pre-flight]
     env:
       SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
       TARGET_BRANCH: ${{ inputs.target-branch }}
     steps:
-      - name: Install Azure CLI
-        run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Azure ACR Login
-        run: az acr login --name nemoci
-
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -98,18 +84,6 @@ jobs:
           -e GH_TOKEN=${{ secrets.PAT }} \
           megatron-bridge \
           bash -c 'uv lock --upgrade'
-
-      - name: Install GPG
-        run: sudo apt-get install -y gnupg2
-
-      - name: Import GPG key (for signing)
-        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec
-        id: gpg-action
-        with:
-          gpg_private_key: ${{ secrets.SSH_KEY }}
-          passphrase: ${{ secrets.SSH_PWD }}
-          git_user_signingkey: true
-          git_commit_gpgsign: true
 
       - name: Create Bump PR
         uses: peter-evans/create-pull-request@v6
