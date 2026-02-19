@@ -52,15 +52,26 @@ def convert_admonition_directive(content: str) -> str:
 
 
 def convert_dropdowns(content: str) -> str:
-    """Convert MyST dropdowns to Fern Accordion components."""
-    pattern = r"```\{dropdown\}\s+([^\n]+)\s*\n(.*?)```"
+    """Convert MyST dropdowns to Fern Accordion components.
+
+    Handles both fenced ```{dropdown} and directive ::: {dropdown} formats.
+    """
     def replace_dropdown(match: re.Match[str]) -> str:
         title = match.group(1).strip()
         body = match.group(2).strip()
         if '"' in title:
             title = title.replace('"', "'")
         return f'<Accordion title="{title}">\n{body}\n</Accordion>'
-    return re.sub(pattern, replace_dropdown, content, flags=re.DOTALL)
+
+    # Pattern 1: ```{dropdown} Title\ncontent\n```
+    pattern_fenced = r"```\{dropdown\}\s+([^\n]+)\s*\n(.*?)```"
+    content = re.sub(pattern_fenced, replace_dropdown, content, flags=re.DOTALL)
+
+    # Pattern 2: ::: {dropdown} Title\ncontent\n:::
+    pattern_directive = r":::\s*\{dropdown\}\s+([^\n]+)(?:\s*\n(?::[^\n]+\n)*)?\n(.*?)\n:::\s*\n"
+    content = re.sub(pattern_directive, lambda m: replace_dropdown(m) + "\n", content, flags=re.DOTALL)
+
+    return content
 
 
 def convert_tab_sets(content: str) -> str:
@@ -152,6 +163,42 @@ def convert_grid_cards(content: str) -> str:
             result.append(line)
 
     return "\n".join(result)
+
+
+def convert_list_table(content: str) -> str:
+    """Convert MyST list-table to markdown table.
+
+    Handles ```{list-table} with * - cell format.
+    """
+    pattern = r"```\{list-table\}[^\n]*(?:\n:[^\n]+)*\n\n(.*?)```"
+
+    def replace_list_table(match: re.Match[str]) -> str:
+        body = match.group(1).strip()
+        rows: list[list[str]] = []
+        for line in body.split("\n"):
+            line = line.rstrip()
+            if not line:
+                continue
+            if line.startswith("* -"):
+                rows.append([line[3:].strip()])
+            elif line.startswith("  -") or line.startswith("-"):
+                cell = line.lstrip("- ").strip()
+                if rows:
+                    rows[-1].append(cell)
+                else:
+                    rows.append([cell])
+        if not rows:
+            return match.group(0)
+        header = rows[0]
+        sep = "| " + " | ".join(["---"] * len(header)) + " |"
+        lines_out = ["| " + " | ".join(header) + " |", sep]
+        for row in rows[1:]:
+            while len(row) < len(header):
+                row.append("")
+            lines_out.append("| " + " | ".join(row[: len(header)]) + " |")
+        return "\n".join(lines_out)
+
+    return re.sub(pattern, replace_list_table, content, flags=re.DOTALL)
 
 
 def remove_toctree(content: str) -> str:
@@ -292,6 +339,7 @@ def convert_file(filepath: Path, repo_root: Path) -> bool:
     content = convert_dropdowns(content)
     content = convert_grid_cards(content)
     content = convert_tab_sets(content)
+    content = convert_list_table(content)
     content = remove_toctree(content)
     content = remove_contents(content)
     content = convert_image(content, filepath, repo_root)

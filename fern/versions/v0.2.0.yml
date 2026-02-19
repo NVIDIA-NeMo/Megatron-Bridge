@@ -125,6 +125,10 @@ navigation:
         path: ../v0.2.0/pages/bridge-rl-integration.mdx
       - page: Documentation
         path: ../v0.2.0/pages/documentation.mdx
+  - section: API Reference
+    contents:
+      - library: megatron-bridge
+        title: Library Reference
   - section: Releases
     contents:
       - page: Releases Overview
