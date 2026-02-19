@@ -310,10 +310,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         #       architectures implemented in this codebase (e.g., h->ffn_h GEMM and ffn_h->h GEMM
         #       in MLP layer).
         # - 2x: A GEMM of a m*n tensor with a n*k tensor requires 2mnk floating-point operations.
-        # Note: LoRA uses 2x multiplier (forward + dgrad only) which is handled separately above.
-        # All other cases (including non-LoRA PEFT) use 3x (forward + wgrad + dgrad).
-        training_multiplier = 3
-        expansion_factor = training_multiplier * 2 * 2
+        expansion_factor = 3 * 2 * 2
 
         if cfg.model.multi_latent_attention:
             """
@@ -344,7 +341,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     + 1
                 )
             self_attn_term = (
-                training_multiplier
+                3
                 * 2  # fwd(1) + bwd(2) *FMA
                 * num_layers
                 * (
@@ -417,7 +414,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 # Self Attention
                 + self_attn_term
                 # MTP norms and proj
-                + training_multiplier
+                + 3
                 * 2
                 * mtp_num_layers
                 * (
@@ -427,7 +424,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     + 2 * cfg.model.hidden_size * cfg.model.hidden_size
                 )
                 # Logit.
-                + training_multiplier * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
+                + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
             )
         )
         return total_floating_point_operations
