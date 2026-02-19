@@ -188,7 +188,7 @@ class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
     """Webdataset factory for multi-turn ChatML samples with multimodal support.
 
     Extends DefaultDecoderWebdatasetFactory to decode webdataset shards into
-    ChatMLSample instances, using custom handlers for image, audio, and video fields.
+    ChatMLSample instances, using custom handlers for image and video fields.
     """
 
     __sample_type__ = ChatMLSample
