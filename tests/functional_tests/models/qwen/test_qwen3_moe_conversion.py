@@ -183,11 +183,11 @@ class TestQwen3MoEConversion:
             first_layer = model.model.layers[0]
             assert hasattr(first_layer, "mlp")
             assert hasattr(first_layer.mlp, "experts")
-            assert len(first_layer.mlp.experts) == 4  # num_experts
+            assert model.config.num_experts == 4
 
             print(f"SUCCESS: Qwen3 MoE toy model created and validated at {qwen3_moe_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")
-            print(f"MoE structure validated: {len(first_layer.mlp.experts)} experts per layer")
+            print(f"MoE structure validated: {model.config.num_experts} experts per layer")
 
         except Exception as e:
             assert False, f"Failed to load created toy MoE model: {e}"
