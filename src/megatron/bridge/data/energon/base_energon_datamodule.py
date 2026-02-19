@@ -167,17 +167,30 @@ class EnergonMultiModalDataModule:
             return self.train_dataloader_object
         if not parallel_state.is_initialized():
             logger.info(
-                f"Muiltimodal data loader parallel state is not initialized,"
-                f"using default worker config with no_workers {self.num_workers}"
+                f"Multimodal data loader parallel state is not initialized, "
+                f"using default worker config with num_workers {self.num_workers}"
             )
             worker_config = WorkerConfig.default_worker_config(self.num_workers)
         else:
+            # NOTE: We intentionally use the pure DP rank (with_context_parallel=False)
+            # rather than the combined DP-CP rank. With Megatron's rank ordering
+            # (default "tp-cp-ep-dp-pp"), all CP ranks within the same DP replica
+            # already share the same pure DP rank. This ensures that CP ranks
+            # processing different sequence portions of the same batch receive
+            # identical data from the dataloader.
+            # Using with_context_parallel=True would be INCORRECT here — it would
+            # assign each CP rank a unique rank, causing them to read different
+            # data shards.
             rank = parallel_state.get_data_parallel_rank()
             world_size = parallel_state.get_data_parallel_world_size()
             data_parallel_group = parallel_state.get_data_parallel_group()
+            cp_size = parallel_state.get_context_parallel_world_size()
+            cp_rank = parallel_state.get_context_parallel_rank()
             logger.info(
-                f" Multimodal  train dataloader initializing with"
-                f"rank {rank} world_size {world_size} data_parallel_group {data_parallel_group} ****** "
+                f"Multimodal train dataloader initializing with "
+                f"dp_rank {rank} dp_world_size {world_size} "
+                f"cp_rank {cp_rank} cp_size {cp_size} "
+                f"data_parallel_group {data_parallel_group}"
             )
             worker_config = WorkerConfig(
                 rank=rank,
@@ -207,20 +220,28 @@ class EnergonMultiModalDataModule:
 
         if not parallel_state.is_initialized():
             logger.info(
-                f"Muiltimodal val data loader parallel state is not initialized,"
-                f"using default worker config with no_workers {self.num_workers}"
+                f"Multimodal val data loader parallel state is not initialized, "
+                f"using default worker config with num_workers {self.num_val_workers}"
             )
             worker_config = WorkerConfig.default_worker_config(self.num_val_workers)
         else:
+            # NOTE: Pure DP rank (with_context_parallel=False) is correct here.
+            # See train_dataloader() comment for detailed explanation of CP handling.
             rank = parallel_state.get_data_parallel_rank()
             world_size = parallel_state.get_data_parallel_world_size()
             data_parallel_group = parallel_state.get_data_parallel_group()
-
-            logger.info(f"rank {rank} world_size {world_size} data_parallel_group {data_parallel_group}")
+            cp_size = parallel_state.get_context_parallel_world_size()
+            cp_rank = parallel_state.get_context_parallel_rank()
+            logger.info(
+                f"Multimodal val dataloader initializing with "
+                f"dp_rank {rank} dp_world_size {world_size} "
+                f"cp_rank {cp_rank} cp_size {cp_size} "
+                f"data_parallel_group {data_parallel_group}"
+            )
             worker_config = WorkerConfig(
                 rank=rank,
                 world_size=world_size,
-                num_workers=self.num_workers,
+                num_workers=self.num_val_workers,
                 data_parallel_group=data_parallel_group,
                 worker_debug_path=None,
                 worker_log_level=0,
