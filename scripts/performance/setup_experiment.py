@@ -398,7 +398,9 @@ def main(
         args=list(sys.argv[1:]),
     )
 
-    logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
+    logger.info(
+        "Will launch the following command with Nemo-Run on compute node: %s", " ".join(nemorun_script.to_command())
+    )
 
     is_finished_experiment = False  # An experiment might consist of multiple training runs, due to restarts.
     is_testing_passed = False  # Whether the testing passed convergence and performance validation.
