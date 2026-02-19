@@ -28,28 +28,28 @@ on:
   workflow_dispatch:
     inputs:
       mcore_commit:
-        description: 'MCore commit SHA to test against'
+        description: "MCore commit SHA to test against"
         required: false
         type: string
       mcore_branch:
-        description: 'MCore branch name (for reference)'
+        description: "MCore branch name (for reference)"
         required: false
         type: string
       mcore_repo:
-        description: 'MCore repository URL (for fetching from forks)'
+        description: "MCore repository URL (for fetching from forks)"
         required: false
         type: string
-        default: 'https://github.com/NVIDIA/Megatron-LM.git'
+        default: "https://github.com/NVIDIA/Megatron-LM.git"
       test_suite:
-        description: 'Test suite to run'
+        description: "Test suite to run"
         required: false
         type: string
-        default: 'all'
+        default: "all"
       triggered_by:
-        description: 'Trigger source (for tracking)'
+        description: "Trigger source (for tracking)"
         required: false
         type: string
-        default: 'manual'
+        default: "manual"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
@@ -57,7 +57,7 @@ concurrency:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.69.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.73.2
     with:
       default_runner_prefix: ${{ vars.INSTALL_TEST_DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.INSTALL_TEST_NON_NVIDIA_RUNNER_PREFIX }}
