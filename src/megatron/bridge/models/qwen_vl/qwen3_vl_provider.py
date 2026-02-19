@@ -43,7 +43,7 @@ def _convert_cuda_graph_scope_to_enum(scope_list: List[str]) -> List[CudaGraphSc
 
 
 @dataclass
-class Qwen3VLModelProvider(Qwen3ModelProvider):
+class Qwen3VLModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen 3 VL Models.
     Inherits language model configuration from Qwen3ModelProvider.
@@ -52,9 +52,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     Default value of 8 is used for GQA (Grouped Query Attention).
     """
 
-    head_dim: int = 128
-    hidden_size: int = 2048
-
+    # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
     patch_size: int = 16
     temporal_patch_size: int = 2
@@ -71,8 +69,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
 
     hf_text_config: Optional[Qwen3VLTextConfig] = None
-
-    # Vision-specific token IDs matching Qwen3VL configuration
+    # Vision-Language token IDs
     # Based on https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/blob/main/config.json
     # Token ID for image placeholder in text
     image_token_id: int = 151655
@@ -104,11 +101,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     scatter_embedding_sequence_parallel: bool = False
 
     # Freeze options for fine-tuning scenarios
-    # Whether to freeze language model weights
     freeze_language_model: bool = False
-    # Whether to freeze vision encoder weights
     freeze_vision_model: bool = False
-    # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
 
     sequence_parallel: bool = False
@@ -128,12 +122,9 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
 
     vision_dp_when_cp: bool = False
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None):
-        """
-        Provide a Qwen3VL model instance with vision and language components.
-        """
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
+        """Provide a Qwen3 VL model instance with vision and language components."""
         language_transformer_config = self
-
         hf_vision_config = self.vision_config
 
         # Spec for the Qwen3VLTransformerLayer
@@ -164,35 +155,32 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        """
-        Provide just the language model component without vision.
-
-        Args:
-            pre_process: Whether this is the first stage in pipeline parallelism
-            post_process: Whether this is the last stage in pipeline parallelism
-            vp_stage: Virtual pipeline stage number
-
-        Returns:
-            MCoreGPTModel instance (language model only)
-        """
-        # Use parent class to create standard language model
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        """Provide just the language model component without vision."""
+        # Use GPTModelProvider's provide method to create standard language model
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
 
 @dataclass
-class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
+class Qwen3VLMoEModelProvider(GPTModelProvider):
     """
-    Base model provider for Qwen 3 VL MoE Models.
-    Inherits language model MoE configuration from Qwen3MoEModelProvider.
+    Base model provider for Qwen 3 VL MoE (Mixture of Experts) Models.
 
-    Key MoE Parameters (inherited from Qwen3MoEModelProvider):
+    This provider inherits directly from GPTModelProvider following the
+    provider_bridge refactoring pattern. It includes:
+    - Qwen3 MoE-specific LLM defaults (RMSNorm, gated linear unit, QK layernorm, MoE config)
+    - VL-specific configurations (vision_config, token IDs, mrope)
+
+    The Qwen3VLMoEBridge leverages Qwen3MoEBridge for HF config mapping,
+    then applies VL-specific overrides.
+
+    Key MoE Parameters:
     - num_moe_experts: Number of total experts (default 128)
     - moe_router_topk: Number of experts selected per token (default 8)
     - moe_router_load_balancing_type: Load balancing strategy (default "aux_loss")
     - moe_aux_loss_coeff: Auxiliary loss coefficient (default 1e-3)
     - moe_grouped_gemm: Use grouped GEMM for efficiency (default True)
 
-    Note: num_query_groups in parent class corresponds to num_key_value_heads in HF config.
+    Note: num_query_groups corresponds to num_key_value_heads in HF config.
     """
 
     # Vision configuration using the transformers Qwen3VLVisionConfig
@@ -262,11 +250,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     decoder_sparse_step: int = 1  # Every layer is MoE by default
 
     # Freeze options for fine-tuning scenarios
-    # Whether to freeze language model weights
     freeze_language_model: bool = True
-    # Whether to freeze vision encoder weights
     freeze_vision_model: bool = True
-    # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
     language_max_sequence_length: int = 2048
 
@@ -286,10 +271,10 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     bias_activation_fusion: bool = True  # Fuse bias and activation
     bias_dropout_fusion: bool = True  # Fuse bias and dropout
     masked_softmax_fusion: bool = False  # Don't fuse masked softmax (Qwen specific)
-    deallocate_pipeline_outputs: bool = True  # Deallocate pipeline outputs to save memory
-    async_tensor_model_parallel_allreduce: bool = True  # Async tensor parallel
-    distribute_saved_activations: bool = False  # Don't distribute saved activations
-    cp_comm_type: str = "p2p"  # Point-to-point communication for context parallel
+    deallocate_pipeline_outputs: bool = True
+    async_tensor_model_parallel_allreduce: bool = True
+    distribute_saved_activations: bool = False
+    cp_comm_type: str = "p2p"
 
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
@@ -297,13 +282,10 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
-
         super().finalize()
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None):
-        """
-        Provide a Qwen3VL MoE model instance with vision and language components.
-        """
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
+        """Provide a Qwen3 VL MoE model instance with vision and language components."""
         language_transformer_config = self
 
         # Qwen3-VL uses M-RoPE (multi-dimensional rotary position embeddings) with a custom
@@ -365,16 +347,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        """
-        Provide just the language MoE model component without vision.
-
-        Args:
-            pre_process: Whether this is the first stage in pipeline parallelism
-            post_process: Whether this is the last stage in pipeline parallelism
-            vp_stage: Virtual pipeline stage number
-
-        Returns:
-            MCoreGPTModel instance (MoE language model only)
-        """
-        # Use parent class to create standard MoE language model
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        """Provide just the language MoE model component without vision."""
+        # Use GPTModelProvider's provide method to create standard MoE language model
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
