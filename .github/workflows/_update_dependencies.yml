@@ -103,6 +103,18 @@ jobs:
           signoff: true
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
 
+      - name: Post /ok to test comment
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR was created, skipping comment"
+            exit 0
+          fi
+          SHA="${{ steps.create-pull-request.outputs.pull-request-head-sha }}"
+          gh pr comment "$PR_NUMBER" --body "/ok to test $SHA"
+
       - name: Wait for CI checks
         env:
           GH_TOKEN: ${{ secrets.PAT }}
