@@ -48,11 +48,11 @@ jobs:
           ref: ${{ env.TARGET_BRANCH }}
           submodules: recursive
 
-      - name: Build container
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-bridge .
+      # - name: Build container
+      #   env:
+      #     GH_TOKEN: ${{ secrets.PAT }}
+      #   run: |
+      #     docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-bridge .
 
       - name: Create bump branch if not exists
         run: |
@@ -73,17 +73,20 @@ jobs:
           git fetch origin ${{ inputs.mcore-branch }}
           git checkout FETCH_HEAD
 
-      - name: Upgrade lock file
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          docker run \
-          --rm \
-          -v $(pwd):/opt/Megatron-Bridge \
-          -w /opt/Megatron-Bridge \
-          -e GH_TOKEN=${{ secrets.PAT }} \
-          megatron-bridge \
-          bash -c 'uv lock --upgrade'
+      - name: test file
+        run: hello > uv.lock
+
+      # - name: Upgrade lock file
+      #   env:
+      #     GH_TOKEN: ${{ secrets.PAT }}
+      #   run: |
+      #     docker run \
+      #     --rm \
+      #     -v $(pwd):/opt/Megatron-Bridge \
+      #     -w /opt/Megatron-Bridge \
+      #     -e GH_TOKEN=${{ secrets.PAT }} \
+      #     megatron-bridge \
+      #     bash -c 'uv lock --upgrade'
 
       - name: Create Bump PR
         uses: peter-evans/create-pull-request@v6
