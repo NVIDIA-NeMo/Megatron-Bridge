@@ -59,7 +59,8 @@ class TestInitializePytorchProfiler:
     @patch("torch.profiler.profile")
     @patch("torch.profiler.tensorboard_trace_handler")
     @patch("torch.profiler.schedule")
-    def test_initialize_pytorch_profiler_basic(self, mock_schedule, mock_handler, mock_profile):
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_initialize_pytorch_profiler_basic(self, _, mock_schedule, mock_handler, mock_profile):
         """Test PyTorch profiler initialization with basic parameters."""
         config = ProfilingConfig(
             use_pytorch_profiler=True,
@@ -158,6 +159,42 @@ class TestInitializePytorchProfiler:
             active=3,
             repeat=1,
         )
+
+    @patch.dict("os.environ", {"TORCH_PROFILER_COLLECT_ET": "1"})
+    @patch("torch.distributed.is_available", return_value=True)
+    @patch("torch.distributed.get_rank", return_value=0)
+    @patch("torch.profiler.ExecutionTraceObserver")
+    @patch("torch.profiler.profile")
+    @patch("torch.profiler.tensorboard_trace_handler")
+    def test_initialize_pytorch_profiler_with_execution_trace(
+        self, mock_tb_handler, mock_profile, mock_et_observer_class, _mock_get_rank, mock_is_available
+    ):
+        """Test profiler initialization with ExecutionTraceObserver enabled."""
+        config = ProfilingConfig(
+            use_pytorch_profiler=True,
+            profile_step_start=5,
+            profile_step_end=10,
+        )
+
+        # Mock the ExecutionTraceObserver instance
+        mock_et_observer = Mock()
+        mock_et_observer_class.return_value = mock_et_observer
+
+        initialize_pytorch_profiler(config, "/tmp/tensorboard")
+        mock_is_available.assert_called()
+
+        # As distributed is available do not use tensorboard handler
+        mock_tb_handler.assert_not_called()
+
+        # Verify ExecutionTraceObserver was created
+        mock_et_observer_class.assert_called_once()
+
+        # Verify register_callback was called with correct path (rank-0_et.json)
+        mock_et_observer.register_callback.assert_called_once_with("/tmp/tensorboard/rank-0_et.json.gz")
+
+        # Verify profiler was created with the ET observer
+        call_kwargs = mock_profile.call_args.kwargs
+        assert call_kwargs["execution_trace_observer"] == mock_et_observer
 
 
 class TestStartNsysProfiler:

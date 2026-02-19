@@ -14,6 +14,7 @@
 
 """Profiling utilities for training loop."""
 
+import os
 from typing import Optional
 
 import torch
@@ -118,6 +119,35 @@ def initialize_pytorch_profiler(
     Returns:
         Initialized (but not started) PyTorch profiler
     """
+
+    def save_torch_trace(prof):
+        """Callback for Torch profiling that saves data per rank"""
+        rank = 0
+        if torch.distributed.is_available():
+            rank = torch.distributed.get_rank()
+        trace_base = os.getenv("TORCH_PROFILES_DIR", tensorboard_dir)
+        # Save in compressed format
+        trace_file = f"{trace_base}/rank-{rank}.json.gz"
+        prof.export_chrome_trace(trace_file)
+        print(f"PyTorch profile saved to {trace_file}")
+
+    # Collect stacks by default
+    with_stack = os.getenv("TORCH_PROFILER_COLLECT_STACK", "1") == "1"
+
+    # Collect Execution Trace optionally
+    if os.getenv("TORCH_PROFILER_COLLECT_ET", "0") == "1":
+        print("Registering Execution Trace")
+        et_observer = torch.profiler.ExecutionTraceObserver()
+        # Register callback to save execution trace
+        rank = 0
+        if torch.distributed.is_available():
+            rank = torch.distributed.get_rank()
+        trace_base = os.getenv("TORCH_PROFILES_DIR", tensorboard_dir)
+        et_trace_file = f"{trace_base}/rank-{rank}_et.json.gz"
+        et_observer.register_callback(et_trace_file)
+    else:
+        et_observer = None
+
     prof = torch.profiler.profile(
         schedule=torch.profiler.schedule(
             wait=max(config.profile_step_start - 1, 0),
@@ -125,9 +155,14 @@ def initialize_pytorch_profiler(
             active=config.profile_step_end - config.profile_step_start,
             repeat=1,
         ),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler(tensorboard_dir),
+        on_trace_ready=(
+            save_torch_trace
+            if torch.distributed.is_available()
+            else torch.profiler.tensorboard_trace_handler(tensorboard_dir)
+        ),
         record_shapes=config.record_shapes,
-        with_stack=True,
+        with_stack=with_stack,
+        execution_trace_observer=et_observer,
     )
     return prof
 
