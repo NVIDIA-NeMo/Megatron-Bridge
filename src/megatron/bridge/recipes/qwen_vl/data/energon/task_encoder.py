@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import dataclasses
-import io
 import json
 import logging
 import pickle
