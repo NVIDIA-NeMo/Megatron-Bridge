@@ -128,6 +128,7 @@ jobs:
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    environment: nemo-ci
     if: |
       (
         success()
@@ -274,6 +275,7 @@ jobs:
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests
+    environment: nemo-ci
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -323,6 +325,7 @@ jobs:
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-functional-tests:
+    environment: nemo-ci
     strategy:
       fail-fast: false
       max-parallel: 16
