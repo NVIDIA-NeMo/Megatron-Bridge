@@ -325,7 +325,6 @@ jobs:
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-functional-tests:
-    environment: nemo-ci
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -373,6 +372,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
     name: ${{ matrix.script }}
+    environment: nemo-ci
     env:
       HF_HOME: /home/TestData/HF_HOME
       TRANSFORMERS_OFFLINE: "1"
