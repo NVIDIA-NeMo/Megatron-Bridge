@@ -29,7 +29,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt_provider import GPTModelProvider, GPTOSSModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
@@ -104,16 +105,16 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.yarn_beta_fast = 32.0
         provider.yarn_beta_slow = 1.0
         provider.yarn_correction_range_round_to_int = False
-        provider.yarn_mscale = 1.0
-        provider.yarn_mscale_all_dim = 0.0
+        provider.yarn_mscale = None
+        provider.yarn_mscale_all_dim = None
 
-        # Re-wrap as GPTOSSModelProvider so yarn_* are dataclass fields and get serialized in run_config.yaml
+        # Re-wrap as GPTOSSProvider so yarn_* are dataclass fields and get serialized in run_config.yaml
         data = {
-            f.name: getattr(provider, f.name)
-            for f in fields(GPTOSSModelProvider)
+            f.name: getattr(provider, f.name, f.default)
+            for f in fields(GPTOSSProvider)
             if not f.name.startswith("_")
         }
-        return GPTOSSModelProvider(**data)
+        return GPTOSSProvider(**data)
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

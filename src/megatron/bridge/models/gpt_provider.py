@@ -356,24 +356,6 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
 
 
 @dataclass
-class GPTOSSModelProvider(GPTModelProvider):
-    """Provider for GPT-OSS models with YARN RoPE.
-
-    Declares yarn_* as dataclass fields so they are serialized in run_config.yaml
-    when saving Megatron checkpoints (e.g. via import_ckpt). Megatron Core
-    expects these attributes on the config for YarnRotaryEmbedding.
-    """
-
-    yarn_rotary_scaling_factor: float = 32.0
-    yarn_original_max_position_embeddings: int = 4096
-    yarn_beta_fast: float = 32.0
-    yarn_beta_slow: float = 1.0
-    yarn_correction_range_round_to_int: bool = False
-    yarn_mscale: float = 1.0
-    yarn_mscale_all_dim: float = 0.0
-
-
-@dataclass
 class GPTProvider126M(GPTModelProvider):
     """Configuration for a 126M parameter GPT model.
 

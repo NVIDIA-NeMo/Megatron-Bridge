@@ -56,3 +56,44 @@ python -m torch.distributed.run --nproc_per_node=8 \
     --trust-remote-code \
     --not-strict
 ```
+
+## Training Recipes
+
+- See: [bridge.recipes.gpt_oss](../../../src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)
+- Available recipes:
+  - `gpt_oss_20b_pretrain_config`: Pretraining configuration for 20B
+  - `gpt_oss_20b_finetune_config`: Finetuning configuration for 20B with PEFT support
+  - `gpt_oss_120b_pretrain_config`: Pretraining configuration for 120B
+  - `gpt_oss_120b_finetune_config`: Finetuning configuration for 120B with PEFT support
+
+Before training, ensure the following are configured:
+1. **Container Image**: Set `CONTAINER_IMAGE` in the SLURM scripts to your container path
+2. **Container Mounts**: (optional) Set `CONTAINER_MOUNTS` for data and workspace directories
+3. **Environment Variables**:
+   - `HF_TOKEN`: to download models from HF Hub (if required)
+   - `HF_HOME`: (optional) to avoid re-downloading models and datasets
+   - `WANDB_API_KEY`: (optional) to enable WandB logging
+
+All training scripts use SLURM for containerized multi-node training.
+
+### Pretrain
+
+See the [slurm_pretrain.sh](slurm_pretrain.sh) script for pretraining with configurable model parallelisms (TP, PP, EP, CP, SP).
+
+W&B report coming soon.
+
+### Supervised Fine-Tuning (SFT)
+
+See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning.
+
+W&B report coming soon.
+
+### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
+
+See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning.
+
+W&B report coming soon.
+
+## Evaluation
+
+Coming soon.
