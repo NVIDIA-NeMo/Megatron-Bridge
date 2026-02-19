@@ -185,7 +185,6 @@ class videohandler:
         return data
 
 
-
 class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
     """Webdataset factory for multi-turn ChatML samples with multimodal support.
 

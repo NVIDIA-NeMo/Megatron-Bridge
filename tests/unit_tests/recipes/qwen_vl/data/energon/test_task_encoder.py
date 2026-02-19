@@ -146,7 +146,6 @@ class TestVideoHandler(unittest.TestCase):
         self.assertEqual(len(result[0]), 3)
 
 
-
 class TestQwenVLTaskEncoder(unittest.TestCase):
     def setUp(self):
         self.tokenizer = MagicMock()
