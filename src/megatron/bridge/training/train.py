@@ -52,10 +52,14 @@ from megatron.core.utils import (
     get_model_config,
     get_attr_wrapped_model,
 )
-from megatron.core.transformer.vision_cuda_graphs import (
-    VisionTECudaGraphHelper,
-    get_vision_cuda_graph_seq_length,
-)
+try:
+    from megatron.core.transformer.cuda_graphs import (
+        VisionTECudaGraphHelper,
+        get_vision_cuda_graph_seq_length,
+    )
+except ImportError:
+    VisionTECudaGraphHelper = None
+    get_vision_cuda_graph_seq_length = None
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
