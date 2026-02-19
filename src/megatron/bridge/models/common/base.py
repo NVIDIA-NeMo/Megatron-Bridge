@@ -157,7 +157,7 @@ class ModelConfig(abc.ABC, Serializable):
             # recurse on serialized nested dataclasses
             subconfigs = {}
             for k, v in filtered_data.items():
-                if isinstance(v, dict):
+                if isinstance(v, dict) and "_target_" in v:
                     subconfigs[k] = _from_dict(v)
             filtered_data.update(subconfigs)
 
@@ -220,6 +220,7 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
         """
         ...
 
+    @abc.abstractmethod
     def build_distributed_models(
         self,
         pg_collection: ProcessGroupCollection,

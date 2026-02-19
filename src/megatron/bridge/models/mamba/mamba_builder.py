@@ -58,9 +58,6 @@ def modelopt_mamba_stack_spec() -> ModuleSpec:
     Uses Norm instead of TENorm and ColumnParallelLinear/RowParallelLinear
     instead of TE layers to enable proper quantizer insertion by ModelOpt.
 
-    Args:
-        config: Mamba configuration object
-
     Returns:
         ModuleSpec: Module specification for quantization-ready Mamba stack
     """
@@ -211,6 +208,8 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
         else:
             padded_vocab_size = self._model_config.vocab_size
 
+        pre_process = pre_process if pre_process is not None else is_pp_first_stage(pg_collection.pp)
+        post_process = post_process if post_process is not None else is_pp_last_stage(pg_collection.pp)
         return MCoreMambaModel(
             config=self._model_config.transformer,
             mamba_stack_spec=mamba_stack_spec,
@@ -226,8 +225,8 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             rotary_percent=self._model_config.rotary_percent,
             rotary_base=self._model_config.rotary_base,
             seq_len_interpolation_factor=self._model_config.seq_len_interpolation_factor,
-            pre_process=pre_process or is_pp_first_stage(pg_collection.pp),
-            post_process=post_process or is_pp_last_stage(pg_collection.pp),
+            pre_process=pre_process,
+            post_process=post_process,
             pg_collection=pg_collection,
             vp_stage=vp_stage,
         )

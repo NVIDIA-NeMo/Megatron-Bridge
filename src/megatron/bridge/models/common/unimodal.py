@@ -88,22 +88,23 @@ def unimodal_build_distributed_models(
     if wrap_with_ddp and not ddp_config:
         raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
-    vp_size = transformer_config.vp_size
+    vp_size = transformer_config.virtual_pipeline_model_parallel_size
     init_model_with_meta_device = transformer_config.init_model_with_meta_device
     if init_model_with_meta_device:
         with torch.device("meta"):
-            model_list = build_virtual_pipeline_stages(build_model_func, pg_collection, vp_size)
+            model_list = build_virtual_pipeline_stages(build_model_func, pg_collection, vp_size, model_type)
     else:
-        model_list = build_virtual_pipeline_stages(build_model_func, pg_collection, vp_size)
+        model_list = build_virtual_pipeline_stages(build_model_func, pg_collection, vp_size, model_type)
 
     # Apply pre wrap hooks
-    if not callable(pre_wrap_hook):
-        raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
-    _model = pre_wrap_hook(model_list)
-    if _model is not None:
-        model_list = _model
-    else:
-        logger.warning("Final pre wrap hook returned None, skipping pre wrap hooks.")
+    if pre_wrap_hook is not None:
+        if not callable(pre_wrap_hook):
+            raise TypeError("pre_wrap_hook must be a callable")
+        _model = pre_wrap_hook(model_list)
+        if _model is not None:
+            model_list = _model
+        else:
+            logger.warning("Final pre wrap hook returned None, skipping pre wrap hooks.")
 
     # Set tensor model parallel attributes if not set.
     # Only parameters that are already tensor model parallel have these
