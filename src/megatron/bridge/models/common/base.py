@@ -25,12 +25,6 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.module import Float16Module
 
 
-try:
-    from megatron.core.fp8_utils import correct_amax_history_if_needed
-except ImportError:
-    correct_amax_history_if_needed = None
-
-
 class Serializable(Protocol):
     """Protocol for serializable configurations."""
 
