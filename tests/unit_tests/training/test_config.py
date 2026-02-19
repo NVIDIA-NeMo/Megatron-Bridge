@@ -2823,3 +2823,102 @@ class TestLoggerConfigFinalize:
         # Mock mlflow import to avoid slow actual import
         with patch("importlib.import_module"):
             config.finalize()  # Should not raise
+
+
+class TestValidationConfigResolution:
+    """Test validation configuration resolution with fallback to training config."""
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_resolution_with_fallbacks(self, mock_get_world_size):
+        """Test that validation config falls back to training config when not specified."""
+        mock_get_world_size.return_value = 4
+
+        train_config = TrainingConfig(micro_batch_size=16, global_batch_size=64, train_iters=1000)
+
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+
+        model_config = create_test_gpt_config()
+
+        config, _, _ = create_test_config_container(
+            world_size_override=4,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        config.validate()
+
+        assert config.dataset.val_num_workers == 8
+        assert config.dataset.val_pin_memory is True
+        assert config.dataset.val_persistent_workers is True
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_resolution_with_explicit_values(self, mock_get_world_size):
+        """Test that explicit validation config values are used when specified."""
+        mock_get_world_size.return_value = 2
+
+        train_config = TrainingConfig(
+            micro_batch_size=16,
+            global_batch_size=64,
+            train_iters=1000,
+        )
+
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+        dataset_config.val_num_workers = 4
+        dataset_config.val_pin_memory = False
+        dataset_config.val_persistent_workers = False
+
+        model_config = create_test_gpt_config()
+
+        config, _, _ = create_test_config_container(
+            world_size_override=2,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        config.validate()
+
+        assert config.dataset.val_num_workers == 4
+        assert config.dataset.val_pin_memory is False
+        assert config.dataset.val_persistent_workers is False
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_mixed_fallbacks(self, mock_get_world_size):
+        """Test mixed scenario where some validation values are explicit, others fall back."""
+        mock_get_world_size.return_value = 2
+
+        train_config = TrainingConfig(
+            micro_batch_size=16,
+            global_batch_size=64,
+            train_iters=1000,
+        )
+
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+        dataset_config.val_num_workers = 4
+        dataset_config.val_pin_memory = None
+        dataset_config.val_persistent_workers = None
+
+        model_config = create_test_gpt_config()
+
+        config, _, _ = create_test_config_container(
+            world_size_override=2,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        config.validate()
+
+        assert config.dataset.val_num_workers == 4
+        assert config.dataset.val_pin_memory is True
+        assert config.dataset.val_persistent_workers is True
