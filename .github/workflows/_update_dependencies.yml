@@ -125,12 +125,18 @@ jobs:
 
       - name: Merge PR
         env:
-          GH_TOKEN: ${{ secrets.PAT }}
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}) (${{ needs.pre-flight.outputs.date }})"
         run: |
           PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
           if [ -z "$PR_NUMBER" ]; then
             echo "No PR was created, skipping merge"
             exit 0
           fi
-          echo "Merging PR #$PR_NUMBER..."
-          gh pr merge "$PR_NUMBER" --squash --delete-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin ${{ env.SOURCE_BRANCH }}
+          git checkout ${{ env.TARGET_BRANCH }}
+          git merge --squash origin/${{ env.SOURCE_BRANCH }}
+          git commit -m "${{ env.title }}"
+          git push origin ${{ env.TARGET_BRANCH }}
+          git push origin --delete ${{ env.SOURCE_BRANCH }}
