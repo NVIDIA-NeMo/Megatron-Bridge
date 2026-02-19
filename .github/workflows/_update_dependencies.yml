@@ -122,12 +122,33 @@ jobs:
           title: ${{ env.title }}
           token: ${{ secrets.PAT }}
           body: |
-            🚀 PR to bump `uv.lock` in `${{ inputs.target-branch }}`.  
+            🚀 PR to bump `uv.lock` in `${{ inputs.target-branch }}`.
 
-            📝 Please remember the following to-do's before merge: 
-            - [ ] Verify the presubmit CI  
-
-            🙏 Please merge this PR only if the CI workflow completed successfully.
+            🤖 This PR will be merged automatically once CI passes.
           commit-message: ${{ env.title }}
           signoff: true
           committer: "${{ steps.gpg-action.outputs.name }} <${{ steps.gpg-action.outputs.email }}>"
+
+      - name: Wait for CI checks
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR was created, skipping wait"
+            exit 0
+          fi
+          echo "Waiting for CI checks on PR #$PR_NUMBER..."
+          gh pr checks "$PR_NUMBER" --watch --interval 60
+
+      - name: Merge PR
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No PR was created, skipping merge"
+            exit 0
+          fi
+          echo "Merging PR #$PR_NUMBER..."
+          gh pr merge "$PR_NUMBER" --squash --delete-branch
