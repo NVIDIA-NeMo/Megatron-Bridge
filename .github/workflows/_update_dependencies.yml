@@ -74,7 +74,7 @@ jobs:
           git checkout FETCH_HEAD
 
       - name: test file
-        run: hello > uv.lock
+        run: echo "hello" > uv.lock
 
       # - name: Upgrade lock file
       #   env:
