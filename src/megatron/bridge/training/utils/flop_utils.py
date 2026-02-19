@@ -12,16 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-from typing import Optional, Tuple
-
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
-def _load_packed_seq_stats(cfg: ConfigContainer) -> Tuple[Optional[float], Optional[float]]:
+def _load_packed_seq_stats(cfg: ConfigContainer):
     """Return (avg_tokens_per_row, avg_seq_len_sq_row) for packed LoRA training.
 
     Reads the packed training .npy file directly via calculate_avg_seqlen.
@@ -34,7 +31,7 @@ def _load_packed_seq_stats(cfg: ConfigContainer) -> Tuple[Optional[float], Optio
         return None, None
 
     packed_train_path = getattr(packed_specs, "packed_train_data_path", None)
-    if packed_train_path is None or not Path(packed_train_path).exists():
+    if packed_train_path is None or not packed_train_path.exists():
         return None, None
 
     gbs = cfg.train.global_batch_size
