@@ -458,7 +458,7 @@ class TestGemma3CustomComponents:
         rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
 
         # Mock the _forward_cached method
-        mock_cached_result = (torch.tensor([1.0, 2.0]), torch.tensor([3.0, 4.0]))
+        mock_cached_result = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         rope_emb._forward_cached = Mock(return_value=mock_cached_result)
 
         # Call forward without cp_group (None)
