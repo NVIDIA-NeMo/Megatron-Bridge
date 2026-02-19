@@ -12,13 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from pathlib import Path
+from typing import Optional, Tuple
 
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+def _load_packed_seq_stats(cfg: ConfigContainer) -> Tuple[Optional[float], Optional[float]]:
+    """Return (avg_tokens_per_row, avg_seq_len_sq_row) for packed LoRA training.
+
+    Reads the packed training .npy file directly via calculate_avg_seqlen.
+    Returns (None, None) if packed_train_data_path is not set or does not exist.
+    """
+    from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
+
+    packed_specs = getattr(cfg.dataset, "packed_sequence_specs", None)
+    if packed_specs is None:
+        return None, None
+
+    packed_train_path = getattr(packed_specs, "packed_train_data_path", None)
+    if packed_train_path is None or not Path(packed_train_path).exists():
+        return None, None
+
+    gbs = cfg.train.global_batch_size
+    _, avg_tokens, _, avg_seq_sq = calculate_avg_seqlen(
+        packed_train_path, gbs, cfg.model.seq_length, drop_remainder=True
+    )
+    return avg_tokens, avg_seq_sq
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
@@ -193,26 +216,12 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             num_tokens = getattr(cfg.dataset, "avg_tokens_per_row", None)
             avg_seq_len_sq_row = getattr(cfg.dataset, "avg_seq_len_sq_row", None)
 
-            # If not set manually, try to load from packing metadata (packed LoRA training).
             if num_tokens is None or avg_seq_len_sq_row is None:
-                packed_specs = getattr(cfg.dataset, "packed_sequence_specs", None)
-                if packed_specs is not None:
-                    metadata_path = getattr(packed_specs, "packed_metadata_path", None)
-                    if metadata_path is not None and Path(metadata_path).exists():
-                        with open(metadata_path) as f:
-                            metadata = json.load(f)
-                        # Convention: train metadata is the first entry in the list.
-                        train_meta = metadata[0] if metadata else {}
-                        total_tokens = train_meta.get("total_tokens")
-                        total_seq_len_sq = train_meta.get("total_seq_len_sq")
-                        num_rows = train_meta.get("num_rows")
-                        if total_tokens is not None and total_seq_len_sq is not None and num_rows is not None:
-                            gbs = cfg.train.global_batch_size
-                            count = (num_rows // gbs) * gbs
-                            if num_tokens is None:
-                                num_tokens = total_tokens / count
-                            if avg_seq_len_sq_row is None:
-                                avg_seq_len_sq_row = total_seq_len_sq / count
+                meta_tokens, meta_seq_sq = _load_packed_seq_stats(cfg)
+                if num_tokens is None:
+                    num_tokens = meta_tokens
+                if avg_seq_len_sq_row is None:
+                    avg_seq_len_sq_row = meta_seq_sq
 
             if num_tokens is None:
                 num_tokens = batch_size * cfg.model.seq_length
