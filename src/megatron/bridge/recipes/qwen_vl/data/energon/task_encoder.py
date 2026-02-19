@@ -19,14 +19,15 @@ import pickle
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
+from megatron.energon.epathlib.epath import EPath
 from megatron.energon.flavors.base_dataset import Sample
-from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
-from PIL import Image
+from megatron.energon.flavors.webdataset import DefaultDecoderWebdatasetFactory
+from webdataset.autodecode import Decoder, imagehandler
 
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
@@ -154,13 +155,54 @@ def _resolve_hf_mm_token_ids(hf_tokenizer):
 
 @dataclass
 class ChatMLSample(Sample):
-    """Intermediate Sample Format"""
+    """multi-turn complex samples with images and videos"""
 
-    # __key__: str
-    # __subflavors__: Dict
-    imgs: List[Image.Image]
-    videos: List[torch.Tensor | list[Image.Image]]
     conversation: str  # JSON string of GPT-format conversations
+    imgs: Optional[List[torch.Tensor]] = None
+    videos: Optional[List[torch.Tensor]] = None
+
+
+class videohandler:
+    """Create an video handler."""
+
+    def __init__(self, imagespec):
+        self.extensions = ["jpgs", "mp4s"]
+        self.extensions_mapping = {"jpgs": "jpg", "mp4s": "jpg"}
+        self.image_handler = imagehandler(imagespec)
+
+    def __call__(self, key, data):
+        """Perform nested image decoding."""
+        extension = re.sub(r".*[.]", "", key)
+        if extension.lower() not in self.extensions:
+            return None
+        data = pickle.loads(data)
+        key = self.extensions_mapping[extension]
+        if extension.lower() == "jpgs":
+            data = [self.image_handler(key, d) for d in data]
+        else:
+            data = [[self.image_handler(key, d) for d in video] for video in data]
+        return data
+
+
+
+class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
+    """Webdataset factory for multi-turn ChatML samples with multimodal support.
+
+    Extends DefaultDecoderWebdatasetFactory to decode webdataset shards into
+    ChatMLSample instances, using custom handlers for image, audio, and video fields.
+    """
+
+    __sample_type__ = ChatMLSample
+
+    def __init__(self, path: EPath, *, auto_decode: bool = True, **kwargs):
+        super().__init__(path, auto_decode=auto_decode, **kwargs)
+        if auto_decode:
+            self._decoder = Decoder(
+                [
+                    imagehandler(self.image_decode),
+                    videohandler(self.image_decode),
+                ]
+            )
 
 
 @dataclass
@@ -231,50 +273,8 @@ def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", v
     return contents
 
 
-def cook_chatml_sample(sample: dict) -> ChatMLSample:
-    """
-    Convert crude sampel to ChatMLSample.
-
-    Args:
-        sample: Crude sample in pickle serialized format
-
-    Returns:
-        sample in ChatMLSample format
-    """
-    imgs = sample.get("jpgs", None)
-    if imgs:
-        imgs = pickle.loads(imgs)
-        if isinstance(imgs, list) and len(imgs) > 0:
-            imgs = [Image.fromarray(d) for d in imgs]
-        else:
-            imgs = None
-    videos = sample.get("videos", None)
-    if videos:
-        videos = pickle.loads(videos)
-        if isinstance(videos, list) and len(videos) > 0:
-            videos = [[d for d in video] for video in videos]
-        else:
-            videos = None
-    if "<image>" in sample["json"] and imgs is None:
-        logging.warning("<image> in conversation text but no image data")
-    if "<video>" in sample["json"] and videos is None:
-        logging.warning("<video> in conversation text but no video data")
-
-    chat_sample = ChatMLSample(
-        **basic_sample_keys(sample),
-        imgs=imgs,
-        videos=videos,
-        conversation=sample["json"],
-    )
-    return chat_sample
-
-
 class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenVLTaskBatch, dict]):
     """A simple task encoder for captioning."""
-
-    cookers = [
-        Cooker(cook_chatml_sample),
-    ]
 
     def __init__(
         self,
