@@ -275,6 +275,9 @@ class PerfEnvPlugin(Plugin):
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+        if model_family_name in ["deepseek", "qwen"]:
+            executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
