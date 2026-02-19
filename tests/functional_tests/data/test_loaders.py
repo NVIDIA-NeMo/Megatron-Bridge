@@ -15,6 +15,8 @@
 import json
 import os
 import unittest.mock as mock
+from collections import OrderedDict
+from types import SimpleNamespace
 
 import torch
 
@@ -37,9 +39,23 @@ from megatron.bridge.training.config import (
     RNGConfig,
     SchedulerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
+
+
+def _mock_tokenizer():
+    """Create a lightweight mock tokenizer for MockGPTLowLevelDataset.
+
+    MockGPTLowLevelDataset requires ``tokenizer.vocab_size`` and
+    ``tokenizer.eod`` when building mock datasets.
+    """
+    return SimpleNamespace(
+        vocab_size=1000,
+        eod=0,
+        unique_identifiers=OrderedDict({"class": "MockTokenizer"}),
+    )
 
 
 def create_simple_test_config():
@@ -49,8 +65,10 @@ def create_simple_test_config():
             micro_batch_size=1,
             global_batch_size=32,
             train_iters=1000,
-            eval_iters=10,
+        ),
+        validation=ValidationConfig(
             eval_interval=100,
+            eval_iters=10,
         ),
         model=GPTModelProvider(
             num_layers=1,
@@ -151,6 +169,7 @@ class TestDataLoaders:
         mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dp_group = object()
@@ -179,7 +198,8 @@ class TestDataLoaders:
         mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
-        cfg.train.eval_iters = 0
+        cfg.validation.eval_iters = 0
+        cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dp_group = object()
@@ -209,9 +229,9 @@ class TestSampleBasedDataLoaders:
         train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
 
         expected_train_samples = cfg.train.train_iters * cfg.train.global_batch_size
-        expected_eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
+        expected_eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
         expected_valid_samples = expected_eval_iters * cfg.train.global_batch_size
-        expected_test_samples = cfg.train.eval_iters * cfg.train.global_batch_size
+        expected_test_samples = cfg.validation.eval_iters * cfg.train.global_batch_size
 
         assert train_samples == expected_train_samples
         assert valid_samples == expected_valid_samples
@@ -229,9 +249,9 @@ class TestSampleBasedDataLoaders:
         train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
 
         expected_train_samples = cfg.train.train_samples  # Direct sample count
-        expected_eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
+        expected_eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
         expected_valid_samples = expected_eval_iters * cfg.train.global_batch_size
-        expected_test_samples = cfg.train.eval_iters * cfg.train.global_batch_size
+        expected_test_samples = cfg.validation.eval_iters * cfg.train.global_batch_size
 
         assert train_samples == expected_train_samples
         assert valid_samples == expected_valid_samples
@@ -254,6 +274,9 @@ class TestSampleBasedDataLoaders:
         cfg.scheduler.lr_decay_iters = None
         cfg.scheduler.lr_warmup_samples = 1000
         cfg.scheduler.lr_warmup_iters = 0
+
+        # Provide a mock tokenizer required by MockGPTLowLevelDataset
+        cfg.dataset.tokenizer = _mock_tokenizer()
 
         # Need to validate config to calculate train_iters from train_samples
         with mock.patch("megatron.bridge.utils.common_utils.get_world_size_safe", return_value=1):
