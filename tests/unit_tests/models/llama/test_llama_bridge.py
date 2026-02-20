@@ -475,7 +475,7 @@ class TestLlamaBridgeBidirectionalConversion:
             "intermediate_size": 14336,
             "vocab_size": 128256,
             "max_position_embeddings": 8192,
-            "rope_theta": 500000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 500000.0},
             "rms_norm_eps": 1e-05,
             "tie_word_embeddings": False,
             "model_type": "llama",
@@ -508,7 +508,7 @@ class TestLlamaBridgeBidirectionalConversion:
         assert result_hf_config["num_key_value_heads"] == hf_config_dict["num_key_value_heads"]
         assert result_hf_config["vocab_size"] == hf_config_dict["vocab_size"]
         assert result_hf_config["max_position_embeddings"] == hf_config_dict["max_position_embeddings"]
-        assert result_hf_config["rope_theta"] == hf_config_dict["rope_theta"]
+        assert result_hf_config["rope_theta"] == hf_config_dict["rope_parameters"]["rope_theta"]
         assert result_hf_config["rms_norm_eps"] == hf_config_dict["rms_norm_eps"]
         assert result_hf_config["tie_word_embeddings"] == hf_config_dict["tie_word_embeddings"]
         # Check new mappings are preserved

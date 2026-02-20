@@ -377,6 +377,14 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             if value is not None:
                 provider_kwargs[megatron_name] = value
 
+        # Extract rotary_base via compat function (handles both legacy rope_theta
+        # attribute and transformers 5.0+ rope_parameters dict)
+        if "rotary_base" not in provider_kwargs:
+            try:
+                provider_kwargs["rotary_base"] = _rope_theta_from_hf(hf_config)
+            except ValueError:
+                pass
+
         # Handle rope scaling: extract params from rope_scaling dict
         # HF configs use either "type" or "rope_type" key for the scaling type
         from megatron.bridge.models.mla_provider import MLAModelProvider
