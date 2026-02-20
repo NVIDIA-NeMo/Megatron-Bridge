@@ -31,7 +31,7 @@ def set_nemotron_3_nano_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def nemotron_3_nano_pretrain_config_gb300(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+def nemotron_3_nano_pretrain_config_gb300(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """GB300, baseline config."""
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
@@ -51,7 +51,7 @@ def nemotron_3_nano_pretrain_config_gb300(precision: str = "bf16", config_varian
     return cfg
 
 
-def nemotron_3_nano_pretrain_config_gb200(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+def nemotron_3_nano_pretrain_config_gb200(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """GB200, baseline config."""
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
@@ -71,7 +71,7 @@ def nemotron_3_nano_pretrain_config_gb200(precision: str = "bf16", config_varian
     return cfg
 
 
-def nemotron_3_nano_pretrain_config_b300(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+def nemotron_3_nano_pretrain_config_b300(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """B300, baseline config."""
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
@@ -91,7 +91,7 @@ def nemotron_3_nano_pretrain_config_b300(precision: str = "bf16", config_variant
     return cfg
 
 
-def nemotron_3_nano_pretrain_config_b200(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+def nemotron_3_nano_pretrain_config_b200(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """B200, baseline config."""
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
@@ -111,7 +111,7 @@ def nemotron_3_nano_pretrain_config_b200(precision: str = "bf16", config_variant
     return cfg
 
 
-def nemotron_3_nano_pretrain_config_h100(precision: str = "bf16", config_variant: str = "v1") -> ConfigContainer:
+def nemotron_3_nano_pretrain_config_h100(precision: str = "bf16", mock: bool = True, config_variant: str = "v1") -> ConfigContainer:
     """H100, baseline config."""
     base_cfg = get_workload_base_config(
         model_family_name="nemotronh",
