@@ -82,22 +82,45 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     pending_step_time = None
     pending_gpu_util = None
     pending_grad_norm = None
+    current_iteration = None
+    # Tracks a completed step whose metric arrived *after* its iteration line due to
+    # interleaved output from multiple pipeline stages.  The very next matching line
+    # (that is not itself on an iteration line) will be assigned here instead.
+    last_step_without_step_time = None
+    last_step_without_gpu_util = None
 
     for line in content.split("\n"):
-        # Check for step time and GPU utilization
+        # Pre-compute whether this line also carries an iteration marker so we can
+        # decide whether a metric on the same line is "pending" (belongs to the
+        # iteration being announced) or a late print for the previous iteration.
+        has_iteration = bool(re.search(patterns["iteration"], line))
+
         if match := re.search(patterns["step time"], line):
-            pending_step_time = float(match.group(1))
+            step_time_val = float(match.group(1))
+            if not has_iteration and last_step_without_step_time is not None:
+                # Late print: fill the step that was missing this metric.
+                metrics["step time"][last_step_without_step_time] = step_time_val
+                last_step_without_step_time = None
+            else:
+                # Normal path: keep as pending until the next iteration line.
+                # Always overwrite so we use the value closest to that line.
+                pending_step_time = step_time_val
 
         if match := re.search(patterns["grad norm"], line):
             pending_grad_norm = float(match.group(1))
 
         if match := re.search(patterns["GPU utilization"], line):
-            pending_gpu_util = float(match.group(1))
+            gpu_util_val = float(match.group(1))
+            if not has_iteration and last_step_without_gpu_util is not None:
+                metrics["GPU utilization"][last_step_without_gpu_util] = gpu_util_val
+                last_step_without_gpu_util = None
+            else:
+                pending_gpu_util = gpu_util_val
 
-        if match := re.search(patterns["alloc"], line):
+        if metrics["alloc"] is None and (match := re.search(patterns["alloc"], line)):
             metrics["alloc"] = float(match.group(1))
 
-        if match := re.search(patterns["max_alloc"], line):
+        if metrics["max_alloc"] is None and (match := re.search(patterns["max_alloc"], line)):
             metrics["max_alloc"] = float(match.group(1))
 
         # Check for iteration line
@@ -108,9 +131,16 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
             # (current_iteration - 1, but use 0-indexed so current_iteration - 1)
             completed_step = str(current_iteration - 1)
 
+            # Reset stale "last without" state — that window has passed.
+            last_step_without_step_time = None
+            last_step_without_gpu_util = None
+
             if pending_step_time is not None:
                 metrics["step time"][completed_step] = pending_step_time
                 pending_step_time = None
+            else:
+                # No pending value: remember this step so a late print can still fill it.
+                last_step_without_step_time = completed_step
 
             if pending_grad_norm is not None:
                 metrics["grad norm"][completed_step] = pending_grad_norm
@@ -119,11 +149,23 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
             if pending_gpu_util is not None:
                 metrics["GPU utilization"][completed_step] = pending_gpu_util
                 pending_gpu_util = None
+            else:
+                last_step_without_gpu_util = completed_step
 
             # Extract metrics from the iteration line itself
             for metric_name in ["elapsed time per iteration (ms)", "lm loss"]:
-                if match := re.search(patterns[metric_name], line):
+                if completed_step not in metrics[metric_name] and (match := re.search(patterns[metric_name], line)):
                     metrics[metric_name][completed_step] = float(match.group(1))
+
+    # Flush any pending metrics from the last iteration (no subsequent iteration line to trigger it)
+    if current_iteration is not None:
+        last_step = str(current_iteration)
+        if pending_step_time is not None:
+            metrics["step time"][last_step] = pending_step_time
+        if pending_grad_norm is not None:
+            metrics["grad norm"][last_step] = pending_grad_norm
+        if pending_gpu_util is not None:
+            metrics["GPU utilization"][last_step] = pending_gpu_util
 
     return metrics[metric]
 
@@ -419,7 +461,7 @@ def validate_memory(
     config = default_config
 
     # Calculate memory difference
-    max_alloc_diff = abs(current_max_alloc - golden_max_alloc) / golden_max_alloc
+    max_alloc_diff = abs(current_max_alloc - golden_max_alloc) / golden_max_alloc if golden_max_alloc != 0 else abs(current_max_alloc)
 
     logger.info(f"Max alloc difference: {max_alloc_diff * 100:.2f}%")
     logger.info(f"Memory threshold: {config['memory_threshold'] * 100:.1f}%")
@@ -444,7 +486,7 @@ def validate_memory(
             f"✓ Max Memory allocation passed: {max_alloc_diff * 100:.2f}% <= {config['memory_threshold'] * 100:.1f}%"
         )
 
-    alloc_diff = abs(current_alloc - golden_alloc) / golden_alloc
+    alloc_diff = abs(current_alloc - golden_alloc) / golden_alloc if golden_alloc != 0 else abs(current_alloc)
 
     logger.info(f"Alloc difference: {alloc_diff * 100:.2f}%")
     logger.info(f"Memory threshold: {config['memory_threshold'] * 100:.1f}%")
@@ -558,10 +600,14 @@ def calc_convergence_and_performance(
     write_golden_values_to_disk(
         current_values=dict(
             **{
-                str(step): {
-                    loss_metric: current_train_loss[str(step)],
-                    timing_metric: current_iter_time[str(step)],
-                    "GPU utilization": current_gpu_util[str(step)],
+                step: {
+                    k: v
+                    for k, v in {
+                        loss_metric: current_train_loss.get(step),
+                        timing_metric: current_iter_time.get(step),
+                        "GPU utilization": current_gpu_util.get(step),
+                    }.items()
+                    if v is not None
                 }
                 for step in current_train_loss.keys()
             },
@@ -620,7 +666,7 @@ def calc_convergence_and_performance(
 
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
-    current_train_loss_values = np.array([current_train_loss[s] for s in steps])
+    current_train_loss_values = np.array([current_train_loss.get(s, float("nan")) for s in steps])
     logger.info(f"Current loss values (last 15): {current_train_loss_values[-15:]}")
     logger.info(f"Golden loss values (last 15): {golden_train_loss_values[-15:]}")
     convergence_result = validate_convergence(
@@ -639,7 +685,7 @@ def calc_convergence_and_performance(
 
     # check for performance
     golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
-    current_iter_time_values = np.array([current_iter_time[s] for s in steps])
+    current_iter_time_values = np.array([current_iter_time.get(s, float("nan")) for s in steps])
     logger.info(f"Current timing values (last 15): {current_iter_time_values[-15:]}")
     logger.info(f"Golden timing values (last 15): {golden_iter_time_values[-15:]}")
     performance_result = validate_performance(
@@ -686,7 +732,7 @@ def calc_convergence_and_performance(
                     "compare/current_iter_time": current_iter_time_values[i],
                     "compare/golden_lm_loss": golden_train_loss_values[i],
                     "compare/golden_iter_time": golden_iter_time_values[i],
-                    "compare/current_grad_norm": current_grad_norm[str(i)],
+                    "compare/current_grad_norm": current_grad_norm.get(steps[i], float("nan")),
                 }
             )
 
