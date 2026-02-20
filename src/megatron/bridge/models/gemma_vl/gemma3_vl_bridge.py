@@ -25,6 +25,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf,
+    rope_scaling_factor_from_hf,
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -60,14 +65,14 @@ class Gemma3VLBridge(MegatronModelBridge):
         provider = Gemma3VLModelProvider(**provider_kwargs)
 
         # Handle rope_local_base_freq for Gemma3 VL
-        rope_local_base_freq = self.rope_local_base_freq_from_hf(text_config)
-        rope_theta = self.rope_theta_from_hf(text_config)
+        rope_local_base_freq = rope_local_base_freq_from_hf(text_config)
+        rope_theta = rope_theta_from_hf(text_config)
 
         # Gemma3-specific features not in CONFIG_MAPPING
         provider.window_size = text_config.sliding_window
         provider.rotary_base = (rope_local_base_freq, rope_theta)
         provider.softmax_scale = 1.0 / math.sqrt(text_config.query_pre_attn_scalar)
-        provider.rope_scaling_factor = self.rope_scaling_factor_from_hf(text_config, default=1.0)
+        provider.rope_scaling_factor = rope_scaling_factor_from_hf(text_config, default=1.0)
 
         # Override dtype and vocab settings to match baseline
         provider.bf16 = True

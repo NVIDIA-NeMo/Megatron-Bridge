@@ -52,13 +52,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
 from megatron.bridge.models.conversion.transformers_compat import (
-    rope_local_base_freq_from_hf as _rope_local_base_freq_from_hf,
-)
-from megatron.bridge.models.conversion.transformers_compat import (
-    rope_scaling_factor_from_hf as _rope_scaling_factor_from_hf,
-)
-from megatron.bridge.models.conversion.transformers_compat import (
-    rope_theta_from_hf as _rope_theta_from_hf,
+    rope_theta_from_hf,
 )
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
@@ -244,10 +238,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         - MegatronModel: The Megatron model type
     """
 
-    rope_theta_from_hf = staticmethod(_rope_theta_from_hf)
-    rope_local_base_freq_from_hf = staticmethod(_rope_local_base_freq_from_hf)
-    rope_scaling_factor_from_hf = staticmethod(_rope_scaling_factor_from_hf)
-
     # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
@@ -381,7 +371,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # attribute and transformers 5.0+ rope_parameters dict)
         if "rotary_base" not in provider_kwargs:
             try:
-                provider_kwargs["rotary_base"] = _rope_theta_from_hf(hf_config)
+                provider_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
             except ValueError:
                 pass
 

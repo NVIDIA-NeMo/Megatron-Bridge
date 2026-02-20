@@ -25,6 +25,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf,
+    rope_scaling_factor_from_hf,
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -63,11 +68,11 @@ class Gemma3ModelBridge(MegatronModelBridge):
         # Gemma3-specific features not in CONFIG_MAPPING
         provider.window_size = hf_config.sliding_window
         provider.rotary_base = (
-            self.rope_local_base_freq_from_hf(hf_config),
-            self.rope_theta_from_hf(hf_config),
+            rope_local_base_freq_from_hf(hf_config),
+            rope_theta_from_hf(hf_config),
         )
         provider.softmax_scale = 1.0 / math.sqrt(hf_config.query_pre_attn_scalar)
-        provider.rope_scaling_factor = self.rope_scaling_factor_from_hf(hf_config)
+        provider.rope_scaling_factor = rope_scaling_factor_from_hf(hf_config)
 
         return provider
 
