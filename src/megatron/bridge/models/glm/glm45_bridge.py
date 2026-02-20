@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import logging
+import re
 from functools import partial
+from typing import Dict, Mapping, Optional, Tuple
 
 import torch
 from megatron.core import parallel_state

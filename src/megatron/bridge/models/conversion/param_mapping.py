@@ -113,7 +113,19 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         # if a param mapping class takes in modified HF weight name from maybe_modify_loaded_hf_weight,
         # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
-        self.allow_hf_name_mismatch = False
+        self.allow_hf_name_mismatch = self._should_allow_hf_name_mismatch(self.hf_param)
+
+    @staticmethod
+    def _should_allow_hf_name_mismatch(hf_param: Union[str, Dict[str, str]]) -> bool:
+        """Return True when HF params may be synthesized (e.g., expert slices)."""
+        def has_expert_wildcard(param_name: str) -> bool:
+            return ".experts.*." in param_name or ".experts.**." in param_name
+        def has_resolved_expert(param_name: str) -> bool:
+            return re.search(r"\.experts\.\d+\.", param_name) is not None
+
+        if isinstance(hf_param, str):
+            return has_expert_wildcard(hf_param) or has_resolved_expert(hf_param)
+        return any(has_expert_wildcard(name) or has_resolved_expert(name) for name in hf_param.values())
 
     @property
     def tp_group(self):

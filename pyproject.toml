@@ -83,7 +83,6 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]",
     "mamba-ssm",
-    "nvidia-resiliency-ext",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
@@ -109,9 +108,6 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 override-dependencies = [
-    "torch; sys_platform == 'never'",
-    "torchvision; sys_platform == 'never'",
-    "triton; sys_platform == 'never'",
     "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@5671fd3675906cda1ade26c24a65d3dedd88eb89",
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
@@ -133,6 +129,9 @@ recipes = [
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
+]
+resiliency = [
+    "nvidia-resiliency-ext",
 ]
 
 [dependency-groups]

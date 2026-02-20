@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -23,90 +24,121 @@ import torch
 from transformers import AutoConfig, AutoTokenizer
 
 
-HF_GLM45_TOY_MODEL_CONFIG = {
-    "architectures": ["Glm4MoeForCausalLM"],
-    "attention_bias": True,
-    "attention_dropout": 0.0,
-    "bos_token_id": 151329,
-    "eos_token_id": 151336,
-    "first_k_dense_replace": 1,
-    "head_dim": 128,
-    "hidden_act": "silu",
-    "hidden_size": 1024,
-    "initializer_range": 0.02,
-    "intermediate_size": 2048,
-    "max_position_embeddings": 8192,
-    "model_type": "glm",
-    "moe_intermediate_size": 512,
-    "n_routed_experts": 8,
-    "n_shared_experts": 1,
-    "num_local_experts": 8,
-    "n_group": 1,
-    "topk_group": 1,
-    "norm_topk_prob": True,
-    "num_attention_heads": 8,
-    "num_experts_per_tok": 4,
-    "num_hidden_layers": 2,
-    "num_key_value_heads": 2,
-    "partial_rotary_factor": 0.5,
-    "rms_norm_eps": 1e-06,
-    "rope_theta": 1000000.0,
-    "routed_scaling_factor": 2.5,
-    "num_nextn_predict_layers": 0,  # Huggingface initialization does not handle MTP correctly
-    "tie_word_embeddings": False,
-    "torch_dtype": "bfloat16",
-    "transformers_version": "4.54.0",
-    "use_cache": True,
-    "use_qk_norm": True,
-    "vocab_size": 151552,
+HF_GLM5_TOY_MODEL_CONFIG = {
+  "architectures": ["GlmMoeDsaForCausalLM"],
+  "model_type": "glm_moe_dsa",
+
+  # ---- Smaller toy dims (keep vocab_size and num_hidden_layers unchanged) ----
+  "hidden_size": 1024,
+  "intermediate_size": 2048,
+  "moe_intermediate_size": 256,
+  "num_hidden_layers": 2,
+
+  # ---- Attention ----
+  "num_attention_heads": 16,
+  "num_key_value_heads": 4,
+  "head_dim": 64,
+
+  "qk_head_dim": 128,
+  "qk_nope_head_dim": 96,
+  "qk_rope_head_dim": 32,
+  "v_head_dim": 128,
+
+  # ---- DSA indexer ----
+  "index_head_dim": 128,
+  "index_n_heads": 8,
+  "index_topk": 256,
+  "indexer_rope_interleave": True,
+
+  # ---- LoRA ranks ----
+  "q_lora_rank": 256,
+  "kv_lora_rank": 128,
+
+  # ---- MoE ----
+  "n_routed_experts": 8,
+  "n_shared_experts": 1,
+  "num_experts_per_tok": 2,
+  "moe_layer_freq": 1,
+  "first_k_dense_replace": 1,  # changed from 3
+  "n_group": 1,
+  "topk_group": 1,
+  "norm_topk_prob": True,
+  "routed_scaling_factor": 2.5,
+  "scoring_func": "sigmoid",
+  "topk_method": "noaux_tc",
+
+  # Exactly one dense, one sparse
+  "mlp_layer_types": [
+    "dense",
+    "sparse"
+  ],
+
+  # ---- Position encoding ----
+  "max_position_embeddings": 8192,
+  "rope_interleave": True,
+  "rope_parameters": {
+    "rope_theta": 1000000,
+    "rope_type": "default"
+  },
+
+  # ---- Norm / activation ----
+  "hidden_act": "silu",
+  "rms_norm_eps": 1e-05,
+
+  # ---- Attention behavior ----
+  "attention_bias": False,
+  "attention_dropout": 0.0,
+
+  # ---- Tokens (unchanged) ----
+  "vocab_size": 154880,
+  "bos_token_id": 0,
+  "eos_token_id": [154820, 154827, 154829],
+  "pad_token_id": 154820,
+
+  # ---- Misc ----
+  "ep_size": 1,
+  "num_nextn_predict_layers": 1,
+  "initializer_range": 0.02,
+  "tie_word_embeddings": False,
+  "use_cache": True,
+  "dtype": "bfloat16",
+  "pretraining_tp": 1,
+  "transformers_version": "5.2.0.dev0"
 }
 
 
-<<<<<<< HEAD
-def _get_num_experts(moe_experts) -> int | None:
-    """Best-effort expert count across transformers versions."""
-    if moe_experts is None:
-        return None
-
-    for attr in ("num_experts", "n_routed_experts", "num_local_experts"):
-        value = getattr(moe_experts, attr, None)
-        if isinstance(value, int):
-            return value
-
-    for attr in ("experts", "local_experts"):
-        nested = getattr(moe_experts, attr, None)
-        if nested is None:
-            continue
-        try:
-            return len(nested)
-        except TypeError:
-            pass
-
-    try:
-        return len(moe_experts)
-    except TypeError:
-        return None
-=======
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
-def _create_glm45_toy_model(model_dir: Path) -> None:
+def _make_tmp_dir(tmp_path_factory, prefix: str) -> Path:
+    """Create temp dirs on fast local disk when available to avoid /tmp quota issues."""
+    preferred_root = Path(os.environ.get("GLM5_TEST_TMP_ROOT", "/opt/dlami/nvme/peng"))
+    try:
+        preferred_root.mkdir(parents=True, exist_ok=True)
+        if preferred_root.exists() and os.access(preferred_root, os.W_OK):
+            return Path(tempfile.mkdtemp(prefix=f"{prefix}_", dir=str(preferred_root)))
+    except Exception:
+        pass
+    return tmp_path_factory.mktemp(prefix)
+
+
+def _create_glm5_toy_model(model_dir: Path) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # Create GLM 4.5 config from the toy model config using AutoConfig
-    config = AutoConfig.from_pretrained("zai-org/GLM-4.5")
+    config = AutoConfig.from_pretrained("zai-org/GLM-5")
 
     # Override with toy model config
-    for key, value in HF_GLM45_TOY_MODEL_CONFIG.items():
+    for key, value in HF_GLM5_TOY_MODEL_CONFIG.items():
         setattr(config, key, value)
 
     config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
     # Create model with random weights and convert to bfloat16
-    from transformers import Glm4MoeForCausalLM
+    from transformers import GlmMoeDsaForCausalLM
 
-    model = Glm4MoeForCausalLM(config)
+    model = GlmMoeDsaForCausalLM(config)
 
     model = model.bfloat16()  # Use .bfloat16() method instead of .to()
     for k, v in model.named_buffers():
@@ -114,14 +146,14 @@ def _create_glm45_toy_model(model_dir: Path) -> None:
             v.data = v.data.to(torch.float32)
 
     # Download and save tokenizer from a reference GLM model
-    tokenizer = AutoTokenizer.from_pretrained("zai-org/GLM-4.5")
+    tokenizer = AutoTokenizer.from_pretrained("zai-org/GLM-5")
     tokenizer.save_pretrained(model_dir)
 
     # Save model and config to directory
     model.save_pretrained(model_dir, safe_serialization=True)
 
     # Also save config.json explicitly to ensure compatibility with correct torch_dtype
-    config_to_save = HF_GLM45_TOY_MODEL_CONFIG.copy()
+    config_to_save = HF_GLM5_TOY_MODEL_CONFIG.copy()
     config_path = model_dir / "config.json"
     with open(config_path, "w") as f:
         json.dump(config_to_save, f, indent=2)
@@ -164,18 +196,17 @@ def _build_roundtrip_cmd(
         str(ep),
     ]
     return cmd
->>>>>>> very first version, local test passed, save as draft and then do more tests and cleaning
 
 
-class TestGLM45Conversion:
+class TestGLM5Conversion:
     """
     Test GLM 4.5 MoE model conversion from local HuggingFace model with different parallelism configurations.
     """
 
     @pytest.fixture(scope="class")
-    def glm45_toy_model_path(self, tmp_path_factory):
+    def glm5_toy_model_path(self, tmp_path_factory):
         """
-        Create and save a HuggingFace GLM 4.5 MoE toy model from config to a temporary directory.
+        Create and save a HuggingFace GLM 5 MoE toy model from config to a temporary directory.
 
         Args:
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
@@ -184,22 +215,22 @@ class TestGLM45Conversion:
             str: Path to the saved HuggingFace model directory
         """
         # Create a temporary directory for this test class
-        temp_dir = tmp_path_factory.mktemp("glm45_toy_model")
-        model_dir = temp_dir / "glm45_toy"
+        temp_dir = _make_tmp_dir(tmp_path_factory, "glm5_toy_model")
+        model_dir = temp_dir / "glm5_toy"
 
-        _create_glm45_toy_model(model_dir)
+        _create_glm5_toy_model(model_dir)
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, glm45_toy_model_path):
+    def test_toy_model_creation(self, glm5_toy_model_path):
         """
         Test that the toy MoE model is created correctly and can be loaded.
 
         Args:
-            glm45_toy_model_path: Path to the toy GLM 4.5 MoE model (from fixture)
+            glm5_toy_model_path: Path to the toy GLM 5 MoE model (from fixture)
         """
         # Verify the model directory exists
-        model_path = Path(glm45_toy_model_path)
+        model_path = Path(glm5_toy_model_path)
         assert model_path.exists(), f"Model directory not found at {model_path}"
 
         # Check essential files exist
@@ -233,53 +264,23 @@ class TestGLM45Conversion:
         with open(config_file) as f:
             config_data = json.load(f)
 
-        assert config_data["model_type"] == "glm"
-        assert config_data["hidden_size"] == 1024
-        assert config_data["intermediate_size"] == 2048
-        assert config_data["num_hidden_layers"] == 2
-        assert config_data["num_attention_heads"] == 8
-        assert config_data["vocab_size"] == 151552
+        assert config_data["model_type"] == HF_GLM5_TOY_MODEL_CONFIG["model_type"]
+        assert config_data["hidden_size"] == HF_GLM5_TOY_MODEL_CONFIG["hidden_size"]
+        assert config_data["intermediate_size"] == HF_GLM5_TOY_MODEL_CONFIG["intermediate_size"]
+        assert config_data["num_hidden_layers"] == HF_GLM5_TOY_MODEL_CONFIG["num_hidden_layers"]
+        assert config_data["num_attention_heads"] == HF_GLM5_TOY_MODEL_CONFIG["num_attention_heads"]
+        assert config_data["vocab_size"] == HF_GLM5_TOY_MODEL_CONFIG["vocab_size"]
         # Verify MoE specific parameters
-        assert config_data["n_routed_experts"] == 8
-        assert config_data["num_experts_per_tok"] == 4
-        assert config_data["moe_intermediate_size"] == 512
+        assert config_data["n_routed_experts"] == HF_GLM5_TOY_MODEL_CONFIG["n_routed_experts"]
+        assert config_data["num_experts_per_tok"] == HF_GLM5_TOY_MODEL_CONFIG["num_experts_per_tok"]
+        assert config_data["moe_intermediate_size"] == HF_GLM5_TOY_MODEL_CONFIG["moe_intermediate_size"]
 
         # Try loading the model to verify it's valid
-<<<<<<< HEAD
-        try:
-            from transformers import Glm4MoeForCausalLM
-
-            model = Glm4MoeForCausalLM.from_pretrained(
-                glm45_toy_model_path,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=True,
-            )
-
-            # Verify model structure
-            assert hasattr(model, "model")
-            assert hasattr(model.model, "layers")
-            assert len(model.model.layers) == 2  # num_hidden_layers
-
-            # Verify MoE structure
-            # First layer is dense, second layer should have MoE structure
-            second_layer = model.model.layers[1]
-            assert hasattr(second_layer, "mlp")
-            # GLM 4.5 MoE structure check (may vary based on implementation)
-            if hasattr(second_layer.mlp, "experts"):
-                num_experts = _get_num_experts(second_layer.mlp.experts)
-                assert num_experts == 8  # n_routed_experts
-
-            print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
-            print("Model weights are correctly in bfloat16 format")
-            print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
-=======
         # try:
-        from transformers import Glm4MoeForCausalLM
->>>>>>> very first version, local test passed, save as draft and then do more tests and cleaning
+        from transformers import GlmMoeDsaForCausalLM
 
-        model = Glm4MoeForCausalLM.from_pretrained(
-            glm45_toy_model_path,
+        model = GlmMoeDsaForCausalLM.from_pretrained(
+            glm5_toy_model_path,
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=False,  # Ensure full loading
             trust_remote_code=True,
@@ -299,11 +300,11 @@ class TestGLM45Conversion:
         total_size = [param.numel() for param in second_layer.mlp.experts.parameters()]
         total_shapes = [param.shape for param in second_layer.mlp.experts.parameters()]
         print(f"second_layer mlp experts: {second_layer.mlp.experts} and type: {type(second_layer.mlp.experts)} and size: {total_size} and shapes: {total_shapes}")
-        # GLM 4.5 MoE structure check (may vary based on implementation)
+        # GLM 5 MoE structure check (may vary based on implementation)
         # if hasattr(second_layer.mlp, "experts"):
         #     assert len(second_layer.mlp.experts) == 8  # n_routed_experts
 
-        print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
+        print(f"SUCCESS: GLM 5 MoE toy model created and validated at {glm5_toy_model_path}")
         print("Model weights are correctly in bfloat16 format")
         print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
 
@@ -319,13 +320,13 @@ class TestGLM45Conversion:
             (1, 1, 2, "EP"),
         ],
     )
-    def test_glm45_conversion_parallelism(self, glm45_toy_model_path, tmp_path, tp, pp, ep, test_name):
+    def test_glm5_conversion_parallelism(self, glm5_toy_model_path, tmp_path_factory, tp, pp, ep, test_name):
         """
-        Test GLM 4.5 MoE model conversion with different parallelism configurations.
+        Test GLM 5 MoE model conversion with different parallelism configurations.
 
         Args:
-            glm45_toy_model_path: Path to the toy GLM 4.5 MoE model (from fixture)
-            tmp_path: Pytest temporary path fixture
+            glm5_toy_model_path: Path to the toy GLM 5 MoE model (from fixture)
+            tmp_path_factory: Pytest temporary path factory
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
             ep: Expert parallelism size
@@ -333,12 +334,12 @@ class TestGLM45Conversion:
         """
 
         # Create temporary output directory for conversion results
-        test_output_dir = tmp_path / f"glm45_moe_{test_name}"
+        test_output_dir = _make_tmp_dir(tmp_path_factory, f"glm5_moe_{test_name}_out")
         test_output_dir.mkdir(exist_ok=True)
 
         repo_root = _repo_root()
         cmd = _build_roundtrip_cmd(
-            glm45_toy_model_path, test_output_dir, tp, pp, ep, repo_root
+            glm5_toy_model_path, test_output_dir, tp, pp, ep, repo_root
         )
 
         # try:
@@ -348,11 +349,11 @@ class TestGLM45Conversion:
         if result.returncode != 0:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
-            assert False, f"GLM 4.5 MoE {test_name} conversion failed with return code {result.returncode}"
+            assert False, f"GLM 5 MoE {test_name} conversion failed with return code {result.returncode}"
 
         # Verify that the converted model was saved
         # The output directory should be named after the last part of the model path
-        model_name = Path(glm45_toy_model_path).name  # "glm45_toy"
+        model_name = Path(glm5_toy_model_path).name  # "glm5_toy"
         converted_model_dir = test_output_dir / model_name
         assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
@@ -375,21 +376,31 @@ class TestGLM45Conversion:
 
         assert weights_found, f"Model weights file not found in converted model at {converted_model_dir}"
 
-        # Verify the config contains GLM 4.5 MoE-specific parameters
+        # Verify the config contains GLM 5 MoE-specific parameters
         with open(config_file) as f:
             saved_config = json.load(f)
 
-        assert saved_config["model_type"] == "glm", (
-            "Model type should be glm (GLM 4.5 MoE uses Glm4MoeForCausalLM)"
+        assert saved_config["model_type"] == "glm_moe_dsa", (
+            "Model type should be glm (GLM 5 MoE uses GlmMoeDsaForCausalLM)"
         )
-        assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
-        assert saved_config["num_attention_heads"] == 8, "Number of attention heads should match toy config"
+        assert saved_config["hidden_size"] == HF_GLM5_TOY_MODEL_CONFIG["hidden_size"], (
+            "Hidden size should match toy config"
+        )
+        assert saved_config["num_attention_heads"] == HF_GLM5_TOY_MODEL_CONFIG["num_attention_heads"], (
+            "Number of attention heads should match toy config"
+        )
         # Verify MoE specific parameters are preserved
-        assert saved_config["n_routed_experts"] == 8, "Number of routed experts should match toy config"
-        assert saved_config["num_experts_per_tok"] == 4, "Number of experts per token should match toy config"
-        assert saved_config["moe_intermediate_size"] == 512, "MoE intermediate size should match toy config"
+        assert saved_config["n_routed_experts"] == HF_GLM5_TOY_MODEL_CONFIG["n_routed_experts"], (
+            "Number of routed experts should match toy config"
+        )
+        assert saved_config["num_experts_per_tok"] == HF_GLM5_TOY_MODEL_CONFIG["num_experts_per_tok"], (
+            "Number of experts per token should match toy config"
+        )
+        assert saved_config["moe_intermediate_size"] == HF_GLM5_TOY_MODEL_CONFIG["moe_intermediate_size"], (
+            "MoE intermediate size should match toy config"
+        )
 
-        print(f"SUCCESS: GLM 4.5 MoE {test_name} conversion test completed successfully")
+        print(f"SUCCESS: GLM 5 MoE {test_name} conversion test completed successfully")
         print(f"Converted model saved at: {converted_model_dir}")
         print(
             f"MoE parameters preserved: {saved_config['n_routed_experts']} experts, {saved_config['num_experts_per_tok']} per token"
@@ -404,25 +415,25 @@ class TestGLM45Conversion:
             (1, 1, 2, "EP"),
         ],
     )
-    def test_glm45_conversion_parallelism_local_model(self, tmp_path, tp, pp, ep, test_name):
+    def test_glm5_conversion_parallelism_local_model(self, tmp_path, tp, pp, ep, test_name):
         """
         Run hf_megatron_roundtrip_multi_gpu.py using a local model path on disk.
 
-        Set GLM45_LOCAL_MODEL_DIR to a writable directory; the test will create
+        Set GLM5_LOCAL_MODEL_DIR to a writable directory; the test will create
         a toy model under that path if it doesn't exist yet.
         """
-        local_root = os.environ.get("GLM45_LOCAL_MODEL_DIR")
+        local_root = os.environ.get("GLM5_LOCAL_MODEL_DIR")
         if not local_root:
-            pytest.skip("Set GLM45_LOCAL_MODEL_DIR to run the local-path conversion test.")
+            pytest.skip("Set GLM5_LOCAL_MODEL_DIR to run the local-path conversion test.")
 
         local_root_path = Path(local_root)
         local_root_path.mkdir(parents=True, exist_ok=True)
-        model_dir = local_root_path / "glm45_toy"
+        model_dir = local_root_path / "glm5_toy"
 
         if not model_dir.exists():
-            _create_glm45_toy_model(model_dir)
+            _create_glm5_toy_model(model_dir)
 
-        test_output_dir = local_root_path / f"glm45_moe_{test_name}_out"
+        test_output_dir = local_root_path / f"glm5_moe_{test_name}_out"
         test_output_dir.mkdir(exist_ok=True)
 
         repo_root = _repo_root()
@@ -435,9 +446,9 @@ class TestGLM45Conversion:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
             assert False, (
-                f"GLM 4.5 MoE local-path {test_name} conversion failed with return code {result.returncode}"
+                f"GLM 5 MoE local-path {test_name} conversion failed with return code {result.returncode}"
             )
 
         # except Exception as e:
-        #     print(f"Error during GLM 4.5 MoE {test_name} conversion test: {e}")
+        #     print(f"Error during GLM 5 MoE {test_name} conversion test: {e}")
         #     raise

@@ -64,6 +64,10 @@ from megatron.bridge.models.glm import (
     GLM45ModelProvider355B,
     GLMMoEModelProvider,
 )
+from megatron.bridge.models.glm_moe_dsa import (
+    GLM5Bridge,
+    GLM5ModelProvider,
+)
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
     GLM45VModelProvider,
@@ -222,6 +226,8 @@ __all__ = [
     "GLM45ModelProvider355B",
     "GLM45AirModelProvider106B",
     "GLM45Bridge",
+    "GLM5Bridge",
+    "GLM5ModelProvider",
     "GLM45VBridge",
     "GLM45VModelProvider",
     "GPTModelProvider",
