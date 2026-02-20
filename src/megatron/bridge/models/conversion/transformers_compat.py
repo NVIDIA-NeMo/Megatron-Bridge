@@ -60,9 +60,12 @@ def rope_theta_from_hf(config) -> float:
                 if rope_theta is not None:
                     return rope_theta
 
-    # Fallback to default_theta for Gemma3 (transformers 5.0+)
+    # Fallback to default_theta (transformers 5.0+)
     if hasattr(config, "default_theta") and config.default_theta:
-        if "global" in config.default_theta:
+        # default_theta can be a plain float (e.g. NemotronH) or a dict (e.g. Gemma3)
+        if isinstance(config.default_theta, (int, float)):
+            return float(config.default_theta)
+        if isinstance(config.default_theta, dict) and "global" in config.default_theta:
             rope_theta = config.default_theta["global"]
             if rope_theta is not None:
                 return rope_theta
@@ -125,9 +128,9 @@ def rope_local_base_freq_from_hf(config) -> float:
             if rope_local_base_freq is not None:
                 return rope_local_base_freq
 
-    # Fallback to default_theta for Gemma3 (transformers 5.0+)
+    # Fallback to default_theta (transformers 5.0+)
     if hasattr(config, "default_theta") and config.default_theta:
-        if "local" in config.default_theta:
+        if isinstance(config.default_theta, dict) and "local" in config.default_theta:
             rope_local_base_freq = config.default_theta["local"]
             if rope_local_base_freq is not None:
                 return rope_local_base_freq
