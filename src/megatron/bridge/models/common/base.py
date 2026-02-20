@@ -28,7 +28,7 @@ from megatron.core.transformer.module import Float16Module
 class Serializable(Protocol):
     """Protocol for serializable configurations."""
 
-    def to_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """Serialize to dictionary with _target_ for class identification."""
         ...
 
@@ -55,7 +55,7 @@ class ModelConfig(abc.ABC, Serializable):
     proxy attribute access to them via ``__getattr__``/``__setattr__`` overrides.
 
     Serialization:
-        Use ``to_dict()`` to serialize to a plain dict (includes a ``_target_`` key
+        Use ``as_dict()`` to serialize to a plain dict (includes a ``_target_`` key
         for class resolution and a ``_builder_`` key for builder resolution).
         Use ``from_dict()`` to reconstruct an instance from such a dict.
 
@@ -90,7 +90,7 @@ class ModelConfig(abc.ABC, Serializable):
         builder_cls = getattr(module, class_name)
         return builder_cls
 
-    def to_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """Serialize config to dictionary for saving.
 
         Includes:
@@ -99,7 +99,7 @@ class ModelConfig(abc.ABC, Serializable):
         - All dataclass fields, including nested dataclasses
         """
 
-        def _to_dict(config):
+        def _as_dict(config):
             result = {
                 "_target_": f"{config.__class__.__module__}.{config.__class__.__qualname__}",
             }
@@ -110,13 +110,13 @@ class ModelConfig(abc.ABC, Serializable):
                     continue
 
                 if is_dataclass(value):
-                    result[f.name] = _to_dict(value)  # recurse on nested dataclasses
+                    result[f.name] = _as_dict(value)  # recurse on nested dataclasses
                 else:
                     result[f.name] = value
 
             return result
 
-        result = _to_dict(self)
+        result = _as_dict(self)
         result["_builder_"] = self.builder  # Serialize the builder path
         return result
 

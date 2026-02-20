@@ -124,39 +124,39 @@ class TestModelConfigGetBuilderCls:
 
 
 class TestModelConfigToDict:
-    """to_dict() serializes all non-callable, non-private dataclass fields, including nested dataclasses."""
+    """as_dict() serializes all non-callable, non-private dataclass fields, including nested dataclasses."""
 
     def test_target_key_present(self):
         cfg = DummyModelConfig()
-        result = cfg.to_dict()
+        result = cfg.as_dict()
         assert result["_target_"] == f"{DummyModelConfig.__module__}.DummyModelConfig"
 
     def test_builder_key_present(self):
         cfg = DummyModelConfig()
-        result = cfg.to_dict()
+        result = cfg.as_dict()
         assert result["_builder_"] == DummyModelConfig.builder
 
     def test_own_fields_serialized(self):
         cfg = DummyModelConfig(value=7, name="world")
-        result = cfg.to_dict()
+        result = cfg.as_dict()
         assert result["value"] == 7
         assert result["name"] == "world"
 
     def test_base_class_fields_serialized(self):
         cfg = DummyModelConfig()
-        result = cfg.to_dict()
+        result = cfg.as_dict()
         assert "restore_modelopt_state" in result
         assert "hf_model_id" in result
         assert "generation_config" in result
 
     def test_callable_field_excluded(self):
         cfg = DummyNestedModelConfig()
-        result = cfg.to_dict()
+        result = cfg.as_dict()
         assert "fn_field" not in result
 
     def test_nested_dataclass_serialized_recursively(self):
         cfg = DummyNestedModelConfig()
-        result = cfg.to_dict()
+        result = cfg.as_dict()
         assert isinstance(result["sub"], dict)
         assert "_target_" in result["sub"]
         assert result["sub"]["x"] == 1
@@ -209,14 +209,14 @@ class TestModelConfigFromDict:
 
     def test_round_trip_flat(self):
         original = DummyModelConfig(value=21, name="round_trip")
-        cfg = ModelConfig.from_dict(original.to_dict())
+        cfg = ModelConfig.from_dict(original.as_dict())
         assert isinstance(cfg, DummyModelConfig)
         assert cfg.value == original.value
         assert cfg.name == original.name
 
     def test_round_trip_with_nested_dataclass(self):
         original = DummyNestedModelConfig(sub=DummySubConfig(x=7, y="nested"), extra=99)
-        cfg = ModelConfig.from_dict(original.to_dict())
+        cfg = ModelConfig.from_dict(original.as_dict())
         assert isinstance(cfg, DummyNestedModelConfig)
         assert cfg.extra == 99
         assert isinstance(cfg.sub, DummySubConfig)
