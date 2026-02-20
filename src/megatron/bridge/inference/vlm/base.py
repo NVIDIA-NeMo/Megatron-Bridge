@@ -41,6 +41,7 @@ def setup_model_and_tokenizer(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
     inference_max_seq_length: int = 8192,
+    inference_max_batch_size: int = 4,
 ):
     """Set up model and tokenizer from a Megatron checkpoint.
 
@@ -51,7 +52,7 @@ def setup_model_and_tokenizer(
         params_dtype: Data type for model parameters.
         inference_batch_times_seqlen_threshold: Threshold for inference batching.
         inference_max_seq_length: Maximum sequence length for inference (prompt + generated tokens).
-
+        inference_max_batch_size: Maximum batch size for inference.
     Returns:
         A tuple of (inference_wrapped_model, processor).
     """
@@ -107,6 +108,7 @@ def setup_model_and_tokenizer(
         params_dtype=torch.bfloat16,
         inference_batch_times_seqlen_threshold=1000,
         inference_max_seq_length=inference_max_seq_length,
+        inference_max_batch_size=inference_max_batch_size,
     )
 
     return inference_wrapped_model, processor
