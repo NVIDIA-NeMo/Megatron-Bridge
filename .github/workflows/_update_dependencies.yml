@@ -24,9 +24,6 @@ on:
       SSH_PWD:
         required: true
 
-env:
-  container-registry: 766267172432.dkr.ecr.us-east-1.amazonaws.com
-
 jobs:
   pre-flight:
     runs-on: ubuntu-latest
@@ -55,7 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          docker build --cache-from type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-bridge .
+          docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-bridge .
 
       - name: Create bump branch if not exists
         run: |
