@@ -43,8 +43,11 @@ def _load_packed_seq_stats(cfg: ConfigContainer):
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
-    # If the model provider has a custom TFLOPS calculation method, use it.
-    if hasattr(cfg.model, "_get_num_floating_point_operations"):
+    # LoRA training uses a different FLOPs formula — check before the model's custom method.
+    peft_scheme = cfg.peft.__class__.__name__.lower() if cfg.peft is not None else ""
+    is_lora = "lora" in peft_scheme
+    # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
+    if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
@@ -207,8 +210,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        peft_scheme = cfg.peft.__class__.__name__.lower() if cfg.peft is not None else ""
-        is_lora = "lora" in peft_scheme
         if is_lora:
             num_tokens = getattr(cfg.dataset, "avg_tokens_per_row", None)
             avg_seq_len_sq_row = getattr(cfg.dataset, "avg_seq_len_sq_row", None)
@@ -221,38 +222,59 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     avg_seq_len_sq_row = meta_seq_sq
 
             if num_tokens is None:
-                num_tokens = batch_size * cfg.model.seq_length
+                num_tokens = cfg.model.seq_length
             if avg_seq_len_sq_row is None:
-                avg_seq_len_sq_row = num_tokens * cfg.model.seq_length
+                avg_seq_len_sq_row = cfg.model.seq_length * cfg.model.seq_length
+            # LoRA skips wgrad for frozen weights, so use 2/3 of the standard 3x multiplier.
             lora_factor = 2.0 / 3.0
-            mft_per_step = (
+
+            # Q, KV, O projection FLOPs (LoRA adapters on projections; lora_factor applies).
+            projection_flops = (
                 batch_size
+                * num_tokens
+                * cfg.model.hidden_size
+                * cfg.model.num_layers
                 * (
-                    (
-                        lora_factor
-                        * (
-                            (num_tokens * cfg.model.hidden_size * cfg.model.hidden_size)
-                            + (
-                                2
-                                * num_tokens
-                                * cfg.model.hidden_size
-                                * cfg.model.hidden_size
-                                * num_query_groups
-                                / cfg.model.num_attention_heads
-                            )
-                            + (num_tokens * cfg.model.hidden_size * cfg.model.hidden_size)
-                            + (2 * num_tokens * cfg.model.hidden_size * cfg.model.ffn_hidden_size)
-                            + (num_tokens * cfg.model.hidden_size * cfg.model.ffn_hidden_size)
-                        )
-                        + (2 * avg_seq_len_sq_row * cfg.model.hidden_size)
-                    )
-                    * cfg.model.num_layers
-                    + cfg.model.vocab_size * cfg.model.hidden_size * num_tokens * lora_factor
+                    cfg.model.hidden_size  # Q projection
+                    + 2 * cfg.model.hidden_size * num_query_groups / cfg.model.num_attention_heads  # KV projections
+                    + cfg.model.hidden_size  # O projection
                 )
-                * 2
-                * 3
             )
-            return mft_per_step
+            # Core attention FLOPs: QK^T and softmax(QK^T)V.
+            # No trainable LoRA weights here, so lora_factor is NOT applied.
+            attn_inner_flops = (
+                batch_size
+                * 2
+                * avg_seq_len_sq_row
+                * cfg.model.hidden_size
+                * cfg.model.num_layers
+            )
+            # MLP FLOPs per layer (lora_factor applies).
+            mlp_flops = (
+                batch_size
+                * num_tokens
+                * cfg.model.hidden_size
+                * cfg.model.num_layers
+                * (
+                    2 * cfg.model.ffn_hidden_size  # up + gate projections
+                    + cfg.model.ffn_hidden_size  # down projection
+                )
+            )
+            # Embedding / logit FLOPs (lora_factor applies).
+            embedding_flops = (
+                batch_size
+                * cfg.model.vocab_size
+                * cfg.model.hidden_size
+                * num_tokens
+            )
+            return (
+                2
+                * 3
+                * (
+                    lora_factor * (projection_flops + mlp_flops + embedding_flops)
+                    + attn_inner_flops
+                )
+            )
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.
