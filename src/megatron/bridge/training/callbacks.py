@@ -60,6 +60,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 VALID_EVENTS: frozenset[str] = frozenset(
     {
+        "on_before_data_init",
         "on_train_start",
         "on_train_step_start",
         "on_train_step_end",
@@ -95,7 +96,8 @@ class CallbackContext:
         total_loss_dict: Aggregated eval losses. Available in on_eval_end.
 
     Field Availability by Event:
-        All events: state, model, user_state
+        on_before_data_init: state, model, optimizer, scheduler, user_state
+        All other events: state, model, user_state
         Training events: optimizer, scheduler
         on_train_step_end: loss_dict, grad_norm, skipped_iter
         on_eval_end, on_test_end: total_loss_dict
@@ -138,6 +140,15 @@ class Callback:
         pretrain(config, forward_step_func, callbacks=[MyCallback()])
         ```
     """
+
+    def on_before_data_init(self, context: CallbackContext) -> None:
+        """Called after model/optimizer/checkpoint are ready, before dataset files are opened.
+
+        This is the correct place to run JIT warmup with mock data and to log
+        MLPerf init_stop/run_start markers, ensuring no real dataset I/O occurs
+        before run_start is recorded.
+        """
+        pass
 
     def on_train_start(self, context: CallbackContext) -> None:
         """Called after model.train(), before training loop begins."""
@@ -259,6 +270,7 @@ class CallbackManager:
 
         Args:
             event_name: Event to register for. Valid events:
+                - "on_before_data_init"
                 - "on_train_start"
                 - "on_train_step_start"
                 - "on_train_step_end"

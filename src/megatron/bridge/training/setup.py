@@ -30,6 +30,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.loaders import setup_data_iterators
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import (
@@ -86,6 +87,7 @@ def setup(
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     restart_store: Optional[torch.distributed.Store] = None,
+    callback_manager: Optional[CallbackManager] = None,
 ) -> SetupOutput:
     """Initialize the training/evaluation environment using an existing GlobalState.
 
@@ -105,6 +107,10 @@ def setup(
         get_embedding_ranks: Optional function to determine embedding layer ranks for model-parallel init.
         get_position_embedding_ranks: Optional function to determine positional embedding ranks.
         restart_store: Optional torch.distributed Store used when in-process restart is enabled.
+        callback_manager: Optional CallbackManager whose on_before_data_init hook is fired
+            after the model/optimizer/checkpoint are ready but before any dataset files are
+            opened. Use this for JIT warmup with mock data and MLPerf init_stop/run_start
+            logging to ensure no real dataset I/O occurs before run_start is recorded.
 
     Returns:
         SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
@@ -282,6 +288,19 @@ def setup(
         align_grad_reduce=cfg.dist.align_grad_reduce,
         pg_collection=pg_collection,
     )
+
+    # Fire on_before_data_init before any dataset files are opened.
+    # This is the correct place for JIT warmup with mock data and MLPerf
+    # init_stop/run_start logging.
+    if should_fire(callback_manager, "on_before_data_init"):
+        context = CallbackContext(
+            state=state,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            user_state=callback_manager.user_state,
+        )
+        callback_manager.fire("on_before_data_init", context)
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
