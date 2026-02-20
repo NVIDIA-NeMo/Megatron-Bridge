@@ -219,7 +219,6 @@ class Nemotron3SuperDebugProvider(Nemotron3SuperProvider):
     moe_ffn_hidden_size: int = 2688
     moe_router_topk: int = 6
     moe_latent_size: int = 576
-    # TODO(liding): check mtp_num_layers
     mtp_num_layers: int = 2
     mtp_hybrid_override_pattern: str = "*E"
     

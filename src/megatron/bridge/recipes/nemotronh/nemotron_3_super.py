@@ -92,7 +92,7 @@ def nemotron_3_super_pretrain_config(**user_kwargs: Unpack[Nemotron3SuperCommonK
     # TODO(liding): change to actual provider and actual parallelism
     recommended_kwargs: Nemotron3SuperCommonKwargs = {
         "model_provider": Nemotron3SuperDebugProvider,
-        "tensor_model_parallel_size": 1,
+        "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
         "context_parallelism": 1,
@@ -299,7 +299,6 @@ def _nemotron_3_super_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-    # TODO(liding): does not work with TP>1???
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(
             tp_comm_bootstrap_backend="nccl",
@@ -360,7 +359,7 @@ def nemotron_3_super_finetune_config(**user_kwargs: Unpack[Nemotron3SuperFinetun
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: Nemotron3SuperFinetuneKwargs = {
-        "model_provider": Nemotron3SuperProvider,
+        "model_provider": Nemotron3SuperDebugProvider,
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
@@ -392,7 +391,7 @@ def _nemotron_3_super_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
@@ -522,7 +521,6 @@ def _nemotron_3_super_finetune_common(
         mixed_precision=precision_config,
     )
 
-    # TODO(liding): does not work with TP>1???
     # if cfg.comm_overlap is None:
     #     cfg.comm_overlap = CommOverlapConfig(
     #         tp_comm_bootstrap_backend="nccl",
