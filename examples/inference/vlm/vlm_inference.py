@@ -109,7 +109,6 @@ def main(args) -> None:
         prompts=[text],
         images=[image_inputs] if image_inputs is not None else None,
         processor=processor,
-        max_batch_size=1,
         random_seed=0,
         sampling_params=inference_params,
     )

@@ -169,7 +169,6 @@ def generate(
     prompts: List[str],
     images: List[Union[Image, List[Image]]],
     processor=None,
-    max_batch_size: int = 4,
     random_seed: Optional[int] = None,
     sampling_params: Optional[SamplingParams] = None,
 ) -> dict:
@@ -181,7 +180,6 @@ def generate(
         image_processor: image processor for the input image,
         prompts (list[str]): The list of prompts to generate text for.
         images (list): The list of images to generate text for.
-        max_batch_size (int, optional): The maximum batch size. Defaults to 4.
         random_seed (Optional[int], optional): The random seed. Defaults to None.
         sampling_params (Optional["SamplingParams"], optional): The sampling parameters defined in
             Mcore's SamplingParams. Defaults to None.
@@ -204,9 +202,7 @@ def generate(
             tokenizer=tokenizer,
             image_processor=image_processor,
         )
-    mcore_engine = VLMEngine(
-        text_generation_controller=text_generation_controller, max_batch_size=max_batch_size, random_seed=random_seed
-    )
+    mcore_engine = VLMEngine(text_generation_controller=text_generation_controller, random_seed=random_seed)
 
     if sampling_params is None:
         sampling_params = SamplingParams(num_tokens_to_generate=50)
