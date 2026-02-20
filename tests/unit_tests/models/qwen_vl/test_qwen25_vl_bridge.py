@@ -49,6 +49,7 @@ def mock_text_config():
     text_config.rope_scaling = None
     text_config.bos_token_id = 151643
     text_config.eos_token_id = 151645
+    text_config.torch_dtype = "bfloat16"
     return text_config
 
 
@@ -318,7 +319,7 @@ class TestQwen25VLBridgeEdgeCases:
     def test_provider_bridge_with_minimal_config(self, qwen25_vl_bridge):
         """Test provider_bridge with minimal HF config."""
         minimal_pretrained = Mock(spec=PreTrainedVLM)
-        minimal_config = Mock()
+        minimal_config = Mock(spec=[])
 
         # Text config with required fields
         text_config = Mock()
@@ -340,6 +341,7 @@ class TestQwen25VLBridgeEdgeCases:
         text_config.v_head_dim = None
         text_config.num_nextn_predict_layers = None
         text_config.rope_scaling = None
+        text_config.torch_dtype = "bfloat16"
 
         minimal_config.text_config = text_config
         minimal_config.vision_config = Qwen2_5_VLVisionConfig()
