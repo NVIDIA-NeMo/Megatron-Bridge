@@ -219,6 +219,8 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_GB300_BF16_V1,
     num_gpus=256,
     global_batch_size=1536,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
@@ -232,6 +234,8 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = replace(
     global_batch_size=1536,
     use_megatron_fsdp=False,
     cpu_offloading_num_layers=None,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
@@ -240,13 +244,16 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
     tensor_model_parallel_size=2,
     num_gpus=256,
     global_batch_size=1536,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V1,
     num_gpus=256,
     global_batch_size=1536,
-    cuda_graph_impl="none",
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
@@ -256,6 +263,8 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_BF16_V2 = replace(
     pipeline_model_parallel_size=16,
     context_parallel_size=1,
     global_batch_size=1536,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
@@ -269,6 +278,8 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_CS_V2 = replace(
     global_batch_size=1536,
     use_megatron_fsdp=False,
     cpu_offloading_num_layers=None,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
@@ -278,6 +289,8 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = replace(
     pipeline_model_parallel_size=16,
     context_parallel_size=1,
     global_batch_size=1536,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V2 = replace(
@@ -285,18 +298,24 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V2 = replace(
     num_gpus=256,
     global_batch_size=1536,
     recompute_num_layers=None,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
 LLAMA31_405B_PRETRAIN_CONFIG_H100_BF16_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_H100_BF16_V1,
     global_batch_size=1536,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
 LLAMA31_405B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
     LLAMA31_405B_PRETRAIN_CONFIG_H100_FP8_CS_V1,
     global_batch_size=1536,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
