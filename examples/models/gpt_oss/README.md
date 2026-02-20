@@ -78,7 +78,20 @@ All training scripts use SLURM for containerized multi-node training.
 
 ### Pretrain
 
-See the [slurm_pretrain.sh](slurm_pretrain.sh) script for pretraining with configurable model parallelisms (TP, PP, EP, CP, SP).
+Pretrain uses the **DCLM** dataset by default when `DCLM_DATA_DIR` and `DCLM_CACHE` are set (see [slurm_pretrain.sh](slurm_pretrain.sh)).
+
+To use your own preprocessed DCLM data, set the dataset config as follows (e.g. in the recipe or via overrides):
+
+```python
+cfg.dataset.blend = [
+    [f"/path/to/dclm/preprocessed/dclm_{i:02d}_text_document" for i in range(1, 11)],
+    None,
+]
+cfg.dataset.split = "9999,8,2"
+cfg.dataset.path_to_cache = "/path/to/cache"
+```
+
+Preprocess your data using the [DCLM data preprocessing tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm).
 
 W&B report coming soon.
 
