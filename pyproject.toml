@@ -83,12 +83,13 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]>=2.10.0a0,<2.13.0",
     "mamba-ssm",
-    "nvidia-resiliency-ext~=0.4.1",
+    "nvidia-resiliency-ext",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
     "mlflow>=3.5.0",
+    "torch>=2.6.0",
 ]
 
 
@@ -115,7 +116,7 @@ override-dependencies = [
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt~=0.41.0",
-    "nvidia-resiliency-ext @ git+https://github.com/NVIDIA/nvidia-resiliency-ext.git@v0.4.1"  # Requires a source install to compile cupti for cuda13
+    "urllib3>=2.6.3"    # To address CVE-2026-21441
 ]
 
 [tool.uv.sources]
@@ -123,7 +124,7 @@ megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 
 [project.optional-dependencies]
 recipes = [
-    "nemo-run>=0.5.0a0,<0.6.0",
+    "nemo-run",
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",

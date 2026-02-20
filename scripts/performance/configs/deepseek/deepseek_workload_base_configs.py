@@ -80,7 +80,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1 = replace(
     moe_a2a_overlap=False,
     recompute_modules=["mla_up_proj"],
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["moe_router", "moe_preprocess"],
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1

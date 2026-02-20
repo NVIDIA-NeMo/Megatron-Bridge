@@ -337,6 +337,7 @@ def _nemotron_3_nano_finetune_common(
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
         seq_length=seq_length,
+        calculate_per_token_loss=True,
     )
 
     if enable_deepep:
@@ -415,11 +416,5 @@ def _nemotron_3_nano_finetune_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_bootstrap_backend="nccl",
-            tp_comm_overlap=True,
-        )
 
     return cfg
