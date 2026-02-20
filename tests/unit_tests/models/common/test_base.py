@@ -89,11 +89,17 @@ class TestModelConfigDefaults:
         assert cfg.restore_modelopt_state is False
         assert cfg.hf_model_id is None
         assert cfg.generation_config is None
+        assert cfg.pre_wrap_hooks == []
+        assert cfg.post_wrap_hooks == []
 
     def test_custom_fields_stored(self):
-        cfg = DummyModelConfig(value=99, name="hello")
+        hook1 = Mock()
+        hook2 = Mock()
+        cfg = DummyModelConfig(value=99, name="hello", pre_wrap_hooks=[hook1], post_wrap_hooks=[hook2])
         assert cfg.value == 99
         assert cfg.name == "hello"
+        assert cfg.pre_wrap_hooks[0] == hook1
+        assert cfg.post_wrap_hooks[0] == hook2
 
     def test_builder_classvar_accessible(self):
         assert DummyModelConfig.builder == "tests.unit_tests.models.common.test_base.DummyModelBuilder"
@@ -148,6 +154,12 @@ class TestModelConfigToDict:
         assert "restore_modelopt_state" in result
         assert "hf_model_id" in result
         assert "generation_config" in result
+
+    def test_hook_lists_excluded(self):
+        cfg = DummyModelConfig()
+        result = cfg.as_dict()
+        assert "pre_wrap_hooks" not in result
+        assert "post_wrap_hooks" not in result
 
     def test_callable_field_excluded(self):
         cfg = DummyNestedModelConfig()
@@ -222,61 +234,6 @@ class TestModelConfigFromDict:
         assert isinstance(cfg.sub, DummySubConfig)
         assert cfg.sub.x == 7
         assert cfg.sub.y == "nested"
-
-
-# =============================================================================
-# Section 5 — TestModelBuilderHooks
-# =============================================================================
-
-
-class TestModelBuilderHooks:
-    """register_pre_wrap_hook() and register_post_wrap_hook() manage their respective hook lists, with optional prepend."""
-
-    def setup_method(self):
-        self.builder = DummyModelBuilder(DummyModelConfig())
-
-    def test_initial_hooks_empty(self):
-        assert self.builder._pre_wrap_hooks == []
-        assert self.builder._post_wrap_hooks == []
-
-    def test_register_pre_wrap_hook_appends(self):
-        h = Mock()
-        self.builder.register_pre_wrap_hook(h)
-        assert self.builder._pre_wrap_hooks == [h]
-
-    def test_register_pre_wrap_hook_prepends(self):
-        h1 = Mock()
-        h2 = Mock()
-        self.builder.register_pre_wrap_hook(h1)
-        self.builder.register_pre_wrap_hook(h2, prepend=True)
-        assert self.builder._pre_wrap_hooks[0] is h2
-
-    def test_register_post_wrap_hook_appends(self):
-        h = Mock()
-        self.builder.register_post_wrap_hook(h)
-        assert self.builder._post_wrap_hooks == [h]
-
-    def test_register_post_wrap_hook_prepends(self):
-        h1 = Mock()
-        h2 = Mock()
-        self.builder.register_post_wrap_hook(h1)
-        self.builder.register_post_wrap_hook(h2, prepend=True)
-        assert self.builder._post_wrap_hooks[0] is h2
-
-    def test_multiple_hooks_append_order(self):
-        h1 = Mock()
-        h2 = Mock()
-        self.builder.register_pre_wrap_hook(h1)
-        self.builder.register_pre_wrap_hook(h2)
-        assert self.builder._pre_wrap_hooks == [h1, h2]
-
-    def test_pre_and_post_hooks_independent(self):
-        h_pre = Mock()
-        h_post = Mock()
-        self.builder.register_pre_wrap_hook(h_pre)
-        assert self.builder._post_wrap_hooks == []
-        self.builder.register_post_wrap_hook(h_post)
-        assert self.builder._pre_wrap_hooks == [h_pre]
 
 
 # =============================================================================

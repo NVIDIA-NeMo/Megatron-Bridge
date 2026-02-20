@@ -14,7 +14,7 @@
 
 import abc
 import importlib
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, field, is_dataclass
 from dataclasses import fields as dataclass_fields
 from typing import Any, Callable, ClassVar, Generic, Protocol, TypeVar
 
@@ -81,6 +81,17 @@ class ModelConfig(abc.ABC, Serializable):
     generation_config: Any | None = None
     """Generation configuration."""
 
+    # === pre-wrap and post-wrap hooks ===
+    pre_wrap_hooks: list[Callable[[list[MegatronModule]], list[MegatronModule]]] = field(default_factory=list)
+    """List of functions that are executed before the model is wrapped with DDP/FSDP.
+    Should take the model as the only argument and return a new model as the only return value.
+    """
+
+    post_wrap_hooks: list[Callable[[list[MegatronModule]], list[MegatronModule]]] = field(default_factory=list)
+    """List of functions that are executed after model initialization is complete.
+    Should take the model as the only argument and return a new model as the only return value.
+    """
+
     def get_builder_cls(self) -> type:
         """Get the appropriate builder type for this config.
         Dynamically imports the builder from the string path.
@@ -106,7 +117,7 @@ class ModelConfig(abc.ABC, Serializable):
             for f in dataclass_fields(config):
                 value = getattr(config, f.name)
                 # Skip non-serializable fields
-                if callable(value) or f.name.startswith("_"):
+                if callable(value) or f.name.startswith("_") or f.name in ["pre_wrap_hooks", "post_wrap_hooks"]:
                     continue
 
                 if is_dataclass(value):
@@ -190,8 +201,6 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
 
     def __init__(self, model_config: ModelConfig):
         self._model_config = model_config
-        self._pre_wrap_hooks = []
-        self._post_wrap_hooks = []
 
     @abc.abstractmethod
     def build_model(
@@ -245,50 +254,6 @@ class ModelBuilder(abc.ABC, Generic[ModelT, BuildConfigT]):
                 this function should still return a single-item list.
         """
         ...
-
-    def register_pre_wrap_hook(
-        self,
-        hook: Callable[[list[MegatronModule]], list[MegatronModule]],
-        prepend: bool = False,
-    ) -> None:
-        """Registers a hook to be executed before the model is wrapped.
-
-        When the hooks are executed is left up to the implementation of child class.
-
-        The hook should be a callable that accepts a list of `MegatronModule` instances
-        and returns a (potentially modified) list of `MegatronModule` instances.
-
-        Args:
-            hook: The hook to register.
-            prepend: If True, the hook is inserted at the beginning of the execution
-                chain. Otherwise, it is appended to the end.
-        """
-        if prepend:
-            self._pre_wrap_hooks.insert(0, hook)
-        else:
-            self._pre_wrap_hooks.append(hook)
-
-    def register_post_wrap_hook(
-        self,
-        hook: Callable[[list[MegatronModule]], list[MegatronModule]],
-        prepend: bool = False,
-    ) -> None:
-        """Registers a hook to be executed after the model is wrapped.
-
-        When the hooks are executed is left up to the implementation of child class.
-
-        The hook should be a callable that accepts a list of `MegatronModule` instances
-        and returns a (potentially modified) list of `MegatronModule` instances.
-
-        Args:
-            hook: The hook to register.
-            prepend: If True, the hook is inserted at the beginning of the execution
-                chain. Otherwise, it is appended to the end.
-        """
-        if prepend:
-            self._post_wrap_hooks.insert(0, hook)
-        else:
-            self._post_wrap_hooks.append(hook)
 
 
 def compose_hooks(

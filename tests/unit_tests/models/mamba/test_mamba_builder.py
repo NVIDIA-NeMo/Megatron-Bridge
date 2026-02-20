@@ -246,7 +246,7 @@ class TestMambaModelConfigSetAttr:
 
 
 class TestMambaModelBuilderInit:
-    """Tests for MambaModelBuilder.__init__ — config storage and hook list initialization."""
+    """Tests for MambaModelBuilder.__init__ — config storage."""
 
     def setup_method(self):
         self.config = _make_mamba_config()
@@ -254,10 +254,6 @@ class TestMambaModelBuilderInit:
 
     def test_stores_model_config(self):
         assert self.builder._model_config is self.config
-
-    def test_hooks_initialized_empty(self):
-        assert self.builder._pre_wrap_hooks == []
-        assert self.builder._post_wrap_hooks == []
 
 
 class TestMambaModelBuilderBuildModel:
@@ -466,7 +462,7 @@ class TestMambaModelBuilderBuildDistributedModels:
         mock_compose.side_effect = [composed_pre, composed_post]
 
         hook1 = Mock()
-        self.builder._pre_wrap_hooks = [hook1]
+        self.config.pre_wrap_hooks = [hook1]
         self.builder.build_distributed_models(self.pg)
 
         # First compose_hooks call must be with the pre_wrap_hooks list

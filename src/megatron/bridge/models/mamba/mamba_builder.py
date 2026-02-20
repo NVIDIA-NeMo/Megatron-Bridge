@@ -268,7 +268,7 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             List of model stages.
         """
         transformer_config = self._model_config.transformer
-        composed_pre_wrap_hook = compose_hooks(self._pre_wrap_hooks)
+        composed_pre_wrap_hook = compose_hooks(self._model_config.pre_wrap_hooks)
         model_list = unimodal_build_distributed_models(
             self.build_model,
             transformer_config,
@@ -284,7 +284,7 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             model_type,
         )
 
-        composed_post_wrap_hook = compose_hooks(self._post_wrap_hooks)
+        composed_post_wrap_hook = compose_hooks(self._model_config.post_wrap_hooks)
         _model = composed_post_wrap_hook(model_list)
         if _model is not None:
             model_list = _model
