@@ -105,13 +105,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         ...     device="cuda:0",
         ...     torch_dtype=torch.bfloat16,
         ...     attn_implementation="flash_attention_2",
-        ... )
-        >>> # For quantization (transformers >= 5.0), use BitsAndBytesConfig:
-        >>> from transformers import BitsAndBytesConfig
-        >>> quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-        >>> model = PreTrainedCausalLM.from_pretrained(
-        ...     "gpt2",
-        ...     quantization_config=quantization_config,
+        ...     load_in_8bit=True
         ... )
         >>> # Override generation config
         >>> from transformers import GenerationConfig
