@@ -188,12 +188,11 @@ class TestQwen25VLConversion:
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
 
-            # Verify model structure for VL model
-            assert hasattr(model, "model")
-            assert hasattr(model.model, "language_model")
-            assert hasattr(model.model.language_model, "layers")
-            assert len(model.model.language_model.layers) == 2  # num_hidden_layers
-            assert hasattr(model.model, "visual")  # VL model should have visual component
+            # Verify model structure for VL model (transformers 5.0+)
+            assert hasattr(model, "language_model")
+            assert hasattr(model.language_model, "layers")
+            assert len(model.language_model.layers) == 2  # num_hidden_layers
+            assert hasattr(model, "visual")  # VL model should have visual component
 
             print(f"SUCCESS: Toy model created and validated at {qwen25_vl_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")

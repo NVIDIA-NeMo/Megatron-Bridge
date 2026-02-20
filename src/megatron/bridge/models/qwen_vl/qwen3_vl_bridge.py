@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
@@ -89,6 +90,11 @@ class Qwen3VLBridge(MegatronModelBridge):
         provider.add_bias_linear = False
         provider.qk_layernorm = True
         provider.hidden_dropout = 0.0
+        provider.rotary_base = rope_theta_from_hf(text_config)
+
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        # text_config inherits PretrainedConfig's default of True which is wrong.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # VL-specific overrides
         provider.position_embedding_type = "mrope"
@@ -246,6 +252,10 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         provider.add_bias_linear = False
         provider.qk_layernorm = True
         provider.hidden_dropout = 0.0
+        provider.rotary_base = rope_theta_from_hf(text_config)
+
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # MoE specific parameters
         provider.moe_ffn_hidden_size = text_config.moe_intermediate_size
