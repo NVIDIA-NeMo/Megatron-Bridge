@@ -39,8 +39,8 @@ class Serializable(Protocol):
 
 
 @dataclass
-class ModelConfig(abc.ABC, Serializable):
-    """Abstract base class for model configurations.
+class ModelConfig:
+    """Base class for model configurations.
 
     Each model type (GPT, T5, Mamba, etc.) defines a concrete subclass with its
     own model-specific parameters. This class is a pure data container - all model
