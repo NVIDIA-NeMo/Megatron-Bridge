@@ -191,8 +191,57 @@ def qwen25_vl_72b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
 
+
 def qwen25_omni_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    pass
+    """Return a fine-tuning config for Qwen2.5-Omni 7B Instruct with SP enabled.
+    
+    Default configuration: 1 node, 8 GPUs
+    - TP=4, PP=1, SP=True (enabled by default for Omni)
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=4, PP=1, LR=5e-6
+    
+    See `_qwen25_vl_common` for the full list of parameters.
+    """
+    peft_value = user_kwargs.get('peft', None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+    tp_size = 4 if is_full_sft else 1
+    sequence_parallel = user_kwargs.get("sequence_parallel", tp_size > 1)
+
+    recommended_kwargs: Qwen25VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen2.5-Omni-7B-Instruct",
+        "tensor_model_parallel_size": tp_size,
+        "pipeline_model_parallel_size": 1,
+        "pipeline_dtype": torch.bfloat16 if is_full_sft else None,
+        "sequence_parallel": sequence_parallel,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen25_vl_common(**combined_kwargs)
+
+
+def qwen25_omni_7b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5-Omni 7B Instruct with SP enabled.
+    
+    Default configuration: 1 node, 8 GPUs
+    - TP=4, PP=1, SP=True (enabled by default for Omni)
+    
+    See `_qwen25_vl_common` for the full list of parameters.
+    """
+    sequence_parallel = user_kwargs.get("sequence_parallel", True)  # Default to True for Omni
+    
+    recommended_kwargs: Qwen25VLCommonKwargs = {
+        "hf_path": "Qwen/Qwen2.5-Omni-7B-Instruct",
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": sequence_parallel,  # Enable SP by default
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+    }
+    combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen25_vl_common(**combined_kwargs)
+
 
 def _qwen25_vl_common(
     hf_path: str,
