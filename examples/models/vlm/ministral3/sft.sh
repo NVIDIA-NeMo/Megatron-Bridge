@@ -16,6 +16,14 @@
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
+# Note: Ministral 3 requires transformers version 5
+# uv pip install --upgrade transformers
+# Commands below use uv run --no-sync to avoid conflicts with the virtual environment.
+
+# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# export WANDB_API_KEY=<your_wandb_api_key>
+# export WANDB_MODE=disabled
+
 # Common configurations
 PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16
 MODEL_NAME=ministral3_3b
@@ -38,7 +46,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
     
     echo "Running full finetuning with TP=$TP, PP=$PP"
-    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+    uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_finetune_config \
         --step_func vlm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \

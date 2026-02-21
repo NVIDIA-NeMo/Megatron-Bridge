@@ -1614,7 +1614,7 @@ def _llama3_finetune_common(
     name: str = "default",
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int | None = None,
