@@ -1,0 +1,57 @@
+---
+title: "GLM-4.5V"
+description: ""
+---
+
+[GLM-4.5V](https://huggingface.co/zai-org/GLM-4.5V) is a powerful vision-language model built on the GLM-4.5 Air architecture. GLM-4.5V combines a 106B parameter sparse MoE language model with a vision encoder for robust multimodal understanding of images and videos.
+
+GLM-4.5V supports multimodal tasks including image captioning, visual question answering, OCR, video understanding, and general vision-language reasoning. The model leverages Multi-Resolution Rotary Position Embedding (MRoPE) for enhanced spatial understanding.
+
+GLM family models are supported via the Bridge system with auto-detected configuration and weight mapping.
+
+<Info>
+Please update `transformers` version to 4.57.1 or higher in order to use the GLM-4.5V model.
+</Info>
+
+## Available Models
+
+### Vision-Language Models
+- **GLM-4.5V** (`zai-org/GLM-4.5V`): 106B parameter vision-language model (based on GLM-4.5 Air)
+  - 46 decoder layers, 4096 hidden size
+  - 96 attention heads, 8 query groups (GQA)
+  - 128 MoE experts with shared experts
+  - ~12B active parameters per token
+  - Sequence length: 131,072 tokens
+  - Recommended: 32 nodes, 256 GPUs (LoRA/DoRA) or 64 nodes, 512 GPUs (Full SFT)
+
+## Model Architecture Features
+
+GLM-4.5V combines efficient sparse MoE language modeling with multimodal capabilities:
+
+**Language Model Features:**
+- **Sparse MoE Architecture**: 128 routed experts with shared experts for efficient parameter usage
+- **Grouped Query Attention (GQA)**: Memory-efficient attention with 8 query groups
+- **SiLU Gated Linear Unit**: Gated linear units with SiLU activation for improved performance
+- **RMSNorm**: Layer normalization without mean centering for faster computation
+- **Multi-Resolution RoPE (MRoPE)**: Enhanced position embeddings with sections [8, 12, 12] for improved spatial understanding
+- **Extended Context**: Supports up to 131,072 tokens
+
+**Vision-Language Features:**
+- **Vision Encoder**: Pre-trained vision encoder for robust visual understanding
+- **Multimodal Integration**: Seamless integration of visual and textual information
+- **Image and Video Support**: Handles both static images and video inputs
+- **Flexible Image Handling**: Supports variable resolution images and multiple images per conversation
+
+## Examples
+
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [GLM-4.5V Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/glm_45v/README.md).
+
+## Hugging Face Model Cards
+
+- GLM-4.5V: https://huggingface.co/zai-org/GLM-4.5V
+
+## Related Docs
+- Related LLM: [GLM 4.5](/../llm/glm45)
+- Recipe usage: [Recipe usage](/../../recipe-usage)
+- Customizing the training recipe configuration: [Configuration overview](/../../training/config-container-overview)
+- Training entry points: [Entry points](/../../training/entry-points)

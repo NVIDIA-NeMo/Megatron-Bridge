@@ -1,0 +1,141 @@
+navigation:
+  - section: Home
+    contents:
+      - page: Welcome
+        path: ../v0.2.0/pages/index.mdx
+  - section: Guides
+    contents:
+      - page: Parallelisms
+        path: ../v0.2.0/pages/parallelisms.mdx
+      - page: Performance Summary
+        path: ../v0.2.0/pages/performance-summary.mdx
+      - page: Performance Guide
+        path: ../v0.2.0/pages/performance-guide.mdx
+      - page: Recipe Usage
+        path: ../v0.2.0/pages/recipe-usage.mdx
+      - page: NeMo 2 Migration Guide
+        path: ../v0.2.0/pages/nemo2-migration-guide.mdx
+      - page: Megatron-LM to Megatron-Bridge
+        path: ../v0.2.0/pages/megatron-lm-to-megatron-bridge.mdx
+  - section: Bridge with Hugging Face
+    contents:
+      - page: Bridge Guide
+        path: ../v0.2.0/pages/bridge-guide.mdx
+      - page: Bridge Tech Details
+        path: ../v0.2.0/pages/bridge-tech-details.mdx
+  - section: Models
+    contents:
+      - page: Large Language Models
+        path: ../v0.2.0/pages/models/llm/index.mdx
+      - page: DeepSeek V2
+        path: ../v0.2.0/pages/models/llm/deepseek-v2.mdx
+      - page: DeepSeek V3
+        path: ../v0.2.0/pages/models/llm/deepseek-v3.mdx
+      - page: Gemma 2
+        path: ../v0.2.0/pages/models/llm/gemma2.mdx
+      - page: Gemma 3
+        path: ../v0.2.0/pages/models/llm/gemma3.mdx
+      - page: GLM 4.5
+        path: ../v0.2.0/pages/models/llm/glm45.mdx
+      - page: GPT-OSS
+        path: ../v0.2.0/pages/models/llm/gpt-oss.mdx
+      - page: LLaMA 3
+        path: ../v0.2.0/pages/models/llm/llama3.mdx
+      - page: LLaMA Nemotron
+        path: ../v0.2.0/pages/models/llm/llama-nemotron.mdx
+      - page: Mistral
+        path: ../v0.2.0/pages/models/llm/mistral.mdx
+      - page: Moonlight
+        path: ../v0.2.0/pages/models/llm/moonlight.mdx
+      - page: Nemotron 3
+        path: ../v0.2.0/pages/models/llm/nemotron3.mdx
+      - page: Nemotron-H
+        path: ../v0.2.0/pages/models/llm/nemotronh.mdx
+      - page: OlMoE
+        path: ../v0.2.0/pages/models/llm/olmoe.mdx
+      - page: Qwen
+        path: ../v0.2.0/pages/models/llm/qwen.mdx
+      - page: Vision Language Models
+        path: ../v0.2.0/pages/models/vlm/index.mdx
+      - page: Qwen 2.5 VL
+        path: ../v0.2.0/pages/models/vlm/qwen2.5-vl.mdx
+      - page: Qwen 3 VL
+        path: ../v0.2.0/pages/models/vlm/qwen3-vl.mdx
+      - page: Nemotron Nano V2 VL
+        path: ../v0.2.0/pages/models/vlm/nemotron-nano-v2-vl.mdx
+      - page: Ministral 3
+        path: ../v0.2.0/pages/models/vlm/ministral3.mdx
+      - page: GLM 4.5V
+        path: ../v0.2.0/pages/models/vlm/glm-45v.mdx
+      - page: Gemma 3 VL
+        path: ../v0.2.0/pages/models/vlm/gemma3-vl.mdx
+  - section: Training
+    contents:
+      - page: Training Overview
+        path: ../v0.2.0/pages/training/README.mdx
+      - page: Config Container Overview
+        path: ../v0.2.0/pages/training/config-container-overview.mdx
+      - page: Entry Points
+        path: ../v0.2.0/pages/training/entry-points.mdx
+      - page: Training Loop Settings
+        path: ../v0.2.0/pages/training/training-loop-settings.mdx
+      - page: Optimizer and Scheduler
+        path: ../v0.2.0/pages/training/optimizer-scheduler.mdx
+      - page: Logging
+        path: ../v0.2.0/pages/training/logging.mdx
+      - page: Profiling
+        path: ../v0.2.0/pages/training/profiling.mdx
+      - page: Checkpointing
+        path: ../v0.2.0/pages/training/checkpointing.mdx
+      - page: Resiliency
+        path: ../v0.2.0/pages/training/resiliency.mdx
+      - page: Mixed Precision
+        path: ../v0.2.0/pages/training/mixed-precision.mdx
+      - page: Communication Overlap
+        path: ../v0.2.0/pages/training/communication-overlap.mdx
+      - page: Attention Optimizations
+        path: ../v0.2.0/pages/training/attention-optimizations.mdx
+      - page: Activation Recomputation
+        path: ../v0.2.0/pages/training/activation-recomputation.mdx
+      - page: CPU Offloading
+        path: ../v0.2.0/pages/training/cpu-offloading.mdx
+      - page: PEFT
+        path: ../v0.2.0/pages/training/peft.mdx
+      - page: Packed Sequences
+        path: ../v0.2.0/pages/training/packed-sequences.mdx
+      - page: Multi-Token Prediction
+        path: ../v0.2.0/pages/training/multi-token-prediction.mdx
+      - page: Distillation
+        path: ../v0.2.0/pages/training/distillation.mdx
+      - page: Pruning
+        path: ../v0.2.0/pages/training/pruning.mdx
+      - page: Callbacks
+        path: ../v0.2.0/pages/training/callbacks.mdx
+  - section: Model Optimization
+    contents:
+      - page: ModelOpt Overview
+        path: ../v0.2.0/pages/modelopt/README.mdx
+      - page: Quantization
+        path: ../v0.2.0/pages/modelopt/quantization.mdx
+  - section: Development
+    contents:
+      - page: Adding New Models
+        path: ../v0.2.0/pages/adding-new-models.mdx
+      - page: Bridge RL Integration
+        path: ../v0.2.0/pages/bridge-rl-integration.mdx
+      - page: Documentation
+        path: ../v0.2.0/pages/documentation.mdx
+  - section: API Reference
+    contents:
+      - library: megatron-bridge
+        title: Library Reference
+  - section: Releases
+    contents:
+      - page: Releases Overview
+        path: ../v0.2.0/pages/releases/README.mdx
+      - page: Software Versions
+        path: ../v0.2.0/pages/releases/software-versions.mdx
+      - page: Changelog
+        path: ../v0.2.0/pages/releases/changelog.mdx
+      - page: Known Issues
+        path: ../v0.2.0/pages/releases/known-issues.mdx

@@ -1,0 +1,154 @@
+---
+title: "DeepSeek V3"
+description: ""
+---
+
+[DeepSeek-V3](https://github.com/deepseek-ai/DeepSeek-V3) is a large-scale Mixture-of-Experts (MoE) language model with 671B total parameters and 37B activated parameters per token. It features Multi-head Latent Attention (MLA), innovative load balancing strategies, and Multi-Token Prediction (MTP) for improved training efficiency. DeepSeek-V3 achieves state-of-the-art performance while maintaining economical training costs. More information is available in the technical report ["DeepSeek-V3 Technical Report"](https://arxiv.org/abs/2412.19437).
+
+DeepSeek V3 models are supported via the Bridge system with auto-detected configuration and weight mapping.
+
+## Available Models
+
+Megatron Bridge supports the following DeepSeek V3 model variants:
+
+- **DeepSeek-V3**: 671B parameters (37B activated per token)
+- **DeepSeek-V3-Base**: Pre-trained base model without instruction tuning
+
+The model supports pretraining with expert parallelism, pipeline parallelism, and optional Multi-Token Prediction (MTP).
+
+## Model Architecture Features
+
+- **Multi-head Latent Attention (MLA)**: Advanced attention mechanism for reduced KV cache and improved efficiency
+- **DeepSeekMoE**: Enhanced MoE architecture with 256 routed experts and shared experts
+- **Multi-Token Prediction (MTP)**: Auxiliary training objective that predicts multiple future tokens
+- **Expert Parallelism**: Distributes 256 experts across GPUs for scalable training
+- **RoPE Embeddings**: Rotary position embeddings with scaling factor for position encoding
+- **Sigmoid Gating with Expert Bias**: Novel routing mechanism with learnable expert bias
+- **Pre-normalization**: RMSNorm before each transformer sub-layer for training stability
+
+## Conversion with 🤗 Hugging Face
+
+### Load HF → Megatron
+
+```python
+from megatron.bridge import AutoBridge
+
+# Example: DeepSeek-V3-Base
+bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3-Base", trust_remote_code=True)
+provider = bridge.to_megatron_provider()
+
+# Optionally configure parallelism before instantiating the model
+provider.tensor_model_parallel_size = 2
+provider.pipeline_model_parallel_size = 16
+provider.expert_model_parallel_size = 64
+
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+```
+
+### Import Checkpoint from HF
+
+```bash
+python examples/conversion/convert_checkpoints.py import \
+  --hf-model deepseek-ai/DeepSeek-V3-Base \
+  --megatron-path /checkpoints/deepseek_v3_megatron \
+  --trust-remote-code
+```
+
+### Export Megatron → HF
+
+```python
+from megatron.bridge import AutoBridge
+
+# Load the bridge from HF model ID
+bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3-Base", trust_remote_code=True)
+
+# Export a trained Megatron checkpoint to HF format
+bridge.export_ckpt(
+    megatron_path="/results/deepseek_v3/checkpoints/iter_0000500",
+    hf_path="/exports/deepseek_v3_hf",
+)
+```
+
+### Run Inference on Converted Checkpoint
+
+```bash
+python examples/conversion/hf_to_megatron_generate_text.py \
+  --hf_model_path deepseek-ai/DeepSeek-V3-Base \
+  --megatron_model_path /checkpoints/deepseek_v3_megatron \
+  --prompt "What is artificial intelligence?" \
+  --max_new_tokens 100 \
+  --tp 2 \
+  --pp 16 \
+  --ep 64 \
+  --trust-remote-code
+```
+
+For more details, see [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
+
+## Recipes
+
+See: [bridge.recipes.deepseek.deepseek_v3](/../../apidocs/bridge/bridge.recipes.deepseek.deepseek_v3)
+
+### Available Recipes
+
+- **Pretrain recipes**:
+  - `deepseek_v3_pretrain_config`: Pre-training for DeepSeek-V3 (671B parameters, 37B activated per token)
+
+### Parallelism Configurations
+
+| Model | TP | PP | EP | VP | Nodes | Total GPUs | Use Case |
+|-------|----|----|-----|-----|------:|-----------:|----------|
+| **DeepSeek-V3** | 2 | 16 | 64 | None | 128 | 1024 | Pre-training |
+
+**Key Features**:
+- **Expert Parallelism**: EP=64 for distributing 256 experts across GPUs
+- **Pipeline Parallelism**: PP=16 with asymmetric layouts optimized for embedding and loss layers
+- **Selective Recomputation**: Enabled by default for memory optimization
+- **Multi-Token Prediction (MTP)**: Optional auxiliary training objective (1 layer by default)
+- **Sequence Parallel**: Enabled by default for memory efficiency
+
+**Performance Optimizations**:
+- **MoE Permute Fusion**: Fused expert permutation operations
+- **Flex Dispatcher Backend**: Optional high-performance MoE token dispatcher
+- **RoPE Fusion**: Optional fusion for Multi-head Latent Attention
+- **Precision-Aware Optimizer**: FP32 master weights with BF16 gradients and optimizer states
+
+### Pre-training Example
+
+```python
+from megatron.bridge.recipes.deepseek import deepseek_v3_pretrain_config
+
+config = deepseek_v3_pretrain_config(
+    name="deepseek_v3_pretrain",
+    data_paths=["/path/to/dataset.nvjsonl"],
+    dir="/results/deepseek_v3",
+    train_iters=500_000,
+    global_batch_size=4096,
+    seq_length=4096,
+    # MTP configuration
+    mtp_num_layers=1,
+    mtp_loss_scaling_factor=0.1,
+    # Uses TP=2, PP=16, EP=64 (1024 GPUs, 128 nodes) automatically
+)
+```
+
+### Finetuning Recipes
+
+Finetuning recipes for DeepSeek V3 are not currently available.
+
+## Hugging Face Model Cards & References
+
+### Hugging Face Model Cards
+- DeepSeek-V3: https://huggingface.co/deepseek-ai/DeepSeek-V3
+- DeepSeek-V3-Base: https://huggingface.co/deepseek-ai/DeepSeek-V3-Base
+
+### Technical Papers
+- DeepSeek-V3 Technical Report: [arXiv:2412.19437](https://arxiv.org/abs/2412.19437)
+
+### Additional Resources
+- GitHub Repository: https://github.com/deepseek-ai/DeepSeek-V3
+
+## Related Docs
+- Recipe usage: [Recipe usage](/../../recipe-usage)
+- Customizing the training recipe configuration: [Configuration overview](/../../training/config-container-overview)
+- Training entry points: [Entry points](/../../training/entry-points)
