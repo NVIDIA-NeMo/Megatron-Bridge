@@ -277,9 +277,7 @@ def test_additional_files_glob_patterns():
 
         # Test copying with glob patterns
         base = MockPreTrainedBase(model_name_or_path=str(source_dir))
-        copied_files = base._copy_custom_modeling_files(
-            source_dir, target_dir, file_patterns=["*.json", "*.md"]
-        )
+        copied_files = base._copy_custom_modeling_files(source_dir, target_dir, file_patterns=["*.json", "*.md"])
 
         # Verify files matching patterns were copied
         assert (target_dir / "config.json").exists()
@@ -313,7 +311,7 @@ def test_additional_files_mixed_patterns_and_names():
 
         # Test copying with mixed patterns and exact names
         base = MockPreTrainedBase(model_name_or_path=str(source_dir))
-        copied_files = base._copy_custom_modeling_files(
+        base._copy_custom_modeling_files(
             source_dir, target_dir, file_patterns=["*.json", "special_file.txt", "readme.md"]
         )
 
@@ -418,9 +416,7 @@ def test_additional_files_with_original_source_path():
         base._config = mock_config
 
         # Call save_artifacts with original_source_path
-        base.save_artifacts(
-            target_dir, original_source_path=str(original_source_dir), additional_files=["vocab.json"]
-        )
+        base.save_artifacts(target_dir, original_source_path=str(original_source_dir), additional_files=["vocab.json"])
 
         # Verify file from original_source_path was copied (not from model_dir)
         assert (target_dir / "vocab.json").exists()
