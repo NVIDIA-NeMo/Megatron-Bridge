@@ -208,7 +208,6 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
             __key__="key",
             __restore_key__="restore_key",
             __subflavor__={},
-            __subflavors__={},
             imgs=[MagicMock(spec=Image.Image)],
             videos=[],
             conversation=json.dumps(
@@ -258,7 +257,6 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         sample = ChatMLSample(
             __key__="key",
             __restore_key__="restore_key",
-            __subflavor__={},
             __subflavors__={},
             imgs=[MagicMock(spec=Image.Image)],
             videos=[],
