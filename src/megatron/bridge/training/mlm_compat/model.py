@@ -214,8 +214,6 @@ def _mamba_provider(
         rotary_base=args.rotary_base,
         vp_stage=vp_stage,
     )
-    #TOTO(liding): remove this 
-    model.mtp_process = False
 
     return model
 

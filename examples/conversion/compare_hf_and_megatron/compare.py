@@ -439,7 +439,7 @@ def _load_hf_model(args, is_vl_model: bool):
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
-        device_map="cuda",
+        device_map="auto",
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
@@ -579,14 +579,8 @@ def _load_megatron_model(args):
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
-
-        model_provider.sequence_parallel=True
-        # FIXME: This is a hack to enable cuda graph for the model.
-        model_provider.enable_cuda_graph=True
-        model_provider.use_te_rng_tracker=True
-
         model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0, seed_kwargs={"te_rng_tracker": model_provider.use_te_rng_tracker})
+        model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(
             args.megatron_model_path,
             mp_overrides={
@@ -598,7 +592,6 @@ def _load_megatron_model(args):
             },
             wrap_with_ddp=False,
         )
-
     else:
         # Convert from HF to Megatron
         bridge = AutoBridge.from_hf_pretrained(
@@ -614,7 +607,7 @@ def _load_megatron_model(args):
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.sequence_parallel=True
+        model_provider.sequence_parallel = True
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 

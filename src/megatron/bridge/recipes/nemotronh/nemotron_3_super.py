@@ -23,7 +23,6 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -37,13 +36,15 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
+
 # TODO(liding): Nemotron3SuperDebugProvider to Nemotron3SuperProvider
+
 
 class Nemotron3SuperCommonKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron 3 Super recipe helper functions."""
 
     # Core identifiers
-    #TODO(liding): init model directly from HF - see gpt_oss recipes
+    # TODO(liding): init model directly from HF - see gpt_oss recipes
     model_provider: Nemotron3SuperDebugProvider
     dir: Optional[str]
     name: str
@@ -91,7 +92,7 @@ def nemotron_3_super_pretrain_config(**user_kwargs: Unpack[Nemotron3SuperCommonK
     """
     # TODO(liding): change to actual provider and actual parallelism
     recommended_kwargs: Nemotron3SuperCommonKwargs = {
-        "model_provider": Nemotron3SuperDebugProvider,
+        "model_provider": Nemotron3SuperProvider,
         "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
@@ -208,16 +209,16 @@ def _nemotron_3_super_common(
         gradient_accumulation_fusion=True,
         init_method_std=0.014,
         use_fused_weighted_squared_relu=True,
-        keep_mamba_stack_attention_linear_in_bf16 = True,
-        keep_mtp_spec_in_bf16 = True,
-        calculate_per_token_loss = True,
-        mtp_loss_scaling_factor = 0.3,
-        moe_token_dispatcher_type = "alltoall",
-        moe_shared_expert_overlap = False,
-        use_te_rng_tracker = True,
-        seq_length = seq_length,
-        mtp_use_repeated_layer = True,
-        enable_cuda_graph = False
+        keep_mamba_stack_attention_linear_in_bf16=True,
+        keep_mtp_spec_in_bf16=True,
+        calculate_per_token_loss=True,
+        mtp_loss_scaling_factor=0.3,
+        moe_token_dispatcher_type="alltoall",
+        moe_shared_expert_overlap=False,
+        use_te_rng_tracker=True,
+        seq_length=seq_length,
+        mtp_use_repeated_layer=True,
+        enable_cuda_graph=False,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -231,15 +232,15 @@ def _nemotron_3_super_common(
         min_lr=min_lr,
         start_weight_decay=0.1,
         end_weight_decay=0.1,
-        lr_decay_style="WSD"
+        lr_decay_style="WSD",
     )
 
     # TODO(liding): update tokenizer name
-    tokenizer_config=TokenizerConfig(
-            tokenizer_type= "HuggingFaceTokenizer",
-            tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-            vocab_size=None
-        )
+    tokenizer_config = TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        vocab_size=None,
+    )
 
     # Config Container
     cfg = ConfigContainer(
@@ -359,7 +360,7 @@ def nemotron_3_super_finetune_config(**user_kwargs: Unpack[Nemotron3SuperFinetun
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: Nemotron3SuperFinetuneKwargs = {
-        "model_provider": Nemotron3SuperDebugProvider,
+        "model_provider": Nemotron3SuperProvider,
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
@@ -443,9 +444,9 @@ def _nemotron_3_super_finetune_common(
         moe_token_dispatcher_type="alltoall",
         moe_shared_expert_overlap=False,
         use_te_rng_tracker=True,
-        seq_length = seq_length,
+        seq_length=seq_length,
         mtp_use_repeated_layer=True,
-        enable_cuda_graph=False
+        enable_cuda_graph=False,
     )
 
     # Optimizer and LR scheduler
@@ -479,8 +480,7 @@ def _nemotron_3_super_finetune_common(
 
     # TODO(liding): update tokenizer to actual Super tokenizer model
     tokenizer_config = TokenizerConfig(
-        tokenizer_type="HuggingFaceTokenizer",
-        tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+        tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
     )
 
     # Config Container
