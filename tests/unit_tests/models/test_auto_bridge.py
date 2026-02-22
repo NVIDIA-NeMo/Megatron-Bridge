@@ -544,7 +544,9 @@ class TestAutoBridge:
             bridge.save_hf_pretrained(mock_megatron_model, "./output_dir")
 
             # Check artifacts were saved on rank 0
-            mock_hf_model.save_artifacts.assert_called_once_with("./output_dir", original_source_path=None)
+            mock_hf_model.save_artifacts.assert_called_once_with(
+                "./output_dir", original_source_path=None, additional_files=None
+            )
             mock_save_hf_weights.assert_called_once_with(
                 mock_megatron_model,
                 "./output_dir",
@@ -837,7 +839,12 @@ class TestAutoBridge:
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(
-                    mock_megatron_model, "./hf_export", show_progress=True, source_path=None, strict=False
+                    mock_megatron_model,
+                    "./hf_export",
+                    show_progress=True,
+                    source_path=None,
+                    strict=False,
+                    additional_files=None,
                 )
 
     def test_export_ckpt_config_only_raises(self):
@@ -873,7 +880,12 @@ class TestAutoBridge:
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(
-                    mock_megatron_model, "./hf_export", show_progress=False, source_path=None, strict=False
+                    mock_megatron_model,
+                    "./hf_export",
+                    show_progress=False,
+                    source_path=None,
+                    strict=False,
+                    additional_files=None,
                 )
 
     def test_save_megatron_model_basic(self):
