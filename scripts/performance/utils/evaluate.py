@@ -54,7 +54,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         For per-step metrics: Dict[str, float] keyed by 0-indexed step number
     """
     patterns = {
-        "iteration": r"iteration\s+(\d+)/\s*\d+",
+        "iteration": r"iteration\s+(\d+)/\s+\d+",
         "elapsed time per iteration (ms)": r"elapsed time per iteration \(ms\):\s+([\d.]+)",
         "lm loss": r"lm loss:\s+([\d.E+\-]+)",
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
