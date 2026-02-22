@@ -41,7 +41,7 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
-def get_metrics_from_logfiles(log_paths: List[str], metric: str):
+def get_metrics_from_logfiles(log_paths: List[str], metric: str, is_long_convergence_run: bool = False):
     """
     Parse training log files and extract metrics.
 
@@ -65,13 +65,26 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     }
 
     metrics: Dict[str, List] = {k: [] for k in patterns}
+    all_lines = []
 
-    for log_path in log_paths:
-        with open(log_path, "r") as f:
-            for line in f:
-                for metric_name, pattern in patterns.items():
-                    if match := re.search(pattern, line):
-                        metrics[metric_name].append(float(match.group(1)))
+    if is_long_convergence_run:
+        for log_path in log_paths:
+            with open(log_path, "r") as f:
+                for line in f:
+                    all_lines.append(line)
+    else:
+        handles = [open(f) for f in log_paths]
+        try:
+            for lines in zip(*handles):
+                all_lines.append("\t".join(line.rstrip("\n") for line in lines))
+        finally:
+            for f in handles:
+                f.close()
+
+    for line in f:
+        for metric_name, pattern in patterns.items():
+            if match := re.search(pattern, line):
+                metrics[metric_name].append(float(match.group(1)))
 
     # Scalar metrics: return first occurrence only
     if metric in ("alloc", "max_alloc"):
@@ -84,8 +97,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     values = metrics[metric]
     if len(values) != len(steps):
         logger.warning(
-            f"Metric '{metric}': found {len(values)} values for {len(steps)} iterations; "
-            "some steps may be missing"
+            f"Metric '{metric}': found {len(values)} values for {len(steps)} iterations; some steps may be missing"
         )
     return {str(step): value for step, value in zip(steps, values)}
 
@@ -381,7 +393,11 @@ def validate_memory(
     config = default_config
 
     # Calculate memory difference
-    max_alloc_diff = abs(current_max_alloc - golden_max_alloc) / golden_max_alloc if golden_max_alloc != 0 else abs(current_max_alloc)
+    max_alloc_diff = (
+        abs(current_max_alloc - golden_max_alloc) / golden_max_alloc
+        if golden_max_alloc != 0
+        else abs(current_max_alloc)
+    )
 
     logger.info(f"Max alloc difference: {max_alloc_diff * 100:.2f}%")
     logger.info(f"Memory threshold: {config['memory_threshold'] * 100:.1f}%")
@@ -477,6 +493,7 @@ def calc_convergence_and_performance(
     performance_config: Dict[str, Any],
     memory_config: Dict[str, Any],
     wandb_run: Optional["wandb.Run"] = None,
+    is_long_convergence_run: bool = False,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -504,12 +521,12 @@ def calc_convergence_and_performance(
     if not HAVE_NUMPY:
         raise ImportError("numpy is required for calculating perf and convergence metrics")
 
-    current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
-    current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
-    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm")
-    current_alloc = get_metrics_from_logfiles(log_paths, alloc_metric)
-    current_max_alloc = get_metrics_from_logfiles(log_paths, max_alloc_metric)
-    current_gpu_util = get_metrics_from_logfiles(log_paths, "GPU utilization")
+    current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric, is_long_convergence_run)
+    current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric, is_long_convergence_run)
+    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm", is_long_convergence_run)
+    current_alloc = get_metrics_from_logfiles(log_paths, alloc_metric, is_long_convergence_run)
+    current_max_alloc = get_metrics_from_logfiles(log_paths, max_alloc_metric, is_long_convergence_run)
+    current_gpu_util = get_metrics_from_logfiles(log_paths, "GPU utilization", is_long_convergence_run)
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)

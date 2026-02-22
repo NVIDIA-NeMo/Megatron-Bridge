@@ -443,7 +443,7 @@ def main(
                 is_testing_passed = True
                 break
 
-            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
+            log_file_paths = list(Path(f"{job_dir}").glob("log*_0.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
@@ -496,6 +496,7 @@ def main(
                 performance_config=performance_params,
                 memory_config=memory_params,
                 wandb_run=wandb_run,
+                is_long_convergence_run=is_long_convergence_run,
             )
 
             if wandb_run:
