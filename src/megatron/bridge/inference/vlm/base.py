@@ -16,6 +16,7 @@ from typing import List, Optional, Union
 
 import torch
 import torch.distributed
+from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
@@ -40,6 +41,7 @@ def setup_model_and_tokenizer(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
     inference_max_seq_length: int = 8192,
+    inference_max_batch_size: int = 4,
 ):
     """Set up model and tokenizer from a Megatron checkpoint.
 
@@ -50,7 +52,7 @@ def setup_model_and_tokenizer(
         params_dtype: Data type for model parameters.
         inference_batch_times_seqlen_threshold: Threshold for inference batching.
         inference_max_seq_length: Maximum sequence length for inference (prompt + generated tokens).
-
+        inference_max_batch_size: Maximum batch size for inference.
     Returns:
         A tuple of (inference_wrapped_model, processor).
     """
@@ -106,6 +108,7 @@ def setup_model_and_tokenizer(
         params_dtype=torch.bfloat16,
         inference_batch_times_seqlen_threshold=1000,
         inference_max_seq_length=inference_max_seq_length,
+        inference_max_batch_size=inference_max_batch_size,
     )
 
     return inference_wrapped_model, processor
@@ -120,6 +123,7 @@ def _expose_decoder_from_language_model(model):
     if hasattr(current, "language_model"):
         language_model = current.language_model
         current.decoder = language_model.decoder
+        current.vocab_size = language_model.vocab_size
 
 
 def setup_inference_wrapper(
@@ -128,6 +132,7 @@ def setup_inference_wrapper(
     params_dtype: torch.dtype = torch.bfloat16,
     inference_batch_times_seqlen_threshold: int = 1000,
     inference_max_seq_length: int = 8192,
+    inference_max_batch_size: int = 4,
 ):
     """Set up inference wrapper for the model"""
     config = model.config
@@ -148,7 +153,13 @@ def setup_inference_wrapper(
     else:
         raise ValueError(f"Unknown model config: {config}")
 
-    inference_wrapped_model = wrapper_cls(mcore_model)
+    inference_wrapped_model = wrapper_cls(
+        mcore_model,
+        inference_context=StaticInferenceContext(
+            max_batch_size=inference_max_batch_size,
+            max_sequence_length=inference_max_seq_length,
+        ),
+    )
 
     return inference_wrapped_model
 
@@ -160,7 +171,6 @@ def generate(
     prompts: List[str],
     images: List[Union[Image, List[Image]]],
     processor=None,
-    max_batch_size: int = 4,
     random_seed: Optional[int] = None,
     sampling_params: Optional[SamplingParams] = None,
 ) -> dict:
@@ -172,7 +182,6 @@ def generate(
         image_processor: image processor for the input image,
         prompts (list[str]): The list of prompts to generate text for.
         images (list): The list of images to generate text for.
-        max_batch_size (int, optional): The maximum batch size. Defaults to 4.
         random_seed (Optional[int], optional): The random seed. Defaults to None.
         sampling_params (Optional["SamplingParams"], optional): The sampling parameters defined in
             Mcore's SamplingParams. Defaults to None.
@@ -195,9 +204,7 @@ def generate(
             tokenizer=tokenizer,
             image_processor=image_processor,
         )
-    mcore_engine = VLMEngine(
-        text_generation_controller=text_generation_controller, max_batch_size=max_batch_size, random_seed=random_seed
-    )
+    mcore_engine = VLMEngine(text_generation_controller=text_generation_controller, random_seed=random_seed)
 
     if sampling_params is None:
         sampling_params = SamplingParams(num_tokens_to_generate=50)

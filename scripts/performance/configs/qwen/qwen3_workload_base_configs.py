@@ -279,9 +279,6 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
 
 QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_V2,
-    virtual_pipeline_model_parallel_size=12,
-    expert_model_parallel_size=16,
-    cuda_graph_scope=["moe_router", "moe_preprocess"],
     global_batch_size=512,
 )
 
