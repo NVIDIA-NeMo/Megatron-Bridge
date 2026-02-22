@@ -466,7 +466,7 @@ def main(
 
         if is_finished_experiment is True and detach is False:
             log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log-*_0.out"))
+                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*_0.out"))
             )
 
             if not is_long_convergence_run:

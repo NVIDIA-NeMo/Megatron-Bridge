@@ -81,7 +81,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str, is_long_converg
             for f in handles:
                 f.close()
 
-    for line in f:
+    for line in all_lines:
         for metric_name, pattern in patterns.items():
             if match := re.search(pattern, line):
                 metrics[metric_name].append(float(match.group(1)))
