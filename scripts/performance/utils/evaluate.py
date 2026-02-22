@@ -43,31 +43,16 @@ logger = logging.getLogger(__name__)
 
 def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     """
-    Parse training log file and extract metrics.
+    Parse training log files and extract metrics.
 
     Args:
-        log_path: Path to the log file
+        log_paths: Paths to the log files
         metric: Metric name to extract
 
     Returns:
-        Dictionary with format: {step: value}
+        For scalar metrics (alloc, max_alloc): float or None
+        For per-step metrics: Dict[str, float] keyed by 0-indexed step number
     """
-    metrics = {
-        "elapsed time per iteration (ms)": {},
-        "lm loss": {},
-        "GPU utilization": {},
-        "step time": {},
-        "grad norm": {},
-        "alloc": None,
-        "max_alloc": None,
-    }
-
-    content = ""
-    for log_path in log_paths:
-        with open(log_path, "r") as f:
-            file_content = f.read()
-            content += file_content + "\n"
-
     patterns = {
         "iteration": r"iteration\s+(\d+)/",
         "elapsed time per iteration (ms)": r"elapsed time per iteration \(ms\):\s+([\d.]+)",
@@ -79,95 +64,30 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "max_alloc": r"mem-max-allocated-gigabytes:\s*([\d\.]+)",
     }
 
-    pending_step_time = None
-    pending_gpu_util = None
-    pending_grad_norm = None
-    current_iteration = None
-    # Tracks a completed step whose metric arrived *after* its iteration line due to
-    # interleaved output from multiple pipeline stages.  The very next matching line
-    # (that is not itself on an iteration line) will be assigned here instead.
-    last_step_without_step_time = None
-    last_step_without_gpu_util = None
+    metrics: Dict[str, List] = {k: [] for k in patterns}
 
-    for line in content.split("\n"):
-        # Pre-compute whether this line also carries an iteration marker so we can
-        # decide whether a metric on the same line is "pending" (belongs to the
-        # iteration being announced) or a late print for the previous iteration.
-        has_iteration = bool(re.search(patterns["iteration"], line))
+    for log_path in log_paths:
+        with open(log_path, "r") as f:
+            for line in f:
+                for metric_name, pattern in patterns.items():
+                    if match := re.search(pattern, line):
+                        metrics[metric_name].append(float(match.group(1)))
 
-        if match := re.search(patterns["step time"], line):
-            step_time_val = float(match.group(1))
-            if not has_iteration and last_step_without_step_time is not None:
-                # Late print: fill the step that was missing this metric.
-                metrics["step time"][last_step_without_step_time] = step_time_val
-                last_step_without_step_time = None
-            else:
-                # Normal path: keep as pending until the next iteration line.
-                # Always overwrite so we use the value closest to that line.
-                pending_step_time = step_time_val
+    # Scalar metrics: return first occurrence only
+    if metric in ("alloc", "max_alloc"):
+        values = metrics[metric]
+        return values[0] if values else None
 
-        if match := re.search(patterns["grad norm"], line):
-            pending_grad_norm = float(match.group(1))
-
-        if match := re.search(patterns["GPU utilization"], line):
-            gpu_util_val = float(match.group(1))
-            if not has_iteration and last_step_without_gpu_util is not None:
-                metrics["GPU utilization"][last_step_without_gpu_util] = gpu_util_val
-                last_step_without_gpu_util = None
-            else:
-                pending_gpu_util = gpu_util_val
-
-        if metrics["alloc"] is None and (match := re.search(patterns["alloc"], line)):
-            metrics["alloc"] = float(match.group(1))
-
-        if metrics["max_alloc"] is None and (match := re.search(patterns["max_alloc"], line)):
-            metrics["max_alloc"] = float(match.group(1))
-
-        # Check for iteration line
-        if match := re.search(patterns["iteration"], line):
-            current_iteration = int(match.group(1))
-
-            # Assign pending metrics to the iteration that just completed
-            # (current_iteration - 1, but use 0-indexed so current_iteration - 1)
-            completed_step = str(current_iteration - 1)
-
-            # Reset stale "last without" state — that window has passed.
-            last_step_without_step_time = None
-            last_step_without_gpu_util = None
-
-            if pending_step_time is not None:
-                metrics["step time"][completed_step] = pending_step_time
-                pending_step_time = None
-            else:
-                # No pending value: remember this step so a late print can still fill it.
-                last_step_without_step_time = completed_step
-
-            if pending_grad_norm is not None:
-                metrics["grad norm"][completed_step] = pending_grad_norm
-                pending_grad_norm = None
-
-            if pending_gpu_util is not None:
-                metrics["GPU utilization"][completed_step] = pending_gpu_util
-                pending_gpu_util = None
-            else:
-                last_step_without_gpu_util = completed_step
-
-            # Extract metrics from the iteration line itself
-            for metric_name in ["elapsed time per iteration (ms)", "lm loss"]:
-                if completed_step not in metrics[metric_name] and (match := re.search(patterns[metric_name], line)):
-                    metrics[metric_name][completed_step] = float(match.group(1))
-
-    # Flush any pending metrics from the last iteration (no subsequent iteration line to trigger it)
-    if current_iteration is not None:
-        last_step = str(current_iteration)
-        if pending_step_time is not None:
-            metrics["step time"][last_step] = pending_step_time
-        if pending_grad_norm is not None:
-            metrics["grad norm"][last_step] = pending_grad_norm
-        if pending_gpu_util is not None:
-            metrics["GPU utilization"][last_step] = pending_gpu_util
-
-    return metrics[metric]
+    # Per-step metrics: postprocess into step-keyed dict
+    # iteration N announces that step N-1 just completed
+    steps = [int(i) - 1 for i in metrics["iteration"]]
+    values = metrics[metric]
+    if len(values) != len(steps):
+        logger.warning(
+            f"Metric '{metric}': found {len(values)} values for {len(steps)} iterations; "
+            "some steps may be missing"
+        )
+    return {str(step): value for step, value in zip(steps, values)}
 
 
 def validate_convergence(
