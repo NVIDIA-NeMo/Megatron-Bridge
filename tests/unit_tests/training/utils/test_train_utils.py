@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import math
-import time
 import random
+import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
