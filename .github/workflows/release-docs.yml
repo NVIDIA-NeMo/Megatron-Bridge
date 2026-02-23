@@ -44,6 +44,37 @@ on:
         required: false
         type: string
         default: ""
+  workflow_call:
+    inputs:
+      dry-run:
+        description: Whether to run the workflow in dry-run mode
+        required: false
+        type: boolean
+        default: true
+      publish-as-latest:
+        description: Publish as Latest stable version.
+        required: false
+        type: boolean
+        default: true
+      docs-version-override:
+        description: Docs version if commit is not tagged
+        required: false
+        type: string
+        default: ""
+      update-version-picker:
+        description: Update version picker.
+        required: false
+        type: boolean
+        default: true
+      notify-emails:
+        description: Email addresses to send the notification to. Format as "me@me.com,you@you.com".
+        required: false
+        type: string
+      github-ref:
+        description: Github ref to checkout
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build-docs:
