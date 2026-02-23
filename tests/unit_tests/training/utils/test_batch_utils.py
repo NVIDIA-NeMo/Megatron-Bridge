@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -142,6 +142,39 @@ class TestGetBatchOnThisTpRank:
         assert call_payloads[0] is False, (
             f"has_extra flag should be False, got {call_payloads[0]}"
         )
+
+    @pytest.mark.parametrize(
+        "is_first, is_last, broadcast_all, expected_count",
+        [
+            (True, False, False, 2),   # first stage: tokens, position_ids
+            (False, True, False, 2),   # last stage: labels, loss_mask
+            (False, False, False, 0),  # mid stage: nothing
+            (True, False, True, 4),    # broadcast_all overrides PP filtering
+        ],
+        ids=["pp_first", "pp_last", "pp_mid", "broadcast_all"],
+    )
+    @patch("torch.distributed.broadcast_object_list")
+    @patch("torch.distributed.broadcast")
+    @patch("torch.distributed.get_rank", return_value=0)
+    @patch("torch.distributed.get_process_group_ranks", return_value=[0, 1, 2, 3, 4, 5, 6, 7])
+    def test_pp_stage_broadcast_filtering(
+        self, _ranks, _rank, mock_bcast, _obj_bcast,
+        is_first, is_last, broadcast_all, expected_count,
+    ):
+        """Only the keys relevant to the PP stage are broadcast."""
+        _obj_bcast.side_effect = lambda obj_list, **kw: None
+        with (
+            patch("megatron.bridge.training.utils.batch_utils.is_pp_first_stage", return_value=is_first),
+            patch("megatron.bridge.training.utils.batch_utils.is_pp_last_stage", return_value=is_last),
+        ):
+            get_batch_on_this_tp_rank(
+                iter([_make_batch()]),
+                _make_cfg(pp_size=2),
+                pg_collection=_make_pg(),
+                broadcast_all_keys=broadcast_all,
+            )
+
+        assert mock_bcast.call_count == expected_count
 
 
 # ---------------------------------------------------------------------------

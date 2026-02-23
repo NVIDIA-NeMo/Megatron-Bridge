@@ -27,6 +27,7 @@ from megatron.bridge.training.gpt_step import (
 )
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.batch_utils import get_batch_on_this_tp_rank
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
@@ -115,12 +116,18 @@ def get_batch(
     is_last = is_pp_last_stage(pg_collection.pp)
     if (not is_first) and (not is_last):
         return None, None, None, None, None, None, None, None, None, None
-    batch = get_batch_from_iterator(
-        data_iterator,
-        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
-    )
+    broadcast_data = getattr(cfg.dataset, "broadcast_data_across_tp", False)
+    if broadcast_data:
+        batch = get_batch_on_this_tp_rank(
+            data_iterator, cfg, pg_collection=pg_collection,
+        )
+    else:
+        batch = get_batch_from_iterator(
+            data_iterator,
+            getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+            is_first_pp_stage=is_first,
+            is_last_pp_stage=is_last,
+        )
 
     # Keep optional vision tensors aside to avoid being dropped by CP slicing util
     images = batch.get("pixel_values")

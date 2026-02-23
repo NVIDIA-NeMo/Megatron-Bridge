@@ -26,6 +26,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.batch_utils import get_batch_on_this_tp_rank
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
@@ -238,15 +239,23 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
 
-    # All PP stages load from iterator to get input_ids and visual grid info
-    # This allows each stage to compute MRoPE position_ids locally without broadcasting
-    batch = get_batch_from_iterator(
-        data_iterator,
-        use_mtp,
-        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
-    )
+    broadcast_data = getattr(cfg.dataset, "broadcast_data_across_tp", False)
+    if broadcast_data:
+        batch = get_batch_on_this_tp_rank(
+            data_iterator, cfg, use_mtp,
+            pg_collection=pg_collection,
+            broadcast_all_keys=True,
+        )
+    else:
+        # All PP stages load from iterator to get input_ids and visual grid info.
+        # This allows each stage to compute MRoPE position_ids locally without broadcasting.
+        batch = get_batch_from_iterator(
+            data_iterator,
+            use_mtp,
+            getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+            is_first_pp_stage=is_first,
+            is_last_pp_stage=is_last,
+        )
     enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
 
     if not enable_packing:

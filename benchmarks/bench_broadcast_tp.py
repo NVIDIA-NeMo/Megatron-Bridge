@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ when ``broadcast_data_across_tp=True``:
 
 Usage::
 
-    torchrun --nproc_per_node=8 tests/benchmarks/bench_broadcast_tp.py
+    torchrun --nproc_per_node=8 benchmarks/bench_broadcast_tp.py
 """
 
 from __future__ import annotations
