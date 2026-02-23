@@ -132,6 +132,12 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=None,
         help="Sequence length for training",
     )
+    parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default=None,
+        help="Dataset type for VLM recipes (e.g., 'energon', 'mock', 'hf', 'preloaded').",
+    )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
 
@@ -141,6 +147,7 @@ def load_recipe(
     peft_scheme: str | None,
     packed_sequence: bool = False,
     seq_length: int | None = None,
+    dataset_type: str | None = None,
 ) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
@@ -150,6 +157,7 @@ def load_recipe(
         peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
         packed_sequence: Enable packed sequence training (default: False)
         seq_length: Sequence length for training (optional)
+        dataset_type: Dataset type for VLM recipes (e.g., 'energon', 'mock', 'hf', 'preloaded')
 
     Returns:
         ConfigContainer from calling the recipe
@@ -175,11 +183,13 @@ def load_recipe(
         accepts_peft = "peft" in params or has_var_keyword
         accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
         accepts_seq_length = "seq_length" in params or has_var_keyword
+        accepts_dataset_type = "dataset_type" in params or has_var_keyword
     except (ValueError, TypeError):
         # If signature inspection fails, fallback conservatively
         accepts_peft = True  # peft is widely supported, try passing it
         accepts_packed_sequence = False  # new parameter, don't pass if unsure
         accepts_seq_length = False  # new parameter, don't pass if unsure
+        accepts_dataset_type = False  # VLM-specific, don't pass if unsure
 
     # Build kwargs dynamically based on what the recipe accepts
     kwargs = {}
@@ -189,6 +199,8 @@ def load_recipe(
         kwargs["packed_sequence"] = packed_sequence
     if accepts_seq_length and seq_length is not None:
         kwargs["seq_length"] = seq_length
+    if accepts_dataset_type and dataset_type is not None:
+        kwargs["dataset_type"] = dataset_type
 
     try:
         return config_builder(**kwargs)
@@ -224,6 +236,7 @@ def main() -> None:
         args.peft_scheme,
         args.packed_sequence,
         args.seq_length,
+        args.dataset_type,
     )
 
     config = process_config_with_overrides(
