@@ -66,27 +66,20 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str, is_long_converg
 
     metrics: Dict[str, List] = {k: [] for k in patterns}
     all_lines = []
+    handles = []
+    for log_path in log_paths:
+        if "allranks" in log_path:
+            continue
+        logger.info(f"Reading log file: {log_path}")
+        handles.append(open(log_path))
 
-    if is_long_convergence_run:
-        for log_path in log_paths:
-            with open(log_path, "r", errors="replace") as f:
-                for line in f:
-                    all_lines.append(line)
-    else:
-        handles = []
-        for log_path in log_paths:
-            if "allranks" in log_path:
-                continue
-            logger.info(f"Reading log file: {log_path}")
-            handles.append(open(log_path))
-
-        try:
-            for lines in zip(*handles):
-                for line in lines:
-                    all_lines.append(line)
-        finally:
-            for f in handles:
-                f.close()
+    try:
+        for lines in zip(*handles):
+            for line in lines:
+                all_lines.append(line)
+    finally:
+        for f in handles:
+            f.close()
 
     for line in all_lines:
         for metric_name, pattern in patterns.items():
