@@ -73,10 +73,17 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str, is_long_converg
                 for line in f:
                     all_lines.append(line)
     else:
-        handles = [open(f) for f in log_paths if "allranks" not in f]
+        handles = []
+        for log_path in log_paths:
+            if "allranks" in log_path:
+                continue
+            logger.info(f"Reading log file: {log_path}")
+            handles.append(open(log_path))
+
         try:
             for lines in zip(*handles):
-                all_lines.append("\t".join(line.rstrip("\n") for line in lines))
+                for line in lines:
+                    all_lines.append(line)
         finally:
             for f in handles:
                 f.close()
