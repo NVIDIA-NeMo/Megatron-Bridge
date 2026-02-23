@@ -16,12 +16,12 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
+from packaging.version import Version
 import pytest
 import torch
-from transformers import AutoConfig, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer, __version__ as TRANSFORMERS_VERSION
 
 
 HF_GLM5_TOY_MODEL_CONFIG = {
@@ -106,21 +106,14 @@ HF_GLM5_TOY_MODEL_CONFIG = {
   "transformers_version": "5.2.0.dev0"
 }
 
+pytestmark = pytest.mark.skipif(
+    Version(TRANSFORMERS_VERSION) < Version("5.2.0"),
+    reason=f"GLM5 conversion tests require transformers>=5.2.0, found {TRANSFORMERS_VERSION}",
+)
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
-
-
-def _make_tmp_dir(tmp_path_factory, prefix: str) -> Path:
-    """Create temp dirs on fast local disk when available to avoid /tmp quota issues."""
-    preferred_root = Path(os.environ.get("GLM5_TEST_TMP_ROOT", "/opt/dlami/nvme/peng"))
-    try:
-        preferred_root.mkdir(parents=True, exist_ok=True)
-        if preferred_root.exists() and os.access(preferred_root, os.W_OK):
-            return Path(tempfile.mkdtemp(prefix=f"{prefix}_", dir=str(preferred_root)))
-    except Exception:
-        pass
-    return tmp_path_factory.mktemp(prefix)
 
 
 def _create_glm5_toy_model(model_dir: Path) -> None:
@@ -215,7 +208,7 @@ class TestGLM5Conversion:
             str: Path to the saved HuggingFace model directory
         """
         # Create a temporary directory for this test class
-        temp_dir = _make_tmp_dir(tmp_path_factory, "glm5_toy_model")
+        temp_dir = tmp_path_factory.mktemp("glm5_toy_model")
         model_dir = temp_dir / "glm5_toy"
 
         _create_glm5_toy_model(model_dir)
@@ -275,8 +268,6 @@ class TestGLM5Conversion:
         assert config_data["num_experts_per_tok"] == HF_GLM5_TOY_MODEL_CONFIG["num_experts_per_tok"]
         assert config_data["moe_intermediate_size"] == HF_GLM5_TOY_MODEL_CONFIG["moe_intermediate_size"]
 
-        # Try loading the model to verify it's valid
-        # try:
         from transformers import GlmMoeDsaForCausalLM
 
         model = GlmMoeDsaForCausalLM.from_pretrained(
@@ -300,16 +291,11 @@ class TestGLM5Conversion:
         total_size = [param.numel() for param in second_layer.mlp.experts.parameters()]
         total_shapes = [param.shape for param in second_layer.mlp.experts.parameters()]
         print(f"second_layer mlp experts: {second_layer.mlp.experts} and type: {type(second_layer.mlp.experts)} and size: {total_size} and shapes: {total_shapes}")
-        # GLM 5 MoE structure check (may vary based on implementation)
-        # if hasattr(second_layer.mlp, "experts"):
-        #     assert len(second_layer.mlp.experts) == 8  # n_routed_experts
 
         print(f"SUCCESS: GLM 5 MoE toy model created and validated at {glm5_toy_model_path}")
         print("Model weights are correctly in bfloat16 format")
         print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
 
-        # except Exception as e:
-        #     assert False, f"Failed to load created toy MoE model: {e}"
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
@@ -320,13 +306,13 @@ class TestGLM5Conversion:
             (1, 1, 2, "EP"),
         ],
     )
-    def test_glm5_conversion_parallelism(self, glm5_toy_model_path, tmp_path_factory, tp, pp, ep, test_name):
+    def test_glm5_conversion_parallelism(self, glm5_toy_model_path, tmp_path, tp, pp, ep, test_name):
         """
         Test GLM 5 MoE model conversion with different parallelism configurations.
 
         Args:
             glm5_toy_model_path: Path to the toy GLM 5 MoE model (from fixture)
-            tmp_path_factory: Pytest temporary path factory
+            tmp_path: Pytest temporary path fixture
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
             ep: Expert parallelism size
@@ -334,7 +320,7 @@ class TestGLM5Conversion:
         """
 
         # Create temporary output directory for conversion results
-        test_output_dir = _make_tmp_dir(tmp_path_factory, f"glm5_moe_{test_name}_out")
+        test_output_dir = tmp_path / f"glm5_moe_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
         repo_root = _repo_root()
@@ -449,6 +435,3 @@ class TestGLM5Conversion:
                 f"GLM 5 MoE local-path {test_name} conversion failed with return code {result.returncode}"
             )
 
-        # except Exception as e:
-        #     print(f"Error during GLM 5 MoE {test_name} conversion test: {e}")
-        #     raise
