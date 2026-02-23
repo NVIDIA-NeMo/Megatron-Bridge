@@ -30,14 +30,26 @@ on:
         required: false
         type: string
         default: ""
+      update-version-picker:
+        description: Update version picker.
+        required: false
+        type: boolean
+        default: true
       notify-emails:
         description: Email addresses to send the notification to. Format as "me@me.com,you@you.com".
         required: false
         type: string
+      github-ref:
+        description: Github ref to checkout
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build-docs:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_docs.yml@v0.67.0
+    with:
+      ref: ${{ inputs.github-ref }}
 
   publish-docs:
     runs-on: ubuntu-latest
@@ -62,6 +74,7 @@ jobs:
           emails-csv: ${{ inputs.notify-emails && format('{0},{1}', vars.docs_release_emails, inputs.notify-emails) || vars.docs_release_emails }}
           overwrite-latest-on-tag: ${{ inputs.publish-as-latest }}
           docs-version-override: ${{ inputs.docs-version-override }}
+          update-version-picker: ${{ inputs.update-version-picker }}
           run-on-version-tag-only: ${{ github.ref_name != 'main' }}
           request-name: megatron-bridge-publish-docs-${{ github.run_id }}
           aws-region: ${{ vars.DOCS_AWS_REGION }}
