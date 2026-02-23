@@ -65,7 +65,7 @@ class LoRALinear(AdapterWrapper):
 class LoRATopKRouter(AdapterWrapper):
     """Adapter wrapper that applies LoRA to router gating logits."""
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any):
         """Forward pass that adds LoRA delta to router logits before routing."""
         self.to_wrap._maintain_float32_expert_bias()
         jittered_input = self.to_wrap.apply_input_jitter(x)
@@ -75,7 +75,7 @@ class LoRATopKRouter(AdapterWrapper):
             logits = logits + adapter_output.to(dtype=logits.dtype)
         if self.to_wrap.config.moe_router_force_load_balancing:
             logits = apply_random_logits(logits)
-        return self.to_wrap.routing(logits)
+        return self.to_wrap.routing(logits, *args, **kwargs)
 
 
 class TELinearAdapter(te.Linear):
