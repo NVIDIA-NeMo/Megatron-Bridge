@@ -955,6 +955,9 @@ class LoggerConfig:
 
     # ---------------- Logging config. ----------------
 
+    skip_train_metrics_log: bool = False
+    """Skips logging of training metrics to all logging backends and to the console as well."""
+
     log_interval: int = 100
     """Report loss and timing interval."""
 
@@ -1120,7 +1123,16 @@ class ProfilingConfig:
     use_pytorch_profiler: bool = False
     """Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard."""
 
-    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    pytorch_profiler_collect_shapes: bool = False
+    """Collect tensor shape in pytorch profiler."""
+
+    pytorch_profiler_collect_callstack: bool = False
+    """Collect callstack in pytorch profiler."""
+
+    pytorch_profiler_collect_chakra: bool = False
+    """Collect chakra trace in pytorch profiler."""
+
+    profile_ranks: list[int] = field(default_factory=lambda: [])
     """Global ranks to profile."""
 
     record_memory_history: bool = False
@@ -1490,6 +1502,8 @@ class ConfigContainer(Container):
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
+        if self.model.cuda_graph_impl == "none":
+            self.model.cuda_graph_scope = []
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
