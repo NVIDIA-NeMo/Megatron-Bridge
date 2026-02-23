@@ -115,8 +115,7 @@ class GLM5Bridge(MegatronModelBridge):
 
         configs["make_vocab_size_divisible_by"] = 1280
         configs["moe_router_score_function"] = "sigmoid"
-        # configs["moe_router_enable_expert_bias"] = True  # TODO: uncomment this
-        configs["moe_router_enable_expert_bias"] = False  # TODO: remove this
+        configs["moe_router_enable_expert_bias"] = False
         if hasattr(hf_config, "aux_loss_alpha"):
             configs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
 
@@ -151,14 +150,6 @@ class GLM5Bridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
 
-        # param_mappings = {
-        #     # Embed
-        #     "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-        #     # LM Head
-        #     "decoder.final_layernorm.weight": "model.norm.weight",
-        #     "output_layer.weight": "lm_head.weight",
-        # }
-        # copied from deepseek's common.py
         param_mappings = {
             # Embed
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
@@ -193,43 +184,19 @@ class GLM5Bridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_a_layernorm.weight",
             # For models without MLA
             "decoder.layers.*.self_attention.linear_q_proj.weight": "model.layers.*.self_attn.q_proj.weight",
-            
-            # copied from megatron-bridge's pr: https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/1421
+            # Sparse attention indexer
             "decoder.layers.*.self_attention.core_attention.indexer.linear_wq_b.weight": "model.layers.*.self_attn.indexer.wq_b.weight",
             "decoder.layers.*.self_attention.core_attention.indexer.linear_wk.weight": "model.layers.*.self_attn.indexer.wk.weight",
             "decoder.layers.*.self_attention.core_attention.indexer.k_norm.weight": "model.layers.*.self_attn.indexer.k_norm.weight",
             "decoder.layers.*.self_attention.core_attention.indexer.k_norm.bias": "model.layers.*.self_attn.indexer.k_norm.bias",
-            "decoder.layers.*.self_attention.core_attention.indexer.linear_weights_proj.weight": "model.layers.*.self_attn.indexer.weights_proj.weight",           
+            "decoder.layers.*.self_attention.core_attention.indexer.linear_weights_proj.weight": "model.layers.*.self_attn.indexer.weights_proj.weight",
         }
-        # copied from glm45_bridge.py
         layer_specific_mappings = {
-            # Attention
-            # "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
-            # "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # Reference: https://github.com/NVIDIA/NeMo/blob/50cceb9c90ea1f440d1e14074fa13bd45f60a1c4/nemo/collections/llm/gpt/model/deepseek.py#L637-L650
-            #  In GLM, HF weight `model.layers.*.post_attention_layernorm.weight` is mapped to the following mcore weights depending on the layer type:
-            #  (a) `decoder.layers.*.pre_mlp_layernorm.weight`, if the layer is MoE
-            #  (b) `decoder.layers.*.mlp.linear_fc1.layer_norm_weight`, if the layer is dense
-            # "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            # "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            # "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            # MLP
-            # "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            # "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
-            # "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.router.weight": "model.layers.*.mlp.shared_experts.gate.weight",
-            # "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
-            # "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-
-            # "decoder.layers.*.self_attention.linear_kv_up_proj.layer_norm_weight": "model.layers.*.self_attn.kv_a_layernorm.weight",  # For Dense MLA
-            # Sparse attention indexer
-
-            # "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-            # "decoder.layers.*.self_attention.linear_q_up_proj.layer_norm_weight": "model.layers.*.self_attn.q_a_layernorm.weight",
         }
-        
+
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 

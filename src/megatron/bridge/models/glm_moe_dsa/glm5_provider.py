@@ -28,5 +28,5 @@ class GLM5ModelProvider(DeepSeekV3ModelProvider):
     moe_aux_loss_coeff: float = 0.001
     sparse_attention_type: str = "dsa"
     index_head_dim: int = 128
-    index_n_heads: int = 64
+    index_n_heads: int = 32
     index_topk: int = 2048
