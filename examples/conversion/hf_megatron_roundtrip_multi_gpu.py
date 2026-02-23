@@ -227,7 +227,6 @@ if __name__ == "__main__":
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
     parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
     args = parser.parse_args()
-    print(f"args: {args}")
     main(
         args.hf_model_id,
         args.output_dir,

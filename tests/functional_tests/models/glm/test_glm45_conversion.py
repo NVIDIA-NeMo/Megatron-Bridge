@@ -13,9 +13,7 @@
 # limitations under the License.
 
 import json
-import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -62,6 +60,7 @@ HF_GLM45_TOY_MODEL_CONFIG = {
 }
 
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 def _get_num_experts(moe_experts) -> int | None:
     """Best-effort expert count across transformers versions."""
@@ -164,8 +163,6 @@ def _build_roundtrip_cmd(
         str(ep),
     ]
     return cmd
->>>>>>> very first version, local test passed, save as draft and then do more tests and cleaning
-
 
 class TestGLM45Conversion:
     """
@@ -187,7 +184,42 @@ class TestGLM45Conversion:
         temp_dir = tmp_path_factory.mktemp("glm45_toy_model")
         model_dir = temp_dir / "glm45_toy"
 
-        _create_glm45_toy_model(model_dir)
+        # Create GLM 4.5 config from the toy model config using AutoConfig
+        config = AutoConfig.from_pretrained("zai-org/GLM-4.5")
+
+        # Override with toy model config
+        for key, value in HF_GLM45_TOY_MODEL_CONFIG.items():
+            setattr(config, key, value)
+
+        config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
+
+        # Create model with random weights and convert to bfloat16
+        from transformers import Glm4MoeForCausalLM
+
+        model = Glm4MoeForCausalLM(config)
+
+        model = model.bfloat16()  # Use .bfloat16() method instead of .to()
+        for k, v in model.named_buffers():
+            if "e_score_correction_bias" in k:
+                v.data = v.data.to(torch.float32)
+
+        # Debug: Check model dtype before saving
+        for name, param in model.named_parameters():
+            print(f"Before save - {name}: {param.dtype}")
+            break  # Just check the first parameter
+
+        # Download and save tokenizer from a reference GLM model
+        tokenizer = AutoTokenizer.from_pretrained("zai-org/GLM-4.5")
+        tokenizer.save_pretrained(model_dir)
+
+        # Save model and config to directory
+        model.save_pretrained(model_dir, safe_serialization=True)
+
+        # Also save config.json explicitly to ensure compatibility with correct torch_dtype
+        config_to_save = HF_GLM45_TOY_MODEL_CONFIG.copy()
+        config_path = model_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(config_to_save, f, indent=2)
 
         return str(model_dir)
 
@@ -245,7 +277,7 @@ class TestGLM45Conversion:
         assert config_data["moe_intermediate_size"] == 512
 
         # Try loading the model to verify it's valid
-<<<<<<< HEAD
+
         try:
             from transformers import Glm4MoeForCausalLM
 
@@ -260,6 +292,7 @@ class TestGLM45Conversion:
             assert hasattr(model, "model")
             assert hasattr(model.model, "layers")
             assert len(model.model.layers) == 2  # num_hidden_layers
+<<<<<<< HEAD
 
             # Verify MoE structure
             # First layer is dense, second layer should have MoE structure
@@ -273,42 +306,21 @@ class TestGLM45Conversion:
             print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")
             print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
-=======
-        # try:
-        from transformers import Glm4MoeForCausalLM
->>>>>>> very first version, local test passed, save as draft and then do more tests and cleaning
 
-        model = Glm4MoeForCausalLM.from_pretrained(
-            glm45_toy_model_path,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=False,  # Ensure full loading
-            trust_remote_code=True,
-        )
+            # Verify MoE structure
+            # First layer is dense, second layer should have MoE structure
+            second_layer = model.model.layers[1]
+            assert hasattr(second_layer, "mlp")
+            # GLM 4.5 MoE structure check (may vary based on implementation)
+            if hasattr(second_layer.mlp, "experts"):
+                assert len(second_layer.mlp.experts) == 8  # n_routed_experts
 
-        # Verify model structure
-        print(f"Model: {model}")
-        assert hasattr(model, "model")
-        assert hasattr(model.model, "layers")
-        assert len(model.model.layers) == 2  # num_hidden_layers
+            print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
+            print("Model weights are correctly in bfloat16 format")
+            print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
 
-        # Verify MoE structure
-        # First layer is dense, second layer should have MoE structure
-        second_layer = model.model.layers[1]
-        assert hasattr(second_layer, "mlp")
-        print(f"second_layer mlp: {second_layer.mlp}")
-        total_size = [param.numel() for param in second_layer.mlp.experts.parameters()]
-        total_shapes = [param.shape for param in second_layer.mlp.experts.parameters()]
-        print(f"second_layer mlp experts: {second_layer.mlp.experts} and type: {type(second_layer.mlp.experts)} and size: {total_size} and shapes: {total_shapes}")
-        # GLM 4.5 MoE structure check (may vary based on implementation)
-        # if hasattr(second_layer.mlp, "experts"):
-        #     assert len(second_layer.mlp.experts) == 8  # n_routed_experts
-
-        print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
-        print("Model weights are correctly in bfloat16 format")
-        print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
-
-        # except Exception as e:
-        #     assert False, f"Failed to load created toy MoE model: {e}"
+        except Exception as e:
+            assert False, f"Failed to load created toy MoE model: {e}"
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
@@ -336,108 +348,88 @@ class TestGLM45Conversion:
         test_output_dir = tmp_path / f"glm45_moe_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        repo_root = _repo_root()
-        cmd = _build_roundtrip_cmd(
-            glm45_toy_model_path, test_output_dir, tp, pp, ep, repo_root
-        )
+        # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration on our toy MoE model
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
+            "--parallel-mode",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "--hf-model-id",
+            glm45_toy_model_path,  # Use our local toy MoE model instead of downloading
+            "--output-dir",
+            str(test_output_dir),
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+            "--ep",
+            str(ep),
+        ]
 
-        # try:
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
-        print(f"RESULT: {result}")
-        # Check that the conversion completed successfully
-        if result.returncode != 0:
-            print(f"STDOUT: {result.stdout}")
-            print(f"STDERR: {result.stderr}")
-            assert False, f"GLM 4.5 MoE {test_name} conversion failed with return code {result.returncode}"
-
-        # Verify that the converted model was saved
-        # The output directory should be named after the last part of the model path
-        model_name = Path(glm45_toy_model_path).name  # "glm45_toy"
-        converted_model_dir = test_output_dir / model_name
-        assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
-
-        # Check that essential model files exist
-        config_file = converted_model_dir / "config.json"
-        assert config_file.exists(), f"config.json not found in converted model at {config_file}"
-
-        # Check for model weights file (could be either safetensors or pytorch_model.bin)
-        weights_file_safetensors = converted_model_dir / "model.safetensors"
-        weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
-
-        # Check for single files first
-        weights_found = weights_file_safetensors.exists() or weights_file_pytorch.exists()
-
-        # If single files don't exist, check for sharded files
-        if not weights_found:
-            sharded_safetensors = list(converted_model_dir.glob("model-*-of-*.safetensors"))
-            sharded_pytorch = list(converted_model_dir.glob("pytorch_model-*-of-*.bin"))
-            weights_found = len(sharded_safetensors) > 0 or len(sharded_pytorch) > 0
-
-        assert weights_found, f"Model weights file not found in converted model at {converted_model_dir}"
-
-        # Verify the config contains GLM 4.5 MoE-specific parameters
-        with open(config_file) as f:
-            saved_config = json.load(f)
-
-        assert saved_config["model_type"] == "glm", (
-            "Model type should be glm (GLM 4.5 MoE uses Glm4MoeForCausalLM)"
-        )
-        assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
-        assert saved_config["num_attention_heads"] == 8, "Number of attention heads should match toy config"
-        # Verify MoE specific parameters are preserved
-        assert saved_config["n_routed_experts"] == 8, "Number of routed experts should match toy config"
-        assert saved_config["num_experts_per_tok"] == 4, "Number of experts per token should match toy config"
-        assert saved_config["moe_intermediate_size"] == 512, "MoE intermediate size should match toy config"
-
-        print(f"SUCCESS: GLM 4.5 MoE {test_name} conversion test completed successfully")
-        print(f"Converted model saved at: {converted_model_dir}")
-        print(
-            f"MoE parameters preserved: {saved_config['n_routed_experts']} experts, {saved_config['num_experts_per_tok']} per token"
-        )
-
-    @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize(
-        "tp,pp,ep,test_name",
-        [
-            (2, 1, 1, "TP"),
-            (1, 2, 1, "PP"),
-            (1, 1, 2, "EP"),
-        ],
-    )
-    def test_glm45_conversion_parallelism_local_model(self, tmp_path, tp, pp, ep, test_name):
-        """
-        Run hf_megatron_roundtrip_multi_gpu.py using a local model path on disk.
-
-        Set GLM45_LOCAL_MODEL_DIR to a writable directory; the test will create
-        a toy model under that path if it doesn't exist yet.
-        """
-        local_root = os.environ.get("GLM45_LOCAL_MODEL_DIR")
-        if not local_root:
-            pytest.skip("Set GLM45_LOCAL_MODEL_DIR to run the local-path conversion test.")
-
-        local_root_path = Path(local_root)
-        local_root_path.mkdir(parents=True, exist_ok=True)
-        model_dir = local_root_path / "glm45_toy"
-
-        if not model_dir.exists():
-            _create_glm45_toy_model(model_dir)
-
-        test_output_dir = local_root_path / f"glm45_moe_{test_name}_out"
-        test_output_dir.mkdir(exist_ok=True)
-
-        repo_root = _repo_root()
-        print(f"model_dir: {model_dir}, test_output_dir: {test_output_dir}, repo_root: {repo_root}, tp: {tp}, pp: {pp}, ep: {ep}")
-        cmd = _build_roundtrip_cmd(str(model_dir), test_output_dir, tp, pp, ep, repo_root)
-
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
-        print(f"RESULT: {result}")
-        if result.returncode != 0:
-            print(f"STDOUT: {result.stdout}")
-            print(f"STDERR: {result.stderr}")
-            assert False, (
-                f"GLM 4.5 MoE local-path {test_name} conversion failed with return code {result.returncode}"
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
-        # except Exception as e:
-        #     print(f"Error during GLM 4.5 MoE {test_name} conversion test: {e}")
-        #     raise
+            # Check that the conversion completed successfully
+            if result.returncode != 0:
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                assert False, f"GLM 4.5 MoE {test_name} conversion failed with return code {result.returncode}"
+
+            # Verify that the converted model was saved
+            # The output directory should be named after the last part of the model path
+            model_name = Path(glm45_toy_model_path).name  # "glm45_toy"
+            converted_model_dir = test_output_dir / model_name
+            assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
+
+            # Check that essential model files exist
+            config_file = converted_model_dir / "config.json"
+            assert config_file.exists(), f"config.json not found in converted model at {config_file}"
+
+            # Check for model weights file (could be either safetensors or pytorch_model.bin)
+            weights_file_safetensors = converted_model_dir / "model.safetensors"
+            weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
+
+            # Check for single files first
+            weights_found = weights_file_safetensors.exists() or weights_file_pytorch.exists()
+
+            # If single files don't exist, check for sharded files
+            if not weights_found:
+                sharded_safetensors = list(converted_model_dir.glob("model-*-of-*.safetensors"))
+                sharded_pytorch = list(converted_model_dir.glob("pytorch_model-*-of-*.bin"))
+                weights_found = len(sharded_safetensors) > 0 or len(sharded_pytorch) > 0
+
+            assert weights_found, f"Model weights file not found in converted model at {converted_model_dir}"
+
+            # Verify the config contains GLM 4.5 MoE-specific parameters
+            with open(config_file) as f:
+                saved_config = json.load(f)
+
+            assert saved_config["model_type"] == "glm", (
+                "Model type should be glm (GLM 4.5 MoE uses Glm4MoeForCausalLM)"
+            )
+            assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
+            assert saved_config["num_attention_heads"] == 8, "Number of attention heads should match toy config"
+            # Verify MoE specific parameters are preserved
+            assert saved_config["n_routed_experts"] == 8, "Number of routed experts should match toy config"
+            assert saved_config["num_experts_per_tok"] == 4, "Number of experts per token should match toy config"
+            assert saved_config["moe_intermediate_size"] == 512, "MoE intermediate size should match toy config"
+
+            print(f"SUCCESS: GLM 4.5 MoE {test_name} conversion test completed successfully")
+            print(f"Converted model saved at: {converted_model_dir}")
+            print(
+                f"MoE parameters preserved: {saved_config['n_routed_experts']} experts, {saved_config['num_experts_per_tok']} per token"
+            )
+
+        except Exception as e:
+            print(f"Error during GLM 4.5 MoE {test_name} conversion test: {e}")
+            raise
