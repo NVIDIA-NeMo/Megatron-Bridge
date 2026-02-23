@@ -26,7 +26,7 @@ To import the HF model to your desired Megatron path:
 
 ```bash
 python examples/conversion/convert_checkpoints.py import \
-    --hf-model openai/gpt-oss-20b \
+    --hf-model unsloth/gpt-oss-20b-BF16 \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b \
     --trust-remote-code
 ```
@@ -37,7 +37,7 @@ Use `--not-strict` when the original HF model uses a different format (e.g. mxfp
 
 ```bash
 python examples/conversion/convert_checkpoints.py export \
-    --hf-model openai/gpt-oss-20b \
+    --hf-model unsloth/gpt-oss-20b-BF16 \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gpt-oss-20b-hf-export \
     --not-strict
@@ -50,7 +50,7 @@ Multi-GPU round-trip validation between formats:
 ```bash
 python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id openai/gpt-oss-20b \
+    --hf-model-id unsloth/gpt-oss-20b-BF16 \
     --megatron-load-path ${WORKSPACE}/models/gpt-oss-20b/iter_0000000 \
     --tp 2 --pp 2 \
     --trust-remote-code \
