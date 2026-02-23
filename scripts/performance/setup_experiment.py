@@ -501,7 +501,6 @@ def main(
                 performance_config=performance_params,
                 memory_config=memory_params,
                 wandb_run=wandb_run,
-                is_long_convergence_run=is_long_convergence_run,
             )
 
             if wandb_run:

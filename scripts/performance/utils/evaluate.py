@@ -41,7 +41,7 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
-def get_metrics_from_logfiles(log_paths: List[str], metric: str, is_long_convergence_run: bool = False):
+def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     """
     Parse training log files and extract metrics.
 
@@ -493,7 +493,6 @@ def calc_convergence_and_performance(
     performance_config: Dict[str, Any],
     memory_config: Dict[str, Any],
     wandb_run: Optional["wandb.Run"] = None,
-    is_long_convergence_run: bool = False,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -521,12 +520,12 @@ def calc_convergence_and_performance(
     if not HAVE_NUMPY:
         raise ImportError("numpy is required for calculating perf and convergence metrics")
 
-    current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric, is_long_convergence_run)
-    current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric, is_long_convergence_run)
-    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm", is_long_convergence_run)
-    current_alloc = get_metrics_from_logfiles(log_paths, alloc_metric, is_long_convergence_run)
-    current_max_alloc = get_metrics_from_logfiles(log_paths, max_alloc_metric, is_long_convergence_run)
-    current_gpu_util = get_metrics_from_logfiles(log_paths, "GPU utilization", is_long_convergence_run)
+    current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
+    current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
+    current_grad_norm = get_metrics_from_logfiles(log_paths, "grad norm")
+    current_alloc = get_metrics_from_logfiles(log_paths, alloc_metric)
+    current_max_alloc = get_metrics_from_logfiles(log_paths, max_alloc_metric)
+    current_gpu_util = get_metrics_from_logfiles(log_paths, "GPU utilization")
 
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
