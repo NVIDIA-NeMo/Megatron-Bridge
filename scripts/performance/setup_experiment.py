@@ -477,9 +477,6 @@ def main(
                 list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
             )
 
-            if not is_long_convergence_run:
-                log_paths = [log_paths[-1]]
-
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
             wandb_run = None
             if HAVE_WANDB and wandb_key:
