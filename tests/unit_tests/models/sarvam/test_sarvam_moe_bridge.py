@@ -21,7 +21,6 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -87,7 +86,6 @@ class TestSarvamMoEBridge:
 
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
-        m.generation_config = Mock(spec=GenerationConfig)
         return m
 
     def test_registration(self):
@@ -112,7 +110,6 @@ class TestSarvamMoEBridge:
         assert provider.vocab_size == mock_pretrained_moe.config.vocab_size
         assert provider.seq_length == mock_pretrained_moe.config.max_position_embeddings
         assert provider.rotary_base == mock_pretrained_moe.config.rope_theta
-        assert provider.generation_config == mock_pretrained_moe.generation_config
 
         expected_freq = [0] * mock_pretrained_moe.config.first_k_dense_replace + [1] * (
             mock_pretrained_moe.config.num_hidden_layers - mock_pretrained_moe.config.first_k_dense_replace
@@ -147,7 +144,6 @@ class TestSarvamMoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = SarvamMoEBridge()
 
@@ -162,32 +158,6 @@ class TestSarvamMoEBridge:
         assert result.fp16 is True
         assert result.bf16 is False
         assert result.params_dtype == torch.float16
-
-    def test_provider_bridge_generation_config_passthrough(self, mock_pretrained_moe):
-        bridge = SarvamMoEBridge()
-        provider = bridge.provider_bridge(mock_pretrained_moe)
-        assert provider.generation_config == mock_pretrained_moe.generation_config
-
-    def test_provider_bridge_generation_config_none(self, sarvam_moe_config_dict_small):
-        cfg = Mock()
-        for k, v in sarvam_moe_config_dict_small.items():
-            setattr(cfg, k, v)
-
-        mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = cfg
-        mock_pretrained.generation_config = None
-
-        bridge = SarvamMoEBridge()
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.generation_config is None
-
-    def test_provider_bridge_generation_config_attribute_absent(self, sarvam_moe_config_dict_small):
-        """Cover get_common_config(getattr(..., None)) branch when generation_config attr is absent."""
-        cfg = SimpleNamespace(**sarvam_moe_config_dict_small)
-        hf = SimpleNamespace(config=cfg)  # no generation_config attribute on purpose
-
-        provider = SarvamMoEBridge().provider_bridge(hf)
-        assert provider.generation_config is None
 
     def test_provider_bridge_requires_torch_dtype_attribute(self, sarvam_moe_config_dict_small):
         """Match Qwen-style robustness tests: torch_dtype is required for dtype mapping."""
@@ -209,7 +179,6 @@ class TestSarvamMoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = None
 
         bridge = SarvamMoEBridge()
         provider = bridge.provider_bridge(mock_pretrained)
@@ -224,7 +193,6 @@ class TestSarvamMoEBridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = SarvamMoEBridge()
         provider = bridge.provider_bridge(mock_pretrained)

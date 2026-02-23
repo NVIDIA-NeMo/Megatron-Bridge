@@ -21,7 +21,6 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -65,7 +64,6 @@ class TestSarvamMLABridge:
 
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
-        m.generation_config = Mock(spec=GenerationConfig)
         return m
 
     def test_registration(self):
@@ -86,7 +84,6 @@ class TestSarvamMLABridge:
         assert provider.vocab_size == mock_pretrained_mla.config.vocab_size
         assert provider.seq_length == mock_pretrained_mla.config.max_position_embeddings
         assert provider.rotary_base == mock_pretrained_mla.config.rope_theta
-        assert provider.generation_config == mock_pretrained_mla.generation_config
 
         # MLA-specific
         assert provider.kv_channels == mock_pretrained_mla.config.hidden_size // mock_pretrained_mla.config.num_attention_heads
@@ -94,7 +91,7 @@ class TestSarvamMLABridge:
         assert provider.qk_head_dim == mock_pretrained_mla.config.qk_nope_head_dim
         assert provider.qk_pos_emb_head_dim == mock_pretrained_mla.config.qk_rope_head_dim
         assert provider.v_head_dim == mock_pretrained_mla.config.v_head_dim
-        
+
         # dtype mapping
         assert provider.fp16 is True
         assert provider.bf16 is False
@@ -142,7 +139,6 @@ class TestSarvamMLABridge:
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = cfg
-        mock_pretrained.generation_config = None
 
         bridge = SarvamMLABridge()
 
@@ -157,11 +153,6 @@ class TestSarvamMLABridge:
         assert provider.fp16 is True
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float16
-
-    def test_provider_bridge_generation_config_passthrough(self, mock_pretrained_mla):
-        bridge = SarvamMLABridge()
-        provider = bridge.provider_bridge(mock_pretrained_mla)
-        assert provider.generation_config == mock_pretrained_mla.generation_config
 
     def test_mapping_registry_basic_lookups(self):
         bridge = SarvamMLABridge()

@@ -38,7 +38,6 @@ def get_common_config(hf_pretrained: PreTrainedCausalLM) -> dict:
     )
     config["vocab_size"] = hf_config.vocab_size
     config["seq_length"] = hf_config.max_position_embeddings
-    config["generation_config"] = getattr(hf_pretrained, "generation_config", None)
     config["rotary_base"] = hf_config.rope_theta
 
     return config
