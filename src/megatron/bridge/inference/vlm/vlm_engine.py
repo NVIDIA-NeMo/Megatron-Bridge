@@ -18,25 +18,11 @@ import torch
 from megatron.core.inference.engines.mcore_engine import MCoreEngine
 from megatron.core.inference.inference_request import InferenceRequest
 from megatron.core.inference.sampling_params import SamplingParams
-from megatron.core.inference.scheduler import Scheduler
-from megatron.core.inference.text_generation_controllers.text_generation_controller import TextGenerationController
 from PIL.Image import Image
 
 
 class VLMEngine(MCoreEngine):
     """VLM inference engine extending MCoreEngine with image support."""
-
-    def __init__(
-        self,
-        text_generation_controller: TextGenerationController,
-        max_batch_size: Optional[int] = None,
-        random_seed: Optional[int] = None,
-    ):
-        self.controller = text_generation_controller
-        self.inference_wrapped_model = self.controller.inference_wrapped_model
-        self.config = self.inference_wrapped_model.config
-        self.random_seed = random_seed or 1234
-        self.scheduler = Scheduler(max_batch_size=max_batch_size)
 
     # pylint: disable=C0115,C0116
     def generate(
