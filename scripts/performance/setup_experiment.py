@@ -144,7 +144,7 @@ def ensure_logs_where_written(log_file_paths: List[str]):
     """Ensure logs were written to disk."""
     if len(log_file_paths) == 0:
         raise FileNotFoundError(
-            f"Unexpected number of log files found: {log_file_paths}. Expected at least1, got {len(log_file_paths)}"
+            f"Unexpected number of log files found: {log_file_paths}. Expected at least 1, got {len(log_file_paths)}"
         )
 
 
