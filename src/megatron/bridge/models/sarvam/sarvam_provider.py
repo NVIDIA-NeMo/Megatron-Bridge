@@ -84,7 +84,7 @@ class SarvamMoEModelProvider(GPTModelProvider):
     cp_comm_type: str = "p2p"
     recompute_granularity: str = "selective"
     recompute_modules: List[str] = field(
-        default_factory=lambda: ["layernorm", "shared_experts", "moe", "mlp", "moe_act"]
+        default_factory=lambda: ["layernorm", "shared_experts", "mlp", "moe_act"]
     )
 
     # Configured through hf config
@@ -156,7 +156,7 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     cp_comm_type: str = "p2p"
     recompute_granularity: str = "selective"
     recompute_modules: List[str] = field(
-        default_factory=lambda: ["layernorm", "shared_experts", "moe", "mlp", "moe_act"]
+        default_factory=lambda: ["moe"]
     )
 
     multi_latent_attention: bool = True

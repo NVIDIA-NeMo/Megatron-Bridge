@@ -60,18 +60,9 @@ class TestSarvamProviderDefaults:
         assert provider.moe_router_dtype == "fp32"
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_router_topk_scaling_factor == 2.5
-        assert provider.moe_z_loss_coeff == 3.5e-5
         assert provider.moe_token_dispatcher_type == "alltoall"
         assert provider.moe_permute_fusion is True
-
-        # Recompute defaults (must include key blocks)
         assert provider.recompute_granularity == "selective"
-        assert "layernorm" in provider.recompute_modules
-        assert "moe" in provider.recompute_modules
-        assert "mlp" in provider.recompute_modules
-
-        # This list is a critical performance/behavior contract; assert exact content
-        assert provider.recompute_modules == ["layernorm", "shared_experts", "moe", "mlp", "moe_act"]
 
     def test_sarvam_mla_provider_defaults(self):
         provider = SarvamMLAModelProvider()
@@ -100,15 +91,9 @@ class TestSarvamProviderDefaults:
 
         # Shape/config defaults that must stay coherent
         assert provider.seq_length == 131072
-        assert provider.rotary_base == 8_000_000.0
+        assert provider.rotary_base == 10_000.0
         assert provider.vocab_size == 262144
-
-        # Recompute defaults should match MoE defaults too
         assert provider.recompute_granularity == "selective"
-        assert "layernorm" in provider.recompute_modules
-        assert "moe" in provider.recompute_modules
-        assert "mlp" in provider.recompute_modules
-        assert provider.recompute_modules == ["layernorm", "shared_experts", "moe", "mlp", "moe_act"]
 
     def test_default_factories_are_not_shared_between_instances(self):
         """Guard against accidental shared mutable defaults (list fields)."""

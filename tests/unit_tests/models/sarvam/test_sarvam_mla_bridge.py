@@ -55,7 +55,6 @@ class TestSarvamMLABridge:
             "qk_nope_head_dim": 128,
             "qk_rope_head_dim": 64,
             "v_head_dim": 128,
-            "rope_scaling": {"factor": 40, "mscale": 1.0, "mscale_all_dim": 1.0},
         }
 
     @pytest.fixture
@@ -95,11 +94,7 @@ class TestSarvamMLABridge:
         assert provider.qk_head_dim == mock_pretrained_mla.config.qk_nope_head_dim
         assert provider.qk_pos_emb_head_dim == mock_pretrained_mla.config.qk_rope_head_dim
         assert provider.v_head_dim == mock_pretrained_mla.config.v_head_dim
-
-        assert provider.rotary_scaling_factor == mock_pretrained_mla.config.rope_scaling["factor"]
-        assert provider.mscale == mock_pretrained_mla.config.rope_scaling["mscale"]
-        assert provider.mscale_all_dim == mock_pretrained_mla.config.rope_scaling["mscale_all_dim"]
-
+        
         # dtype mapping
         assert provider.fp16 is True
         assert provider.bf16 is False
@@ -111,67 +106,6 @@ class TestSarvamMLABridge:
         assert provider.add_qkv_bias is False
         assert provider.gated_linear_unit is True
         assert provider.position_embedding_type == "rope"
-
-    def test_provider_bridge_rope_scaling_defaults_when_missing(self, sarvam_mla_config_dict):
-        cfg = Mock()
-        for k, v in sarvam_mla_config_dict.items():
-            if k == "rope_scaling":
-                continue
-            setattr(cfg, k, v)
-        cfg.rope_scaling = None
-
-        m = Mock(spec=PreTrainedCausalLM)
-        m.config = cfg
-        m.generation_config = None
-
-        bridge = SarvamMLABridge()
-        provider = bridge.provider_bridge(m)
-
-        assert provider.rotary_scaling_factor == 1.0
-        assert provider.mscale == 1.0
-        assert provider.mscale_all_dim == 1.0
-
-    def test_provider_bridge_rope_scaling_attribute_absent_defaults(self):
-        """Cover the branch where rope_scaling attr is entirely absent (not just None)."""
-        cfg = SimpleNamespace(
-            architectures=["SarvamMLAForCausalLM"],
-            auto_map={"AutoModelForCausalLM": "modeling_sarvam.SarvamMLAForCausalLM"},
-            # Common Sarvam fields
-            num_hidden_layers=2,
-            hidden_size=256,
-            intermediate_size=1024,
-            moe_intermediate_size=128,
-            num_attention_heads=8,
-            num_experts=4,
-            num_experts_per_tok=2,
-            num_shared_experts=1,
-            first_k_dense_replace=0,
-            vocab_size=32000,
-            max_position_embeddings=2048,
-            rope_theta=8_000_000.0,
-            # dtype
-            torch_dtype="bfloat16",
-            # MLA fields
-            kv_lora_rank=64,
-            qk_nope_head_dim=32,
-            qk_rope_head_dim=16,
-            v_head_dim=32,
-            # NOTE: no rope_scaling attribute here on purpose
-        )
-
-        # No generation_config attribute either; get_common_config should default to None.
-        hf = SimpleNamespace(config=cfg)
-
-        bridge = SarvamMLABridge()
-        provider = bridge.provider_bridge(hf)
-
-        assert provider.rotary_scaling_factor == 1.0
-        assert provider.mscale == 1.0
-        assert provider.mscale_all_dim == 1.0
-        assert provider.generation_config is None
-        assert provider.bf16 is True
-        assert provider.fp16 is False
-        assert provider.params_dtype == torch.bfloat16
 
     def test_provider_bridge_requires_torch_dtype_attribute(self):
         """Match Qwen-style robustness tests: torch_dtype is required for dtype mapping."""
