@@ -14,27 +14,27 @@
 # limitations under the License.
 
 # ==============================================================================
-# GLM-4.5V Full Supervised Fine-Tuning (SFT)
+# Nemotron 3 Nano Pretraining
 #
-# GLM-4.5V is a large MoE model (106B parameters)
-# Recommended: TP=1, PP=8, EP=16 for full SFT (512 GPUs, 64 nodes)
-# For smaller setups, use LoRA/DoRA instead (see slurm_peft.sh)
+# Nemotron 3 Nano is a 30B parameter model with A3B (Active 3 Billion) architecture
+# Supports multiple parallelism configs: each "TP,PP,EP,CP,SP" runs sequentially.
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
 #   2. Set CONTAINER_IMAGE to your container path
-#   3. Submit: sbatch slurm_sft.sh
+#   3. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
+#   4. Submit: sbatch slurm_pretrain.sh
 # ==============================================================================
 
-#SBATCH --job-name=glm45v-sft
-#SBATCH --nodes=64
+#SBATCH --job-name=nemotron3-pretrain
+#SBATCH --nodes=4
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpu
 #SBATCH --account=my_account
-#SBATCH --output=logs/glm45v_sft_%j.out
-#SBATCH --error=logs/glm45v_sft_%j.err
+#SBATCH --output=logs/nemotron3_pretrain_%j.out
+#SBATCH --error=logs/nemotron3_pretrain_%j.err
 #SBATCH --exclusive
 
 # ==============================================================================
@@ -45,24 +45,19 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Model and training configurations
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/GLM-4.5V
-MODEL_NAME=glm_45v
-DATASET_NAME=cord_v2
-SEQ_LENGTH=8192
+MODEL_NAME=nemotron_3_nano
+DATASET_NAME=mock
+SEQ_LENGTH=512
 TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=64
+GLOBAL_BATCH_SIZE=32
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=10
-LR=0.000005
-MIN_LR=0.0000005
-LR_WARMUP_ITERS=10
+LR_WARMUP_ITERS=5
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
-# Parallelism configuration
-TP=1
-PP=8
-EP=16
+# Parallelism configs: "TP,PP,EP,CP,SP" per entry
+PARALLELISM_CONFIGS=("4,1,8,1,True" "2,2,8,1,True" "2,1,8,2,True")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -90,57 +85,23 @@ export NCCL_NVLS_ENABLE=0
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
 # export WANDB_API_KEY="your_wandb_key_here"
-# or disable wandb logging
-# export WANDB_MODE=disabled
 
 # ==============================================================================
 # Job Execution
 # ==============================================================================
 
 echo "======================================"
-echo "GLM-4.5V Full SFT Training Job"
+echo "Nemotron 3 Nano Pretraining Job"
 echo "======================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $SLURM_GPUS_PER_NODE"
 echo "Model: $MODEL_NAME"
-echo "Parallelism: TP=$TP, PP=$PP, EP=$EP"
+echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
 echo "======================================"
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
-
-# Build CLI overrides
-CLI_OVERRIDES="\
-    checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
-    model.seq_length=$SEQ_LENGTH \
-    train.train_iters=$TRAIN_ITERS \
-    train.global_batch_size=$GLOBAL_BATCH_SIZE \
-    train.micro_batch_size=$MICRO_BATCH_SIZE \
-    train.eval_iters=$EVAL_ITERS \
-    optimizer.lr=$LR \
-    optimizer.min_lr=$MIN_LR \
-    scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-    checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_sft_tp${TP}_pp${PP}_ep${EP} \
-    logger.log_interval=$LOG_INTERVAL \
-    logger.wandb_project=$WANDB_PROJECT \
-    logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP}_ep${EP} \
-    dataset.maker_name=make_${DATASET_NAME}_dataset \
-    dataset.seq_length=$SEQ_LENGTH \
-    model.tensor_model_parallel_size=$TP \
-    model.pipeline_model_parallel_size=$PP \
-    model.expert_model_parallel_size=$EP"
-
-# Build command
-# If mounting a workspace that requires re-syncing dependencies, uncomment the uv sync line:
-# CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
-CMD="uv run --no-sync python scripts/training/run_recipe.py"
-CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
-CMD="$CMD --step_func vlm_step"
-CMD="$CMD $CLI_OVERRIDES"
-
-echo "Executing command..."
-echo "======================================"
 
 # Require container image
 if [ -z "$CONTAINER_IMAGE" ]; then
@@ -148,18 +109,59 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     exit 1
 fi
 
-# Build srun command
+# Build srun command (shared across configs)
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
-
-# Add container mounts
 if [ -n "$CONTAINER_MOUNTS" ]; then
-    for mount in $CONTAINER_MOUNTS; do
-        SRUN_CMD="$SRUN_CMD --container-mounts=$mount"
-    done
+    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
 fi
+echo "SRUN base: $SRUN_CMD"
+echo "======================================"
 
-$SRUN_CMD bash -c "$CMD"
+# Run each parallelism config in sequence
+CONFIG_INDEX=0
+for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
+    IFS=',' read -r TP PP EP CP SP <<< "$CONFIG"
+    CONFIG_INDEX=$((CONFIG_INDEX + 1))
+    echo ""
+    echo "======================================"
+    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP"
+    echo "======================================"
+
+    # Build CLI overrides for this config
+    CLI_OVERRIDES="\
+        model.seq_length=$SEQ_LENGTH \
+        train.train_iters=$TRAIN_ITERS \
+        train.global_batch_size=$GLOBAL_BATCH_SIZE \
+        train.micro_batch_size=$MICRO_BATCH_SIZE \
+        train.eval_iters=$EVAL_ITERS \
+        scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
+        logger.log_interval=$LOG_INTERVAL \
+        logger.wandb_project=$WANDB_PROJECT \
+        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
+        dataset.sequence_length=$SEQ_LENGTH \
+        model.tensor_model_parallel_size=$TP \
+        model.pipeline_model_parallel_size=$PP \
+        model.expert_model_parallel_size=$EP \
+        model.sequence_parallel=$SP \
+        model.context_parallel_size=$CP"
+
+    CMD="uv run --no-sync python scripts/training/run_recipe.py"
+    CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
+    CMD="$CMD $CLI_OVERRIDES"
+
+    echo "Executing command..."
+    echo $CMD
+    echo "======================================"
+
+    $SRUN_CMD bash -c "$CMD"
+    RUN_EXIT=$?
+    if [ $RUN_EXIT -ne 0 ]; then
+        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP failed with exit code $RUN_EXIT"
+        exit $RUN_EXIT
+    fi
+done
 
 echo "======================================"
-echo "Job completed"
+echo "Job completed (all ${#PARALLELISM_CONFIGS[@]} configs)"
 echo "======================================"
