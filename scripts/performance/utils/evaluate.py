@@ -69,7 +69,7 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str, is_long_converg
 
     if is_long_convergence_run:
         for log_path in log_paths:
-            with open(log_path, "r") as f:
+            with open(log_path, "r", errors="replace") as f:
                 for line in f:
                     all_lines.append(line)
     else:

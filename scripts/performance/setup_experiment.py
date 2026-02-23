@@ -65,7 +65,7 @@ def check_training_finished(log_file_paths: List[str]) -> bool:
     """Check if training is finished."""
     all_lines = []
     for log_path in log_file_paths:
-        with open(log_path, "r") as f:
+        with open(log_path, "r", errors="replace") as f:
             for line in f:
                 all_lines.append(
                     (
