@@ -33,6 +33,8 @@ class EnergonProvider(DatasetProvider):
     num_workers: int_repr
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
+    # Enable batch-level online sequence packing
+    pack_sequences_in_batch: bool = False
 
     def build_datasets(self, context: DatasetBuildContext):
         dataset = EnergonMultiModalDataModule(
