@@ -61,18 +61,20 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-def check_training_finished(log_file_path: str) -> bool:
+def check_training_finished(log_file_paths: List[str]) -> bool:
     """Check if training is finished."""
     all_lines = []
-    for log_path in log_file_path:
+    for log_path in log_file_paths:
         with open(log_path, "r") as f:
             for line in f:
-                all_lines.append(line)
-    return (
-        "StopIteration" in all_lines
-        or "after training is done" in all_lines
-        or "exiting program at iteration" in all_lines
-    )
+                all_lines.append(
+                    (
+                        "StopIteration" in line
+                        or "after training is done" in line
+                        or "exiting program at iteration" in line
+                    )
+                )
+    return any(all_lines)
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
