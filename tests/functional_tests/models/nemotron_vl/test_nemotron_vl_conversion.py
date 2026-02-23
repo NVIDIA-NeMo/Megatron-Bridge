@@ -155,8 +155,7 @@ class TestNemotronVLConversion:
         assert config_file.exists(), f"config.json not found at {config_file}"
 
         # Check for model weights (safetensors preferred)
-        weights_file = model_path / "model-00001-of-00006.safetensors"
-        assert weights_file.exists(), f"Model weights file not found in {model_path}"
+        assert list(model_path.glob("model*.safetensors")), f"Model weights file not found in {model_path}"
 
         # Check for tokenizer files
         tokenizer_config_file = model_path / "tokenizer_config.json"

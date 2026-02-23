@@ -308,6 +308,7 @@ class TestLlamaNemotronHeterogeneousRoundtrip:
 
         config_dict = {
             "architectures": ["DeciLMForCausalLM"],
+            "model_type": "llama",
             "auto_map": {"AutoModelForCausalLM": "modeling_decilm.DeciLMForCausalLM"},
             "hidden_size": H,
             "num_attention_heads": A,

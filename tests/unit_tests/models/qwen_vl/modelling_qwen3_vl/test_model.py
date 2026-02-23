@@ -161,7 +161,11 @@ class TestQwen3VLModel:
                 else hf_config.text_config.rope_parameters.get("rope_theta", 5000000.0)
             ),
             rotary_percent=1.0,
-            mrope_section=hf_config.text_config.rope_scaling.get("mrope_section", [16, 24, 24]),
+            mrope_section=(
+                hf_config.text_config.rope_parameters.get("mrope_section", [16, 24, 24])
+                if hasattr(hf_config.text_config, "rope_parameters") and hf_config.text_config.rope_parameters
+                else hf_config.text_config.rope_scaling.get("mrope_section", [16, 24, 24])
+            ),
             hf_text_config=hf_config.text_config,
             # Training settings
             normalization="RMSNorm",

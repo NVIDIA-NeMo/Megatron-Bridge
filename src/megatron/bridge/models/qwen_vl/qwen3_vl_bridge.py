@@ -107,7 +107,8 @@ class Qwen3VLBridge(MegatronModelBridge):
         provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
         provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
         provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
-        provider.mrope_section = text_config.rope_scaling.get("mrope_section", [24, 20, 20])
+        rope_cfg = getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", {})
+        provider.mrope_section = rope_cfg.get("mrope_section", [24, 20, 20])
 
         return provider
 
@@ -283,7 +284,8 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
         provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
         provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
-        provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [24, 20, 20])
+        rope_cfg = getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", {})
+        provider.mrope_section = rope_cfg.get("mrope_section", [24, 20, 20])
 
         return provider
 
