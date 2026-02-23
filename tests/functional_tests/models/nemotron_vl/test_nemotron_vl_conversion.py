@@ -245,8 +245,7 @@ class TestNemotronVLConversion:
         assert config_file.exists(), f"config.json not found in converted model at {config_file}"
 
         # Check for model weights file (could be either safetensors or pytorch_model.bin)
-        weights_file_safetensors = converted_model_dir / "model-00001-of-00006.safetensors"
-        assert weights_file_safetensors.exists(), (
+        assert list(converted_model_dir.glob("model*.safetensors")), (
             f"Model weights file not found in converted model at {converted_model_dir}"
         )
 

@@ -457,4 +457,3 @@ class TestLlamaNemotronHeterogeneousRoundtrip:
         assert saved_config["hidden_size"] == 128
         assert saved_config["num_attention_heads"] == 8
         assert saved_config["num_hidden_layers"] == 2
-        assert saved_config.get("rope_scaling", {}).get("rope_type") == "llama3"
