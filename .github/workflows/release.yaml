@@ -70,10 +70,10 @@ jobs:
       publish-docs: ${{ inputs.publish-docs }}
       docs-target-path: nemo/megatron-bridge
     secrets:
-      TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
-      TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
-      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
+      TWINE_USERNAME: __token__
+      TWINE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SVC_PYPI_TOKEN || secrets.SVC_PYPI_TEST_TOKEN }}
+      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
+      SLACK_WEBHOOK: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SLACK_MAIN_CHANNEL_WEBHOOK || secrets.SLACK_CI_CHANNEL_WEBHOOK }}
       PAT: ${{ secrets.PAT }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
       SSH_PWD: ${{ secrets.SSH_PWD }}
