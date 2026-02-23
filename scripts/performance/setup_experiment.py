@@ -63,10 +63,16 @@ logger = logging.getLogger(__name__)
 
 def check_training_finished(log_file_path: str) -> bool:
     """Check if training is finished."""
-    with open(log_file_path, "r") as f:
-        log_lines = f.readlines()
-    log = "\n".join(log_lines)
-    return "StopIteration" in log or "after training is done" in log or "exiting program at iteration" in log
+    all_lines = []
+    for log_path in log_file_path:
+        with open(log_path, "r") as f:
+            for line in f:
+                all_lines.append(line)
+    return (
+        "StopIteration" in all_lines
+        or "after training is done" in all_lines
+        or "exiting program at iteration" in all_lines
+    )
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
@@ -447,7 +453,7 @@ def main(
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
-                check_training_finished(log_file_paths[-1]) if is_long_convergence_run else (job_status == "SUCCEEDED")
+                check_training_finished(log_file_paths) if is_long_convergence_run else (job_status == "SUCCEEDED")
             )
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
