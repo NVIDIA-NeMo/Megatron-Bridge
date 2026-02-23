@@ -443,7 +443,7 @@ def main(
                 is_testing_passed = True
                 break
 
-            log_file_paths = list(Path(f"{job_dir}").glob("log*_0.out"))
+            log_file_paths = list(Path(f"{job_dir}").glob("log*0.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
@@ -466,7 +466,7 @@ def main(
 
         if is_finished_experiment is True and detach is False:
             log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*_0.out"))
+                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*0.out"))
             )
 
             if not is_long_convergence_run:
