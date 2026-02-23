@@ -276,8 +276,10 @@ class TestQwen25VLConversion:
                 saved_config = json.load(f)
 
             assert saved_config["model_type"] == "qwen2_5_vl", "Model type should be qwen2_5_vl"
-            assert saved_config["hidden_size"] == 3584, "Hidden size should match toy config"
-            assert saved_config["num_attention_heads"] == 28, "Number of attention heads should match toy config"
+            # In transformers 5.0+, text model params are nested under text_config
+            text_config = saved_config.get("text_config", saved_config)
+            assert text_config["hidden_size"] == 3584, "Hidden size should match toy config"
+            assert text_config["num_attention_heads"] == 28, "Number of attention heads should match toy config"
             assert "vision_config" in saved_config, "VL model should have vision_config"
 
             print(f"SUCCESS: Qwen25 VL {test_name} conversion test completed successfully")
