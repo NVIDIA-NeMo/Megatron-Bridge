@@ -27,7 +27,6 @@
 # ==============================================================================
 
 #SBATCH --job-name=gpt-oss-sft
-# 2 nodes (16 GPUs) required for all PARALLELISM_CONFIGS; first config uses 8, others use 16
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
@@ -69,7 +68,6 @@ LOG_INTERVAL=1
 WANDB_PROJECT=mbridge-hf-squad
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
-# Both configs use 16 GPUs (--nodes=2)
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
@@ -150,7 +148,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         validation.eval_interval=$EVAL_INTERVAL \
         validation.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-        optimizer.adam_eps=1e-5 \
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
@@ -163,8 +160,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.sequence_parallel=$SP \
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
-        model.async_tensor_model_parallel_allreduce=False \
-        model.microbatch_group_size_per_vp_stage=$PP \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
         dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
