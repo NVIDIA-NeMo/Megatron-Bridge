@@ -140,13 +140,13 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         if inv_freq is None:
             rotary_dim = self.hf_config.qk_rope_head_dim
             rotary_base = self.hf_config.rope_theta
-            inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
+            inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 1, dtype=torch.float32) / rotary_dim))
             self._deepseek_inv_freq = inv_freq
 
         if converted_weights_dict:
             reference_tensor = next(iter(converted_weights_dict.values()))
             if inv_freq.device != reference_tensor.device:
-                inv_freq = inv_freq.to(device=reference_tensor.device)
+                inv_freq = inv_freq.to(device=reference_tensor.device, dtype=reference_tensor.dtype)
                 self._deepseek_inv_freq = inv_freq
 
         converted_weights_dict[inv_freq_key] = inv_freq
