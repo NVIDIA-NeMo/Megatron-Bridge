@@ -162,13 +162,13 @@ class TestCreateModel:
         model_provider = Mock()
         model_provider.provide = Mock(return_value=mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=_PG())
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=_PG())
 
         # Assertions
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0] is mock_model
-        assert mock_model.model_type == ModelType.encoder_and_decoder
+        assert mock_model.model_type == ModelType.encoder_or_decoder
         model_provider.provide.assert_called_once_with()  # No pre/post process args
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
@@ -180,13 +180,13 @@ class TestCreateModel:
         model_provider = Mock()
         model_provider.provide = Mock(return_value=mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=_PG())
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=_PG())
 
         # Assertions
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0] is mock_model
-        assert mock_model.model_type == ModelType.encoder_and_decoder
+        assert mock_model.model_type == ModelType.encoder_or_decoder
         model_provider.provide.assert_called_once_with()
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
@@ -904,6 +904,6 @@ class TestEdgeCases:
 
             pg = _PG()
             pg.pp = _PP()
-            _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=pg)
+            _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=pg)
 
         assert "Interleaved schedule not supported" in str(excinfo.value)
