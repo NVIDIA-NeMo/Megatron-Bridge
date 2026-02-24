@@ -43,33 +43,18 @@ logger = logging.getLogger(__name__)
 
 def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     """
-    Parse training log file and extract metrics.
+    Parse training log files and extract metrics.
 
     Args:
-        log_path: Path to the log file
+        log_paths: Paths to the log files
         metric: Metric name to extract
 
     Returns:
-        Dictionary with format: {step: value}
+        For scalar metrics (alloc, max_alloc): float or None
+        For per-step metrics: Dict[str, float] keyed by 0-indexed step number
     """
-    metrics = {
-        "elapsed time per iteration (ms)": {},
-        "lm loss": {},
-        "GPU utilization": {},
-        "step time": {},
-        "grad norm": {},
-        "alloc": None,
-        "max_alloc": None,
-    }
-
-    content = ""
-    for log_path in log_paths:
-        with open(log_path, "r") as f:
-            file_content = f.read()
-            content += file_content + "\n"
-
     patterns = {
-        "iteration": r"iteration\s+(\d+)/",
+        "iteration": r"iteration\s+(\d+)/\s+\d+",
         "elapsed time per iteration (ms)": r"elapsed time per iteration \(ms\):\s+([\d.]+)",
         "lm loss": r"lm loss:\s+([\d.E+\-]+)",
         "GPU utilization": r"GPU utilization:\s+([\d.]+)",
@@ -79,53 +64,42 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         "max_alloc": r"mem-max-allocated-gigabytes:\s*([\d\.]+)",
     }
 
-    pending_step_time = None
-    pending_gpu_util = None
-    pending_grad_norm = None
+    metrics: Dict[str, List] = {k: [] for k in patterns}
+    all_lines = []
+    handles = []
+    for log_path in list(set(log_paths)):
+        if "allranks" in log_path:
+            continue
+        logger.info(f"Reading log file: {log_path}")
+        handles.append(open(log_path))
 
-    for line in content.split("\n"):
-        # Check for step time and GPU utilization
-        if match := re.search(patterns["step time"], line):
-            pending_step_time = float(match.group(1))
+    try:
+        for lines in zip(*handles):
+            for line in lines:
+                all_lines.append(line)
+    finally:
+        for f in handles:
+            f.close()
 
-        if match := re.search(patterns["grad norm"], line):
-            pending_grad_norm = float(match.group(1))
+    for line in all_lines:
+        for metric_name, pattern in patterns.items():
+            if match := re.search(pattern, line):
+                metrics[metric_name].append(float(match.group(1)))
 
-        if match := re.search(patterns["GPU utilization"], line):
-            pending_gpu_util = float(match.group(1))
+    # Scalar metrics: return first occurrence only
+    if metric in ("alloc", "max_alloc"):
+        values = metrics[metric]
+        return values[0] if values else None
 
-        if match := re.search(patterns["alloc"], line):
-            metrics["alloc"] = float(match.group(1))
-
-        if match := re.search(patterns["max_alloc"], line):
-            metrics["max_alloc"] = float(match.group(1))
-
-        # Check for iteration line
-        if match := re.search(patterns["iteration"], line):
-            current_iteration = int(match.group(1))
-
-            # Assign pending metrics to the iteration that just completed
-            # (current_iteration - 1, but use 0-indexed so current_iteration - 1)
-            completed_step = str(current_iteration - 1)
-
-            if pending_step_time is not None:
-                metrics["step time"][completed_step] = pending_step_time
-                pending_step_time = None
-
-            if pending_grad_norm is not None:
-                metrics["grad norm"][completed_step] = pending_grad_norm
-                pending_grad_norm = None
-
-            if pending_gpu_util is not None:
-                metrics["GPU utilization"][completed_step] = pending_gpu_util
-                pending_gpu_util = None
-
-            # Extract metrics from the iteration line itself
-            for metric_name in ["elapsed time per iteration (ms)", "lm loss"]:
-                if match := re.search(patterns[metric_name], line):
-                    metrics[metric_name][completed_step] = float(match.group(1))
-
-    return metrics[metric]
+    # Per-step metrics: postprocess into step-keyed dict
+    # iteration N announces that step N-1 just completed
+    steps = [int(i) - 1 for i in metrics["iteration"]]
+    values = metrics[metric]
+    if len(values) != len(steps):
+        logger.warning(
+            f"Metric '{metric}': found {len(values)} values for {len(steps)} iterations; some steps may be missing"
+        )
+    return {str(step): value for step, value in zip(steps, values)}
 
 
 def validate_convergence(
@@ -419,7 +393,11 @@ def validate_memory(
     config = default_config
 
     # Calculate memory difference
-    max_alloc_diff = abs(current_max_alloc - golden_max_alloc) / golden_max_alloc
+    max_alloc_diff = (
+        abs(current_max_alloc - golden_max_alloc) / golden_max_alloc
+        if golden_max_alloc != 0
+        else abs(current_max_alloc)
+    )
 
     logger.info(f"Max alloc difference: {max_alloc_diff * 100:.2f}%")
     logger.info(f"Memory threshold: {config['memory_threshold'] * 100:.1f}%")
@@ -444,7 +422,7 @@ def validate_memory(
             f"✓ Max Memory allocation passed: {max_alloc_diff * 100:.2f}% <= {config['memory_threshold'] * 100:.1f}%"
         )
 
-    alloc_diff = abs(current_alloc - golden_alloc) / golden_alloc
+    alloc_diff = abs(current_alloc - golden_alloc) / golden_alloc if golden_alloc != 0 else abs(current_alloc)
 
     logger.info(f"Alloc difference: {alloc_diff * 100:.2f}%")
     logger.info(f"Memory threshold: {config['memory_threshold'] * 100:.1f}%")
@@ -558,10 +536,14 @@ def calc_convergence_and_performance(
     write_golden_values_to_disk(
         current_values=dict(
             **{
-                str(step): {
-                    loss_metric: current_train_loss[str(step)],
-                    timing_metric: current_iter_time[str(step)],
-                    "GPU utilization": current_gpu_util[str(step)],
+                step: {
+                    k: v
+                    for k, v in {
+                        loss_metric: current_train_loss.get(step),
+                        timing_metric: current_iter_time.get(step),
+                        "GPU utilization": current_gpu_util.get(step),
+                    }.items()
+                    if v is not None
                 }
                 for step in current_train_loss.keys()
             },
@@ -620,7 +602,7 @@ def calc_convergence_and_performance(
 
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
-    current_train_loss_values = np.array([current_train_loss[s] for s in steps])
+    current_train_loss_values = np.array([current_train_loss.get(s, float("nan")) for s in steps])
     logger.info(f"Current loss values (last 15): {current_train_loss_values[-15:]}")
     logger.info(f"Golden loss values (last 15): {golden_train_loss_values[-15:]}")
     convergence_result = validate_convergence(
@@ -639,7 +621,7 @@ def calc_convergence_and_performance(
 
     # check for performance
     golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
-    current_iter_time_values = np.array([current_iter_time[s] for s in steps])
+    current_iter_time_values = np.array([current_iter_time.get(s, float("nan")) for s in steps])
     logger.info(f"Current timing values (last 15): {current_iter_time_values[-15:]}")
     logger.info(f"Golden timing values (last 15): {golden_iter_time_values[-15:]}")
     performance_result = validate_performance(
@@ -686,7 +668,7 @@ def calc_convergence_and_performance(
                     "compare/current_iter_time": current_iter_time_values[i],
                     "compare/golden_lm_loss": golden_train_loss_values[i],
                     "compare/golden_iter_time": golden_iter_time_values[i],
-                    "compare/current_grad_norm": current_grad_norm[str(i)],
+                    "compare/current_grad_norm": current_grad_norm.get(steps[i], float("nan")),
                 }
             )
 

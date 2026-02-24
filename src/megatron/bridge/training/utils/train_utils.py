@@ -955,7 +955,7 @@ def report_throughput(
     Returns:
         Dictionary with throughput metrics.
     """
-    if iteration >= window_size:
+    if len(history_wct) >= window_size:
         history_iters = [i for i in range(iteration - window_size + 1, iteration + 1)]
         history_samples = [i * train_config.global_batch_size for i in history_iters]
         history_tokens = [i * seq_length for i in history_samples]
