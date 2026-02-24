@@ -54,7 +54,7 @@ jobs:
       python-package: megatron.bridge
       python-version: "3.10"
       packaging: uv
-      no-publish: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) }}
+      no-publish: false # ${{ !startsWith(github.ref, 'refs/heads/r') }}
       has-src-dir: true
       skip-test-wheel: true
       custom-container: nvcr.io/nvidia/pytorch:25.11-py3
@@ -64,7 +64,7 @@ jobs:
       container-options: "--gpus all --runtime=nvidia"
     secrets:
       TWINE_USERNAME: __token__
-      TWINE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SVC_PYPI_TOKEN || secrets.SVC_PYPI_TEST_TOKEN }}
+      TWINE_PASSWORD: ${{ secrets.SVC_PYPI_TEST_TOKEN }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_CI_CHANNEL_WEBHOOK }}
       SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
       GH_TOKEN: ${{ secrets.PAT }}
