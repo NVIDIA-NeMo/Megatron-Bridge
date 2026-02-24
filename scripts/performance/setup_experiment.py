@@ -61,12 +61,20 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-def check_training_finished(log_file_path: str) -> bool:
+def check_training_finished(log_file_paths: List[str]) -> bool:
     """Check if training is finished."""
-    with open(log_file_path, "r") as f:
-        log_lines = f.readlines()
-    log = "\n".join(log_lines)
-    return "StopIteration" in log or "after training is done" in log or "exiting program at iteration" in log
+    all_lines = []
+    for log_path in log_file_paths:
+        with open(log_path, "r", errors="replace") as f:
+            for line in f:
+                all_lines.append(
+                    (
+                        "StopIteration" in line
+                        or "after training is done" in line
+                        or "exiting program at iteration" in line
+                    )
+                )
+    return any(all_lines)
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
@@ -134,9 +142,9 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
 
 def ensure_logs_where_written(log_file_paths: List[str]):
     """Ensure logs were written to disk."""
-    if len(log_file_paths) != 1:
+    if len(log_file_paths) == 0:
         raise FileNotFoundError(
-            f"Unexpected number of log files found: {log_file_paths}. Expected 1, got {len(log_file_paths)}"
+            f"Unexpected number of log files found: {log_file_paths}. Expected at least 1, got {len(log_file_paths)}"
         )
 
 
@@ -443,11 +451,11 @@ def main(
                 is_testing_passed = True
                 break
 
-            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
+            log_file_paths = list(Path(f"{job_dir}").glob("log*.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
-                check_training_finished(log_file_paths[-1]) if is_long_convergence_run else (job_status == "SUCCEEDED")
+                check_training_finished(log_file_paths) if is_long_convergence_run else (job_status == "SUCCEEDED")
             )
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
@@ -466,11 +474,8 @@ def main(
 
         if is_finished_experiment is True and detach is False:
             log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log-*_0.out"))
+                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
             )
-
-            if not is_long_convergence_run:
-                log_paths = [log_paths[-1]]
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
             wandb_run = None
