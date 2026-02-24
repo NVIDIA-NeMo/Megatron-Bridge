@@ -27,6 +27,7 @@
 # ==============================================================================
 
 #SBATCH --job-name=gpt-oss-sft
+# 2 nodes (16 GPUs) required for all PARALLELISM_CONFIGS; first config uses 8, others use 16
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
@@ -40,9 +41,13 @@
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
+export HF_HOME="/lustre/fsw/portfolios/coreai/users/weijiac/.cache/huggingface"
+export HF_DATASETS_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 
 # Workspace directory for checkpoints and results
-WORKSPACE=${WORKSPACE:-/workspace}
+# WORKSPACE=${WORKSPACE:-/workspace}
+WORKSPACE=/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
 export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
@@ -54,14 +59,17 @@ MODEL_NAME=gpt_oss_20b
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
-GLOBAL_BATCH_SIZE=128
+GLOBAL_BATCH_SIZE=8
 MICRO_BATCH_SIZE=1
-EVAL_ITERS=10
+EVAL_ITERS=32
+EVAL_INTERVAL=50
 LR_WARMUP_ITERS=50
 LOG_INTERVAL=1
-WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
+# Match succeeded run: mbridge-hf-squad (entity kept as nvidia-nemo-fw-public)
+WANDB_PROJECT=mbridge-hf-squad
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
+# Both configs use 16 GPUs (--nodes=2)
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
@@ -138,7 +146,11 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
         train.eval_iters=$EVAL_ITERS \
+        train.eval_interval=$EVAL_INTERVAL \
+        validation.eval_interval=$EVAL_INTERVAL \
+        validation.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
+        optimizer.adam_eps=1e-5 \
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
@@ -151,8 +163,10 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.sequence_parallel=$SP \
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
+        model.async_tensor_model_parallel_allreduce=False \
+        model.microbatch_group_size_per_vp_stage=$PP \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
-        dataset.packed_sequence_specs.pad_seq_to_mult=$((CP * 2)) \
+        dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
         dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH
