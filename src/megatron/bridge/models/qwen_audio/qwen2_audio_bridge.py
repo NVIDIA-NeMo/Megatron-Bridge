@@ -25,7 +25,7 @@ Supported models:
 Reference: https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct
 """
 
-import torch
+from transformers import Qwen2AudioForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -36,19 +36,16 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioModel
 from megatron.bridge.models.qwen_audio.qwen2_audio_provider import Qwen2AudioModelProvider
 
 
-# Import HuggingFace model classes with fallback for older transformers versions
-try:
-    from transformers import Qwen2AudioForConditionalGeneration
-
-    HAS_QWEN2_AUDIO = True
-except ImportError:
-    Qwen2AudioForConditionalGeneration = None
-    HAS_QWEN2_AUDIO = False
-
-
+@MegatronModelBridge.register_bridge(
+    source=Qwen2AudioForConditionalGeneration,
+    target=Qwen2AudioModel,
+    provider=Qwen2AudioModelProvider,
+    model_type="qwen2_audio",
+)
 class Qwen2AudioBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen2-Audio Models.
@@ -82,32 +79,23 @@ class Qwen2AudioBridge(MegatronModelBridge):
         # Qwen2-Audio has separate text_config and audio_config
         text_config = getattr(hf_config, "text_config", hf_config)
 
-        provider = Qwen2AudioModelProvider(
-            num_layers=text_config.num_hidden_layers,
-            hidden_size=text_config.hidden_size,
-            ffn_hidden_size=text_config.intermediate_size,
-            num_attention_heads=text_config.num_attention_heads,
-            num_query_groups=text_config.num_key_value_heads,
-            init_method_std=text_config.initializer_range,
-            layernorm_epsilon=text_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
-            rotary_base=text_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
-            vocab_size=text_config.vocab_size,
-            seq_length=text_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            add_qkv_bias=True,  # Qwen2 has bias in QKV projections
-            hf_config=hf_config,
-            # Audio-specific token IDs
-            audio_token_id=getattr(hf_config, "audio_token_index", 151646),
-            bos_token_id=getattr(hf_config, "bos_token_id", 151643),
-            eos_token_id=getattr(hf_config, "eos_token_id", 151645),
-            pad_token_id=getattr(hf_config, "pad_token_id", 151643),
-        )
+        # Use base class helper for common config conversion
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        provider = Qwen2AudioModelProvider(**provider_kwargs)
+
+        # Qwen2-specific settings
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_qkv_bias = True
+        provider.add_bias_linear = False
+        provider.hidden_dropout = 0.0
+
+        # Audio-specific settings
+        provider.hf_config = hf_config
+        provider.audio_token_id = getattr(hf_config, "audio_token_index", 151646)
+        provider.bos_token_id = getattr(hf_config, "bos_token_id", 151643)
+        provider.eos_token_id = getattr(hf_config, "eos_token_id", 151645)
+        provider.pad_token_id = getattr(hf_config, "pad_token_id", 151643)
 
         return provider
 
@@ -188,18 +176,3 @@ class Qwen2AudioBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
-
-
-# Register the bridge if Qwen2AudioForConditionalGeneration is available
-if HAS_QWEN2_AUDIO and Qwen2AudioForConditionalGeneration is not None:
-    # Import Qwen2AudioModel for target registration
-    from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioModel
-
-    # Dynamically register the bridge with Qwen2AudioModel as target
-    try:
-        Qwen2AudioBridge = MegatronModelBridge.register_bridge(
-            source=Qwen2AudioForConditionalGeneration, target=Qwen2AudioModel
-        )(Qwen2AudioBridge)
-    except Exception:
-        # If registration fails, the bridge will still work manually
-        pass

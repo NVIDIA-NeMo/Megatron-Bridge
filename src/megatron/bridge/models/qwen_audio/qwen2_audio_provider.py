@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
 
@@ -124,8 +125,7 @@ class Qwen2AudioModelProvider(Qwen2ModelProvider):
         Returns:
             MCoreGPTModel instance (language model only)
         """
-        # Use parent class to create standard language model
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
 
 @dataclass
