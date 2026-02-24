@@ -1,17 +1,54 @@
 #!/bin/bash
 # Usage:
 #   Normal run: ./run_llama3_8b_fp8.sh
-#   Deterministic mode: DETERMINISTIC=true ./run_llama3_8b_fp8.sh
+#   Deterministic mode: DETERMINISTIC=true bash run_llama3_8b_fp8.sh
 #   Deterministic with Flash Attention: DETERMINISTIC=true BACKEND=flash bash run_llama3_8b_fp8.sh
 set -euo pipefail
-source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
+source ../../secrets.sh
 
-CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
-ACCOUNT="coreai_dlalgo_nemorl"
-PARTITION="interactive"
+GPU=${GPU:-"h100"}
+if [ "$GPU" = "h100" ]; then
+    CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_nemorl"
+    PARTITION="interactive"
+    NUM_GPUS=8
+    GPUS_PER_NODE=8
+    PRECISION="fp8_cs"
+    TP_SIZE=2
+    CP_SIZE=2
+    DP_SIZE=2
+elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
+    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-25.11.sqsh"
+    ACCOUNT="coreai_dlalgo_llm"
+    PARTITION="batch"
+    NUM_GPUS=4
+    GPUS_PER_NODE=4
+    # Megatron Core requires NCCL_GRAPH_REGISTER=0 to be explicitly set to prevent illegal memory access when CUDA graphs are also active.
+    export NCCL_GRAPH_REGISTER=0
+    PRECISION="fp8_mx"
+    TP_SIZE=2
+    CP_SIZE=1
+    DP_SIZE=2
+else
+    echo "Invalid GPU: $GPU"
+    exit 1
+fi
 # Get current directory to mount
 WORKDIR=$(pwd)
 
+
+# Base commit for Megatron-LM changes
+BASE_COMMIT="0d8e0714cd29c01e164fe6de9f532182bdffa942"   # base commit in nemo-25.11
+MEGATRON_DIR="3rdparty/Megatron-LM"
+
+# Dynamically construct mounts for changed files in Megatron-LM to avoid override the cpp files in Megatron-LM
+CUSTOM_MOUNTS=""
+if [ -d "$MEGATRON_DIR" ]; then
+    CHANGED_FILES=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD)
+    for f in $CHANGED_FILES; do
+        CUSTOM_MOUNTS="${CUSTOM_MOUNTS},$WORKDIR/$MEGATRON_DIR/$f:/opt/megatron-lm/$f"
+    done
+fi
 
 export DETERMINISTIC=${DETERMINISTIC:-false}
 export BACKEND=${BACKEND:-fused}  # Allow Flash Attention in deterministic mode
@@ -20,7 +57,6 @@ export HF_OFFLINE=${HF_OFFLINE:-true}
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-true}
 export NVTE_DEBUG=1   # disables/enables debugging
 export NVTE_DEBUG_LEVEL=2
-
 
 
 # FP8 memory optimization
@@ -58,29 +94,28 @@ if [ "$DETERMINISTIC" = true ]; then
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     export additional_args="${additional_args} model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
-    export EXP_NAME="deterministic-${BACKEND}"
+    export EXP_NAME="deterministic-${BACKEND}-${PRECISION}-${GPU}"
 else
-    export EXP_NAME="non-deterministic-${BACKEND}"
+    export EXP_NAME="non-deterministic-${BACKEND}-${PRECISION}-${GPU}"
 fi
-
 
 python scripts/performance/setup_experiment.py \
     --account $ACCOUNT \
     --partition $PARTITION \
-    --gpu h100 \
+    --gpu $GPU \
     -m llama3 \
     -s 8b \
-    -ng 8 \
-    -gn 8 \
-    -cp 2 \
-    -tp 2 \
-    -c fp8_cs \
+    -ng $NUM_GPUS \
+    -gn $GPUS_PER_NODE \
+    -tp $TP_SIZE \
+    -cp $CP_SIZE \
+    -c $PRECISION \
     --container_image $CONTAINER \
-    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge,$WORKDIR/3rdparty/Megatron-LM:/opt/megatron-lm" \
+    --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
     -hf $HF_TOKEN \
     -wdk $WANDB_API_KEY \
     -wdp "mbridge-dev-zhiyul" \
-    -wdj "llama3-8b-fp8-nemo-25.11-${EXP_NAME}_cp2tp2dp2" \
+    -wdj "llama3-8b-fp8-nemo-25.11-${EXP_NAME}_cp${CP_SIZE}tp${TP_SIZE}dp${DP_SIZE}" \
     --task pretrain \
     logger.tensorboard_dir=/nemo_run/tensorboard \
     logger.log_interval=1 \
@@ -91,6 +126,3 @@ python scripts/performance/setup_experiment.py \
     logger.tensorboard_log_interval=1 \
     $RECOMPUTE_ARGS \
     $additional_args
-
-
-
