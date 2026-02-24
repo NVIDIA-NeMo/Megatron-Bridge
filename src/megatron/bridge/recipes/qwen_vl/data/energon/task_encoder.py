@@ -159,7 +159,7 @@ class ChatMLSample(Sample):
 
     conversation: str  # JSON string of GPT-format conversations
     imgs: Optional[List[torch.Tensor]] = None
-    videos: Optional[List[torch.Tensor]] = None
+    videos: Optional[List[List[torch.Tensor]]] = None
 
 
 class videohandler:
