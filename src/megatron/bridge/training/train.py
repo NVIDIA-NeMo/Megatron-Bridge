@@ -248,8 +248,7 @@ def train(
             config=model_config,
             seq_length=config.model.seq_length,
             micro_batch_size=config.train.micro_batch_size,
-            optimizers=[optimizer],
-            pg_collection=pg_collection,
+            optimizers=[optimizer],#pg_collection=pg_collection,
         )
 
     # Capture Vision Encoder CUDA Graphs (separate from language model).
@@ -272,8 +271,7 @@ def train(
                             vision_config=vision_model_config,
                             vision_seq_length=vision_seq_length,
                             micro_batch_size=config.train.micro_batch_size,
-                            num_microbatches=get_num_microbatches(),
-                            pg_collection=pg_collection,
+                            num_microbatches=get_num_microbatches(),#pg_collection=pg_collection,
                         )
                         print_rank_0(
                             f"Vision encoder CUDA graph enabled with seq_length={vision_seq_length}"
@@ -1482,7 +1480,7 @@ def _delete_cuda_graphs(
                 del layer.cuda_graphs
 
     # Cleanup vision encoder CUDA graphs
-    if vision_cuda_graph_helper is not None:
+    if vision_cuda_graph_helper is not None and vision_cuda_graph_helper.graphs_created():
         vision_cuda_graph_helper.delete_cuda_graphs()
 
     # Run GC to collect the freshed object
