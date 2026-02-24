@@ -735,7 +735,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
     def _deepstack_process(
         self, hidden_states: torch.Tensor, visual_pos_masks: torch.Tensor, visual_embeds: torch.Tensor
     ):
-        hidden_states = hidden_states.transpose(0, 1).contiguous()
+        hidden_states = hidden_states.transpose(0, 1).contiguous().clone()
         local_this = hidden_states[visual_pos_masks, :].clone() + visual_embeds
         hidden_states[visual_pos_masks, :] = local_this
         hidden_states = hidden_states.transpose(0, 1).contiguous()

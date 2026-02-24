@@ -45,6 +45,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_deepstack_embs,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.utils.grad_debug_hooks import GradDebugHooks
 
 
 class Qwen3VLModel(MegatronModule):
@@ -230,6 +231,39 @@ class Qwen3VLModel(MegatronModule):
                 for param in self.vision_model.merger.parameters():
                     param.requires_grad = True
 
+    def enable_grad_debug_hooks(
+        self,
+        log_every_n_steps: int = 1,
+        verbose: bool = True,
+        rank_filter: int = 0,
+        module_name_filter: str = None,
+    ) -> GradDebugHooks:
+        """Enable gradient debug hooks on this model for diagnosing gradient issues.
+
+        Args:
+            log_every_n_steps: Only log every N backward passes.
+            verbose: If True, log all gradient stats. If False, only log NaN/Inf anomalies.
+            rank_filter: Only log on this distributed rank. Set to None to log on all ranks.
+            module_name_filter: Only hook modules whose name contains this substring.
+                Examples: "vision_model", "language_model", "decoder.layers.0",
+                          "deepstack", "merger", "self_attention"
+
+        Returns:
+            GradDebugHooks instance. Call .print_summary() after loss.backward().
+        """
+        self._grad_debug_hooks = GradDebugHooks(
+            model=self,
+            log_every_n_steps=log_every_n_steps,
+            verbose=verbose,
+            rank_filter=rank_filter,
+            module_name_filter=module_name_filter,
+        )
+        self._grad_debug_hooks.register()
+        # Propagate to language_model so its forward can register tensor hooks
+        if self.language_model is not None:
+            self.language_model._grad_debug_hooks = self._grad_debug_hooks
+        return self._grad_debug_hooks
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -364,6 +398,15 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
                 combined_embeddings[vision_mask] = vision_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+
+            # Register tensor hooks for gradient debugging on key intermediate tensors
+            # if hasattr(self, "_grad_debug_hooks") and self._grad_debug_hooks is not None:
+            #     if vision_embeds is not None:
+            #         self._grad_debug_hooks.register_tensor_hook(vision_embeds, "tensor:vision_embeds")
+            #     self._grad_debug_hooks.register_tensor_hook(combined_embeddings, "tensor:combined_embeddings")
+            #     if deepstack_feature_lists:
+            #         for i, dsf in enumerate(deepstack_feature_lists):
+            #             self._grad_debug_hooks.register_tensor_hook(dsf, f"tensor:deepstack_feature[{i}]")
 
             if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
