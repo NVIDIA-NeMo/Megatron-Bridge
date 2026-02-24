@@ -20,8 +20,11 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.sarvam.sarvam_provider import (
+    SarvamMLAModelProvider,
+    SarvamMoEModelProvider,
+)
 from megatron.bridge.models.transformer_config import MLATransformerConfig
-from megatron.bridge.models.sarvam.sarvam_provider import SarvamMLAModelProvider, SarvamMoEModelProvider
 
 
 class TestSarvamProviderDefaults:
@@ -194,5 +197,3 @@ class TestSarvamProviderDefaults:
         assert mla.fp16 is True
         assert mla.bf16 is False
         assert mla.params_dtype == torch.float16
-
-

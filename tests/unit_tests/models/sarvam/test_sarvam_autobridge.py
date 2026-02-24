@@ -19,8 +19,7 @@ Unit tests for AutoBridge integration/validation for Sarvam architectures.
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from transformers import PretrainedConfig
 
@@ -56,13 +55,19 @@ class TestAutoBridgeSarvamConfigValidation:
         with open(index_path, "w") as f:
             json.dump({"metadata": {"total_size": 1}, "weight_map": {}}, f, indent=2)
 
-    @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
+    @patch(
+        "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+    )
     @patch("megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry")
-    def test_from_pretrained_with_temp_dir(self, mock_safe_load_cfg, mock_from_pretrained):
+    def test_from_pretrained_with_temp_dir(
+        self, mock_safe_load_cfg, mock_from_pretrained
+    ):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg_dict = {
                 "architectures": ["SarvamMoEForCausalLM"],
-                "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"},
+                "auto_map": {
+                    "AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"
+                },
             }
             self._write_minimal_model_dir(cfg_dict, temp_dir)
 
@@ -80,16 +85,24 @@ class TestAutoBridgeSarvamConfigValidation:
             assert isinstance(bridge, AutoBridge)
             assert bridge.hf_pretrained == hf_model
 
-            mock_safe_load_cfg.assert_called_once_with(temp_dir, trust_remote_code=False)
+            mock_safe_load_cfg.assert_called_once_with(
+                temp_dir, trust_remote_code=False
+            )
             mock_from_pretrained.assert_called_once_with(temp_dir)
 
-    @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
+    @patch(
+        "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+    )
     @patch("megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry")
-    def test_from_pretrained_with_temp_dir_mla(self, mock_safe_load_cfg, mock_from_pretrained):
+    def test_from_pretrained_with_temp_dir_mla(
+        self, mock_safe_load_cfg, mock_from_pretrained
+    ):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg_dict = {
                 "architectures": ["SarvamMLAForCausalLM"],
-                "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMLAForCausalLM"},
+                "auto_map": {
+                    "AutoModelForCausalLM": "modeling_sarvam.SarvamMLAForCausalLM"
+                },
             }
             self._write_minimal_model_dir(cfg_dict, temp_dir)
 
@@ -105,16 +118,24 @@ class TestAutoBridgeSarvamConfigValidation:
             assert isinstance(bridge, AutoBridge)
             assert bridge.hf_pretrained == hf_model
 
-            mock_safe_load_cfg.assert_called_once_with(temp_dir, trust_remote_code=False)
+            mock_safe_load_cfg.assert_called_once_with(
+                temp_dir, trust_remote_code=False
+            )
             mock_from_pretrained.assert_called_once_with(temp_dir)
 
-    @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
+    @patch(
+        "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+    )
     @patch("megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry")
-    def test_from_pretrained_to_megatron_provider_calls_bridge(self, mock_safe_load_cfg, mock_from_pretrained):
+    def test_from_pretrained_to_megatron_provider_calls_bridge(
+        self, mock_safe_load_cfg, mock_from_pretrained
+    ):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg_dict = {
                 "architectures": ["SarvamMoEForCausalLM"],
-                "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"},
+                "auto_map": {
+                    "AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"
+                },
             }
             self._write_minimal_model_dir(cfg_dict, temp_dir)
 
@@ -127,7 +148,9 @@ class TestAutoBridgeSarvamConfigValidation:
 
             bridge = AutoBridge.from_hf_pretrained(temp_dir)
 
-            with patch("megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge") as mock_get_bridge:
+            with patch(
+                "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
+            ) as mock_get_bridge:
                 mock_bridge = Mock()
                 mock_provider = Mock()
                 mock_bridge.provider_bridge.return_value = mock_provider
@@ -136,4 +159,3 @@ class TestAutoBridgeSarvamConfigValidation:
                 provider = bridge.to_megatron_provider(load_weights=False)
                 assert provider == mock_provider
                 mock_bridge.provider_bridge.assert_called_once_with(hf_model)
-

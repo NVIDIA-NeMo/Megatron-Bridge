@@ -34,7 +34,9 @@ class TestSarvamMoEBridge:
         # Minimal but complete for provider_bridge mappings.
         return {
             "architectures": ["SarvamMoEForCausalLM"],
-            "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"},
+            "auto_map": {
+                "AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"
+            },
             # Common Sarvam fields
             "num_hidden_layers": 19,
             "hidden_size": 4096,
@@ -60,7 +62,9 @@ class TestSarvamMoEBridge:
         # A second config to ensure mappings don't depend on a single hardcoded set.
         return {
             "architectures": ["SarvamMoEForCausalLM"],
-            "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"},
+            "auto_map": {
+                "AutoModelForCausalLM": "modeling_sarvam.SarvamMoEForCausalLM"
+            },
             "num_hidden_layers": 32,
             "hidden_size": 5120,
             "intermediate_size": 10240,
@@ -99,20 +103,30 @@ class TestSarvamMoEBridge:
         assert provider.num_layers == mock_pretrained_moe.config.num_hidden_layers
         assert provider.hidden_size == mock_pretrained_moe.config.hidden_size
         assert provider.ffn_hidden_size == mock_pretrained_moe.config.intermediate_size
-        assert provider.moe_ffn_hidden_size == mock_pretrained_moe.config.moe_intermediate_size
-        assert provider.num_attention_heads == mock_pretrained_moe.config.num_attention_heads
+        assert (
+            provider.moe_ffn_hidden_size
+            == mock_pretrained_moe.config.moe_intermediate_size
+        )
+        assert (
+            provider.num_attention_heads
+            == mock_pretrained_moe.config.num_attention_heads
+        )
         assert provider.num_moe_experts == mock_pretrained_moe.config.num_experts
-        assert provider.moe_router_topk == mock_pretrained_moe.config.num_experts_per_tok
+        assert (
+            provider.moe_router_topk == mock_pretrained_moe.config.num_experts_per_tok
+        )
         assert (
             provider.moe_shared_expert_intermediate_size
-            == mock_pretrained_moe.config.num_shared_experts * mock_pretrained_moe.config.moe_intermediate_size
+            == mock_pretrained_moe.config.num_shared_experts
+            * mock_pretrained_moe.config.moe_intermediate_size
         )
         assert provider.vocab_size == mock_pretrained_moe.config.vocab_size
         assert provider.seq_length == mock_pretrained_moe.config.max_position_embeddings
         assert provider.rotary_base == mock_pretrained_moe.config.rope_theta
 
         expected_freq = [0] * mock_pretrained_moe.config.first_k_dense_replace + [1] * (
-            mock_pretrained_moe.config.num_hidden_layers - mock_pretrained_moe.config.first_k_dense_replace
+            mock_pretrained_moe.config.num_hidden_layers
+            - mock_pretrained_moe.config.first_k_dense_replace
         )
         assert provider.moe_layer_freq == expected_freq
 
@@ -126,7 +140,9 @@ class TestSarvamMoEBridge:
         bridge = SarvamMoEBridge()
         provider = bridge.provider_bridge(mock_pretrained_moe)
 
-        assert provider.num_query_groups == mock_pretrained_moe.config.num_key_value_heads
+        assert (
+            provider.num_query_groups == mock_pretrained_moe.config.num_key_value_heads
+        )
         assert provider.kv_channels == mock_pretrained_moe.config.head_dim
 
     def test_provider_bridge_dtype_handling(self, mock_pretrained_moe):
@@ -137,7 +153,9 @@ class TestSarvamMoEBridge:
         assert provider.fp16 is False
         assert provider.params_dtype == torch.bfloat16
 
-    def test_provider_bridge_dtype_handling_multiple_precisions(self, sarvam_moe_config_dict_small):
+    def test_provider_bridge_dtype_handling_multiple_precisions(
+        self, sarvam_moe_config_dict_small
+    ):
         cfg = Mock()
         for k, v in sarvam_moe_config_dict_small.items():
             setattr(cfg, k, v)
@@ -159,7 +177,9 @@ class TestSarvamMoEBridge:
         assert result.bf16 is False
         assert result.params_dtype == torch.float16
 
-    def test_provider_bridge_requires_torch_dtype_attribute(self, sarvam_moe_config_dict_small):
+    def test_provider_bridge_requires_torch_dtype_attribute(
+        self, sarvam_moe_config_dict_small
+    ):
         """Match Qwen-style robustness tests: torch_dtype is required for dtype mapping."""
         cfg_dict = dict(sarvam_moe_config_dict_small)
         cfg_dict.pop("torch_dtype", None)
@@ -170,7 +190,9 @@ class TestSarvamMoEBridge:
             SarvamMoEBridge().provider_bridge(hf)
 
     @pytest.mark.parametrize("first_k_dense_replace", [0, 1, 4])
-    def test_provider_bridge_moe_layer_freq_edge_cases(self, sarvam_moe_config_dict_small, first_k_dense_replace):
+    def test_provider_bridge_moe_layer_freq_edge_cases(
+        self, sarvam_moe_config_dict_small, first_k_dense_replace
+    ):
         cfg = Mock()
         for k, v in sarvam_moe_config_dict_small.items():
             setattr(cfg, k, v)
@@ -183,7 +205,9 @@ class TestSarvamMoEBridge:
         bridge = SarvamMoEBridge()
         provider = bridge.provider_bridge(mock_pretrained)
 
-        expected = [0] * first_k_dense_replace + [1] * (cfg.num_hidden_layers - first_k_dense_replace)
+        expected = [0] * first_k_dense_replace + [1] * (
+            cfg.num_hidden_layers - first_k_dense_replace
+        )
         assert provider.moe_layer_freq == expected
 
     def test_provider_bridge_second_config_variant(self, sarvam_moe_config_dict_large):
@@ -223,12 +247,16 @@ class TestSarvamMoEBridge:
         assert m.hf_param == "model.word_embeddings.weight"
 
         # Wildcard mapping resolves layer index
-        m = reg.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_proj.weight")
+        m = reg.megatron_to_hf_lookup(
+            "decoder.layers.0.self_attention.linear_proj.weight"
+        )
         assert m is not None
         assert m.hf_param == "model.layers.0.attention.dense.weight"
 
         # QKV concatenation mapping
-        m = reg.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_qkv.weight")
+        m = reg.megatron_to_hf_lookup(
+            "decoder.layers.0.self_attention.linear_qkv.weight"
+        )
         assert m is not None
         assert m.hf_param == "model.layers.0.attention.query_key_value.weight"
 
@@ -249,7 +277,9 @@ class TestSarvamMoEBridge:
         bridge = SarvamMoEBridge()
         registry = bridge.mapping_registry()
 
-        auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
+        auto_mappings = [
+            m for m in registry.mappings if type(m).__name__ == "AutoMapping"
+        ]
         hf_params = [m.hf_param for m in auto_mappings]
         megatron_params = [m.megatron_param for m in auto_mappings]
 
@@ -259,18 +289,39 @@ class TestSarvamMoEBridge:
             ("output_layer.weight", "lm_head.weight"),
             ("decoder.final_layernorm.weight", "model.norm.weight"),
             # Attention QK norm
-            ("decoder.layers.*.self_attention.q_layernorm.weight", "model.layers.*.attention.query_layernorm.weight"),
-            ("decoder.layers.*.self_attention.k_layernorm.weight", "model.layers.*.attention.key_layernorm.weight"),
+            (
+                "decoder.layers.*.self_attention.q_layernorm.weight",
+                "model.layers.*.attention.query_layernorm.weight",
+            ),
+            (
+                "decoder.layers.*.self_attention.k_layernorm.weight",
+                "model.layers.*.attention.key_layernorm.weight",
+            ),
             # Attention output projection
-            ("decoder.layers.*.self_attention.linear_proj.weight", "model.layers.*.attention.dense.weight"),
+            (
+                "decoder.layers.*.self_attention.linear_proj.weight",
+                "model.layers.*.attention.dense.weight",
+            ),
             # Router mappings (including expert_bias)
             ("decoder.layers.*.mlp.router.weight", "model.layers.*.mlp.gate.weight"),
-            ("decoder.layers.*.mlp.router.expert_bias", "model.layers.*.mlp.gate.expert_bias"),
+            (
+                "decoder.layers.*.mlp.router.expert_bias",
+                "model.layers.*.mlp.gate.expert_bias",
+            ),
             # Dense MLP down-proj
-            ("decoder.layers.*.mlp.linear_fc2.weight", "model.layers.*.mlp.down_proj.weight"),
+            (
+                "decoder.layers.*.mlp.linear_fc2.weight",
+                "model.layers.*.mlp.down_proj.weight",
+            ),
             # Expert + shared expert down-proj
-            ("decoder.layers.*.mlp.experts.linear_fc2.weight*", "model.layers.*.mlp.experts.*.down_proj.weight"),
-            ("decoder.layers.*.mlp.shared_experts.linear_fc2.weight", "model.layers.*.mlp.shared_experts.down_proj.weight"),
+            (
+                "decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                "model.layers.*.mlp.experts.*.down_proj.weight",
+            ),
+            (
+                "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
+                "model.layers.*.mlp.shared_experts.down_proj.weight",
+            ),
         ]
 
         for megatron_param, hf_param in expected_pairs:
@@ -285,7 +336,9 @@ class TestSarvamMoEBridge:
         bridge = SarvamMoEBridge()
         registry = bridge.mapping_registry()
 
-        auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
+        auto_mappings = [
+            m for m in registry.mappings if type(m).__name__ == "AutoMapping"
+        ]
         pairs = {(m.megatron_param, m.hf_param) for m in auto_mappings}
 
         assert (
@@ -298,7 +351,9 @@ class TestSarvamMoEBridge:
         ) in pairs
 
         # Reverse lookup returns the *first* matching mapping; ensure it's one of the two.
-        rev = registry.hf_to_megatron_lookup("model.layers.0.post_attention_layernorm.weight")
+        rev = registry.hf_to_megatron_lookup(
+            "model.layers.0.post_attention_layernorm.weight"
+        )
         assert rev is not None
         assert rev.megatron_param in {
             "decoder.layers.0.pre_mlp_layernorm.weight",
@@ -316,21 +371,27 @@ class TestSarvamMoEBridge:
         megatron_params = {m.megatron_param for m in gated}
         assert "decoder.layers.*.mlp.linear_fc1.weight" in megatron_params
         assert "decoder.layers.*.mlp.experts.linear_fc1.weight*" in megatron_params
-        assert "decoder.layers.*.mlp.shared_experts.linear_fc1.weight" in megatron_params
+        assert (
+            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight" in megatron_params
+        )
 
     def test_mapping_registry_concatenated_qkv_mapping_shape(self):
         """Validate ConcatenatedQKVMapping uses a single HF qkv tensor name (not dict)."""
         bridge = SarvamMoEBridge()
         registry = bridge.mapping_registry()
 
-        qkv = [m for m in registry.mappings if type(m).__name__ == "ConcatenatedQKVMapping"]
+        qkv = [
+            m for m in registry.mappings if type(m).__name__ == "ConcatenatedQKVMapping"
+        ]
         assert len(qkv) == 1
         qkv = qkv[0]
         assert isinstance(qkv.hf_param, str)
         assert qkv.megatron_param == "decoder.layers.*.self_attention.linear_qkv.weight"
 
         # Wildcard resolution should work
-        resolved = registry.megatron_to_hf_lookup("decoder.layers.12.self_attention.linear_qkv.weight")
+        resolved = registry.megatron_to_hf_lookup(
+            "decoder.layers.12.self_attention.linear_qkv.weight"
+        )
         assert resolved is not None
         assert resolved.hf_param == "model.layers.12.attention.query_key_value.weight"
 
@@ -338,7 +399,9 @@ class TestSarvamMoEBridge:
         bridge = SarvamMoEBridge()
         registry = bridge.mapping_registry()
 
-        auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
+        auto_mappings = [
+            m for m in registry.mappings if type(m).__name__ == "AutoMapping"
+        ]
         hf_params = [m.hf_param for m in auto_mappings]
         megatron_params = [m.megatron_param for m in auto_mappings]
 
@@ -364,7 +427,9 @@ class TestSarvamMoEBridge:
         assert m is not None
         assert m.megatron_param == "decoder.layers.5.self_attention.linear_proj.weight"
 
-        m = registry.hf_to_megatron_lookup("model.layers.3.attention.query_key_value.weight")
+        m = registry.hf_to_megatron_lookup(
+            "model.layers.3.attention.query_key_value.weight"
+        )
         assert m is not None
         assert m.megatron_param == "decoder.layers.3.self_attention.linear_qkv.weight"
 
@@ -372,4 +437,3 @@ class TestSarvamMoEBridge:
         m = registry.hf_to_megatron_lookup("model.layers.2.mlp.gate.weight")
         assert m is not None
         assert m.megatron_param == "decoder.layers.2.mlp.router.weight"
-

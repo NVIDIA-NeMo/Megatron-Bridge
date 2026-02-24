@@ -18,9 +18,11 @@ from functools import partial
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import MLATransformerConfig
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +36,10 @@ except (ImportError, ModuleNotFoundError):
 if TYPE_CHECKING:
     from megatron.core.transformer import ModuleSpec
 
-if HAVE_TE:
-    from megatron.core.utils import is_te_min_version
-
 
 @dataclass
 class SarvamMoEModelProvider(GPTModelProvider):
+    """Sarvam 30B model provider."""
 
     transformer_layer_spec: Union[
         "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
@@ -112,6 +112,7 @@ class SarvamMoEModelProvider(GPTModelProvider):
 
 @dataclass
 class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
+    """Sarvam 105B model provider."""
 
     transformer_layer_spec: Union[
         "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
@@ -155,9 +156,7 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     cross_entropy_fusion_impl: str = "te"
     cp_comm_type: str = "p2p"
     recompute_granularity: str = "selective"
-    recompute_modules: List[str] = field(
-        default_factory=lambda: ["moe"]
-    )
+    recompute_modules: List[str] = field(default_factory=lambda: ["moe"])
 
     multi_latent_attention: bool = True
     rope_type: str = "yarn"
@@ -193,4 +192,3 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     qk_head_dim: int = 128
     qk_pos_emb_head_dim: int = 64
     v_head_dim: int = 128
-    

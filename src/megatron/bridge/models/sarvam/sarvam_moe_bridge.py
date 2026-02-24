@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
+
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -23,7 +25,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.sarvam.common import get_common_config
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
-from megatron.core.models.gpt.gpt_model import GPTModel
 
 
 @MegatronModelBridge.register_bridge(source="SarvamMoEForCausalLM", target=GPTModel)
