@@ -35,7 +35,12 @@ from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvide
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3VLForConditionalGeneration, target=Qwen3VLModel)
+@MegatronModelBridge.register_bridge(
+    source=Qwen3VLForConditionalGeneration,
+    target=Qwen3VLModel,
+    provider=Qwen3VLModelProvider,
+    model_type="qwen3_vl",
+)
 class Qwen3VLBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-VL Conditional Generation.
@@ -70,88 +75,45 @@ class Qwen3VLBridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
-        # Get the model dtype from text config
-        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
 
-        # Set vision config dtype to match the language model dtype
-        # This ensures vision model parameters are initialized in the same dtype
         vision_config = hf_config.vision_config
-        vision_config.torch_dtype = model_dtype
+        vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
 
-        # Create the provider with text model configuration
-        provider = Qwen3VLModelProvider(
-            # Language model configuration from text_config
-            num_layers=text_config.num_hidden_layers,
-            hidden_size=text_config.hidden_size,
-            ffn_hidden_size=text_config.intermediate_size,
-            num_attention_heads=text_config.num_attention_heads,
-            num_query_groups=text_config.num_key_value_heads,  # GQA configuration
-            head_dim=text_config.head_dim,
-            init_method_std=text_config.initializer_range,
-            layernorm_epsilon=text_config.rms_norm_eps,
-            gated_linear_unit=True,  # Qwen3 uses gated linear units
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
-            rotary_base=text_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
-            vocab_size=text_config.vocab_size,
-            seq_length=text_config.max_position_embeddings,
-            fp16=(model_dtype == torch.float16),
-            bf16=(model_dtype == torch.bfloat16),
-            params_dtype=model_dtype,
-            # Qwen3 specific parameters
-            add_qkv_bias=text_config.attention_bias,  # Qwen3 can have bias in QKV
-            qk_layernorm=True,  # Qwen3 uses QK layernorm
-            # Vision configuration
-            vision_config=vision_config,
-            # Store the original HF text config for RoPE initialization
-            hf_text_config=text_config,
-            # Vision-Language token IDs
-            bos_token_id=getattr(text_config, "bos_token_id", 151643),
-            eos_token_id=getattr(text_config, "eos_token_id", 151645),
-            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
-            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
-            image_token_id=getattr(hf_config, "image_token_id", 151655),
-            video_token_id=getattr(hf_config, "video_token_id", 151656),
-            # MRoPE configuration for multimodal position embeddings
-            mrope_section=text_config.rope_scaling.get("mrope_section", [24, 20, 20]),
-        )
+        provider = Qwen3VLModelProvider(**provider_kwargs)
 
-        # TODO: setattr use_hf_vision_model to bridge instance in a dangerous way, maybe optimize it later.
-        setattr(self, "use_hf_vision_model", provider.use_hf_vision_model)
+        # Qwen3-specific settings
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_qkv_bias = text_config.attention_bias
+        provider.add_bias_linear = False
+        provider.qk_layernorm = True
+        provider.hidden_dropout = 0.0
+
+        # VL-specific overrides
+        provider.position_embedding_type = "mrope"
+        provider.vision_config = vision_config
+        provider.hf_text_config = text_config
+        provider.head_dim = text_config.head_dim
+        provider.bos_token_id = getattr(text_config, "bos_token_id", 151643)
+        provider.eos_token_id = getattr(text_config, "eos_token_id", 151645)
+        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 151652)
+        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
+        provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
+        provider.mrope_section = text_config.rope_scaling.get("mrope_section", [24, 20, 20])
 
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        """
-        Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.
-
-        The mappings are organized into:
-        1. Simple 1:1 mappings for embeddings, layer norms, and output layers
-        2. Vision model mappings (replicated without modification)
-        3. QKV mappings that combine separate Q, K, V matrices
-        4. Gated MLP mappings that combine gate and up projections
-        5. Deepstack visual merger mappings
-
-        Returns:
-            MegatronMappingRegistry with all parameter mappings
-        """
-        # Dictionary maps Megatron parameter names -> HF parameter names
-        # Based on yan-mbridge weight mappings in __init__.py
-
-        # Language model direct mappings
         param_mappings = {
-            # Embeddings and output layers
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.output_layer.weight": "lm_head.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-            # Layer normalization for attention and MLP
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
             "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
-            # Attention output projection
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
-            # MLP output projection
             "language_model.decoder.layers.*.mlp.linear_fc2.weight": "model.language_model.layers.*.mlp.down_proj.weight",
-            # QK layernorm weights (Qwen3 specific)
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
             # vision module attn
@@ -233,7 +195,12 @@ class Qwen3VLBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3VLMoeForConditionalGeneration, target=Qwen3VLModel)
+@MegatronModelBridge.register_bridge(
+    source=Qwen3VLMoeForConditionalGeneration,
+    target=Qwen3VLModel,
+    provider=Qwen3VLMoEModelProvider,
+    model_type="qwen3_vl_moe",
+)
 class Qwen3VLMoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-VL MoE (Mixture of Experts) Conditional Generation.
@@ -259,71 +226,54 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
 
     def __init__(self):
         super().__init__()
-        # Cache expert shards during HF export until all ranks contribute.
         self.hf_weights_cache: Dict[str, Dict[int, torch.Tensor]] = {}
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3VLMoEModelProvider:
-        """
-        Create a Qwen3VLMoEModelProvider from a HuggingFace pretrained MoE model.
-
-        Args:
-            hf_pretrained: HuggingFace pretrained VLM MoE model
-
-        Returns:
-            Qwen3VLMoEModelProvider configured with the HF MoE model's parameters
-        """
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
-        # Get the model dtype from text config
-        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
 
-        # Set vision config dtype to match the language model dtype
-        # This ensures vision model parameters are initialized in the same dtype
         vision_config = hf_config.vision_config
-        vision_config.torch_dtype = model_dtype
+        vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
 
-        provider = Qwen3VLMoEModelProvider(
-            num_layers=text_config.num_hidden_layers,
-            hidden_size=text_config.hidden_size,
-            ffn_hidden_size=text_config.intermediate_size,  # Dense FFN size (for non-MoE layers if any)
-            moe_ffn_hidden_size=text_config.moe_intermediate_size,  # Expert FFN size
-            num_attention_heads=text_config.num_attention_heads,
-            num_query_groups=text_config.num_key_value_heads,  # GQA configuration
-            head_dim=getattr(text_config, "head_dim", text_config.hidden_size // text_config.num_attention_heads),
-            init_method_std=text_config.initializer_range,
-            layernorm_epsilon=text_config.rms_norm_eps,
-            gated_linear_unit=True,  # Qwen3 MoE uses gated linear units
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
-            rotary_base=getattr(text_config, "rope_theta", 5000000.0),  # Default Qwen3 rope theta
-            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
-            vocab_size=text_config.vocab_size,
-            seq_length=text_config.max_position_embeddings,
-            fp16=(model_dtype == torch.float16),
-            bf16=(model_dtype == torch.bfloat16),
-            params_dtype=model_dtype,
-            # Qwen3 specific parameters
-            add_qkv_bias=text_config.attention_bias,  # Qwen3 can have bias in QKV
-            qk_layernorm=True,  # Qwen3 uses QK layernorm
-            # MoE specific parameters
-            num_moe_experts=text_config.num_experts,
-            moe_router_topk=text_config.num_experts_per_tok,
-            decoder_sparse_step=getattr(text_config, "decoder_sparse_step", 1),  # Default to every layer being MoE
-            mlp_only_layers=getattr(text_config, "mlp_only_layers", []),  # Default to all layers using MoE
-            # Vision configuration
-            vision_config=vision_config,
-            # Store the original HF text config for RoPE initialization
-            hf_text_config=text_config,
-            # Vision-Language token IDs
-            bos_token_id=getattr(text_config, "bos_token_id", 151643),
-            eos_token_id=getattr(text_config, "eos_token_id", 151645),
-            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
-            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
-            image_token_id=getattr(hf_config, "image_token_id", 151655),
-            video_token_id=getattr(hf_config, "video_token_id", 151656),
-            # MRoPE configuration for multimodal position embeddings
-            mrope_section=getattr(text_config, "rope_scaling", {}).get("mrope_section", [24, 20, 20]),
+        provider = Qwen3VLMoEModelProvider(**provider_kwargs)
+
+        # Qwen3 MoE-specific settings
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_qkv_bias = text_config.attention_bias
+        provider.add_bias_linear = False
+        provider.qk_layernorm = True
+        provider.hidden_dropout = 0.0
+
+        # MoE specific parameters
+        provider.moe_ffn_hidden_size = text_config.moe_intermediate_size
+        provider.num_moe_experts = text_config.num_experts
+        provider.moe_router_topk = text_config.num_experts_per_tok
+        provider.decoder_sparse_step = getattr(text_config, "decoder_sparse_step", 1)
+        provider.mlp_only_layers = getattr(text_config, "mlp_only_layers", [])
+        provider.moe_grouped_gemm = True
+        provider.moe_router_load_balancing_type = "aux_loss"
+        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_router_pre_softmax = False
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
+
+        # VL-specific overrides
+        provider.position_embedding_type = "mrope"
+        provider.vision_config = vision_config
+        provider.hf_text_config = text_config
+        provider.head_dim = getattr(
+            text_config, "head_dim", text_config.hidden_size // text_config.num_attention_heads
         )
+        provider.bos_token_id = getattr(text_config, "bos_token_id", 151643)
+        provider.eos_token_id = getattr(text_config, "eos_token_id", 151645)
+        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 151652)
+        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
+        provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
+        provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [24, 20, 20])
 
         return provider
 

@@ -444,6 +444,256 @@ class TestGetModel:
     @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.bridge.models.model_provider._ddp_wrap")
     @patch("megatron.bridge.models.model_provider.get_model_config")
+    def test_get_model_fp16_expert_bias_maintained(
+        self,
+        mock_get_model_config,
+        mock_ddp_wrap,
+        mock_fix_float8,
+        mock_print_params,
+        mock_create_model,
+    ):
+        """Test that expert bias is maintained in float32 when FP16 is enabled."""
+        # Setup mocks
+        config = create_test_config()
+        config.use_cpu_initialization = True
+        config.init_model_with_meta_device = False
+        config.fp16 = True
+        config.bf16 = False
+
+        mock_get_model_config.return_value = config
+
+        # Create a model with a submodule that has expert bias
+        model = MockMegatronModule(config)
+
+        # Create a submodule with expert bias that should be maintained in FP32
+        expert_module = Mock()
+        expert_module._maintain_float32_expert_bias = True
+        expert_bias = torch.nn.Parameter(torch.randn(10, 10, dtype=torch.float32))
+        expert_module.expert_bias = expert_bias
+        original_bias_data = expert_bias.data.clone()
+
+        # Mock the modules() method to return the expert module
+        model.modules = Mock(return_value=[expert_module])
+
+        mock_create_model.return_value = [model]
+        mock_fix_float8.return_value = [model]
+        mock_ddp_wrap.return_value = [model]
+
+        model_provider = MockModelProvider(model)
+        ddp_config = DistributedDataParallelConfig()
+
+        # Mock Float16Module to convert to fp16
+        def mock_float16_wrapper(config, model_module):
+            # Simulate conversion to FP16
+            for submodule in model_module.modules():
+                if hasattr(submodule, "expert_bias"):
+                    submodule.expert_bias.data = submodule.expert_bias.data.half()
+            return model_module
+
+        get_model(
+            model_provider,
+            ddp_config,
+            wrap_with_ddp=True,
+            mixed_precision_wrapper=mock_float16_wrapper,
+            pg_collection=_PG(),
+        )
+
+        # Assertions: expert bias should be restored to float32
+        assert expert_module.expert_bias.dtype == torch.float32
+        # The data should match the original (within floating point tolerance)
+        assert torch.allclose(expert_module.expert_bias.data, original_bias_data)
+
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
+    def test_get_model_fp16_no_expert_bias(
+        self,
+        mock_get_model_config,
+        mock_ddp_wrap,
+        mock_fix_float8,
+        mock_print_params,
+        mock_create_model,
+    ):
+        """Test that modules without expert bias are not affected by FP16."""
+        # Setup mocks
+        config = create_test_config()
+        config.use_cpu_initialization = True
+        config.init_model_with_meta_device = False
+        config.fp16 = True
+        config.bf16 = False
+
+        mock_get_model_config.return_value = config
+
+        # Create a model with a submodule that has _maintain_float32_expert_bias but no expert_bias
+        model = MockMegatronModule(config)
+
+        # Create a submodule with the flag but no expert_bias attribute
+        expert_module = Mock()
+        expert_module._maintain_float32_expert_bias = True
+        # Simulate getattr returning None for expert_bias
+        expert_module.expert_bias = None
+
+        # Mock the modules() method to return the expert module
+        model.modules = Mock(return_value=[expert_module])
+
+        mock_create_model.return_value = [model]
+        mock_fix_float8.return_value = [model]
+        mock_ddp_wrap.return_value = [model]
+
+        model_provider = MockModelProvider(model)
+        ddp_config = DistributedDataParallelConfig()
+
+        # Mock Float16Module
+        def mock_float16_wrapper(config, model_module):
+            return model_module
+
+        # Should not raise an error even though expert_bias is None
+        result = get_model(
+            model_provider,
+            ddp_config,
+            wrap_with_ddp=True,
+            mixed_precision_wrapper=mock_float16_wrapper,
+            pg_collection=_PG(),
+        )
+
+        # Assertions: should complete without errors
+        assert len(result) == 1
+
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
+    def test_get_model_bf16_expert_bias_maintained(
+        self,
+        mock_get_model_config,
+        mock_ddp_wrap,
+        mock_fix_float8,
+        mock_print_params,
+        mock_create_model,
+    ):
+        """Test that expert bias is maintained in float32 when BF16 is enabled."""
+        # Setup mocks
+        config = create_test_config()
+        config.use_cpu_initialization = True
+        config.init_model_with_meta_device = False
+        config.fp16 = False
+        config.bf16 = True
+
+        mock_get_model_config.return_value = config
+
+        # Create a model with a submodule that has expert bias
+        model = MockMegatronModule(config)
+
+        # Create multiple submodules to test the iteration
+        expert_module_1 = Mock()
+        expert_module_1._maintain_float32_expert_bias = True
+        expert_bias_1 = torch.nn.Parameter(torch.randn(10, 10, dtype=torch.float32))
+        expert_module_1.expert_bias = expert_bias_1
+        original_bias_data_1 = expert_bias_1.data.clone()
+
+        expert_module_2 = Mock()
+        expert_module_2._maintain_float32_expert_bias = True
+        expert_bias_2 = torch.nn.Parameter(torch.randn(5, 5, dtype=torch.float32))
+        expert_module_2.expert_bias = expert_bias_2
+        original_bias_data_2 = expert_bias_2.data.clone()
+
+        # Regular module without the flag (should not be saved/restored)
+        regular_module = Mock()
+
+        # Mock the modules() method to return all modules
+        model.modules = Mock(return_value=[expert_module_1, regular_module, expert_module_2])
+
+        mock_create_model.return_value = [model]
+        mock_fix_float8.return_value = [model]
+        mock_ddp_wrap.return_value = [model]
+
+        model_provider = MockModelProvider(model)
+        ddp_config = DistributedDataParallelConfig()
+
+        # Mock Float16Module to convert to bf16
+        def mock_bfloat16_wrapper(config, model_module):
+            # Simulate conversion to BF16
+            for submodule in model_module.modules():
+                if hasattr(submodule, "expert_bias") and submodule.expert_bias is not None:
+                    submodule.expert_bias.data = submodule.expert_bias.data.bfloat16()
+            return model_module
+
+        get_model(
+            model_provider,
+            ddp_config,
+            wrap_with_ddp=True,
+            mixed_precision_wrapper=mock_bfloat16_wrapper,
+            pg_collection=_PG(),
+        )
+
+        # Assertions: both expert biases should be restored to float32
+        assert expert_module_1.expert_bias.dtype == torch.float32
+        assert expert_module_2.expert_bias.dtype == torch.float32
+        assert torch.allclose(expert_module_1.expert_bias.data, original_bias_data_1)
+        assert torch.allclose(expert_module_2.expert_bias.data, original_bias_data_2)
+
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
+    def test_get_model_fp16_no_mixed_precision_wrapper(
+        self,
+        mock_get_model_config,
+        mock_ddp_wrap,
+        mock_fix_float8,
+        mock_print_params,
+        mock_create_model,
+    ):
+        """Test that expert bias logic is skipped when mixed_precision_wrapper is None."""
+        # Setup mocks
+        config = create_test_config()
+        config.use_cpu_initialization = True
+        config.init_model_with_meta_device = False
+        config.fp16 = True
+        config.bf16 = False
+
+        mock_get_model_config.return_value = config
+
+        # Create a model with expert bias
+        model = MockMegatronModule(config)
+
+        expert_module = Mock()
+        expert_module._maintain_float32_expert_bias = True
+        expert_bias = torch.nn.Parameter(torch.randn(10, 10, dtype=torch.float32))
+        expert_module.expert_bias = expert_bias
+
+        model.modules = Mock(return_value=[expert_module])
+
+        mock_create_model.return_value = [model]
+        mock_fix_float8.return_value = [model]
+        mock_ddp_wrap.return_value = [model]
+
+        model_provider = MockModelProvider(model)
+        ddp_config = DistributedDataParallelConfig()
+
+        # Call with mixed_precision_wrapper=None
+        result = get_model(
+            model_provider,
+            ddp_config,
+            wrap_with_ddp=True,
+            mixed_precision_wrapper=None,
+            pg_collection=_PG(),
+        )
+
+        # Assertions: expert bias should remain as is (not wrapped/unwrapped)
+        assert len(result) == 1
+        # Expert bias dtype should still be float32 (unchanged)
+        assert expert_module.expert_bias.dtype == torch.float32
+
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_cpu_initialization(
         self,
         mock_get_model_config,
