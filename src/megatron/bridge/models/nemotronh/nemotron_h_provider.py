@@ -14,8 +14,8 @@
 
 import logging
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from megatron.core.activations import squared_relu
 from megatron.core.transformer.enums import AttnBackend

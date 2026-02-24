@@ -15,8 +15,9 @@
 import inspect
 import logging
 import time
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, NamedTuple
 
 import torch
 from megatron.core.config import set_experimental_flag
@@ -25,9 +26,9 @@ from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataPa
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
-from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -38,18 +39,17 @@ from megatron.bridge.training.checkpointing import (
     init_checkpointing_context,
     load_checkpoint,
 )
-from megatron.bridge.training.config import ConfigContainer, runtime_config_update
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
-
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 class SetupOutput(NamedTuple):
@@ -74,18 +74,18 @@ class SetupOutput(NamedTuple):
     model: MegatronModule
     optimizer: MegatronOptimizer
     scheduler: OptimizerParamScheduler
-    train_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
+    valid_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
+    test_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
     checkpointing_context: dict[str, Any]
     pg_collection: ProcessGroupCollection
 
 def setup(
     state: GlobalState,
-    train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
-    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    restart_store: Optional[torch.distributed.Store] = None,
+    train_valid_test_datasets_provider: Callable[..., tuple[Any | None, Any | None, Any | None]],
+    get_embedding_ranks: Callable[[list[int], int | None], list[int]] | None = None,
+    get_position_embedding_ranks: Callable[[list[int], int | None], list[int]] | None = None,
+    restart_store: torch.distributed.Store | None = None,
 ) -> SetupOutput:
     """Initialize the training/evaluation environment using an existing GlobalState.
 
@@ -324,10 +324,10 @@ def _update_model_config_funcs(
     model: MegatronModule,
     model_config: GPTModelProvider | T5ModelProvider,
     ddp_config: DistributedDataParallelConfig,
-    optimizer: Optional[MegatronOptimizer],
+    optimizer: MegatronOptimizer | None,
     *,
     align_grad_reduce: bool = True,
-    pg_collection: Optional[ProcessGroupCollection] = None,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
     if isinstance(model[0], (DistributedDataParallel, megatron_FSDP)) and ddp_config.overlap_grad_reduce:
@@ -439,7 +439,7 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
         if param.requires_grad:
             trainable_params += param_count
 
-    print_rank_0(f"PEFT Statistics:")
+    print_rank_0("PEFT Statistics:")
     print_rank_0(f"  Total parameters: {total_params:,}")
     print_rank_0(f"  Trainable parameters: {trainable_params:,}")
     print_rank_0(f"  Trainable percentage: {100 * trainable_params / total_params:.2f}%")
@@ -447,7 +447,7 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
+def _validate_and_set_vocab_size(model_vocab_size: int | None, tokenizer_vocab_size: int) -> tuple[int, bool]:
     """Validate and determine the correct vocab size for the model.
 
     Args:

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Union
-
 import torch
 
 from megatron.bridge import AutoBridge
@@ -27,7 +25,7 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def set_deepseek_v3_pipeline_model_parallel_layout(
-    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+    model_cfg: GPTModelProvider, layout: str | list[list[str]] | None = None
 ) -> None:
     """Set the DeepSeek-V3 pipeline model parallel layout."""
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0

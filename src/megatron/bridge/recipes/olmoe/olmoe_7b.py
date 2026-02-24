@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -41,29 +40,29 @@ class OLMoECommonKwargs(TypedDict, total=False):
     """Typed options accepted by OLMoE family recipe helpers."""
 
     # Core identifiers
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     sequence_parallel: bool
     # Recomputation
     recompute_granularity: str
-    recompute_modules: Optional[List[str]]
-    recompute_method: Optional[str]
-    recompute_num_layers: Optional[int]
+    recompute_modules: list[str] | None
+    recompute_method: str | None
+    recompute_num_layers: int | None
     apply_rope_fusion: bool
     # Training hyperparameters
     train_iters: int
@@ -77,8 +76,8 @@ class OLMoECommonKwargs(TypedDict, total=False):
     eval_interval: int
     save_interval: int
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
 
 
 class OLMoEFinetuneKwargs(TypedDict, total=False):
@@ -86,44 +85,44 @@ class OLMoEFinetuneKwargs(TypedDict, total=False):
 
     # Core identifiers
     tokenizer_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Model parallelism
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     sequence_parallel: bool
     # Recomputation
     recompute_granularity: str
-    recompute_modules: Optional[List[str]]
-    recompute_method: Optional[str]
-    recompute_num_layers: Optional[int]
+    recompute_modules: list[str] | None
+    recompute_method: str | None
+    recompute_num_layers: int | None
     apply_rope_fusion: bool
     # Finetuning specifics
-    pretrained_checkpoint: Optional[str]
-    peft: Optional[Union[str, PEFT]]
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
     packed_sequence: bool
     # Training hyperparameters
     train_iters: int
-    global_batch_size: Optional[int]
+    global_batch_size: int | None
     micro_batch_size: int
     seq_length: int
     finetune_lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
     # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
 
 def _get_olmoe_pipeline_layout(pp_size: int, vp_size: int):
@@ -282,16 +281,16 @@ def olmoe_7b_pretrain_config() -> ConfigContainer:
 def _model_config(
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 8,
     sequence_parallel: bool = False,
     # Recomputation
     recompute_granularity: str = "selective",
-    recompute_modules: Optional[List[str]] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
+    recompute_modules: list[str] | None = None,
+    recompute_method: str | None = None,
+    recompute_num_layers: int | None = None,
     apply_rope_fusion: bool = False,
 ) -> OlMoEModelProvider:
     """
@@ -378,25 +377,25 @@ def olmoe_7b_finetune_config(**user_kwargs: Unpack[OLMoEFinetuneKwargs]) -> Conf
 
 def _olmoe_finetune_common(
     tokenizer_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Model configuration
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
     sequence_parallel: bool = False,
     # Recomputation
     recompute_granularity: str = "selective",
-    recompute_modules: Optional[List[str]] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
+    recompute_modules: list[str] | None = None,
+    recompute_method: str | None = None,
+    recompute_num_layers: int | None = None,
     apply_rope_fusion: bool = False,
     # Finetuning-specific params
-    pretrained_checkpoint: Optional[str] = None,
-    peft: Optional[Union[str, PEFT]] = "lora",
+    pretrained_checkpoint: str | None = None,
+    peft: str | PEFT | None = "lora",
     packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
@@ -409,36 +408,36 @@ def _olmoe_finetune_common(
     finetune_lr: float = 1e-4,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 50,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     # Precision / overlap
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = None,
+    comm_overlap_config: CommOverlapConfig | None = None,
     # W&B
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
 ) -> ConfigContainer:
     """
     Create a finetuning configuration for OLMoE-7B model (7B total, ~1B active).
 
     Args:
         tokenizer_path (str): Path to the tokenizer (HuggingFace tokenizer).
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
+        dir (str | None): Base directory for saving logs and checkpoints.
         name (str): Name of the finetuning run.
         tensor_model_parallel_size (int): Degree of tensor model parallelism.
         pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        pipeline_dtype (torch.dtype | None): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (int | None): Size of virtual pipeline parallelism.
         context_parallel_size (int): Degree of context parallelism.
         expert_model_parallel_size (int): Degree of expert model parallelism.
         sequence_parallel (bool): Whether to use sequence parallelism.
         recompute_granularity (str): Recomputation granularity.
-        recompute_modules (Optional[List[str]]): Modules to recompute.
-        recompute_method (Optional[str]): Recomputation method.
-        recompute_num_layers (Optional[int]): Number of layers to recompute.
+        recompute_modules (list[str] | None): Modules to recompute.
+        recompute_method (str | None): Recomputation method.
+        recompute_num_layers (int | None): Number of layers to recompute.
         apply_rope_fusion (bool): Whether to apply RoPE fusion.
-        pretrained_checkpoint (Optional[str]): Path to pretrained checkpoint.
-        peft (Optional[Union[str, PEFT]]): PEFT configuration (e.g., "lora", "dora", or None for full SFT).
+        pretrained_checkpoint (str | None): Path to pretrained checkpoint.
+        peft (str | PEFT | None): PEFT configuration (e.g., "lora", "dora", or None for full SFT).
         packed_sequence (bool): Whether to use packed sequences.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
@@ -449,12 +448,12 @@ def _olmoe_finetune_common(
         finetune_lr (float): Learning rate for finetuning.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of decay iterations for the learning rate.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
-        wandb_project (Optional[str]): Weights & Biases project name.
-        wandb_entity (Optional[str]): Weights & Biases entity name.
-        wandb_exp_name (Optional[str]): Weights & Biases experiment name.
+        lr_decay_iters (int | None): Number of decay iterations for the learning rate.
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
+        wandb_project (str | None): Weights & Biases project name.
+        wandb_entity (str | None): Weights & Biases entity name.
+        wandb_exp_name (str | None): Weights & Biases experiment name.
 
     Returns:
         ConfigContainer: Configuration for finetuning.

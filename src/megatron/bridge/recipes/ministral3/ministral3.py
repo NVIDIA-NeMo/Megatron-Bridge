@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -48,50 +47,50 @@ class Ministral3FinetuneKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    dataset_type: Optional[str]
-    image_folder: Optional[str]
-    tokenizer_model: Optional[str]
-    seq_length: Optional[int]
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    dataset_type: str | None
+    image_folder: str | None
+    tokenizer_model: str | None
+    seq_length: int | None
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
     sequence_parallel: bool
     use_megatron_fsdp: bool
     # Training hyperparameters
     train_iters: int
-    global_batch_size: Optional[int]
+    global_batch_size: int | None
     micro_batch_size: int
     eval_interval: int
     save_interval: int
     # Optimizer
-    finetune_lr: Optional[float]
+    finetune_lr: float | None
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
     # Freeze options
     freeze_language_model: bool
     freeze_vision_model: bool
     freeze_vision_projection: bool
     # Checkpoint options
-    pretrained_checkpoint: Optional[str]
+    pretrained_checkpoint: str | None
     # PEFT options
-    peft: Optional[Union[str, PEFT]]
+    peft: str | PEFT | None
     # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
 
 def ministral3_3b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwargs]) -> ConfigContainer:
@@ -168,21 +167,21 @@ def ministral3_14b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwarg
 
 def _ministral3_finetune_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "ministral3_finetune",
-    pretrained_checkpoint: Optional[str] = None,
+    pretrained_checkpoint: str | None = None,
     # Dataset configuration
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    dataset_type: Optional[str] = None,
-    image_folder: Optional[str] = None,
-    tokenizer_model: Optional[str] = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    dataset_type: str | None = None,
+    image_folder: str | None = None,
+    tokenizer_model: str | None = None,
     # Model configuration
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
@@ -194,23 +193,23 @@ def _ministral3_finetune_common(
     eval_interval: int = 30,
     save_interval: int = 50,
     # Optimizer
-    finetune_lr: Optional[float] = None,
+    finetune_lr: float | None = None,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 50,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     # Precision and comm overlap
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
     # Freeze options
     freeze_language_model: bool = False,
     freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
     # PEFT options
-    peft: Optional[Union[str, PEFT]] = None,
+    peft: str | PEFT | None = None,
     # W&B logging
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
 ) -> ConfigContainer:
     """
     Create a fine-tuning configuration for Ministral3 family models using a given HuggingFace path.

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import importlib
-from typing import Callable, List
+from collections.abc import Callable
 
 import pytest
 
@@ -21,10 +21,10 @@ import pytest
 _qwen3_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen3_vl")
 
 
-def _collect_recipe_functions(mod) -> List[Callable]:
+def _collect_recipe_functions(mod) -> list[Callable]:
     # Prefer explicit exports
     exported_names = getattr(mod, "__all__", None)
-    candidates: List[Callable] = []
+    candidates: list[Callable] = []
 
     if exported_names:
         for name in exported_names:
@@ -50,7 +50,7 @@ def _collect_recipe_functions(mod) -> List[Callable]:
     return unique
 
 
-_QWEN3_VL_RECIPE_FUNCS: List[Callable] = _collect_recipe_functions(_qwen3_vl_module)
+_QWEN3_VL_RECIPE_FUNCS: list[Callable] = _collect_recipe_functions(_qwen3_vl_module)
 
 
 def _safe_overrides_for(name: str) -> dict:

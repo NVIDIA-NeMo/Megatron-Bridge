@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Literal, Optional, Tuple, Union
+from typing import Literal
 
 import torch
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -45,7 +46,7 @@ class GPTOSSProvider(GPTModelProvider):
     num_attention_heads: int = 64
     num_query_groups: int = 8
     ffn_hidden_size: int = 2880
-    kv_channels: Optional[int] = 64
+    kv_channels: int | None = 64
     normalization: str = "RMSNorm"
     gated_linear_unit: bool = True
     add_bias_linear: bool = True
@@ -63,8 +64,8 @@ class GPTOSSProvider(GPTModelProvider):
     yarn_beta_fast: float = 32.0
     yarn_beta_slow: float = 1.0
     yarn_correction_range_round_to_int: bool = False
-    yarn_mscale: Optional[float] = None
-    yarn_mscale_all_dim: Optional[float] = None
+    yarn_mscale: float | None = None
+    yarn_mscale_all_dim: float | None = None
 
     moe_router_topk: int = 4
     moe_router_pre_softmax: bool = False
@@ -74,14 +75,14 @@ class GPTOSSProvider(GPTModelProvider):
     moe_ffn_hidden_size: int = 2880
     moe_router_load_balancing_type: str = "none"
     seq_length: int = 131072
-    window_size: Optional[Tuple[int, int]] = (128, 0)
+    window_size: tuple[int, int] | None = (128, 0)
     softmax_type: Literal["vanilla", "off-by-one", "learnable"] = "learnable"
     activation_func: Callable = quick_gelu
     glu_linear_offset: float = 1.0
     bias_activation_fusion: bool = True
     bias_dropout_fusion: bool = False
-    window_attn_skip_freq: Optional[Union[int, List[int]]] = 2  # alternative SWA/full
-    activation_func_clamp_value: Optional[float] = 7.0
+    window_attn_skip_freq: int | list[int] | None = 2  # alternative SWA/full
+    activation_func_clamp_value: float | None = 7.0
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         if not is_te_min_version("2.8"):

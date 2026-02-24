@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 import pytest
 
@@ -60,10 +60,10 @@ def run_distill_recipe_test(
     teacher_config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_model_parallel_size: Optional[int] = None,
-    pipeline_model_parallel_size: Optional[int] = None,
-    expert_model_parallel_size: Optional[int] = None,
-    model_overrides: Optional[dict] = None,
+    tensor_model_parallel_size: int | None = None,
+    pipeline_model_parallel_size: int | None = None,
+    expert_model_parallel_size: int | None = None,
+    model_overrides: dict | None = None,
 ):
     """
     Common test implementation for distillation recipe configurations.

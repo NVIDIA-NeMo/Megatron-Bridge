@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import re
-from typing import List, Optional
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
 
@@ -180,7 +179,7 @@ class MegatronMappingRegistry:
                         reverse_dict_patterns[key] = None
                 self._reverse_patterns.append((reverse_dict_patterns, mapping))
 
-    def megatron_to_hf_lookup(self, megatron_param_name: str) -> Optional[MegatronParamMapping]:
+    def megatron_to_hf_lookup(self, megatron_param_name: str) -> MegatronParamMapping | None:
         """
         Get mapping for a Megatron parameter name.
 
@@ -216,7 +215,7 @@ class MegatronMappingRegistry:
                     return mapping.resolve(match.groups())
         return None
 
-    def hf_to_megatron_lookup(self, hf_param_name: str) -> Optional[MegatronParamMapping]:
+    def hf_to_megatron_lookup(self, hf_param_name: str) -> MegatronParamMapping | None:
         """
         Get mapping for a destination parameter name (reverse lookup).
 
@@ -258,11 +257,11 @@ class MegatronMappingRegistry:
                             return mapping.resolve(match.groups())
         return None
 
-    def get_all_mappings(self) -> List[MegatronParamMapping]:
+    def get_all_mappings(self) -> list[MegatronParamMapping]:
         """Get all mappings in this MegatronMappingRegistry."""
         return self.mappings.copy()
 
-    def get_mappings_by_pattern(self, pattern: str) -> List[MegatronParamMapping]:
+    def get_mappings_by_pattern(self, pattern: str) -> list[MegatronParamMapping]:
         """
         Get all mappings that match a given pattern.
 

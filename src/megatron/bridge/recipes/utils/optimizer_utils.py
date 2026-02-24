@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 
@@ -29,7 +28,7 @@ def distributed_muon_with_cosine_annealing(
     lr_decay_iters: int = 2000,
     weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: Optional[float] = None,
+    min_lr: float | None = None,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
@@ -47,7 +46,7 @@ def distributed_muon_with_cosine_annealing(
         lr_decay_iters (int): Number of decay iterations for the learning rate scheduler.
         weight_decay (float): Amount of weight decay to apply.
         max_lr (float): Maximum learning rate.
-        min_lr (Optional[float]): Minimum learning rate; if None, determined automatically.
+        min_lr (float | None): Minimum learning rate; if None, determined automatically.
         clip_grad (float): Gradient clipping threshold.
 
     Returns:
@@ -85,13 +84,13 @@ def distributed_muon_with_cosine_annealing(
 def distributed_fused_adam_with_cosine_annealing(
     precision: str = "bf16-mixed",
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
     adam_eps: float = 1e-8,
     weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: Optional[float] = None,
+    min_lr: float | None = None,
     clip_grad: float = 1.0,
     start_weight_decay: float = 0.033,
     end_weight_decay: float = 0.033,
@@ -152,14 +151,14 @@ def distributed_fused_adam_with_cosine_annealing(
 
 def distributed_fused_adam_with_cosine_annealing_samples(
     precision: str = "bf16-mixed",
-    lr_warmup_samples: Optional[int] = None,
-    lr_decay_samples: Optional[int] = None,
+    lr_warmup_samples: int | None = None,
+    lr_decay_samples: int | None = None,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
     adam_eps: float = 1e-8,
     weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: Optional[float] = None,
+    min_lr: float | None = None,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """

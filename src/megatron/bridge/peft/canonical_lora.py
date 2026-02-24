@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
@@ -39,8 +39,8 @@ class ModuleDict(nn.ModuleDict):
     def sharded_state_dict(
         self,
         prefix: str = "",
-        sharded_offsets: Tuple[Tuple[int, int, int]] = (),
-        metadata: Optional[dict] = None,
+        sharded_offsets: tuple[tuple[int, int, int]] = (),
+        metadata: dict | None = None,
     ) -> "ShardedStateDict":
         """Retrieve the sharded state dictionary of the wrapped module and adapter.
 
@@ -49,9 +49,9 @@ class ModuleDict(nn.ModuleDict):
 
         Args:
             prefix (str): A prefix added to parameter and buffer names. Defaults to ''.
-            sharded_offsets (Tuple[Tuple[int, int, int]]): Offsets for sharded parameters.
+            sharded_offsets (tuple[tuple[int, int, int]]): Offsets for sharded parameters.
                                                            Defaults to an empty tuple.
-            metadata (Optional[dict]): Additional metadata for the sharded state.
+            metadata (dict | None): Additional metadata for the sharded state.
                                        Defaults to None.
 
         Returns:
@@ -127,7 +127,7 @@ class LoRALinearSplitQKV(AdapterWrapper):
         qkv = torch.cat(qkv_chunks, dim=1)
         return qkv.reshape(*leading_shape, -1)
 
-    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor | None]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
@@ -150,7 +150,7 @@ class LoRALinearSplitFC1UpGate(AdapterWrapper):
     class to provide a specific implementation of the forward method.
     """
 
-    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor | None]:
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
@@ -169,7 +169,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
     matrices separately. This follows more closely with Huggingface's implementation of LoRA.
 
     Args:
-        target_modules (List[str], optional): A list of module names to apply LoRA to.
+        target_modules (list[str], optional): A list of module names to apply LoRA to.
             Defaults to all linear layers ['linear_q', 'linear_k', 'linear_v', 'linear_proj',
                                            'linear_fc1_up', 'linear_fc1_gate', 'linear_fc2'].
                 - 'linear_q', 'linear_k', 'linear_v': Apply LoRA to the linear layer used for query, key, and value
@@ -182,7 +182,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             Target modules can also contain wildcards. For example, you can specify
                 target_modules=['*.layers.0.*.linear_q', '*.layers.1.*.linear_q'] to add LoRA to only linear_q
                 on the first two layers.
-        exclude_modules (List[str], optional): A list of module names not to apply LoRA to. It will
+        exclude_modules (list[str], optional): A list of module names not to apply LoRA to. It will
             match all nn.Linear & nn.Linear-adjacent modules whose name does not match any string in
             exclude_modules. If used, will require target_modules to be empty list or None.
         dim (int): Dimension of the low-rank projection space. Defaults to 32.
@@ -194,7 +194,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         lora_B_init_method (str): Initialization method for LoRA B matrix. Defaults to "zero".
     """
 
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=lambda: [
             "linear_q",
             "linear_k",
@@ -256,14 +256,14 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             else:
                 self.canonical_mapping[target].add(target)
 
-    def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(self, m: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
         """
         Applies LoRA to a specific module within the model architecture.
 
         Args:
             m (nn.Module): The module to apply LoRA to.
-            name (Optional[str]): Name of the module (if applicable). Defaults to None.
-            prefix (Optional[str]): Prefix for the module name (if applicable). Defaults to None.
+            name (str | None): Name of the module (if applicable). Defaults to None.
+            prefix (str | None): Prefix for the module name (if applicable). Defaults to None.
 
         Returns:
             nn.Module: The modified module with LoRA applied, or the original module if not a target.

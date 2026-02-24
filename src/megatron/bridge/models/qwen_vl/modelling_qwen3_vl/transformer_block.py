@@ -19,7 +19,6 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 """
 
 from contextlib import nullcontext
-from typing import Optional, Union
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -60,12 +59,12 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
     def __init__(
         self,
         config: Qwen3VLTransformerConfig,
-        spec: Union[TransformerBlockSubmodules, ModuleSpec],
+        spec: TransformerBlockSubmodules | ModuleSpec,
         post_layer_norm: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
         # model_comm_pgs: ModelCommProcessGroups = None,
-        vp_stage: Optional[int] = None,
+        vp_stage: int | None = None,
         patch_merger_spec: ModuleSpec = None,
     ):
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
@@ -208,19 +207,19 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
     def forward(
         self,
-        hidden_states: Union[Tensor, WrappedTensor],
-        attention_mask: Optional[Tensor],
-        context: Optional[Tensor] = None,
-        context_mask: Optional[Tensor] = None,
-        rotary_pos_emb: Optional[Tensor] = None,
-        rotary_pos_cos: Optional[Tensor] = None,
-        rotary_pos_sin: Optional[Tensor] = None,
-        attention_bias: Optional[Tensor] = None,
-        inference_context: Optional[BaseInferenceContext] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
-        sequence_len_offset: Optional[Tensor] = None,
+        hidden_states: Tensor | WrappedTensor,
+        attention_mask: Tensor | None,
+        context: Tensor | None = None,
+        context_mask: Tensor | None = None,
+        rotary_pos_emb: Tensor | None = None,
+        rotary_pos_cos: Tensor | None = None,
+        rotary_pos_sin: Tensor | None = None,
+        attention_bias: Tensor | None = None,
+        inference_context: BaseInferenceContext | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        sequence_len_offset: Tensor | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
+        inference_params: BaseInferenceContext | None = None,
     ):
         """
         Perform the forward pass through the transformer block.
@@ -447,8 +446,8 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         packed_seq_params: PackedSeqParams,
         use_inner_fp8_context: bool,
         # args for deepstack
-        visual_pos_masks: Optional[torch.Tensor] = None,
-        deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        visual_pos_masks: torch.Tensor | None = None,
+        deepstack_visual_embeds: list[torch.Tensor] | None = None,
     ):
         """Forward method with activation checkpointing."""
 
@@ -570,22 +569,22 @@ class Qwen3VLTransformerBlock(TransformerBlock):
 
     def forward(
         self,
-        hidden_states: Union[Tensor, WrappedTensor],
-        attention_mask: Optional[Tensor],
-        context: Optional[Tensor] = None,
-        context_mask: Optional[Tensor] = None,
-        rotary_pos_emb: Optional[Tensor] = None,
-        rotary_pos_cos: Optional[Tensor] = None,
-        rotary_pos_sin: Optional[Tensor] = None,
-        attention_bias: Optional[Tensor] = None,
-        inference_context: Optional[BaseInferenceContext] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
-        sequence_len_offset: Optional[Tensor] = None,
+        hidden_states: Tensor | WrappedTensor,
+        attention_mask: Tensor | None,
+        context: Tensor | None = None,
+        context_mask: Tensor | None = None,
+        rotary_pos_emb: Tensor | None = None,
+        rotary_pos_cos: Tensor | None = None,
+        rotary_pos_sin: Tensor | None = None,
+        attention_bias: Tensor | None = None,
+        inference_context: BaseInferenceContext | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        sequence_len_offset: Tensor | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
+        inference_params: BaseInferenceContext | None = None,
         # args for deepstack
-        visual_pos_masks: Optional[torch.Tensor] = None,
-        deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        visual_pos_masks: torch.Tensor | None = None,
+        deepstack_visual_embeds: list[torch.Tensor] | None = None,
     ):
         """
         Perform the forward pass through the transformer block.
@@ -594,7 +593,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         self-attention, optional cross-attention, and feed-forward operations.
 
         Args:
-            hidden_states (Union[Tensor, WrappedTensor]): Input tensor of shape [s, b, h]
+            hidden_states (Tensor | WrappedTensor): Input tensor of shape [s, b, h]
                 where s is the sequence length, b is the batch size, and h is the hidden size.
                 Can be passed as a WrappedTensor during inference to avoid an obsolete
                 reference in the calling function.
@@ -612,7 +611,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 processing.
 
         Returns:
-            Union[Tensor, Tuple[Tensor, Tensor]]: The output hidden states tensor of shape
+            Tensor | tuple[Tensor, Tensor]]: The output hidden states tensor of shape
             [s, b, h], and optionally the updated context tensor if cross-attention is used.
         """
         if self.pre_process and deepstack_visual_embeds is not None:

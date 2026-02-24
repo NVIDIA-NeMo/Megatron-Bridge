@@ -342,7 +342,7 @@ def trainer(
 
 @run.cli.factory(target=llm.pretrain, name="llama3_8b")
 def pretrain_recipe(
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     num_nodes: int = 1,
     num_gpus_per_node: int = 8,
@@ -373,7 +373,6 @@ if __name__ == "__main__":
 
 ```python
 # my_recipes/llama3_8b.py
-from typing import Optional
 from megatron.bridge.training.config import (
     ConfigContainer,
     TrainingConfig,
@@ -399,7 +398,7 @@ def llama3_8b_config(
     global_batch_size: int = 512,
     micro_batch_size: int = 1,
     # Checkpoint params
-    checkpoint_dir: Optional[str] = None,
+    checkpoint_dir: str | None = None,
     save_interval: int = 1000,
 ) -> ConfigContainer:
     """Create a Llama3 8B pretraining configuration."""
@@ -1429,7 +1428,7 @@ model = run.Config(llm.LlamaModel, config=model_config)
 ```python
 # Megatron Bridge: Define and pass forward step function
 import torch
-from typing import Iterable
+from collections.abc import Iterable
 from functools import partial
 from megatron.bridge.training.state import GlobalState
 

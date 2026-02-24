@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import Dict, List
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -27,8 +26,8 @@ def slurm_executor(
     num_gpus_per_node: int,
     time_limit: str = "00:30:00",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
-    custom_mounts: List[str] = [],
-    custom_env_vars: Dict[str, str] = {},
+    custom_mounts: list[str] = [],
+    custom_env_vars: dict[str, str] = {},
     hf_token: str = None,
 ) -> run.SlurmExecutor:
     """
@@ -76,7 +75,7 @@ def kuberay_executor(
     head_cpu: str = "8",
     head_memory: str = "32Gi",
     hf_token: str = None,
-    custom_env_vars: Dict[str, str] = None,
+    custom_env_vars: dict[str, str] = None,
 ):
     """
     Kuberay cluster definition with appropriate cluster params and NeMo container params needed for pre-training

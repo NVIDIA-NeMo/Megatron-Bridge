@@ -14,9 +14,9 @@
 
 import copy
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Callable, Optional, Tuple, Union
 
 import torch
 from megatron.core.activations import fast_gelu
@@ -86,7 +86,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     is_vision_language: bool = False
     flash_decode: bool = False
     gradient_accumulation_fusion: bool = False
-    transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(
+    transformer_layer_spec: ModuleSpec | Callable[["Gemma3ModelProvider"], ModuleSpec] = field(
         default_factory=lambda: gemma3_layer_spec
     )
     scatter_embedding_sequence_parallel: bool = True
@@ -247,18 +247,18 @@ class Gemma3SelfAttention(SelfAttention):
         self,
         hidden_states: Tensor,
         attention_mask: Tensor,
-        key_value_states: Optional[Tensor] = None,
-        inference_context: Optional[BaseInferenceContext] = None,
-        rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
-        rotary_pos_cos: Optional[Tensor] = None,
-        rotary_pos_sin: Optional[Tensor] = None,
-        rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
-        attention_bias: Optional[Tensor] = None,
-        packed_seq_params: Optional[PackedSeqParams] = None,
-        sequence_len_offset: Optional[int] = None,
+        key_value_states: Tensor | None = None,
+        inference_context: BaseInferenceContext | None = None,
+        rotary_pos_emb: Tensor | tuple[Tensor, Tensor] | None = None,
+        rotary_pos_cos: Tensor | None = None,
+        rotary_pos_sin: Tensor | None = None,
+        rotary_pos_cos_sin: tuple[Tensor, Tensor] | None = None,
+        attention_bias: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        sequence_len_offset: int | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
-    ) -> Tuple[Tensor, Tensor]:
+        inference_params: BaseInferenceContext | None = None,
+    ) -> tuple[Tensor, Tensor]:
         """Switch to either local or global rope embedding before forward"""
         assert isinstance(rotary_pos_emb, tuple)
         assert rotary_pos_cos is None and rotary_pos_sin is None
@@ -295,7 +295,7 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         layer_number: int,
         attn_mask_type: AttnMaskType,
         attention_type: str,
-        attention_dropout: Optional[float] = None,
+        attention_dropout: float | None = None,
         **kwargs,
     ):
         # Overwrite config.window_size based on layer_number
@@ -400,7 +400,7 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
 
 def _is_local_attn_layer(
     layer_number: int,
-    layer_pattern: Tuple[int, int],
+    layer_pattern: tuple[int, int],
 ) -> bool:
     pattern_size = sum(layer_pattern)
     return layer_number % pattern_size != 0

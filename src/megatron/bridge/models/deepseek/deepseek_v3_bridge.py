@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 from functools import partial
-from typing import Dict, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -106,9 +106,9 @@ class DeepSeekV3Bridge(MegatronModelBridge):
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
-        converted_weights_dict: Dict[str, torch.Tensor],
+        converted_weights_dict: dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """Add rotary embedding inverse frequency parameter if needed."""
         global_name = task.global_param_name
         if not global_name.startswith("decoder.layers.") or not global_name.endswith(".input_layernorm.weight"):

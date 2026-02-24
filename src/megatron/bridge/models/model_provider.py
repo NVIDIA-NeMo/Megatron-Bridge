@@ -14,8 +14,9 @@
 
 import abc
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Generic, TypedDict, TypeVar
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -30,8 +31,6 @@ except ImportError:
 
         Unpack = MagicMock()
 
-
-from typing import Callable
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -116,11 +115,11 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         data_parallel_random_init: bool = True,
         use_cpu_initialization: None | bool = False,
         init_model_with_meta_device: bool | None = None,
-        pre_wrap_hook: Union[
-            Callable[[list[MegatronModule]], list[MegatronModule]],
-            list[Callable[[list[MegatronModule]], list[MegatronModule]]],
-        ]
-        | None = None,
+        pre_wrap_hook: (
+            Callable[[list[MegatronModule]], list[MegatronModule]]
+            | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
+            | None
+        ) = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
@@ -442,10 +441,8 @@ class GetModelKwargs(TypedDict, total=False):
     use_cpu_initialization: bool | None
     init_model_with_meta_device: bool | None
     pre_wrap_hook: (
-        Union[
-            Callable[[list[MegatronModule]], list[MegatronModule]],
-            list[Callable[[list[MegatronModule]], list[MegatronModule]]],
-        ]
+        Callable[[list[MegatronModule]], list[MegatronModule]]
+        | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
         | None
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
@@ -486,11 +483,11 @@ def get_model(
     data_parallel_random_init: bool = True,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
-    pre_wrap_hook: Union[
-        Callable[[list[MegatronModule]], list[MegatronModule]],
-        list[Callable[[list[MegatronModule]], list[MegatronModule]]],
-    ]
-    | None = None,
+    pre_wrap_hook: (
+        Callable[[list[MegatronModule]], list[MegatronModule]]
+        | list[Callable[[list[MegatronModule]], list[MegatronModule]]]
+        | None
+    ) = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,

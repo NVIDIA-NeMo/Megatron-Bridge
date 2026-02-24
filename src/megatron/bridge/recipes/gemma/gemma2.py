@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -43,21 +42,21 @@ class Gemma2CommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[str]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: str | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
     context_parallel_size: int
     sequence_parallel: bool
     use_megatron_fsdp: bool
@@ -69,13 +68,13 @@ class Gemma2CommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
 
 
 class Gemma2FinetuneKwargs(TypedDict, total=False):
@@ -83,35 +82,35 @@ class Gemma2FinetuneKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
 
     # Finetuning-specific
-    pretrained_checkpoint: Optional[str]
-    peft: Union[str, PEFT, None]
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
     packed_sequence: bool
 
     # Training hyperparameters
     train_iters: int
-    global_batch_size: Optional[int]
+    global_batch_size: int | None
     micro_batch_size: int
-    seq_length: Optional[int]
+    seq_length: int | None
     eval_interval: int
     save_interval: int
 
     # Optimizer
-    finetune_lr: Optional[float]
+    finetune_lr: float | None
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
 
     # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
     # Precision
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    precision_config: MixedPrecisionConfig | str | None
 
 
 # Pretrain Configs
@@ -410,37 +409,37 @@ def gemma2_27b_finetune_config(**user_kwargs: Unpack[Gemma2FinetuneKwargs]) -> C
 
 def _gemma2_finetune_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Core model configuration
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
     context_parallel_size: int = 1,
     sequence_parallel: bool = False,
     # Finetuning-specific params
-    pretrained_checkpoint: Optional[str] = None,
-    peft: Union[str, PEFT, None] = "lora",
+    pretrained_checkpoint: str | None = None,
+    peft: str | PEFT | None = "lora",
     packed_sequence: bool = True,
     # Training params
     train_iters: int = 100,
-    global_batch_size: Optional[int] = None,
+    global_batch_size: int | None = None,
     micro_batch_size: int = 1,
-    seq_length: Optional[int] = None,
+    seq_length: int | None = None,
     eval_interval: int = 50,
     save_interval: int = 100,
     # Optimizer
-    finetune_lr: Optional[float] = None,
+    finetune_lr: float | None = None,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 10,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     # W&B logging
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
     # Precision
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
+    precision_config: MixedPrecisionConfig | str | None = None,
 ) -> ConfigContainer:
     """Common finetuning configuration for all Gemma2 models."""
 

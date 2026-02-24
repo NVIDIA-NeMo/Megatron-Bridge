@@ -15,7 +15,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home, set_nemorun_home
@@ -57,23 +57,23 @@ def slurm_executor(
     num_gpus_per_node: int,
     time_limit: str = "00:30:00",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
-    custom_mounts: List[str] = [],
-    custom_env_vars: Dict[str, str] = {},
-    custom_srun_args: List[str] = [],
+    custom_mounts: list[str] = [],
+    custom_env_vars: dict[str, str] = {},
+    custom_srun_args: list[str] = [],
     hf_token: str = None,
     nemo_home: str = DEFAULT_NEMO_HOME,
     wandb_key: str = None,
     network: str = None,
-    custom_bash_cmds: List[List[str]] = None,
-    additional_slurm_params: Dict[str, Any] = None,
-    gres: Optional[str] = None,
+    custom_bash_cmds: list[str] = None,
+    additional_slurm_params: dict[str, Any] = None,
+    gres: str | None = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
     and fine-tuning experiments
 
     Args:
-        additional_slurm_params: Dict[str, Any], optional
+        additional_slurm_params: dict[str, Any], optional
             Additional SLURM parameters to pass to sbatch. These will be converted to #SBATCH directives.
             Example: {"nodelist": "node001,node002", "constraint": "gpu"} will generate:
                 #SBATCH --nodelist=node001,node002
@@ -170,7 +170,7 @@ def dgxc_executor(
     num_gpus_per_node: int,
     wandb_key: str = None,
     hf_token: str = None,
-    custom_env_vars: Dict[str, str] = None,
+    custom_env_vars: dict[str, str] = None,
     dgxc_pvc_mount_path: str = "/nemo-workspace",
     container_image: str = "nvcr.io/nvidia/nemo:dev",
 ):

@@ -21,7 +21,6 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -51,14 +50,14 @@ class Qwen3VLModelProvider(GPTModelProvider):
     num_position_embeddings: int = 2304
     out_hidden_size: int = 2304
     apply_rotary_pos_emb_in_fp32: bool = False
-    deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+    deepstack_visual_indexes: list[int] = field(default_factory=lambda: [8, 16, 24])
     fp16_lm_cross_entropy: bool = False
     rotary_percent: float = 1.0
     apply_rope_fusion: bool = False
 
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
 
-    hf_text_config: Optional[Qwen3VLTextConfig] = None
+    hf_text_config: Qwen3VLTextConfig | None = None
     # Vision-Language token IDs
     # Based on https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/blob/main/config.json
     # Token ID for image placeholder in text
@@ -81,7 +80,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
-    mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+    mrope_section: list[int] = field(default_factory=lambda: [24, 20, 20])
 
     # RoPE theta value specific to Qwen3-VL models
     # From HuggingFace config: rope_theta: 5000000
@@ -170,7 +169,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
 
-    hf_text_config: Optional[Qwen3VLMoeTextConfig] = None
+    hf_text_config: Qwen3VLMoeTextConfig | None = None
 
     pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 
@@ -199,11 +198,11 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
 
     apply_rotary_pos_emb_in_fp32: bool = False
     # This is not used in the model, we use hf_config.deepstack_visual_indexes to override it
-    deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
+    deepstack_visual_indexes: list[int] = field(default_factory=lambda: [8, 16, 24])
 
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
-    mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+    mrope_section: list[int] = field(default_factory=lambda: [24, 20, 20])
 
     # RoPE theta value specific to Qwen3-VL models
     # From HuggingFace config: rope_theta: 5000000
@@ -227,7 +226,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
 
     # Dense layers configuration (some layers may not use MoE)
     # Empty list means all layers use MoE, otherwise specify layer indices
-    mlp_only_layers: List[int] = field(default_factory=list)
+    mlp_only_layers: list[int] = field(default_factory=list)
 
     # Decoder sparse step (frequency of MoE layers)
     decoder_sparse_step: int = 1  # Every layer is MoE by default

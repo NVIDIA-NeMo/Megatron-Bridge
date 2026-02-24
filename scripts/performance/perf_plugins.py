@@ -29,8 +29,8 @@ use hydra-style overrides.
 
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Union
 
 import nemo_run as run
 from nemo_run import Plugin, Script, SlurmExecutor
@@ -44,7 +44,7 @@ except (ImportError, ModuleNotFoundError):
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _format_list_for_override(values: List | int):
+def _format_list_for_override(values: list | int):
     """Render a Python list into a Hydra/CLI-safe list string without spaces.
 
     Example: [0, 3] -> "[0,3]"
@@ -60,11 +60,11 @@ class NsysPluginScriptArgs:
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: List[int]
+    profile_ranks: list[int]
     record_shapes: bool
 
 
-def _default_nsys_converter(args: NsysPluginScriptArgs) -> List[str]:
+def _default_nsys_converter(args: NsysPluginScriptArgs) -> list[str]:
     """Default converter for NsysPlugin that generates hydra-style overrides."""
     return [
         "profiling.use_nsys_profiler=true",
@@ -87,13 +87,13 @@ class NsysPlugin(Plugin):
     Args:
         profile_step_start (int): The step at which to start the nsys profiling.
         profile_step_end (int): The step at which to end the nsys profiling.
-        profile_ranks (Optional[list[int]]): The ranks on which to run the nsys profiling. If not specified,
+        profile_ranks (list[int] | None): The ranks on which to run the nsys profiling. If not specified,
             profiling will be run on rank 0.
-        nsys_trace (Optional[list[str]]): The events to trace during profiling. If not specified,
+        nsys_trace (list[str] | None): The events to trace during profiling. If not specified,
             'nvtx' and 'cuda' events will be traced.
         record_shapes (bool): Whether to record tensor shapes. Default is False.
         nsys_gpu_metrics (bool): Whether to enable GPU metrics collection. Default is False.
-        script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
 
@@ -105,14 +105,14 @@ class NsysPlugin(Plugin):
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: Optional[list[int]] = None
-    nsys_trace: Optional[list[str]] = None
-    nsys_extra_args: Optional[list[str]] = None
+    profile_ranks: list[int] | None = None
+    nsys_trace: list[str] | None = None
+    nsys_extra_args: list[str] | None = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
-    script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[NsysPluginScriptArgs], list[str]] | None = None
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
@@ -170,7 +170,7 @@ class PerfEnvPluginScriptArgs:
     manual_gc_interval: int
 
 
-def _default_perf_env_converter(args: PerfEnvPluginScriptArgs) -> List[str]:
+def _default_perf_env_converter(args: PerfEnvPluginScriptArgs) -> list[str]:
     """Default converter for PerfEnvPlugin that generates hydra-style overrides."""
     return [
         f"train.manual_gc={str(args.enable_manual_gc).lower()}",
@@ -193,7 +193,7 @@ class PerfEnvPlugin(Plugin):
         tp_size (int): Tensor parallelism size. Default is 1.
         cp_size (int): Context parallelism size. Default is 1.
         pp_size (int): Pipeline parallelism size. Default is 1.
-        script_args_converter_fn (Optional[Callable]): A function that takes PerfEnvPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes PerfEnvPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
@@ -206,7 +206,7 @@ class PerfEnvPlugin(Plugin):
     cp_size: int | None = None
     pp_size: int | None = None
     ep_size: int | None = None
-    script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[PerfEnvPluginScriptArgs], list[str]] | None = None
     moe_a2a_overlap: bool = False
     model_family_name: str
     model_recipe_name: str
@@ -217,7 +217,7 @@ class PerfEnvPlugin(Plugin):
 
     def _set_num_cuda_device_max_connections(
         self,
-        task: Union["run.Partial", "run.Script"],
+        task: "run.Partial" | "run.Script",
         executor: "run.Executor",
         tp_size: int,
         cp_size: int,
@@ -250,7 +250,7 @@ class PerfEnvPlugin(Plugin):
 
     def _set_model_specific_environment_variables(
         self,
-        task: Union["run.Partial", "run.Script"],
+        task: "run.Partial" | "run.Script",
         executor: "run.Executor",
         model_family_name: str,
         model_recipe_name: str,
@@ -306,7 +306,7 @@ class PerfEnvPlugin(Plugin):
 
     def _set_layernorm_sm_margin(
         self,
-        task: Union["run.Partial", "run.Script"],
+        task: "run.Partial" | "run.Script",
         executor: "run.Executor",
         enable_layernorm_sm_margin: bool,
         layernorm_sm_margin: int,
@@ -317,7 +317,7 @@ class PerfEnvPlugin(Plugin):
 
     def _set_nvl_domain_size(
         self,
-        task: Union["run.Partial", "run.Script"],
+        task: "run.Partial" | "run.Script",
         executor: "run.Executor",
         moe_flex_dispatcher_backend: str,
         gpu: str,
@@ -338,7 +338,7 @@ class PerfEnvPlugin(Plugin):
 
     def _set_nccl_pp_comm_chunksize(
         self,
-        task: Union["run.Partial", "run.Script"],
+        task: "run.Partial" | "run.Script",
         executor: "run.Executor",
         nccl_pp_comm_chunksize: int,
         pp_size: int,
@@ -349,7 +349,7 @@ class PerfEnvPlugin(Plugin):
 
     def _set_manual_gc(
         self,
-        task: Union["run.Partial", "run.Script"],
+        task: "run.Partial" | "run.Script",
         executor: "run.Executor",
         enable_manual_gc: bool,
         manual_gc_interval: int,
@@ -372,7 +372,7 @@ class PerfEnvPlugin(Plugin):
             else:
                 raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
-    def _set_vboost(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", enable_vboost: bool):
+    def _set_vboost(self, task: "run.Partial" | "run.Script", executor: "run.Executor", enable_vboost: bool):
         def get_vboost_srun_cmd(nodes, job_dir):
             """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
             import shlex
@@ -401,7 +401,7 @@ class PerfEnvPlugin(Plugin):
                 else vboost_cmd
             )
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
             self.model_family_name,
@@ -487,13 +487,13 @@ class PyTorchProfilerPluginScriptArgs:
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: List[int]
+    profile_ranks: list[int]
     record_memory_history: bool
     memory_snapshot_path: str
     record_shapes: bool
 
 
-def _default_pytorch_profiler_converter(args: PyTorchProfilerPluginScriptArgs) -> List[str]:
+def _default_pytorch_profiler_converter(args: PyTorchProfilerPluginScriptArgs) -> list[str]:
     """Default converter for PyTorchProfilerPlugin that generates hydra-style overrides."""
     return [
         "profiling.use_pytorch_profiler=true",
@@ -517,25 +517,25 @@ class PyTorchProfilerPlugin(Plugin):
     Args:
         profile_step_start (int): The step at which to start profiling.
         profile_step_end (int): The step at which to end profiling.
-        profile_ranks (Optional[list[int]]): The ranks on which to run the profiling. If not specified,
+        profile_ranks (list[int] | None): The ranks on which to run the profiling. If not specified,
             profiling will be run on rank 0.
         record_memory_history (bool): Whether to record memory history. Default is False.
         memory_snapshot_path (str): Path to save memory snapshots. Default is "snapshot.pickle".
         record_shapes (bool): Whether to record tensor shapes. Default is False.
-        script_args_converter_fn (Optional[Callable]): A function that takes PyTorchProfilerPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes PyTorchProfilerPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: Optional[list[int]] = None
+    profile_ranks: list[int] | None = None
     record_memory_history: bool = True
     memory_snapshot_path: str = "/nemo_run/pytorch_profile/snapshot.pickle"
     record_shapes: bool = False
-    script_args_converter_fn: Optional[Callable[[PyTorchProfilerPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[PyTorchProfilerPluginScriptArgs], list[str]] | None = None
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         """Set up the PyTorch profiler plugin."""
         if isinstance(task, Script):
             # For run.Script, append CLI overrides to the script arguments

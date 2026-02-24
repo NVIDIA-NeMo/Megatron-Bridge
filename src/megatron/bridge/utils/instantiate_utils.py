@@ -19,9 +19,10 @@ import copy
 import functools
 import inspect
 import logging
+from collections.abc import Callable, Sequence
 from enum import Enum
 from textwrap import dedent
-from typing import Any, Callable, Sequence, Union
+from typing import Any
 
 from omegaconf import OmegaConf
 from omegaconf._utils import is_structured_config
@@ -401,7 +402,7 @@ def _filter_kwargs_for_target(
         raise InstantiationException(msg)
 
 
-def _prepare_input_dict_or_list(d: Union[dict[Any, Any], list[Any]]) -> Any:
+def _prepare_input_dict_or_list(d: dict[Any, Any] | list[Any]) -> Any:
     res: Any
     if isinstance(d, dict):
         res = {}
@@ -423,10 +424,10 @@ def _prepare_input_dict_or_list(d: Union[dict[Any, Any], list[Any]]) -> Any:
 
 
 def _resolve_target(
-    target: Union[str, type, Callable[..., Any]],
+    target: str | type | Callable[..., Any],
     full_key: str,
     check_callable: bool = True,
-) -> Union[type, Callable[..., Any], object]:
+) -> type | Callable[..., Any] | object:
     """Resolve target string, type or callable into type or callable."""
     if isinstance(target, str):
         try:

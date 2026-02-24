@@ -28,8 +28,9 @@ Ministral 3 Key Features:
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
@@ -78,7 +79,7 @@ class Ministral3ModelProvider(MistralModelProvider):
     - https://huggingface.co/mistralai/Ministral-3-14B-Base-2512
     """
 
-    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = ministral_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = ministral_layer_spec
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     add_bias_linear: bool = False
@@ -95,8 +96,8 @@ class Ministral3ModelProvider(MistralModelProvider):
     yarn_beta_fast: float = 32.0
     yarn_beta_slow: float = 1.0
     yarn_correction_range_round_to_int: bool = False
-    yarn_mscale: Optional[float] = 1.0
-    yarn_mscale_all_dim: Optional[float] = 1.0  # todo llama_4_scaling_beta
+    yarn_mscale: float | None = 1.0
+    yarn_mscale_all_dim: float | None = 1.0  # todo llama_4_scaling_beta
 
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
@@ -110,7 +111,7 @@ class Ministral3ModelProvider(MistralModelProvider):
     # because vision embeddings are inserted into language embeddings
     scatter_embedding_sequence_parallel: bool = False
 
-    hf_config: Optional["Mistral3Config"] = None
+    hf_config: "Mistral3Config" | None = None
 
     # Vision-specific token IDs (defaults, actual values come from HF config)
     image_token_id: int = 10
@@ -238,7 +239,7 @@ class MinistralTEDotProductAttention(MCoreTEDotProductAttention):
         layer_number: int,
         attn_mask_type: AttnMaskType,
         attention_type: str,
-        attention_dropout: Optional[float] = None,
+        attention_dropout: float | None = None,
         **kwargs,
     ):
         super().__init__(

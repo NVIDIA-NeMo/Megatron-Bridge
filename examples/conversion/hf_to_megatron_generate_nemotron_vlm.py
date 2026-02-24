@@ -34,7 +34,6 @@ Examples with Nemotron Nano V2 VL:
 """
 
 import argparse
-from typing import Optional
 
 import requests
 import torch
@@ -134,7 +133,7 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_image_inputs(processor, image_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):
+def process_image_inputs(processor, image_path: str | None, prompt: str, system_prompt: str | None = None):
     """Process image inputs for vision-language model.
 
     Args:
@@ -190,7 +189,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, syst
         return inputs.input_ids, None, 0
 
 
-def process_video_inputs(processor, video_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):
+def process_video_inputs(processor, video_path: str | None, prompt: str, system_prompt: str | None = None):
     """Process video inputs for vision-language model."""
     from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
         maybe_path_or_url_to_data_urls,

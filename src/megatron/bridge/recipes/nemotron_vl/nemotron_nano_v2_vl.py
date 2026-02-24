@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import Optional, Union
 
 import torch
 
@@ -40,18 +39,18 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def nemotron_nano_v2_vl_12b_pretrain_config(
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "nemotron_nano_v2_vl_pretrain",
     hf_model_path: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     # Dataset configuration
-    dataset_type: Optional[str] = None,
+    dataset_type: str | None = None,
     mock: bool = False,
     dataset_maker_name: str = "make_cord_v2_dataset",
     # Model configuration
     tensor_parallelism: int = 4,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
+    pipeline_parallelism_dtype: torch.dtype | None = None,
+    virtual_pipeline_parallelism: int | None = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
     # Training hyperparameters
@@ -62,12 +61,12 @@ def nemotron_nano_v2_vl_12b_pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     # Precision and comm overlap
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
     # Checkpointing
-    save_interval: Optional[int] = 200,
+    save_interval: int | None = 200,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Nemotron Nano V2 VL.
@@ -176,7 +175,7 @@ def nemotron_nano_v2_vl_12b_finetune_config(
     pretrained_checkpoint: str = "",
     lora_on_language_model: bool = False,
     lora_on_vision_model: bool = False,
-    save_checkpoint_dir: Optional[str] = None,
+    save_checkpoint_dir: str | None = None,
     **pretrain_kwargs,
 ) -> ConfigContainer:
     """Create a finetuning configuration for Nemotron Nano V2 VL.

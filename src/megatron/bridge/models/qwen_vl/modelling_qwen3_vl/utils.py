@@ -14,7 +14,6 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, Union
 
 import torch
 from megatron.core import mpu
@@ -104,9 +103,9 @@ class PatchMergerSubmodules:
     Patch Merger Submodules for Qwen3VL vision model.
     """
 
-    patch_norm: Union[ModuleSpec, type] = None
-    linear_fc1: Union[ModuleSpec, type] = None
-    linear_fc2: Union[ModuleSpec, type] = None
+    patch_norm: ModuleSpec | None = None
+    linear_fc1: ModuleSpec | None = None
+    linear_fc2: ModuleSpec | None = None
 
 
 class Qwen3VLVisionPatchMerger(MegatronModule):
@@ -119,7 +118,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
         config: Qwen3VLTransformerConfig,
         submodules: PatchMergerSubmodules,
         use_postshuffle_norm=False,
-        tp_group: Optional[torch.distributed.ProcessGroup] = None,
+        tp_group: torch.distributed.ProcessGroup | None = None,
     ):
         super().__init__(config=config)
 
@@ -658,7 +657,7 @@ def preprocess_packed_seqs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
     pre_process: bool = True,
-    pg_collection: Optional[ProcessGroupCollection] = None,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> tuple[torch.Tensor, PackedSeqParams]:
     """
     Preprocess packed sequences

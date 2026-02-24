@@ -15,8 +15,9 @@
 import enum
 import functools
 import inspect
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator, Optional
+from typing import Any
 
 import yaml
 
@@ -86,7 +87,7 @@ def safe_yaml_representers() -> Generator[None, None, None]:
         yaml.SafeDumper.yaml_multi_representers = original_multi_representers
 
 
-def dump_dataclass_to_yaml(obj: Any, filename: Optional[str] = None) -> Optional[str]:
+def dump_dataclass_to_yaml(obj: Any, filename: str | None = None) -> str | None:
     """Dump a dataclass object or other Python object to a YAML file or string.
 
     Uses safe representers to handle common types.

@@ -17,8 +17,8 @@ import logging
 import math
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 import datasets
 import numpy as np

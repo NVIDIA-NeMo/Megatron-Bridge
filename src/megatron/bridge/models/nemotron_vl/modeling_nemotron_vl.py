@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 import torch
 from megatron.core.models.multimodal.llava_model import LLaVAModel
@@ -31,12 +30,12 @@ class NemotronVLModel(MegatronModule):
 
     def __init__(
         self,
-        config: Optional["NemotronNano12Bv2VLModelProvider"] = None,
+        config: "NemotronNano12Bv2VLModelProvider" | None = None,
         *,
-        llava_model: Optional[LLaVAModel] = None,
+        llava_model: LLaVAModel | None = None,
         pre_process: bool | None = True,
         post_process: bool | None = True,
-        vp_stage: Optional[int] = None,
+        vp_stage: int | None = None,
     ) -> None:
         """Create a wrapper that exposes an existing :class:`LLaVAModel` via the
         Bridge API.

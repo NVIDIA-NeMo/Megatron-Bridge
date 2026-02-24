@@ -15,9 +15,10 @@
 import contextlib
 import inspect
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal
 
 import torch
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -141,35 +142,35 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     rotary_percent: float = 1.0
     rope_scaling: bool = False
     rope_scaling_factor: float = 1.0
-    rotary_scaling_factor: Optional[float] = None
-    seq_len_interpolation_factor: Optional[float] = None
+    rotary_scaling_factor: float | None = None
+    seq_len_interpolation_factor: float | None = None
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
     deallocate_pipeline_outputs: bool = True
     scatter_embedding_sequence_parallel: bool = True
     tp_only_amax_red: bool = False
-    tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
+    tp_comm_overlap_cfg: str | dict[str, Any] | None = None
     """Config file when tp_comm_overlap is enabled."""
 
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
-    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = default_layer_spec
 
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
 
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
-    vocab_size: Optional[int] = None
+    vocab_size: int | None = None
     # Set if the tokenizer provides the vocab size. In this case, the vocab size will be padded
     # Controls whether vocab size should be padded for tensor parallelism
     should_pad_vocab: bool = False
 
     # MoE / FP8
-    num_moe_experts: Optional[int] = None
+    num_moe_experts: int | None = None
     moe_grouped_gemm: bool = False
     qk_layernorm: bool = False
-    fp8: Optional[str] = None
+    fp8: str | None = None
     normalization: str = "LayerNorm"
 
     # Multi-token prediction
@@ -178,7 +179,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # Additional parameters that might be needed
     init_model_with_meta_device: bool = False
     use_te_rng_tracker: bool = False
-    virtual_pipeline_model_parallel_size: Optional[int] = None
+    virtual_pipeline_model_parallel_size: int | None = None
     account_for_embedding_in_pipeline_split: bool = False
     account_for_loss_in_pipeline_split: bool = False
 
@@ -194,9 +195,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # Whether to use AttnMaskType.arbitrary in the ModelOpt spec.
     # If None, it will be determined by the default behavior (arbitrary only when context_parallel==1).
     # Set to False when using packed/remove-padding (THD) data format.
-    use_arbitrary_attention_mask: Optional[bool] = None
+    use_arbitrary_attention_mask: bool | None = None
 
-    _pg_collection: Optional[ProcessGroupCollection] = None
+    _pg_collection: ProcessGroupCollection | None = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
@@ -327,7 +328,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         return model
 
 
-def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
+def mtp_block_spec(config: "GPTModelProvider", vp_stage: int | None = None) -> ModuleSpec | None:
     """Pass in the MTP block spec if model has MTP layers.
 
     Args:

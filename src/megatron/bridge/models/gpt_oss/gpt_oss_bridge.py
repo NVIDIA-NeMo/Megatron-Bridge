@@ -14,7 +14,7 @@
 
 import logging
 import math
-from typing import Dict, Mapping, Optional, Tuple, Union
+from collections.abc import Mapping
 
 import torch
 import torch.nn as nn
@@ -136,9 +136,9 @@ class GPTOSSBridge(MegatronModelBridge):
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
-        converted_weights_dict: Dict[str, torch.Tensor],
+        converted_weights_dict: dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         num_experts = self.hf_config.num_local_experts
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         experts_per_rank = num_experts // ep_size
@@ -247,7 +247,7 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
     MLPDownProj for expert weights GPT-OSS models.
     """
 
-    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: tuple[int, ...] | None = None):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
 
@@ -255,7 +255,7 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         return super().hf_to_megatron(hf_weights[global_expert_number], megatron_module)
 
-    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> dict[str, torch.Tensor]:
         # only bf16 export is supported currently
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)
@@ -275,7 +275,7 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     MLPGateUpProj for expert weights GPT-OSS models.
     """
 
-    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: tuple[int, ...] | None = None):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
 
@@ -290,11 +290,11 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         output[1::2, ...] = up
         return output
 
-    def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
+    def hf_to_megatron(self, hf_weights: torch.Tensor | dict, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         return super().hf_to_megatron(self._interleave(hf_weights[global_expert_number]), megatron_module)
 
-    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> dict[str, torch.Tensor]:
         # only bf16 export is supported currently
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)

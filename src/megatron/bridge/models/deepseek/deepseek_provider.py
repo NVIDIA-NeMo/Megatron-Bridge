@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -54,7 +54,7 @@ class DeepSeekModelProvider(MLAModelProvider):
     moe_grouped_gemm: bool = True
     moe_token_dispatcher_type: str = "alltoall"
     # MLA defaults
-    q_lora_rank: Optional[int] = 1536
+    q_lora_rank: int | None = 1536
     kv_lora_rank: int = 512
 
     def __post_init__(self) -> None:
@@ -74,7 +74,7 @@ class DeepSeekV2ModelProvider(MLAModelProvider):
     num_moe_experts: int = 160
     moe_ffn_hidden_size: int = 1536
     moe_shared_expert_intermediate_size: int = 3072  # 1536 * 2 shared experts
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 59)  # first layer is dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] + [1] * 59)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 3
@@ -101,11 +101,11 @@ class DeepSeekV2LiteModelProvider(MLAModelProvider):
     ffn_hidden_size: int = 10944
     num_attention_heads: int = 16
     kv_channels: int = 16
-    q_lora_rank: Optional[int] = None
+    q_lora_rank: int | None = None
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared experts
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 26)  # first layer is dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1
@@ -132,9 +132,7 @@ class DeepSeekV3ModelProvider(MLAModelProvider):
     num_moe_experts: int = 256
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] * 3 + [1] * 58
-    )  # first three layers are dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] * 3 + [1] * 58)  # first three layers are dense
     moe_router_topk: int = 8
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 4
@@ -170,7 +168,7 @@ class MoonlightModelProvider16B(MLAModelProvider):
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1

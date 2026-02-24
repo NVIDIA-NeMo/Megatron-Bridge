@@ -16,7 +16,7 @@ import json
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional, Protocol, Type, TypeVar, Union, runtime_checkable
+from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 import yaml
 from omegaconf import OmegaConf
@@ -44,8 +44,8 @@ class ConfigProtocol(Protocol):
 
     @classmethod
     def from_hf_pretrained(
-        cls: Type[T],
-        pretrained_model_name_or_path: Union[str, Path],
+        cls: type[T],
+        pretrained_model_name_or_path: str | Path,
         trust_remote_code: bool = False,
         mode: InstantiationMode = InstantiationMode.LENIENT,
         **kwargs,
@@ -55,9 +55,9 @@ class ConfigProtocol(Protocol):
 
     def save_hf_pretrained(
         self,
-        save_directory: Union[str, Path],
+        save_directory: str | Path,
         config_format: ConfigFormat | None = None,
-        config_name: Optional[str] = None,
+        config_name: str | None = None,
         **kwargs,
     ) -> None:
         """Save the model configuration to a directory."""
@@ -65,8 +65,8 @@ class ConfigProtocol(Protocol):
 
 
 def from_hf_pretrained(
-    cls: Type[T],
-    pretrained_model_name_or_path: Union[str, Path],
+    cls: type[T],
+    pretrained_model_name_or_path: str | Path,
     trust_remote_code: bool = False,
     mode: InstantiationMode = InstantiationMode.LENIENT,
     config_name: str = "config",
@@ -172,7 +172,7 @@ def from_hf_pretrained(
 
 def save_hf_pretrained(
     obj: Any,
-    save_directory: Union[str, Path],
+    save_directory: str | Path,
     config_format: ConfigFormat = "json",
     config_name: str = "config",
     **kwargs,
@@ -246,7 +246,7 @@ def save_hf_pretrained(
     print(f"Configuration saved to {config_file}")
 
 
-def _to_dict(obj: Any) -> Dict[str, Any]:
+def _to_dict(obj: Any) -> dict[str, Any]:
     """
     Convert an object to a dictionary representation.
 
@@ -309,7 +309,7 @@ def _convert_value_to_dict(value: Any) -> Any:
         return value
 
 
-def _contains_code_references(config_dict: Dict[str, Any]) -> bool:
+def _contains_code_references(config_dict: dict[str, Any]) -> bool:
     """
     Check if a configuration dictionary contains code references.
 

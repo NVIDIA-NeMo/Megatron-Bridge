@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Literal
 
 from torch import nn
 
@@ -37,7 +37,7 @@ class DoRA(PEFT, ModuleMatcher):
     This class facilitates the application of DoRA to specific modules within the model architecture.
 
     Args:
-        target_modules (List[str], optional): A list of module names to apply DoRA to.
+        target_modules (list[str], optional): A list of module names to apply DoRA to.
             Defaults to all linear layers ['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2'].
                 - 'linear_qkv': Apply DoRA to the fused linear layer used for query, key, and value projections
                                 in self-attention.
@@ -56,7 +56,7 @@ class DoRA(PEFT, ModuleMatcher):
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
     """
 
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=lambda: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
     )
     dim: int = 32
@@ -72,7 +72,7 @@ class DoRA(PEFT, ModuleMatcher):
             "DoRA only supports pre-adapter dropout at this time. Please set DoRA(..., dropout_position='pre')"
         )
 
-    def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(self, m: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
         """
         Applies DoRA to a specific module within the model architecture.
 

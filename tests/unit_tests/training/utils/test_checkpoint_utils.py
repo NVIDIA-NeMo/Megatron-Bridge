@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import mock_open, patch
 
 import pytest
@@ -43,7 +43,7 @@ class MockTrainState:
     epoch: int = 0
     step: int = 0
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Load state from dictionary."""
         self.iteration = state_dict.get("iteration", 0)
         self.epoch = state_dict.get("epoch", 0)
@@ -59,8 +59,8 @@ class ComplexTrainState:
     step: int = 0
     learning_rate: float = 0.0
     loss: float = 0.0
-    metrics: Dict[str, float] = None
-    optimizer_state: Dict[str, Any] = None
+    metrics: dict[str, float] = None
+    optimizer_state: dict[str, Any] = None
 
     def __post_init__(self):
         if self.metrics is None:
@@ -68,7 +68,7 @@ class ComplexTrainState:
         if self.optimizer_state is None:
             self.optimizer_state = {}
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Load state from dictionary."""
         self.iteration = state_dict.get("iteration", 0)
         self.epoch = state_dict.get("epoch", 0)

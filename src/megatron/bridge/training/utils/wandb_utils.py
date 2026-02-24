@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from megatron.bridge.utils.common_utils import print_rank_last
 
@@ -22,7 +22,7 @@ def on_save_checkpoint_success(
     checkpoint_path: str,
     save_dir: str,
     iteration: int,
-    wandb_writer: Optional[Any],
+    wandb_writer: Any | None,
 ) -> None:
     """Callback executed after a checkpoint is successfully saved.
 
@@ -52,7 +52,7 @@ def on_save_checkpoint_success(
             print_rank_last(f"  failed to log checkpoint {checkpoint_path} to wandb")
 
 
-def on_load_checkpoint_success(checkpoint_path: str, load_dir: str, wandb_writer: Optional[Any]) -> None:
+def on_load_checkpoint_success(checkpoint_path: str, load_dir: str, wandb_writer: Any | None) -> None:
     """Callback executed after a checkpoint is successfully loaded.
 
     If a wandb writer is provided, attempts to mark the corresponding

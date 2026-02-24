@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Tuple
 
 import torch
 from megatron.core.rerun_state_machine import get_rerun_state_machine
@@ -40,10 +39,10 @@ def create_masked_next_token_loss_function(
 
 def masked_next_token_loss(
     loss_mask: torch.Tensor,
-    output_tensor: torch.Tensor | Tuple[torch.Tensor],
+    output_tensor: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
     check_for_nan_in_loss: bool = True,
     check_for_spiky_loss: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
     """Loss function.
 
     Args:
