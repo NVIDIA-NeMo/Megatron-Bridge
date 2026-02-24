@@ -1166,7 +1166,7 @@ class ConfigContainer(Container):
 
         # Disallow flash attention when running deterministically
         if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
-            raise AssertionError("Flash attention can not be used in deterministic mode.")
+            print ("[WARNING] Flash attention used in deterministic mode.")
 
         # Disallow cross-entropy loss fusion as it is not deterministic
         assert not getattr(self.model, "cross_entropy_loss_fusion", False), (

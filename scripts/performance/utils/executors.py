@@ -124,6 +124,7 @@ def slurm_executor(
         tunnel=run.LocalTunnel(job_dir=os.path.join(log_dir, "experiments")),
         nodes=nodes,
         ntasks_per_node=num_gpus_per_node,
+        gpus_per_node=None if gpu.lower() in ["gb200", "b200"] else num_gpus_per_node,
         container_image=container_image,
         container_mounts=mounts,
         env_vars=PERF_ENV_VARS,
