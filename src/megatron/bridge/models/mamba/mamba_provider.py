@@ -172,13 +172,11 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
                 mamba_stack_spec = mamba_stack_spec()
 
         sep = Symbols.MTP_SEPARATOR
-        if self.mtp_hybrid_override_pattern is not None and self.mtp_num_layers > 0 and (self.hybrid_override_pattern is None or sep not in self.hybrid_override_pattern):
-            main_pattern = self.hybrid_override_pattern or ""
-            mtp_pattern = self.mtp_hybrid_override_pattern
-            hybrid_override_pattern = main_pattern + sep + sep.join([mtp_pattern] * self.mtp_num_layers)
-            print(f"Converted legacy MTP pattern to unified: {hybrid_override_pattern}")
-            self.hybrid_override_pattern = hybrid_override_pattern
-            self.mtp_hybrid_override_pattern = None
+        # Derive the hybrid override pattern from the saved hybrid_override_pattern, 
+        # mtp_hybrid_override_pattern, and mtp_num_layers.
+        # This allows us to use a different mtp_num_layers than the one saved in the checkpoint.
+        main_pattern = self.hybrid_override_pattern.split(sep)[0]
+        self.hybrid_override_pattern = main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * self.mtp_num_layers)
 
         if self.hybrid_override_pattern and sep in self.hybrid_override_pattern:
             parsed = parse_hybrid_pattern(self.hybrid_override_pattern)
