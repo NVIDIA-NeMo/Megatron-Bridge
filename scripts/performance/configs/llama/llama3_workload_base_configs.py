@@ -486,7 +486,7 @@ _LLAMA3_8B_SFT_CONFIG_H100 = replace(
 LLAMA3_8B_SFT_CONFIG_H100_BF16_V1 = _LLAMA3_8B_SFT_CONFIG_H100
 LLAMA3_8B_SFT_CONFIG_H100_FP8_CS_V1 = replace(
     _LLAMA3_8B_SFT_CONFIG_H100,
-    cuda_graph_impl="transformer_engine",
+    cuda_graph_impl="none",
     cuda_graph_scope="mlp",
 )
 
