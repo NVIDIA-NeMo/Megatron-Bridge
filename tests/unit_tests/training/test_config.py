@@ -2825,6 +2825,7 @@ class TestLoggerConfigFinalize:
             config.finalize()  # Should not raise
 
 
+@pytest.mark.unit
 class TestValidationConfigResolution:
     """Test validation configuration resolution with fallback to training config."""
 

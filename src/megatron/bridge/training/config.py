@@ -255,13 +255,13 @@ class DataloaderConfig:
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
 
-    val_num_workers: Optional[int] = None
+    val_num_workers: int | None = None
     """Validation dataloader number of workers. If None, uses num_workers."""
 
-    val_pin_memory: Optional[bool] = None
+    val_pin_memory: bool | None = None
     """Whether to pin memory for validation data loading. If None, uses pin_memory."""
 
-    val_persistent_workers: Optional[bool] = None
+    val_persistent_workers: bool | None = None
     """Whether to keep validation data loading workers persistent. If None, uses persistent_workers."""
 
     def finalize(self) -> None:

@@ -16,12 +16,16 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.training.config import ConfigContainer, LoggerConfig, TrainingConfig, ValidationConfig
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.state import GlobalState, TrainState
+
+
+pytestmark = pytest.mark.unit
 
 
 class TestValidationDataloaderCreation:
@@ -160,7 +164,7 @@ class TestEvaluateAndPrintResults:
     @patch("torch.distributed.get_world_size")
     @patch("torch.distributed.get_rank")
     def test_evaluate_and_print_results_single_dataset(
-        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+        self, mock_get_rank, mock_world_size, _mock_print_rank_last, mock_is_last_rank, mock_evaluate
     ):
         """Test original single dataset behavior in evaluate_and_print_results."""
         mock_get_rank.return_value = 0
@@ -204,7 +208,7 @@ class TestEvaluateAndPrintResults:
     @patch("torch.distributed.get_world_size")
     @patch("torch.distributed.get_rank")
     def test_evaluate_and_print_results_multiple_datasets(
-        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+        self, mock_get_rank, mock_world_size, _mock_print_rank_last, mock_is_last_rank, mock_evaluate
     ):
         """Test new multiple datasets behavior in evaluate_and_print_results."""
         mock_get_rank.return_value = 0
@@ -256,7 +260,7 @@ class TestEvaluateAndPrintResults:
     @patch("torch.distributed.get_world_size")
     @patch("torch.distributed.get_rank")
     def test_evaluate_and_print_results_timelimit_handling(
-        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+        self, mock_get_rank, mock_world_size, _mock_print_rank_last, mock_is_last_rank, mock_evaluate
     ):
         """Test timelimit handling in evaluate_and_print_results."""
         mock_get_rank.return_value = 0
@@ -291,7 +295,7 @@ class TestEvaluateAndPrintResults:
     @patch("torch.distributed.get_world_size")
     @patch("torch.distributed.get_rank")
     def test_evaluate_and_print_results_dataset_naming(
-        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+        self, mock_get_rank, mock_world_size, _mock_print_rank_last, mock_is_last_rank, mock_evaluate
     ):
         """Test dataset naming from blend_per_split configuration."""
         mock_get_rank.return_value = 0

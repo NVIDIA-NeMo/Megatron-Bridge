@@ -109,7 +109,7 @@ def evaluate(
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
             seq_length=state.cfg.model.seq_length,
-            micro_batch_size=state.cfg.train.micro_batch_size,
+            micro_batch_size=val_mbs,
             decoder_seq_length=state.cfg.model.seq_length,
         )
     else:
@@ -268,7 +268,7 @@ def evaluate(
                 model=model,
                 num_microbatches=get_num_microbatches(),
                 seq_length=non_loss_seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=val_mbs,
                 forward_only=True,
                 collect_non_loss_data=True,
                 p2p_communicator=p2p_communicator,

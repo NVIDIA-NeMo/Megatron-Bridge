@@ -130,8 +130,8 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
 
     return (
         train_samples,
-        eval_iters * cfg.train.global_batch_size,
-        test_iters * cfg.train.global_batch_size,
+        eval_iters * val_gbs,
+        test_iters * val_gbs,
     )
 
 
@@ -228,19 +228,23 @@ def build_train_valid_test_data_loaders(
     if val_persistent_workers is None:
         val_persistent_workers = cfg.dataset.persistent_workers
 
+    val_dataloader_type = (
+        "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+    )
+
     if (
         hasattr(cfg.dataset, "multiple_validation_sets")
         and cfg.dataset.multiple_validation_sets
         and isinstance(valid_ds, list)
     ):
         valid_dataloader = []
-        for i, valid_dataset in enumerate(valid_ds):
+        for _, valid_dataset in enumerate(valid_ds):
             if valid_dataset is not None and cfg.validation.eval_iters and cfg.validation.eval_iters > 0:
                 if cfg.validation.skip_train:
                     valid_dl = build_pretraining_data_loader(
                         valid_dataset,
                         0,
-                        cfg.dataset.dataloader_type,
+                        val_dataloader_type,
                         val_mbs,
                         val_num_workers,
                         cfg.dataset.data_sharding,
@@ -256,7 +260,7 @@ def build_train_valid_test_data_loaders(
                     valid_dl = build_pretraining_data_loader(
                         valid_dataset,
                         train_state.consumed_valid_samples,
-                        "cyclic",
+                        val_dataloader_type,
                         val_mbs,
                         val_num_workers,
                         cfg.dataset.data_sharding,
@@ -276,7 +280,7 @@ def build_train_valid_test_data_loaders(
             valid_dataloader = build_pretraining_data_loader(
                 valid_ds,
                 0,
-                cfg.dataset.dataloader_type,
+                val_dataloader_type,
                 val_mbs,
                 val_num_workers,
                 cfg.dataset.data_sharding,
@@ -289,9 +293,6 @@ def build_train_valid_test_data_loaders(
                 global_batch_size=val_gbs,
             )
         elif cfg.validation.eval_iters and cfg.validation.eval_iters > 0:
-            val_dataloader_type = (
-                "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
-            )
             valid_dataloader = build_pretraining_data_loader(
                 valid_ds,
                 train_state.consumed_valid_samples,
@@ -312,17 +313,17 @@ def build_train_valid_test_data_loaders(
         test_dataloader = build_pretraining_data_loader(
             test_ds,
             0,
-            cfg.dataset.dataloader_type,
-            cfg.train.micro_batch_size,
-            cfg.dataset.num_workers,
+            val_dataloader_type,
+            val_mbs,
+            val_num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
             collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
-            pin_memory=cfg.dataset.pin_memory,
-            persistent_workers=cfg.dataset.persistent_workers,
+            pin_memory=val_pin_memory,
+            persistent_workers=val_persistent_workers,
             data_parallel_rank=dp_rank,
             data_parallel_size=dp_size,
-            global_batch_size=cfg.train.global_batch_size,
+            global_batch_size=val_gbs,
         )
 
     # Flags to know if we need to do training/validation/testing.
