@@ -30,7 +30,7 @@ from utils.utils import WorkloadBaseConfig
 
 BASE_NEMOTRON_3_NANO_CONFIG = WorkloadBaseConfig(
     num_gpus=8,
-    global_batch_size=3072,
+    global_batch_size=512,
     micro_batch_size=2,
     tensor_model_parallel_size=4,
     expert_tensor_parallel_size=1,
