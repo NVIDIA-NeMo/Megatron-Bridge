@@ -14,16 +14,15 @@
 
 import torch.nn.functional as F
 
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
-    # LoRA training uses a different FLOPs formula — check before the model's custom method.
     peft = getattr(cfg, "peft", None)
-    peft_scheme = peft.__class__.__name__.lower() if peft is not None else ""
-    is_lora = "lora" in peft_scheme
+    is_lora = isinstance(peft, LoRA)
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
     if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)
@@ -195,10 +194,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             }
             seq_len = cfg.model.seq_length
             if seq_len not in _LORA_SEQ_STATS:
-                raise ValueError(
-                    f"No LoRA sequence statistics available for seq_length={seq_len}. "
-                    f"Add an entry to _LORA_SEQ_STATS for this sequence length."
-                )
+                raise ValueError(f"No LoRA stats for seq_length={seq_len}. Add it to _LORA_SEQ_STATS.")
             avg_seqlen2, avg_tokens = _LORA_SEQ_STATS[seq_len]
 
             hs = cfg.model.hidden_size
