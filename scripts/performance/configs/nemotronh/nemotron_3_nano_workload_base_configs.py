@@ -35,6 +35,7 @@ BASE_NEMOTRON_3_NANO_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     expert_tensor_parallel_size=1,
     expert_model_parallel_size=8,
+    moe_flex_dispatcher_backend="hybridep",
 )
 
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
