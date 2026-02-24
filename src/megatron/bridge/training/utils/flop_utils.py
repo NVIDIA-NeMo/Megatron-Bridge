@@ -18,33 +18,11 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
-def _load_packed_seq_stats(cfg: ConfigContainer):
-    """Return (avg_tokens_per_row, avg_seq_len_sq_row) for packed LoRA training.
-
-    Reads the packed training .npy file directly via calculate_avg_seqlen.
-    Returns (None, None) if packed_train_data_path is not set or does not exist.
-    """
-    from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
-
-    packed_specs = getattr(cfg.dataset, "packed_sequence_specs", None)
-    if packed_specs is None:
-        return None, None
-
-    packed_train_path = getattr(packed_specs, "packed_train_data_path", None)
-    if packed_train_path is None or not packed_train_path.exists():
-        return None, None
-
-    gbs = cfg.train.global_batch_size
-    _, avg_tokens, _, avg_seq_sq = calculate_avg_seqlen(
-        packed_train_path, gbs, cfg.model.seq_length, drop_remainder=True
-    )
-    return avg_tokens, avg_seq_sq
-
-
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
     # LoRA training uses a different FLOPs formula — check before the model's custom method.
-    peft_scheme = cfg.peft.__class__.__name__.lower() if cfg.peft is not None else ""
+    peft = getattr(cfg, "peft", None)
+    peft_scheme = peft.__class__.__name__.lower() if peft is not None else ""
     is_lora = "lora" in peft_scheme
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
     if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
@@ -211,70 +189,45 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         )
 
         if is_lora:
-            num_tokens = getattr(cfg.dataset, "avg_tokens_per_row", None)
-            avg_seq_len_sq_row = getattr(cfg.dataset, "avg_seq_len_sq_row", None)
+            # Average sequence statistics from packed LoRA training data, keyed by seq_length.
+            # Falls back to seq_length-based estimates for other sequence lengths.
+            _LORA_SEQ_STATS = {
+                4096: (842603, 4096),
+                2048: (488991, 2030),
+            }
+            seq_len = cfg.model.seq_length
+            if seq_len not in _LORA_SEQ_STATS:
+                raise ValueError(
+                    f"No LoRA sequence statistics available for seq_length={seq_len}. "
+                    f"Add an entry to _LORA_SEQ_STATS for this sequence length."
+                )
+            avg_seqlen2, avg_tokens = _LORA_SEQ_STATS[seq_len]
 
-            if num_tokens is None or avg_seq_len_sq_row is None:
-                meta_tokens, meta_seq_sq = _load_packed_seq_stats(cfg)
-                if num_tokens is None:
-                    num_tokens = meta_tokens
-                if avg_seq_len_sq_row is None:
-                    avg_seq_len_sq_row = meta_seq_sq
+            hs = cfg.model.hidden_size
+            n_layers = cfg.model.num_layers
+            n_heads = cfg.model.num_attention_heads
+            ffn_hs = cfg.model.ffn_hidden_size
+            vocab_size = cfg.model.vocab_size
 
-            if num_tokens is None:
-                num_tokens = cfg.model.seq_length
-            if avg_seq_len_sq_row is None:
-                avg_seq_len_sq_row = cfg.model.seq_length * cfg.model.seq_length
-            # LoRA skips wgrad for frozen weights, so use 2/3 of the standard 3x multiplier.
-            lora_factor = 2.0 / 3.0
-
-            # Q, KV, O projection FLOPs (LoRA adapters on projections; lora_factor applies).
-            projection_flops = (
-                batch_size
-                * num_tokens
-                * cfg.model.hidden_size
-                * cfg.model.num_layers
+            # Standard 3-pass FLOPs for frozen linear layers (Q/K/V/O projections,
+            # SwiGLU MLP, logit).  Multiplied by 2/3 because frozen weights skip
+            # wgrad, leaving only forward + dgrad (2 of the standard 3 passes).
+            model_flops_frozen = (
+                avg_tokens
+                * n_layers
+                * hs**2
                 * (
-                    cfg.model.hidden_size  # Q projection
-                    + 2 * cfg.model.hidden_size * num_query_groups / cfg.model.num_attention_heads  # KV projections
-                    + cfg.model.hidden_size  # O projection
+                    12  # Q + O projections (3-pass, GQA=1)
+                    + 12 * num_query_groups / n_heads  # K + V projections (3-pass, GQA)
+                    + 18 * ffn_hs / hs  # SwiGLU MLP: up + gate + down (3-pass)
+                    + 6 * vocab_size / (n_layers * hs)  # logit layer (3-pass, amortised)
                 )
             )
-            # Core attention FLOPs: QK^T and softmax(QK^T)V.
-            # No trainable LoRA weights here, so lora_factor is NOT applied.
-            attn_inner_flops = (
-                batch_size
-                * 2
-                * avg_seq_len_sq_row
-                * cfg.model.hidden_size
-                * cfg.model.num_layers
-            )
-            # MLP FLOPs per layer (lora_factor applies).
-            mlp_flops = (
-                batch_size
-                * num_tokens
-                * cfg.model.hidden_size
-                * cfg.model.num_layers
-                * (
-                    2 * cfg.model.ffn_hidden_size  # up + gate projections
-                    + cfg.model.ffn_hidden_size  # down projection
-                )
-            )
-            # Embedding / logit FLOPs (lora_factor applies).
-            embedding_flops = (
-                batch_size
-                * cfg.model.vocab_size
-                * cfg.model.hidden_size
-                * num_tokens
-            )
-            return (
-                2
-                * 3
-                * (
-                    lora_factor * (projection_flops + mlp_flops + embedding_flops)
-                    + attn_inner_flops
-                )
-            )
+            # Full 3-pass FLOPs for attention inner products (QK^T and softmax(QK^T)V).
+            # No trainable weights here so the standard 3x multiplier applies.
+            model_flops_unfrozen = n_layers * hs**2 * (12 * avg_seqlen2 / hs)
+
+            return batch_size * (model_flops_frozen * (2.0 / 3.0) + model_flops_unfrozen)
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.

@@ -81,9 +81,6 @@ class FinetuningDatasetBuilder:
         self.do_validation = do_validation
         self.do_test = do_test
 
-        if self.packed_sequence_size > 0 and self.packed_sequence_specs.packed_train_data_path is None:
-            self.packed_sequence_specs.packed_train_data_path = self.train_path_packed
-
         print_rank_0(f"Building FinetuningDatasetBuilder with root={self.dataset_root}")
 
         if self.packed_sequence_size > 0:

@@ -25,51 +25,6 @@ PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 logger = logging.getLogger(__name__)
 
 
-def get_seqlen_list(elem):
-    num_seq = len(elem['seq_start_id'])
-    tokens_total = len(elem['input_ids'])
-    tokens_minus_eos = tokens_total - num_seq
-
-    seq_boundaries = elem['seq_start_id'] + [tokens_total]
-
-    # subtract 1 to account for removing eos token
-    token_counts = [seq_boundaries[i + 1] - seq_boundaries[i] - 1 for i in range(num_seq)]
-
-    assert sum(token_counts) == tokens_minus_eos, (sum(token_counts), tokens_minus_eos)
-
-    return token_counts, tokens_minus_eos
-
-
-def calculate_avg_seqlen(dataset_file, gbs, max_seq_len, drop_remainder):
-    data = np.load(dataset_file, allow_pickle=True)
-
-    total_len_accum = 0
-    seqlen_sq_accum = 0
-    seq_count_accum = 0
-
-    rows_total = len(data)
-    count = (rows_total // gbs) * gbs if drop_remainder else rows_total
-
-    if count != rows_total:
-        print(f'Dropping {rows_total - count}, total was {rows_total}')
-
-    for i, elem in enumerate(data):
-        if i >= count:
-            break
-        seqlen_list, total_count = get_seqlen_list(elem)
-        seqlen_sq_list = [s * s for s in seqlen_list]
-        total_len_accum += total_count
-        seqlen_sq_accum += sum(seqlen_sq_list)
-        seq_count_accum += len(seqlen_list)
-
-    avg_seqlen_count = seq_count_accum / count
-    avg_seqlen_total = total_len_accum / count
-    avg_seqlen_sq_individual = seqlen_sq_accum / seq_count_accum
-    avg_seqlen_sq_per_row = seqlen_sq_accum / count
-
-    return avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row
-
-
 def find_first_bin_that_fits(bins: List[List[int]], s: int, bin_size: int) -> int:
     """
     Finds the first bin in a list of bins that has enough space to fit a sequence of size 's'.

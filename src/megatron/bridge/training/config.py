@@ -255,12 +255,6 @@ class DataloaderConfig:
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
 
-    avg_seq_len_sq_row: Optional[float] = None
-    """Average sum of squared sequence lengths per sample/row, used by LoRA FLOPs accounting."""
-
-    avg_tokens_per_row: Optional[float] = None
-    """Average token count per sample/row, used by LoRA FLOPs accounting."""
-
 
 @dataclass(frozen=True)
 class DatasetBuildContext:
