@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from functools import partial
 from typing import Any, Callable, Dict, Optional, Type, Union
 
 from megatron.core import parallel_state
@@ -23,6 +24,7 @@ from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatr
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
@@ -40,32 +42,55 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection | None = None) -> bool:
+def is_dataset_built_on_rank(
+    pg_collection: ProcessGroupCollection | None = None,
+    model_config: TransformerConfig | None = None,
+) -> bool:
     """Determines whether the dataset should be built on the current rank.
 
     Datasets are typically built only on the first and last pipeline stages
-    and the first tensor parallel rank to save memory and avoid redundancy.
+    (and any stage hosting MTP layers) at TP-rank 0 to save memory and
+    avoid redundancy.
 
     Args:
         pg_collection: Process group collection. When provided, uses the
             explicit process groups. When ``None``, falls back to the global
             parallel state, which allows this function to be passed directly
             as a zero-argument callable to ``BlendedMegatronDatasetBuilder``.
+        model_config: Optional ``TransformerConfig``.  When provided, stages
+            that host MTP layers (even if they are neither the first nor
+            last PP stage) are also included.  Required for custom
+            ``pipeline_model_parallel_layout`` configs that place MTP on
+            standalone mid stages.
 
     Returns:
         True if the dataset should be built on the current rank, False otherwise.
     """
+    from megatron.core.transformer.multi_token_prediction import mtp_on_this_rank
+
+    def _needs_data(is_first: bool, is_last: bool) -> bool:
+        if is_first or is_last:
+            return True
+        if model_config is not None and mtp_on_this_rank(model_config):
+            return True
+        return False
+
     if pg_collection is not None:
-        return (is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)) and (
-            pg_collection.tp.rank() == 0
+        return (
+            _needs_data(is_pp_first_stage(pg_collection.pp), is_pp_last_stage(pg_collection.pp))
+            and pg_collection.tp.rank() == 0
         )
-    return (parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()) and (
-        parallel_state.get_tensor_model_parallel_rank() == 0
+
+    return (
+        _needs_data(parallel_state.is_pipeline_first_stage(), parallel_state.is_pipeline_last_stage())
+        and parallel_state.get_tensor_model_parallel_rank() == 0
     )
 
 
 def pretrain_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: BlendedMegatronDatasetConfig
+    train_val_test_num_samples: list[int],
+    dataset_config: BlendedMegatronDatasetConfig,
+    model_config: TransformerConfig | None = None,
 ) -> tuple[GPTDataset, GPTDataset, GPTDataset]:
     """Build pretraining train, validation, and test datasets.
 
@@ -75,6 +100,9 @@ def pretrain_train_valid_test_datasets_provider(
         train_val_test_num_samples: A list containing the number of samples for
                                     train, validation, and test datasets.
         dataset_config: Configuration object for the blended Megatron dataset.
+        model_config: Optional ``TransformerConfig``, passed through from
+            ``build_train_valid_test_datasets`` so that MTP-hosting PP stages
+            also build the dataset.
 
     Returns:
         A tuple containing the train, validation, and test datasets.
@@ -90,7 +118,9 @@ def pretrain_train_valid_test_datasets_provider(
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
     broadcast_data = getattr(dataset_config, "broadcast_data_across_tp", False)
-    is_built_on_rank = is_dataset_built_on_rank if broadcast_data else (lambda: True)
+    is_built_on_rank = (
+        partial(is_dataset_built_on_rank, model_config=model_config) if broadcast_data else (lambda: True)
+    )
 
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
         dataset_type, train_val_test_num_samples, is_built_on_rank, dataset_config

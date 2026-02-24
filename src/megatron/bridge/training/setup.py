@@ -285,8 +285,11 @@ def setup(
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
-    if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
+    provider_params = inspect.signature(train_valid_test_datasets_provider).parameters
+    if "tokenizer" in provider_params:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    if "model_config" in provider_params:
+        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, model_config=cfg.model)
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
