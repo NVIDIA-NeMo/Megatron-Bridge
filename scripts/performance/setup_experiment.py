@@ -17,6 +17,7 @@
 import glob
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -59,6 +60,22 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+def get_git_commit_info() -> Optional[str]:
+    """Get the current git commit information.
+
+    Returns:
+        Git commit information from 'git log -1' or None if git is not available.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "--no-pager", "log", "-1", "--oneline"], capture_output=True, text=True, timeout=5, check=True
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.debug(f"Git not available or command failed: {e}")
+        return None
 
 
 def check_training_finished(log_file_path: str) -> bool:
@@ -232,6 +249,11 @@ def main(
     gres: Optional[str] = None,
 ):
     """Sets up the experiment and runs it."""
+    if commit_info := get_git_commit_info():
+        logger.info(f"Running with git commit:\n{commit_info}")
+    else:
+        logger.info("Git information not available")
+
     if (
         model_family_name in ["qwen3"]
         and model_recipe_name
