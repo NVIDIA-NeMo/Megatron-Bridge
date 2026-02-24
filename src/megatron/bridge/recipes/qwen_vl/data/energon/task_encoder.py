@@ -166,8 +166,8 @@ class videohandler:
     """Create an video handler."""
 
     def __init__(self, imagespec):
-        self.extensions = ["jpgs", "mp4s"]
-        self.extensions_mapping = {"jpgs": "jpg", "mp4s": "jpg"}
+        self.extensions = ["jpgs", "mp4s", "videos"]
+        self.extensions_mapping = {"jpgs": "jpg", "mp4s": "jpg", "videos": "jpg"}
         self.image_handler = imagehandler(imagespec)
 
     def __call__(self, key, data):
@@ -330,6 +330,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             json.loads(sample.conversation) if isinstance(sample.conversation, (str, bytes)) else sample.conversation
         )
 
+        conversation = conversation if not isinstance(conversation, dict) else conversation.get("conversations", [])
         _from_system_ = "from" in conversation[0]
         role_key = "from" if "from" in conversation[0] else "role"
         content_key = "value" if "from" in conversation[0] else "content"
