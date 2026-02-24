@@ -6,7 +6,11 @@
 set -euo pipefail
 source /lustre/fsw/portfolios/coreai/users/zhiyul/secrets.sh
 
-CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+# CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11.sqsh"
+CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-25.11-cuda13.1-cudnn9.18.0.76.sqsh"
+export CUDNN_HOME=/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/Megatron-Bridge/cudnn_lib/9.18.0.76/cudnn/
+export LD_LIBRARY_PATH='$CUDNN_HOME/lib64:$LD_LIBRARY_PATH'
+
 ACCOUNT="coreai_dlalgo_nemorl"
 PARTITION="batch"
 # Get current directory to mount
