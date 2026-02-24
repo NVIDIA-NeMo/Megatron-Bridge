@@ -467,7 +467,7 @@ _LLAMA3_8B_SFT_CONFIG_GB200 = replace(
     peft="none",
     micro_batch_size=1,
     global_batch_size=8,
-    cuda_graph_impl="transformer_engine",
+    cuda_graph_impl="none",  # NOTE: CUDA Graphs reduces performance here
     cuda_graph_scope="mlp",
 )
 
