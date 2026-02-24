@@ -189,8 +189,6 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         )
 
         if is_lora:
-            # Average sequence statistics from packed LoRA training data, keyed by seq_length.
-            # Falls back to seq_length-based estimates for other sequence lengths.
             _LORA_SEQ_STATS = {
                 4096: (842603, 4096),
                 2048: (488991, 2030),
@@ -209,22 +207,17 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             ffn_hs = cfg.model.ffn_hidden_size
             vocab_size = cfg.model.vocab_size
 
-            # Standard 3-pass FLOPs for frozen linear layers (Q/K/V/O projections,
-            # SwiGLU MLP, logit).  Multiplied by 2/3 because frozen weights skip
-            # wgrad, leaving only forward + dgrad (2 of the standard 3 passes).
             model_flops_frozen = (
                 avg_tokens
                 * n_layers
                 * hs**2
                 * (
-                    12  # Q + O projections (3-pass, GQA=1)
-                    + 12 * num_query_groups / n_heads  # K + V projections (3-pass, GQA)
-                    + 18 * ffn_hs / hs  # SwiGLU MLP: up + gate + down (3-pass)
-                    + 6 * vocab_size / (n_layers * hs)  # logit layer (3-pass, amortised)
+                    12
+                    + 12 * num_query_groups / n_heads
+                    + 18 * ffn_hs / hs
+                    + 6 * vocab_size / (n_layers * hs)
                 )
             )
-            # Full 3-pass FLOPs for attention inner products (QK^T and softmax(QK^T)V).
-            # No trainable weights here so the standard 3x multiplier applies.
             model_flops_unfrozen = n_layers * hs**2 * (12 * avg_seqlen2 / hs)
 
             return batch_size * (model_flops_frozen * (2.0 / 3.0) + model_flops_unfrozen)
