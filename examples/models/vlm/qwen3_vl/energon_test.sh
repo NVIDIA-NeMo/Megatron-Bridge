@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,8 +45,8 @@ PARALLELISM_CONFIGS=("1,1,1,4,8" "1,1,1,2,4" "1,1,1,1,2")
 for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
     for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP N_PROC <<< "$par_config"
-        echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP DP=$N_PROC"
-        python -m torch.distributed.run --nproc_per_node=$N_PROC scripts/training/run_recipe.py \
+        echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP N_PROC=$N_PROC"
+        uv run python -m torch.distributed.run --nproc_per_node=$N_PROC scripts/training/run_recipe.py \
             --recipe ${MODEL_NAME}_finetune_config \
             --step_func qwen3_vl_step \
             --peft_scheme lora \
