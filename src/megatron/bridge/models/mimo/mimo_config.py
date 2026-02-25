@@ -68,7 +68,6 @@ class MimoParallelismConfig:
 
     module_parallelisms: dict[str, ModuleParallelismConfig]
     special_token_ids: dict[str, int] = field(default_factory=dict)
-    # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
 
     def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
         return self.module_parallelisms[module_name]
@@ -86,47 +85,17 @@ class MimoParallelismConfig:
     def _validate_heterogeneous(self) -> None:
         """Validate heterogeneous deployment: no overlapping rank ranges."""
         ranges = []
-        for name, parallelism in self.module_parallelisms.items():
+        for parallelism in self.module_parallelisms.values():
             if parallelism.data_parallel_size is None:
                 raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
-            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks, name))
+            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
 
-        ranges.sort(key=lambda x: x[0])
+        ranges.sort()
         for idx in range(1, len(ranges)):
             prev_end = ranges[idx - 1][1]
             cur_start = ranges[idx][0]
             if cur_start < prev_end:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
-
-        # Check for gaps between modules (likely misconfiguration)
-        # Gaps in the middle are errors; leading gaps (rank_offset > 0) are warnings
-        if ranges:
-            min_rank = ranges[0][0]  # Already sorted by rank_offset
-            max_rank = ranges[-1][1]
-
-            # Collect all covered ranks
-            covered_ranks = set()
-            for parallelism in self.module_parallelisms.values():
-                start = parallelism.rank_offset
-                end = start + parallelism.total_ranks
-                covered_ranks.update(range(start, end))
-
-            # Check for gaps between min and max (error - likely misconfiguration)
-            expected_middle = set(range(min_rank, max_rank))
-            gaps_in_middle = expected_middle - covered_ranks
-            if gaps_in_middle:
-                raise ValueError(
-                    f"Ranks {sorted(gaps_in_middle)} are not assigned to any module in heterogeneous "
-                    f"deployment. This creates a gap between modules which is not allowed."
-                )
-
-            # Check for leading gap (ranks 0 to min_rank-1 unused) - warning only
-            if min_rank > 0:
-                warnings.warn(
-                    f"Ranks {list(range(min_rank))} (before first module) are not assigned to any "
-                    f"module in heterogeneous deployment. These ranks will be idle during training.",
-                    stacklevel=3,
-                )
 
     def finalize(self, world_size: Optional[int]) -> None:
         """Finalize parallelism config: compute data_parallel_size and validate."""

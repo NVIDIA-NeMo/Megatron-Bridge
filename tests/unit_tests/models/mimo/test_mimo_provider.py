@@ -3,7 +3,6 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.mimo import (
@@ -261,59 +260,6 @@ class TestMimoModelProvider:
         infra = provider.build_infra()
         assert "llm" in infra.module_to_grid_map
         assert "llm" in infra.pg_collections
-
-    @patch("torch.distributed.is_initialized")
-    @patch("torch.distributed.get_world_size")
-    @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
-    def test_non_participating_rank_raises_error(
-        self, mock_build_grids, mock_get_rank, mock_get_world_size, mock_is_initialized
-    ):
-        """Test that non-participating ranks raise ValueError during finalize().
-
-        This tests the gap scenario: world_size=12, but modules only cover
-        ranks 0-3 and 8-11, leaving ranks 4-7 as non-participating.
-        """
-        mock_is_initialized.return_value = True
-        mock_get_world_size.return_value = 12  # World has 12 ranks
-        mock_get_rank.return_value = 5  # Rank 5 is in the gap
-
-        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        # Create config with a gap: llm at 0-3, encoder at 8-11, gap at 4-7
-        mimo_parallelism_config = MimoParallelismConfig(
-            module_parallelisms={
-                "llm": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
-                    data_parallel_size=2,
-                    rank_offset=0,  # ranks 0-3
-                ),
-                "encoder": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
-                    data_parallel_size=2,
-                    rank_offset=8,  # ranks 8-11
-                ),
-            },
-        )
-
-        # Mock grids with the gap (ranks 4-7 not covered)
-        llm_grid = MagicMock()
-        llm_grid.rank_offset = 0
-        llm_grid.size = 4  # ranks 0-3
-
-        encoder_grid = MagicMock()
-        encoder_grid.rank_offset = 8
-        encoder_grid.size = 4  # ranks 8-11
-
-        mock_build_grids.return_value = {"llm": llm_grid, "encoder": encoder_grid}
-
-        provider = MimoModelProvider(
-            language_model_spec=language_spec,
-            mimo_parallelism_config=mimo_parallelism_config,
-        )
-
-        # Should raise ValueError because ranks 4-7 are a gap between modules
-        with pytest.raises(ValueError, match="not assigned to any module"):
-            provider.finalize()
 
     def test_inject_pg_collection_into_language_spec(self):
         """Test that pg_collection is injected into language specs."""
