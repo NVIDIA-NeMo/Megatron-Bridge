@@ -14,9 +14,6 @@
 
 """Unit tests for megatron.bridge.training.vocab_slice module."""
 
-import importlib.util
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,19 +22,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-
-# Import vocab_slice directly from file to avoid triggering the heavy
-# megatron.bridge.__init__ import chain (which requires transformer_engine etc.)
-_module_path = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "training" / "vocab_slice.py"
-assert _module_path.exists(), f"vocab_slice.py not found at {_module_path}"
-_spec = importlib.util.spec_from_file_location("vocab_slice", _module_path)
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules["megatron.bridge.training.vocab_slice"] = _mod
-_spec.loader.exec_module(_mod)
-
-collect_active_vocab_ids = _mod.collect_active_vocab_ids
-install_vocab_slice = _mod.install_vocab_slice
-create_vocab_sliced_forward_step = _mod.create_vocab_sliced_forward_step
+from megatron.bridge.training.vocab_slice import (
+    collect_active_vocab_ids,
+    create_vocab_sliced_forward_step,
+    install_vocab_slice,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +302,7 @@ class TestCreateVocabSlicedForwardStep:
 
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch.object(_mod, "install_vocab_slice") as mock_install:
+        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice") as mock_install:
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_forward_step)
 
             # Call twice with same model
@@ -328,7 +317,7 @@ class TestCreateVocabSlicedForwardStep:
         """Test that vocab slice is installed on first call and not subsequent ones."""
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch.object(_mod, "install_vocab_slice") as mock_install:
+        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice") as mock_install:
             mock_base = MagicMock(return_value=(torch.tensor(0.0), None))
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_base)
 
@@ -344,7 +333,7 @@ class TestCreateVocabSlicedForwardStep:
         """Test that vocab slice is re-installed when model identity changes."""
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch.object(_mod, "install_vocab_slice") as mock_install:
+        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice") as mock_install:
             mock_base = MagicMock(return_value=(torch.tensor(0.0), None))
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_base)
 
@@ -371,7 +360,7 @@ class TestCreateVocabSlicedForwardStep:
 
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch.object(_mod, "install_vocab_slice"):
+        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice"):
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_forward_step)
 
             state = MagicMock()
