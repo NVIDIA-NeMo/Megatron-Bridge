@@ -154,6 +154,49 @@ The plugin automatically forwards the `WANDB_API_KEY` and by default injects CLI
 This allows seamless integration of W&B logging into your training workflow without manual configuration.
 
 
+### MLFlow
+
+Megatron Bridge can log metrics and artifacts to MLFlow, following the same pattern as the W&B integration.
+
+#### What Gets Logged
+
+When enabled, MLFlow receives:
+
+- Training configuration as run parameters
+- Scalar metrics (losses, learning rate, batch size, throughput, timers, memory, runtime, norms, energy, etc.)
+- Checkpoint artifacts saved under an experiment-specific artifact path per iteration
+
+#### Enable MLFlow Logging
+
+  1) Install MLFlow (installed by default with Megatron Bridge):
+
+  ```bash
+  pip install mlflow / uv add mlflow
+  ```
+
+  2) Configure the tracking server (Optional):
+  - Either set `MLFLOW_TRACKING_URI` in the environment, or
+  - Pass an explicit `mlflow_tracking_uri` in the logger config.
+
+  3) Configure logging in your training setup.
+
+  ```python
+  from megatron.bridge.training.config import LoggerConfig
+
+  cfg.logger = LoggerConfig(
+      tensorboard_dir="./runs/tensorboard",
+      mlflow_experiment="my_megatron_experiment",
+      mlflow_run_name="llama32_1b_pretrain_run",
+      mlflow_tracking_uri="http://mlflow:5000",  # optional
+      mlflow_tags={                              # optional
+          "project": "llama32",
+          "phase": "pretrain",
+      },
+  )
+  ```
+
+
+
 #### Progress Log
 
 When `logger.log_progress` is enabled, the framework generates a `progress.txt` file in the checkpoint save directory.

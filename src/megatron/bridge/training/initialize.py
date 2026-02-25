@@ -14,6 +14,7 @@
 
 import datetime
 import os
+import time
 import warnings
 from typing import Callable, Optional
 
@@ -21,6 +22,7 @@ import torch
 import torch.distributed
 import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.datasets.utils import compile_helpers
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
 from megatron.core.fusions.fused_bias_swiglu import bias_swiglu
@@ -115,7 +117,7 @@ def initialize_megatron(
     init_rerun_state(rerun_state_machine_config)
 
     # torch.distributed initialization
-    return torch_dist_init(
+    result = torch_dist_init(
         model_config=model_config,
         dist_config=dist_config,
         rng_config=rng_config,
@@ -127,6 +129,23 @@ def initialize_megatron(
         restart_store=restart_store,
         use_inprocess_restart=use_inprocess_restart,
     )
+
+    # Compile dataset helpers after distributed initialization
+    # Use local rank to ensure each node compiles independently (multi-node without shared filesystem)
+    if torch.distributed.is_initialized():
+        if get_local_rank_preinit() == 0:
+            start_time = time.time()
+            print("> compiling dataset index builder ...")
+            compile_helpers()
+            print(
+                ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(
+                    time.time() - start_time
+                ),
+                flush=True,
+            )
+        torch.distributed.barrier()
+
+    return result
 
 
 def torch_dist_init(
@@ -222,6 +241,7 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
         RerunDiagnostic,
         RerunErrorInjector,
         RerunMode,
+        get_rerun_state_machine,
         initialize_rerun_state_machine,
     )
 
@@ -241,6 +261,10 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
             error_injection_type=RerunDiagnostic(rerun_state_machine_config.error_injection_type),
         ),
     )
+
+    # Store config on the singleton for use in loss validation
+    rsm = get_rerun_state_machine()
+    rsm.spiky_loss_factor = rerun_state_machine_config.spiky_loss_factor
 
 
 def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:

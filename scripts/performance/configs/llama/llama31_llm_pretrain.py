@@ -62,7 +62,8 @@ def llama31_405b_pretrain_config_gb300(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -95,7 +96,8 @@ def llama31_405b_pretrain_config_gb200(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -129,7 +131,8 @@ def llama31_405b_pretrain_config_b300(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -158,7 +161,8 @@ def llama31_405b_pretrain_config_b200(
     else:
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -187,7 +191,8 @@ def llama31_405b_pretrain_config_h100(
     else:
         comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
-    cfg = llama31_405b_pretrain_config(mock=mock, precision_config=precision_config)
+    cfg = llama31_405b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_llama31_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

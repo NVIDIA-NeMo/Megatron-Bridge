@@ -116,8 +116,18 @@ class NsysPlugin(Plugin):
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
-        launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
-        launcher.nsys_extra_args = self.nsys_extra_args or launcher.nsys_extra_args
+
+        # Set nsys_trace if provided, otherwise use nemo_run defaults
+        if self.nsys_trace is not None:
+            launcher.nsys_trace = self.nsys_trace
+
+        # Combine default extra args with user-provided extra args
+        if self.nsys_extra_args is not None:
+            # Get existing launcher extra args (nemo_run defaults)
+            existing_extra_args = launcher.nsys_extra_args or []
+            # Combine user args with existing args (user args first for precedence)
+            launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
+            logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -257,6 +267,14 @@ class PerfEnvPlugin(Plugin):
         ):
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        elif (
+            model_family_name in ["deepseek"]
+            and model_recipe_name in ["deepseek_v3"]
+            and train_task == "pretrain"
+            and gpu in ["h100"]
+        ):
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
@@ -271,6 +289,15 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
+            if model_family_name == "deepseek":
+                if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
+        if model_family_name in ["llama"] and train_task in ["sft"]:
+            # TODO: Verify for H100 and 8b
+            del_cudnn_ln = False
+            if gpu in ["h100"] and model_recipe_name in ["llama3_70b"] and compute_dtype == "fp8_cs":
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
@@ -426,6 +453,9 @@ class PerfEnvPlugin(Plugin):
             2097152
             if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
             else None
+        )
+        nccl_pp_comm_chunksize = (
+            2097152 if self.model_family_name in ["llama"] and self.train_task in ["sft"] else None
         )
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 

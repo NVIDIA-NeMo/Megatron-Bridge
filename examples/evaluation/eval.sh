@@ -9,7 +9,7 @@ PARALLELISM=$2
 # Install missing dependency for lm-evaluation-harness
 uv pip install math_verify --quiet
 
-uv run --active --no-sync python << EVAL_EOF
+cat << EVAL_EOF > _temp_eval_script.py
 import subprocess
 import time
 
@@ -65,12 +65,15 @@ eval_cfg = EvaluationConfig(
     output_dir=output_dir,
 )
 
-# Run evaluation
-result = evaluate(target_cfg=target_cfg, eval_cfg=eval_cfg)
+if __name__ == "__main__":
+    # Run evaluation
+    result = evaluate(target_cfg=target_cfg, eval_cfg=eval_cfg)
 
-# Shutdown Ray server
-print("Evaluation completed. Shutting down Ray server...")
-subprocess.run(["ray", "stop", "--force"], check=False, timeout=30)
-print("Ray server shutdown command sent.")
-time.sleep(5)
+    # Shutdown Ray server
+    print("Evaluation completed. Shutting down Ray server...")
+    subprocess.run(["ray", "stop", "--force"], check=False, timeout=30)
+    print("Ray server shutdown command sent.")
+    time.sleep(5)
 EVAL_EOF
+
+uv run --active --no-sync python _temp_eval_script.py

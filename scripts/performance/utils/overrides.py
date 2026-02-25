@@ -19,6 +19,7 @@ from typing import List, Optional
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -43,6 +44,8 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
 
+    # Checkpoint save is disabled by default for performance benchmarks
+    # Users can enable it via command-line arguments
     recipe.checkpoint.save = None
 
     recipe.logger.log_interval = 1
@@ -69,9 +72,7 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     return recipe
 
 
-def _set_megatron_fsdp_overrides(
-    recipe: ConfigContainer, use_megatron_fsdp: bool = False, nccl_ub: bool = False
-) -> ConfigContainer:
+def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: bool = False) -> ConfigContainer:
     """Set the Megatron FSDP overrides."""
     if not use_megatron_fsdp:
         return
@@ -81,10 +82,6 @@ def _set_megatron_fsdp_overrides(
     recipe.ddp.keep_fp8_transpose_cache = False
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
-
-    if nccl_ub:
-        recipe.ddp.nccl_ub = True
-        recipe.ddp.fsdp_manual_registration = True
 
     recipe.model.init_model_with_meta_device = True
     recipe.model.gradient_accumulation_fusion = True
@@ -159,6 +156,43 @@ def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: boo
     return recipe
 
 
+def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+    """Set checkpoint save/load configuration."""
+    # When save_interval is provided, enable checkpointing
+    if args.save_interval is not None:
+        recipe.checkpoint.save_interval = args.save_interval
+        logger.info(f"Checkpoint save interval set to: {args.save_interval} iterations")
+
+        # Set save directory (use provided or default)
+        if args.save_dir is not None:
+            recipe.checkpoint.save = args.save_dir
+            logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        else:
+            recipe.checkpoint.save = "/nemo_run/checkpoints"
+            logger.info("Checkpoint save directory defaulting to: /nemo_run/checkpoints")
+
+    # If only save_dir is provided without save_interval, still enable checkpointing
+    elif args.save_dir is not None:
+        recipe.checkpoint.save = args.save_dir
+        logger.info(f"Checkpoint save directory set to: {args.save_dir}")
+        # Default save_interval to train_iters
+        recipe.checkpoint.save_interval = recipe.train.train_iters
+        logger.info(f"Checkpoint save interval defaulting to train_iters: {recipe.train.train_iters}")
+
+    if args.load_dir is not None:
+        recipe.checkpoint.load = args.load_dir
+        logger.info(f"Checkpoint load directory set to: {args.load_dir}")
+
+    if args.most_recent_k is not None:
+        recipe.checkpoint.most_recent_k = args.most_recent_k
+        logger.info(f"Keeping {args.most_recent_k} most recent checkpoints")
+
+    if args.save_config_filepath is not None:
+        recipe.logger.save_config_filepath = args.save_config_filepath
+
+    return recipe
+
+
 def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig) -> ConfigContainer:
     """Set workload base configs."""
     cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
@@ -171,7 +205,8 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
 
-    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp, nccl_ub=settings.nccl_ub)
+    _set_megatron_fsdp_overrides(cfg, use_megatron_fsdp=settings.use_megatron_fsdp)
+    _set_nccl_ub_overrides(cfg, nccl_ub=settings.nccl_ub)
     _set_cuda_graph_overrides(
         cfg,
         cuda_graph_impl=settings.cuda_graph_impl,
@@ -209,9 +244,24 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     return recipe
 
 
+def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> ConfigContainer:
+    """Set the NCCL UB overrides."""
+    if nccl_ub:
+        recipe.ddp.nccl_ub = True
+        # The current version of NCCL does not support the AVG operation for reductions with symmetric kernels.
+        # To enable symmetric kernels, average_in_collective must be disabled.
+        recipe.ddp.average_in_collective = False
+
+    if recipe.ddp.use_megatron_fsdp and recipe.ddp.nccl_ub:
+        recipe.ddp.fsdp_manual_registration = True
+
+    return recipe
+
+
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
-    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp, nccl_ub=args.nccl_ub)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
+    _set_nccl_ub_overrides(recipe, nccl_ub=args.nccl_ub)
     _set_cuda_graph_overrides(
         recipe,
         cuda_graph_impl=args.cuda_graph_impl,
@@ -250,6 +300,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
     if args.context_parallel_size is not None:
         recipe.model.context_parallel_size = args.context_parallel_size
+    # VP special case: -1 means "not specified, use default config", but None is a valid user override
     if args.virtual_pipeline_model_parallel_size != -1:
         recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
     if args.expert_model_parallel_size is not None:
@@ -262,6 +313,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.train.micro_batch_size = args.micro_batch_size
     if args.pretrained_checkpoint is not None:
         recipe.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+
+    # Handle checkpoint configuration
+    _set_checkpoint_overrides(recipe, args)
+
     if args.tokenizer_type == "NullTokenizer":
         recipe.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
     elif args.tokenizer_type == "HuggingFaceTokenizer":
@@ -340,6 +395,20 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
     ):
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
+    if model_recipe_name == "kimi_k2":
+        if pp_size is not None or vp_size != -1:
+            try:
+                layout = _get_kimi_k2_pipeline_layout(
+                    recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                )
+                recipe.model.pipeline_model_parallel_layout = layout
+            except ValueError:
+                logger.warning(
+                    f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                )
+                recipe.model.pipeline_model_parallel_layout = None
+        if pipeline_model_parallel_layout is not None:
+            recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
@@ -363,7 +432,7 @@ def set_post_overrides(
         model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
     )
 
-    if compute_dtype == "bf16":
+    if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
 
     tp = recipe.model.tensor_model_parallel_size
@@ -375,9 +444,11 @@ def set_post_overrides(
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
+        if recipe.optimizer.optimizer != "dist_muon":
+            recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+            if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+                recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:

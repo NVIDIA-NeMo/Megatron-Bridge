@@ -23,11 +23,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen2ForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen2ForCausalLM, target=GPTModel, model_type="qwen2")
 class Qwen2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen2 Causal LM.
@@ -36,35 +34,26 @@ class Qwen2Bridge(MegatronModelBridge):
     and Megatron-Core GPTModel formats, including weight mappings and
     configuration translation.
 
+    Qwen2 inherits CONFIG_MAPPING and ACTIVATION_MAPPING from MegatronModelBridge base class.
+    Model-specific settings are applied in provider_bridge.
+
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B")
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen2ModelProvider:
-        hf_config = hf_pretrained.config
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Qwen2 config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
 
-        provider = Qwen2ModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            add_qkv_bias=True,  # Qwen2 has bias in QKV projections
-        )
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = True
+        provider.hidden_dropout = 0.0
+        provider.autocast_dtype = torch.bfloat16
 
         return provider
 

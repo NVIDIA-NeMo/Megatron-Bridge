@@ -467,7 +467,7 @@ _LLAMA3_8B_SFT_CONFIG_GB200 = replace(
     peft="none",
     micro_batch_size=1,
     global_batch_size=8,
-    cuda_graph_impl="transformer_engine",
+    cuda_graph_impl="none",  # NOTE: CUDA Graphs reduces performance here
     cuda_graph_scope="mlp",
 )
 
@@ -486,7 +486,7 @@ _LLAMA3_8B_SFT_CONFIG_H100 = replace(
 LLAMA3_8B_SFT_CONFIG_H100_BF16_V1 = _LLAMA3_8B_SFT_CONFIG_H100
 LLAMA3_8B_SFT_CONFIG_H100_FP8_CS_V1 = replace(
     _LLAMA3_8B_SFT_CONFIG_H100,
-    cuda_graph_impl="transformer_engine",
+    cuda_graph_impl="none",
     cuda_graph_scope="mlp",
 )
 
@@ -500,8 +500,8 @@ _LLAMA3_70B_SFT_CONFIG_GB300 = replace(
     num_gpus=32,
     peft="none",
     tensor_model_parallel_size=1,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=5,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=20,
     micro_batch_size=1,
     global_batch_size=32,
     cuda_graph_impl="transformer_engine",
@@ -517,9 +517,9 @@ _LLAMA3_70B_SFT_CONFIG_GB200 = replace(
     BASE_LLAMA3_70B_CONFIG,
     num_gpus=32,
     peft="none",
-    tensor_model_parallel_size=2,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=5,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=8,
+    virtual_pipeline_model_parallel_size=10,
     micro_batch_size=1,
     global_batch_size=32,
     cuda_graph_impl="transformer_engine",
@@ -527,7 +527,10 @@ _LLAMA3_70B_SFT_CONFIG_GB200 = replace(
 )
 
 LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1 = _LLAMA3_70B_SFT_CONFIG_GB200
-LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1 = _LLAMA3_70B_SFT_CONFIG_GB200
+LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1 = replace(
+    _LLAMA3_70B_SFT_CONFIG_GB200,
+    pipeline_model_parallel_size=4,
+)
 LLAMA3_70B_SFT_CONFIG_GB200_FP8_MX_V1 = _LLAMA3_70B_SFT_CONFIG_GB200
 
 
@@ -543,8 +546,11 @@ _LLAMA3_70B_SFT_CONFIG_H100 = replace(
 )
 
 LLAMA3_70B_SFT_CONFIG_H100_BF16_V1 = _LLAMA3_70B_SFT_CONFIG_H100
-LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1 = _LLAMA3_70B_SFT_CONFIG_H100
-
+LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1 = replace(
+    _LLAMA3_70B_SFT_CONFIG_H100,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
+)
 
 # =============================================================================
 # Llama3 70B finetune (LoRA) presets - V1 (only version)
@@ -554,10 +560,11 @@ _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
     BASE_LLAMA3_70B_CONFIG,
     num_gpus=8,
     peft="lora",
-    # pipeline_model_parallel_size=4,
-    # virtual_pipeline_model_parallel_size=20,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
     micro_batch_size=1,
-    global_batch_size=64,
+    global_batch_size=32,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="mlp",
 )
@@ -565,8 +572,8 @@ _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
 LLAMA3_70B_LORA_CONFIG_GB300_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
 LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
 LLAMA3_70B_LORA_CONFIG_GB300_FP8_MX_V1 = replace(
-    LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1,
-    pipeline_model_parallel_size=2,  # PP=1 is OOM
+    _LLAMA3_70B_LORA_CONFIG_GB300,
+    pipeline_model_parallel_size=2,
 )
 
 
@@ -574,8 +581,9 @@ _LLAMA3_70B_LORA_CONFIG_GB200 = replace(
     BASE_LLAMA3_70B_CONFIG,
     num_gpus=8,
     peft="lora",
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=20,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
     micro_batch_size=1,
     global_batch_size=64,
     cuda_graph_impl="transformer_engine",
@@ -583,7 +591,18 @@ _LLAMA3_70B_LORA_CONFIG_GB200 = replace(
 )
 
 LLAMA3_70B_LORA_CONFIG_GB200_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_GB200
-LLAMA3_70B_LORA_CONFIG_GB200_FP8_CS_V1 = _LLAMA3_70B_LORA_CONFIG_GB200
+LLAMA3_70B_LORA_CONFIG_GB200_FP8_CS_V1 = replace(
+    BASE_LLAMA3_70B_CONFIG,
+    num_gpus=8,
+    peft="lora",
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=2,
+    context_parallel_size=1,
+    micro_batch_size=1,
+    global_batch_size=32,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
+)
 LLAMA3_70B_LORA_CONFIG_GB200_FP8_MX_V1 = LLAMA3_70B_LORA_CONFIG_GB200_FP8_CS_V1
 
 
@@ -591,8 +610,9 @@ _LLAMA3_70B_LORA_CONFIG_H100 = replace(
     BASE_LLAMA3_70B_CONFIG,
     num_gpus=8,
     peft="lora",
-    tensor_model_parallel_size=2,
+    tensor_model_parallel_size=1,
     pipeline_model_parallel_size=4,
+    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=20,
     micro_batch_size=1,
     global_batch_size=32,
@@ -600,9 +620,12 @@ _LLAMA3_70B_LORA_CONFIG_H100 = replace(
 
 LLAMA3_70B_LORA_CONFIG_H100_BF16_V1 = replace(
     _LLAMA3_70B_LORA_CONFIG_H100,
-    recompute_num_layers=2,
+    recompute_num_layers=1,
 )
-LLAMA3_70B_LORA_CONFIG_H100_FP8_CS_V1 = _LLAMA3_70B_LORA_CONFIG_H100
+LLAMA3_70B_LORA_CONFIG_H100_FP8_CS_V1 = replace(
+    _LLAMA3_70B_LORA_CONFIG_H100,
+    tensor_model_parallel_size=2,
+)
 
 
 __all__ = [

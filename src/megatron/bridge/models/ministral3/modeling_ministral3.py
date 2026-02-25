@@ -24,14 +24,21 @@ Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
 import types
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+from megatron.bridge.utils.common_utils import (
+    hook_hf_module_setattr_for_tp_grad_sync,
+    slice_batch_for_context_parallel,
+)
+
+
+if TYPE_CHECKING:
+    from megatron.core.packed_seq_params import PackedSeqParams
 
 
 # Import HuggingFace Mistral3 model classes with fallback
@@ -185,9 +192,10 @@ class Ministral3Model(MegatronModule):
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         image_sizes: Optional[torch.Tensor] = None,
+        packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         """
         Forward pass combining HuggingFace vision encoder with Megatron language model.
 
@@ -202,7 +210,8 @@ class Ministral3Model(MegatronModule):
             loss_mask: Mask for loss computation.
 
         Returns:
-            Model output (logits or loss depending on mode).
+            tuple: (output_tensor, loss_mask) where output_tensor contains model output
+                   and loss_mask is the CP-sliced mask for consistent loss computation.
         """
         if self.pre_process:
             if inputs_embeds is None:
@@ -216,7 +225,9 @@ class Ministral3Model(MegatronModule):
 
             if pixel_values is not None:
                 # Get image features using HF's method (monkey-patched)
-                image_features = self.get_image_features(pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes)
+                image_features = self.get_image_features(
+                    pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes
+                ).pooler_output
                 image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
 
                 # Replace image tokens in text embeddings with image features
@@ -237,6 +248,18 @@ class Ministral3Model(MegatronModule):
             # Transpose back to Megatron format [seq_len, batch, hidden]
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
+        # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
+        # This must happen AFTER vision-text merge so image token positions are correct
+        inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            loss_mask=loss_mask,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=packed_seq_params,
+            pg_collection=self.config._pg_collection,
+        )
+
         # Forward through Megatron language model
         outputs = self.language_model.forward(
             input_ids=None,
@@ -246,8 +269,10 @@ class Ministral3Model(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
-        return outputs
+        # Return both outputs and the CP-sliced loss_mask for consistent loss computation
+        return (outputs, loss_mask)
 
     def freeze(
         self,

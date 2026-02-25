@@ -43,6 +43,8 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     cu_seqlens_argmin = batch.get("cu_seqlens_argmin")
     cu_seqlens_unpadded_argmin = batch.get("cu_seqlens_unpadded_argmin")
 
+    # note: if argmin is not pre-computed in the dataloader, torch.argmin here will incur a
+    # device-to-host synchronization, which can slow down training
     if cu_seqlens_argmin is not None:
         cu_seqlens_padded = cu_seqlens_padded[: cu_seqlens_argmin.item()]
     else:

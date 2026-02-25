@@ -40,7 +40,7 @@ python examples/conversion/convert_checkpoints.py export  \
 BLEND_PATH=/path/to/dataset/blend
 TOKENIZER_MODEL=/path/to/tiktok/tokenizer/model
 
-torchrun --nproc-per-node=8 examples/recipes/nemotron_3/pretrain_nemotron_3_nano.py \
+torchrun --nproc-per-node=8 examples/models/nemotron_3/pretrain_nemotron_3_nano.py \
 --per-split-data-args-path=${BLEND_PATH} \
 --tokenizer-model=${TOKENIZER_MODEL} \
 train.global_batch_size=3072 \
@@ -58,7 +58,7 @@ Notes:
 
 ### Full Parameter Fine-Tuning
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/nemotron_3/finetune_nemotron_3_nano.py \
+torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
 train.global_batch_size=128 \
 train.train_iters=100 \
 scheduler.lr_warmup_iters=10 \
@@ -66,7 +66,7 @@ checkpoint.pretrained_checkpoint=/path/to/output/megatron/ckpt
 ```
 
 Notes:
-- Default parallelism TP=1, EP=8, PP=1, CP=1. It is recommended to run this recipe on at least 2 H100 nodes (16 GPUs).
+- Default parallelism TP=1, EP=8, PP=1, CP=1. Running this recipe requires at least 2 H100 nodes (16 GPUs).
 - By default, the [SQuAD](https://huggingface.co/datasets/rajpurkar/squad) dataset is used. To use customerized dataset, see this [tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/recipes/llama#quickstart)
 - Fine-tuning requires a pretrained megatron checkpoint, which can be obtained in "Import HF → Megatron" section above
 
@@ -74,7 +74,7 @@ Notes:
 ### LoRA Fine-Tuning
 To enable LoRA fine-tuning, pass `--peft lora` to script
 ```bash
-torchrun --nproc-per-node=8 examples/recipes/nemotron_3/finetune_nemotron_3_nano.py \
+torchrun --nproc-per-node=8 examples/models/nemotron_3/finetune_nemotron_3_nano.py \
 --peft lora \
 train.global_batch_size=128 \
 train.train_iters=100 \

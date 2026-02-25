@@ -22,7 +22,7 @@ import argparse
 from typing import Optional
 
 import torch
-from megatron.core.inference.common_inference_params import CommonInferenceParams
+from megatron.core.inference.sampling_params import SamplingParams
 from qwen_vl_utils import process_vision_info
 
 from megatron.bridge.inference.vlm.base import generate, setup_model_and_tokenizer
@@ -86,6 +86,7 @@ def main(args) -> None:
         tp=args.tp,
         pp=args.pp,
         inference_batch_times_seqlen_threshold=1000,
+        inference_max_seq_length=args.max_seq_length,
     )
 
     # Process inputs (text and image if provided)
@@ -93,7 +94,7 @@ def main(args) -> None:
     text, image_inputs, video_inputs = process_image_inputs(processor, args.image_path, prompt)
 
     # Setup inference parameters
-    inference_params = CommonInferenceParams(
+    inference_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
         top_k=args.top_k,
@@ -108,9 +109,8 @@ def main(args) -> None:
         prompts=[text],
         images=[image_inputs] if image_inputs is not None else None,
         processor=processor,
-        max_batch_size=1,
         random_seed=0,
-        inference_params=inference_params,
+        sampling_params=inference_params,
     )
 
     # Print results
@@ -155,6 +155,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument(
+        "--max_seq_length",
+        type=int,
+        default=8192,
+        help="Maximum sequence length for inference (prompt + generated tokens).",
+    )
     parser.add_argument(
         "--image_path",
         type=str,

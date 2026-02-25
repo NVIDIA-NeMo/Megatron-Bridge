@@ -199,6 +199,18 @@ Unit tests are stored at `tests/unit_tests`. Please add your test to an existing
 
 **Functional tests** are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
 
+### Functional Test Launcher Scripts
+
+Functional tests that take longer to run should be placed in a `L2_Launch_*.sh` launcher script inside the [`tests/functional_tests/`](tests/functional_tests/) folder. These launcher scripts allow CI to run test groups in parallel, significantly reducing overall pipeline time.
+
+When adding a new `L2_Launch_*.sh` file, you **must** also update [`.github/workflows/cicd-main.yml`](.github/workflows/cicd-main.yml) to include it in the `cicd-functional-tests` job matrix. Add a new entry under `matrix.include`, for example:
+
+```yaml
+- script: L2_Launch_your_new_test
+```
+
+Without this step, your new launcher script will not be picked up by CI.
+
 ## 📦 Dependencies Management
 
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.

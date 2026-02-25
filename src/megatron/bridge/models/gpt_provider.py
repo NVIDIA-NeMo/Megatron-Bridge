@@ -136,9 +136,12 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
     make_vocab_size_divisible_by: int = 128
-    position_embedding_type: Literal["learned_absolute", "rope"] = "learned_absolute"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn"] = "learned_absolute"
     rotary_base: int = 10000
     rotary_percent: float = 1.0
+    rope_scaling: bool = False
+    rope_scaling_factor: float = 1.0
+    rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
@@ -154,8 +157,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
-
-    generation_config: Optional[Any] = None
 
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
@@ -287,6 +288,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 position_embedding_type=self.position_embedding_type,
                 rotary_percent=self.rotary_percent,
                 rotary_base=self.rotary_base,
+                rope_scaling=self.rope_scaling,
+                rope_scaling_factor=self.rope_scaling_factor,
                 seq_len_interpolation_factor=self.seq_len_interpolation_factor,
                 pre_process=pre_process,
                 post_process=post_process,

@@ -143,6 +143,54 @@ def get_workload_base_config(
     )
 
 
+def get_exp_name_config(
+    args,
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
+    config_variant: str = "v1",
+) -> str:
+    """Get the experiment name from the base config and user overrides."""
+    base_config = get_workload_base_config(
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+    )
+    num_gpus = args.num_gpus if args.num_gpus is not None else base_config.num_gpus
+    tp_size = (
+        args.tensor_model_parallel_size
+        if args.tensor_model_parallel_size is not None
+        else base_config.tensor_model_parallel_size
+    )
+    pp_size = (
+        args.pipeline_model_parallel_size
+        if args.pipeline_model_parallel_size is not None
+        else base_config.pipeline_model_parallel_size
+    )
+    cp_size = (
+        args.context_parallel_size if args.context_parallel_size is not None else base_config.context_parallel_size
+    )
+    vp_size = (
+        args.virtual_pipeline_model_parallel_size
+        if args.virtual_pipeline_model_parallel_size != -1
+        else base_config.virtual_pipeline_model_parallel_size
+    )
+    ep_size = (
+        args.expert_model_parallel_size
+        if args.expert_model_parallel_size is not None
+        else base_config.expert_model_parallel_size
+    )
+    etp_size = (
+        args.expert_tensor_parallel_size
+        if args.expert_tensor_parallel_size is not None
+        else base_config.expert_tensor_parallel_size
+    )
+    mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config.micro_batch_size
+    gbs_size = args.global_batch_size if args.global_batch_size is not None else base_config.global_batch_size
+    exp_config = f"gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}_vp{vp_size}_ep{ep_size}_etp{etp_size}_mbs{mbs_size}_gbs{gbs_size}"
+    return exp_config
+
+
 def list_available_config_variants(
     model_family_name: str,
     model_recipe_name: str,
@@ -213,7 +261,19 @@ def get_perf_optimized_recipe(
 
 
 def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
-    """Get the library recipe."""
+    """Get the library recipe.
+
+    Note: Library pretrain recipes no longer accept kwargs. This function calls the recipe
+    without arguments and then configures the output directories on the returned config.
+
+    The old API was: recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
+    This set:
+        - run_output_dir = "/nemo_run/{name}"
+        - checkpoint_dir = "/nemo_run/{name}/checkpoints"
+        - tensorboard_dir = "/nemo_run/{name}/tb_logs"
+    """
+    import os
+
     family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
 
@@ -225,7 +285,27 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
         model_recipe_name = f"{model_recipe_name}_finetune_config"
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
-    return recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
+
+    # Library pretrain recipes no longer accept kwargs - call without args
+    # and configure the returned ConfigContainer
+    cfg = recipe_builder()
+
+    # Set output directories that were previously configured via dir="/nemo_run/" and name=wandb_experiment_name
+    base_output_dir = "/nemo_run"
+    run_output_dir = os.path.join(base_output_dir, wandb_experiment_name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Checkpoint paths
+    cfg.checkpoint.save = checkpoint_dir
+    cfg.checkpoint.load = checkpoint_dir
+
+    # Logger paths
+    cfg.logger.tensorboard_dir = tensorboard_dir
+    cfg.logger.wandb_exp_name = wandb_experiment_name
+    cfg.logger.wandb_save_dir = os.path.join(run_output_dir, "wandb")
+
+    return cfg
 
 
 class _Colors:

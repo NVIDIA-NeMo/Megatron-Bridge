@@ -69,7 +69,6 @@ class Qwen3NextBridge(MegatronModelBridge):
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
             qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
             moe_grouped_gemm=True,
             kv_channels=hf_config.head_dim,
