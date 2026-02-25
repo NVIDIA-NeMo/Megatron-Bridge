@@ -21,13 +21,11 @@ from megatron.core.enums import ModelType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.common.unimodal import (
-    _ddp_wrap,
-    _print_num_params,
-)
 from megatron.bridge.models.model_provider import (
     ModelProviderMixin,
     _create_model,
+    _ddp_wrap,
+    _print_num_params,
     get_model,
 )
 
@@ -208,7 +206,7 @@ class TestCreateModel:
 class TestDDPWrap:
     """Test cases for _ddp_wrap function."""
 
-    @patch("megatron.bridge.models.common.unimodal.DistributedDataParallel")
+    @patch("megatron.bridge.models.model_provider.DistributedDataParallel")
     def test_ddp_wrap_standard(self, mock_ddp):
         """Test wrapping models with standard DDP."""
         # Setup
@@ -245,7 +243,7 @@ class TestDDPWrap:
         for ddp_instance in mock_ddp_instances:
             ddp_instance.broadcast_params.assert_called_once()
 
-    @patch("megatron.bridge.models.common.unimodal.TorchFullyShardedDataParallel")
+    @patch("megatron.bridge.models.model_provider.TorchFullyShardedDataParallel")
     def test_ddp_wrap_fsdp2(self, mock_fsdp):
         """Test wrapping models with FSDP2."""
         # Setup
@@ -273,7 +271,7 @@ class TestDDPWrap:
 
     def test_ddp_wrap_overlap_param_gather(self):
         """Test DDP wrapping with overlap_param_gather_with_optimizer_step."""
-        with patch("megatron.bridge.models.common.unimodal.DistributedDataParallel") as mock_ddp:
+        with patch("megatron.bridge.models.model_provider.DistributedDataParallel") as mock_ddp:
             # Setup
             config = create_test_config()
             models = [MockMegatronModule(config)]
