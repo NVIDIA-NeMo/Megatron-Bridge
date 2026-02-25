@@ -104,6 +104,8 @@ class Qwen3VLModel(MegatronModule):
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
         # process groups
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         self.pg_collection = pg_collection
         self.cp_group = pg_collection.cp
         self.tp_group = pg_collection.tp

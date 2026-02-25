@@ -18,6 +18,7 @@ import torch
 from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec
 from torch import nn
@@ -48,7 +49,7 @@ class Qwen3VLVisionModel(VisionModule):
         patch_merger_spec: ModuleSpec,
         pre_process: bool = True,
         post_process: bool = True,
-        pg_collection: Optional[torch.distributed.ProcessGroup] = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
     ) -> None:
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(config=transformer_config)
@@ -56,6 +57,8 @@ class Qwen3VLVisionModel(VisionModule):
         self.patch_size = transformer_config.patch_size
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
         self.pg_collection = pg_collection
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         self.tp_group = self.pg_collection.tp
 
         assert transformer_config.context_parallel_size == 1, (
