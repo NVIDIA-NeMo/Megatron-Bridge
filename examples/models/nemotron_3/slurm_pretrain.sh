@@ -128,7 +128,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "======================================"
 
     # Build CLI overrides for this config
-    CLI_OVERRIDES=" \
+    CLI_OVERRIDES="\
         model.seq_length=$SEQ_LENGTH \
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
@@ -144,10 +144,9 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.pipeline_model_parallel_size=$PP \
         model.expert_model_parallel_size=$EP \
         model.sequence_parallel=$SP \
-        model.context_parallel_size=$CP
-    "
+        model.context_parallel_size=$CP"
 
-    CMD="python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
+    CMD="uv run --no-sync python scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
     CMD="$CMD $CLI_OVERRIDES"
 
