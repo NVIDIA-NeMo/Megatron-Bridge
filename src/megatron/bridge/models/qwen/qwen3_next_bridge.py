@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import torch
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3NextForCausalLM
 
@@ -27,67 +30,66 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
 class Qwen3NextBridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for Qwen3 MoE Causal LM.
+    Megatron Bridge for Qwen3-Next Causal LM.
 
-    This bridge handles the conversion between HuggingFace Qwen3MoeForCausalLM
-    and Megatron-Core GPTModel formats. Qwen3 MoE models use mixture of experts
-    architecture with QK layernorm.
+    This bridge handles the conversion between HuggingFace Qwen3NextForCausalLM
+    and Megatron-Core GPTModel formats. Qwen3-Next uses a hybrid architecture
+    combining gated delta net linear attention with standard softmax attention,
+    mixture of experts with shared experts, and zero-centered RMSNorm.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
+        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct")
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3NextModelProvider:
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider = Qwen3NextModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,  # Maps to moe_intermediate_size in HF
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            num_moe_experts=hf_config.num_experts,
-            moe_router_topk=hf_config.num_experts_per_tok,  # Maps to num_experts_per_tok in HF
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=rope_theta_from_hf(hf_config),
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
-            moe_grouped_gemm=True,
-            kv_channels=hf_config.head_dim,
-            # New for Qwen3-Next
-            layernorm_zero_centered_gamma=True,
-            attention_output_gate=True,
-            experimental_attention_variant="gated_delta_net",
-            linear_attention_freq=hf_config.full_attention_interval,
-            rotary_percent=hf_config.partial_rotary_factor,
-            moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
-            moe_shared_expert_gate=True,
-            linear_conv_kernel_dim=hf_config.linear_conv_kernel_dim,
-            linear_key_head_dim=hf_config.linear_key_head_dim,
-            linear_value_head_dim=hf_config.linear_value_head_dim,
-            linear_num_key_heads=hf_config.linear_num_key_heads,
-            linear_num_value_heads=hf_config.linear_num_value_heads,
-            mtp_num_layers=None,  # Set to 1 if need MTP
-        )
+        # Standard GPT settings (shared with Qwen3 MoE)
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False
+        provider.hidden_dropout = 0.0
+        provider.qk_layernorm = True
+        provider.autocast_dtype = torch.bfloat16
+
+        # MoE settings
+        provider.moe_grouped_gemm = True
+        provider.moe_router_load_balancing_type = "global_aux_loss"
+        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_router_pre_softmax = False
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
+        provider.moe_shared_expert_gate = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_shared_expert_intermediate_size = hf_config.shared_expert_intermediate_size
+
+        # Qwen3-Next: zero-centered RMSNorm and gated attention
+        provider.layernorm_zero_centered_gamma = True
+        provider.attention_output_gate = True
+
+        # Qwen3-Next: hybrid gated delta net + standard attention
+        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
+        provider.experimental_attention_variant = "gated_delta_net"
+        provider.linear_attention_freq = hf_config.full_attention_interval
+        provider.linear_conv_kernel_dim = hf_config.linear_conv_kernel_dim
+        provider.linear_key_head_dim = hf_config.linear_key_head_dim
+        provider.linear_value_head_dim = hf_config.linear_value_head_dim
+        provider.linear_num_key_heads = hf_config.linear_num_key_heads
+        provider.linear_num_value_heads = hf_config.linear_num_value_heads
+
+        # Heterogeneous checkpointing for mixed attention layers
+        provider.hetereogenous_dist_checkpoint = True
 
         return provider
 
