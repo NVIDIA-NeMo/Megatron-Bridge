@@ -163,7 +163,7 @@ class ChatMLSample(Sample):
 
 
 class videohandler:
-    """Create an video handler."""
+    """Create a video handler."""
 
     def __init__(self, imagespec):
         self.extensions = ["jpgs", "mp4s", "videos"]
