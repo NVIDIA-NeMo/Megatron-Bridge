@@ -25,6 +25,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.exaone import (
+    Exaone4Bridge,
+    Exaone4ModelProvider,
+    Exaone4ModelProvider1P2B,
+)
 from megatron.bridge.models.deepseek import (
     DeepSeekModelProvider,
     DeepSeekProvider,
@@ -288,6 +293,9 @@ __all__ = [
     "Qwen3MoEModelProvider",
     "Qwen3MoEModelProvider30B_A3B",
     "Qwen3MoEModelProvider235B_A22B",
+    "Exaone4Bridge",
+    "Exaone4ModelProvider",
+    "Exaone4ModelProvider1P2B",
     "DeepSeekModelProvider",
     "DeepSeekProvider",
     "DeepSeekV2LiteModelProvider",
