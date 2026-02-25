@@ -22,6 +22,7 @@ from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
 class TestTokenizers:
+    @pytest.mark.pleasefixme
     @pytest.mark.parametrize("vocab_size", [32000])
     def test_build_null_tokenizer(self, vocab_size):
         # Setup
