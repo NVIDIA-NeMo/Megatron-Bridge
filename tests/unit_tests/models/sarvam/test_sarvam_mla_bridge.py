@@ -33,9 +33,7 @@ class TestSarvamMLABridge:
     def sarvam_mla_config_dict(self):
         return {
             "architectures": ["SarvamMLAForCausalLM"],
-            "auto_map": {
-                "AutoModelForCausalLM": "modeling_sarvam.SarvamMLAForCausalLM"
-            },
+            "auto_map": {"AutoModelForCausalLM": "modeling_sarvam.SarvamMLAForCausalLM"},
             # Common Sarvam fields
             "num_hidden_layers": 32,
             "hidden_size": 4096,
@@ -81,14 +79,8 @@ class TestSarvamMLABridge:
         assert provider.num_layers == mock_pretrained_mla.config.num_hidden_layers
         assert provider.hidden_size == mock_pretrained_mla.config.hidden_size
         assert provider.ffn_hidden_size == mock_pretrained_mla.config.intermediate_size
-        assert (
-            provider.moe_ffn_hidden_size
-            == mock_pretrained_mla.config.moe_intermediate_size
-        )
-        assert (
-            provider.num_attention_heads
-            == mock_pretrained_mla.config.num_attention_heads
-        )
+        assert provider.moe_ffn_hidden_size == mock_pretrained_mla.config.moe_intermediate_size
+        assert provider.num_attention_heads == mock_pretrained_mla.config.num_attention_heads
         assert provider.vocab_size == mock_pretrained_mla.config.vocab_size
         assert provider.seq_length == mock_pretrained_mla.config.max_position_embeddings
         assert provider.rotary_base == mock_pretrained_mla.config.rope_theta
@@ -96,14 +88,11 @@ class TestSarvamMLABridge:
         # MLA-specific
         assert (
             provider.kv_channels
-            == mock_pretrained_mla.config.hidden_size
-            // mock_pretrained_mla.config.num_attention_heads
+            == mock_pretrained_mla.config.hidden_size // mock_pretrained_mla.config.num_attention_heads
         )
         assert provider.kv_lora_rank == mock_pretrained_mla.config.kv_lora_rank
         assert provider.qk_head_dim == mock_pretrained_mla.config.qk_nope_head_dim
-        assert (
-            provider.qk_pos_emb_head_dim == mock_pretrained_mla.config.qk_rope_head_dim
-        )
+        assert provider.qk_pos_emb_head_dim == mock_pretrained_mla.config.qk_rope_head_dim
         assert provider.v_head_dim == mock_pretrained_mla.config.v_head_dim
 
         # dtype mapping
@@ -146,9 +135,7 @@ class TestSarvamMLABridge:
         with pytest.raises(AssertionError, match="torch_dtype"):
             SarvamMLABridge().provider_bridge(hf)
 
-    def test_provider_bridge_dtype_handling_multiple_precisions(
-        self, sarvam_mla_config_dict
-    ):
+    def test_provider_bridge_dtype_handling_multiple_precisions(self, sarvam_mla_config_dict):
         cfg = Mock()
         for k, v in sarvam_mla_config_dict.items():
             setattr(cfg, k, v)
@@ -181,9 +168,7 @@ class TestSarvamMLABridge:
         assert m is not None
         assert m.hf_param == "model.embed_tokens.weight"
 
-        m = reg.megatron_to_hf_lookup(
-            "decoder.layers.0.self_attention.linear_proj.weight"
-        )
+        m = reg.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_proj.weight")
         assert m is not None
         assert m.hf_param == "model.layers.0.self_attn.o_proj.weight"
 
@@ -203,9 +188,7 @@ class TestSarvamMLABridge:
         bridge = SarvamMLABridge()
         registry = bridge.mapping_registry()
 
-        auto_mappings = [
-            m for m in registry.mappings if type(m).__name__ == "AutoMapping"
-        ]
+        auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
         hf_params = [m.hf_param for m in auto_mappings]
         megatron_params = [m.megatron_param for m in auto_mappings]
 
@@ -279,9 +262,7 @@ class TestSarvamMLABridge:
         bridge = SarvamMLABridge()
         registry = bridge.mapping_registry()
 
-        auto_mappings = [
-            m for m in registry.mappings if type(m).__name__ == "AutoMapping"
-        ]
+        auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
         pairs = {(m.megatron_param, m.hf_param) for m in auto_mappings}
 
         assert (
@@ -293,9 +274,7 @@ class TestSarvamMLABridge:
             "model.layers.*.post_attention_layernorm.weight",
         ) in pairs
 
-        rev = registry.hf_to_megatron_lookup(
-            "model.layers.0.post_attention_layernorm.weight"
-        )
+        rev = registry.hf_to_megatron_lookup("model.layers.0.post_attention_layernorm.weight")
         assert rev is not None
         assert rev.megatron_param in {
             "decoder.layers.0.pre_mlp_layernorm.weight",
@@ -312,17 +291,13 @@ class TestSarvamMLABridge:
         megatron_params = {m.megatron_param for m in gated}
         assert "decoder.layers.*.mlp.linear_fc1.weight" in megatron_params
         assert "decoder.layers.*.mlp.experts.linear_fc1.weight*" in megatron_params
-        assert (
-            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight" in megatron_params
-        )
+        assert "decoder.layers.*.mlp.shared_experts.linear_fc1.weight" in megatron_params
 
     def test_mapping_registry_parameter_mappings(self):
         bridge = SarvamMLABridge()
         registry = bridge.mapping_registry()
 
-        auto_mappings = [
-            m for m in registry.mappings if type(m).__name__ == "AutoMapping"
-        ]
+        auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
         hf_params = [m.hf_param for m in auto_mappings]
         megatron_params = [m.megatron_param for m in auto_mappings]
 
@@ -349,13 +324,9 @@ class TestSarvamMLABridge:
 
         m = registry.hf_to_megatron_lookup("model.layers.7.self_attn.q_proj.weight")
         assert m is not None
-        assert (
-            m.megatron_param == "decoder.layers.7.self_attention.linear_q_proj.weight"
-        )
+        assert m.megatron_param == "decoder.layers.7.self_attention.linear_q_proj.weight"
 
-        m = registry.hf_to_megatron_lookup(
-            "model.layers.7.self_attn.kv_a_layernorm.weight"
-        )
+        m = registry.hf_to_megatron_lookup("model.layers.7.self_attn.kv_a_layernorm.weight")
         assert m is not None
         # There are two megatron aliases mapping to the same HF weight; accept either.
         assert m.megatron_param in {
@@ -363,8 +334,6 @@ class TestSarvamMLABridge:
             "decoder.layers.7.self_attention.kv_layernorm.weight",
         }
 
-        m = registry.hf_to_megatron_lookup(
-            "model.layers.2.mlp.gate.e_score_correction_bias"
-        )
+        m = registry.hf_to_megatron_lookup("model.layers.2.mlp.gate.e_score_correction_bias")
         assert m is not None
         assert m.megatron_param == "decoder.layers.2.mlp.router.expert_bias"

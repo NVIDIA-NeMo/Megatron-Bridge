@@ -33,18 +33,12 @@ class SarvamMLABridge(MegatronModelBridge):
     architecture.
     """
 
-    def provider_bridge(
-        self, hf_pretrained: PreTrainedCausalLM
-    ) -> SarvamMLAModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> SarvamMLAModelProvider:
         hf_config = hf_pretrained.config
         config = get_common_config(hf_pretrained)
 
-        config["fp16"] = (
-            self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16
-        )
-        config["bf16"] = (
-            self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16
-        )
+        config["fp16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16
+        config["bf16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16
         config["params_dtype"] = self.dtype_from_hf(hf_config, default=torch.float32)
         config["kv_channels"] = hf_config.hidden_size // hf_config.num_attention_heads
 
@@ -57,7 +51,6 @@ class SarvamMLABridge(MegatronModelBridge):
         return SarvamMLAModelProvider(**config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-
         param_mappings = {
             # Embed
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
@@ -89,9 +82,7 @@ class SarvamMLABridge(MegatronModelBridge):
 
         mapping_list = []
         for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(
-                AutoMapping(hf_param=hf_param, megatron_param=megatron_param)
-            )
+            mapping_list.append(AutoMapping(hf_param=hf_param, megatron_param=megatron_param))
 
         mapping_list.extend(
             [

@@ -41,9 +41,7 @@ if TYPE_CHECKING:
 class SarvamMoEModelProvider(GPTModelProvider):
     """Sarvam 30B model provider."""
 
-    transformer_layer_spec: Union[
-        "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
-    ] = partial(
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
         get_gpt_decoder_block_spec,
         use_transformer_engine=HAVE_TE,
         normalization="RMSNorm",
@@ -83,9 +81,7 @@ class SarvamMoEModelProvider(GPTModelProvider):
     cross_entropy_fusion_impl: str = "te"
     cp_comm_type: str = "p2p"
     recompute_granularity: str = "selective"
-    recompute_modules: List[str] = field(
-        default_factory=lambda: ["layernorm", "shared_experts", "mlp", "moe_act"]
-    )
+    recompute_modules: List[str] = field(default_factory=lambda: ["layernorm", "shared_experts", "mlp", "moe_act"])
 
     # Configured through hf config
 
@@ -101,9 +97,7 @@ class SarvamMoEModelProvider(GPTModelProvider):
     ffn_hidden_size: int = 8192
     moe_ffn_hidden_size: int = 1024
     moe_shared_expert_intermediate_size: int = 1024
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] + [1] * 18
-    )
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 18)
     bf16: bool = True
 
     # GQA
@@ -114,9 +108,7 @@ class SarvamMoEModelProvider(GPTModelProvider):
 class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     """Sarvam 105B model provider."""
 
-    transformer_layer_spec: Union[
-        "ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]
-    ] = partial(
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
         get_gpt_decoder_block_spec,
         use_transformer_engine=HAVE_TE,
         normalization="RMSNorm",
@@ -181,9 +173,7 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     ffn_hidden_size: int = 16384
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] + [1] * 31
-    )
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 31)
     bf16: bool = True
 
     # MLA
