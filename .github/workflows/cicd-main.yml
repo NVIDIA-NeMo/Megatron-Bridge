@@ -254,7 +254,7 @@ jobs:
             KEY="$BRANCH_SANITIZED"
           fi
           echo "key=$KEY" >> $GITHUB_OUTPUT
-          echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+          echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
