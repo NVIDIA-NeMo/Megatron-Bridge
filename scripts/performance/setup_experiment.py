@@ -28,15 +28,15 @@ from nemo_run.config import get_nemorun_home
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
-    from utils.utils import NUM_GPUS_PER_NODE_MAP, get_exp_name_config, select_config_variant_interactive
+    from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
-    from .utils.utils import NUM_GPUS_PER_NODE_MAP, get_exp_name_config, select_config_variant_interactive
+    from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -534,7 +534,9 @@ if __name__ == "__main__":
         if args.gpu in NUM_GPUS_PER_NODE_MAP:
             gpus_per_node = NUM_GPUS_PER_NODE_MAP[args.gpu]
         else:
-            gpus_per_node = 8
+            raise ValueError(
+                f"Invalid GPU type: {args.gpu}. Please use one of the following: {NUM_GPUS_PER_NODE_MAP.keys()}"
+            )
 
     assert not (args.enable_nsys and args.pytorch_profiler), (
         "Both NSys and PyTorch profiler cannot be enabled at the same time"

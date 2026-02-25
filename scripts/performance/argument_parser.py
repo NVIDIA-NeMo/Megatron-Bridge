@@ -26,6 +26,14 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo")
 VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
 VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
 
+NUM_GPUS_PER_NODE_MAP = {
+    "h100": 8,
+    "b200": 8,
+    "b300": 8,
+    "gb200": 4,
+    "gb300": 4,
+}
+
 
 def list_of_strings(arg):
     """Split a comma-separated string into a list of substrings."""
@@ -500,7 +508,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300", "b300"],
+        choices=NUM_GPUS_PER_NODE_MAP.keys(),
         help="Target gpu type.",
         required=True,
     )

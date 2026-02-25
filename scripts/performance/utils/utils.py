@@ -26,15 +26,6 @@ logger = logging.getLogger(__name__)
 CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 
 
-NUM_GPUS_PER_NODE_MAP = {
-    "h100": 8,
-    "b200": 8,
-    "b300": 8,
-    "gb200": 4,
-    "gb300": 4,
-}
-
-
 @dataclass
 class WorkloadBaseConfig:
     """Container for workload base configs. This object exists because we cannot import MBridge on the headnode but need a place to store recipe overrides."""
