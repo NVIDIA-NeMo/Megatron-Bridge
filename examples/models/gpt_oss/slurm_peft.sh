@@ -45,7 +45,7 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
+export WKDIR="${WKDIR:-}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # After pretrain, use e.g. ${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp2_pp4_ep4_spTrue_cp1
@@ -54,7 +54,7 @@ MODEL_NAME=gpt_oss_20b
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
-GLOBAL_BATCH_SIZE=128
+GLOBAL_BATCH_SIZE=16
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=10
 LR_WARMUP_ITERS=50
@@ -65,11 +65,12 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE="$WKDIR/sqsh/nemo_26.02.rc5.sqsh"
+CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS="/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm"
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
 # Environment Setup
@@ -143,7 +144,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_entity=nvidia-nemo-fw-public \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
@@ -153,7 +153,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
-        dataset.packed_sequence_specs.pad_seq_to_mult=$((CP * 2)) \
+        dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
         dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH

@@ -40,16 +40,12 @@
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-export HF_HOME="/lustre/fsw/portfolios/coreai/users/weijiac/.cache/huggingface"
-export HF_DATASETS_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
 
 # Workspace directory for checkpoints and results
-# WORKSPACE=${WORKSPACE:-/workspace}
-WORKSPACE=/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace
+WORKSPACE=${WORKSPACE:-/workspace}
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
+export WKDIR="${WKDIR:-}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
@@ -64,18 +60,18 @@ EVAL_ITERS=32
 EVAL_INTERVAL=50
 LR_WARMUP_ITERS=50
 LOG_INTERVAL=1
-# Match succeeded run: mbridge-hf-squad (entity kept as nvidia-nemo-fw-public)
-WANDB_PROJECT=mbridge-hf-squad
+WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE="$WKDIR/sqsh/nemo_26.02.rc5.sqsh"
+CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS="/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm"
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
 # Environment Setup
@@ -151,7 +147,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_entity=nvidia-nemo-fw-public \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \

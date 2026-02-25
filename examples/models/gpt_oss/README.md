@@ -97,13 +97,13 @@ W&B report coming soon.
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning.
+See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequenece packing by default.
 
 W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning.
+See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequenece packing by default.
 
 W&B report coming soon.
 

@@ -145,18 +145,8 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
-    # Dataset config - mock data by default; use DCLM when DCLM_DATA_DIR and DCLM_CACHE are set
-    dclm_data_dir = os.environ.get("DCLM_DATA_DIR")
-    dclm_cache = os.environ.get("DCLM_CACHE")
-    if dclm_data_dir and dclm_cache:
-        cfg.dataset.blend = [
-            ([f"{dclm_data_dir}/dclm_{i:02d}_text_document" for i in range(1, 11)]),
-            None,
-        ]
-        cfg.dataset.split = "9999,8,2"
-        cfg.dataset.path_to_cache = dclm_cache
-    else:
-        cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 

@@ -45,17 +45,18 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
+export WKDIR="${WKDIR:-}"
 
 # Model and training configurations
 MODEL_NAME=gpt_oss_20b
 DATASET_NAME=dclm  # set to "mock" for mock data; "dclm" uses DCLM when DCLM_DATA_DIR/DCLM_CACHE are set below
 SEQ_LENGTH=4096
 
-# When DATASET_NAME=dclm, set these so the recipe uses DCLM; leave unset for mock
+# When DATASET_NAME=dclm, set DCLM_DATA_DIR and DCLM_CACHE so the recipe uses DCLM; leave unset for mock
 if [ "$DATASET_NAME" = "dclm" ]; then
-    export DCLM_DATA_DIR="/lustre/fs1/portfolios/coreai/projects/coreai_dlalgo_llm/dclm/preprocessed"
-    export DCLM_CACHE="/lustre/fsw/portfolios/coreai/users/weijiac/.cache"
+    # export DCLM_DATA_DIR="/path/to/dclm/preprocessed"
+    # export DCLM_CACHE="/path/to/cache"
+    :
 else
     unset DCLM_DATA_DIR
     unset DCLM_CACHE
@@ -73,11 +74,12 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 PARALLELISM_CONFIGS=("2,4,4,1,True" "4,2,4,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE="$WKDIR/sqsh/nemo_26.02.rc5.sqsh"
+CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS="/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm"
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
 # Environment Setup
@@ -129,6 +131,18 @@ fi
 echo "SRUN base: $SRUN_CMD"
 echo "======================================"
 
+# If using DCLM, pass dataset config via CLI overrides
+DCLM_DATASET_OVERRIDES=""
+if [ -n "${DCLM_DATA_DIR:-}" ] && [ -n "${DCLM_CACHE:-}" ]; then
+    BLEND_PATHS=""
+    for i in $(seq 1 10); do
+        pad=$(printf "%02d" $i)
+        BLEND_PATHS="${BLEND_PATHS}\"${DCLM_DATA_DIR}/dclm_${pad}_text_document\","
+    done
+    BLEND_PATHS="${BLEND_PATHS%,}"
+    DCLM_DATASET_OVERRIDES="dataset.blend=[[${BLEND_PATHS}],null] dataset.split=9999,8,2 dataset.path_to_cache=${DCLM_CACHE}"
+fi
+
 # Run each parallelism config in sequence
 CONFIG_INDEX=0
 for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
@@ -150,7 +164,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_entity=nvidia-nemo-fw-public \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         dataset.sequence_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
@@ -159,6 +172,9 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.sequence_parallel=$SP \
         model.context_parallel_size=$CP
     "
+    if [ -n "$DCLM_DATASET_OVERRIDES" ]; then
+        CLI_OVERRIDES="$CLI_OVERRIDES $DCLM_DATASET_OVERRIDES"
+    fi
 
     CMD="python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
