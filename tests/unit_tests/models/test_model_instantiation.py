@@ -890,20 +890,24 @@ class TestEdgeCases:
 
     def test_create_model_virtual_pipeline_with_encoder_decoder_raises(self):
         """Test that virtual pipeline with encoder-decoder raises assertion error."""
-        model_provider = MockModelProvider()
+        mock_model = MockMegatronModule()
+        model_provider = MockModelProvider(mock_model)
         model_provider.virtual_pipeline_model_parallel_size = 2
 
-        with pytest.raises(AssertionError) as excinfo:
-            # Craft pg with pp size > 1 to trigger VPP branch for the assertion
-            class _PP:
-                def size(self):
-                    return 2
+        # Craft pg with pp size > 1
+        class _PP:
+            def size(self):
+                return 2
 
-                def rank(self):
-                    return 0
+            def rank(self):
+                return 0
 
-            pg = _PG()
-            pg.pp = _PP()
-            _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=pg)
+        pg = _PG()
+        pg.pp = _PP()
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=pg)
 
-        assert "Interleaved schedule not supported" in str(excinfo.value)
+        # Assertions
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0] is mock_model
+        assert mock_model.model_type == ModelType.encoder_or_decoder
