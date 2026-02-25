@@ -18,7 +18,10 @@ Directory structure:
 
 ## Checkpoint Conversion
 
-See the [conversion.sh](conversion.sh) script for checkpoint conversion examples. The Hugging Face GPT-OSS model uses mxfp4; exported Megatron checkpoints are typically bf16. Use `--not-strict` on export to allow key/dtype differences.
+See the [conversion.sh](conversion.sh) script for checkpoint conversion examples.
+
+- **Import**: Use `openai/gpt-oss-20b` as the source Hugging Face model.
+- **Export**: Use `unsloth/gpt-oss-20b-BF16` as the reference HF model for export because the exported Megatron checkpoint is unquantized (bf16), which matches that repo's format.
 
 ### Import HF → Megatron
 
@@ -26,12 +29,14 @@ To import the HF model to your desired Megatron path:
 
 ```bash
 python examples/conversion/convert_checkpoints.py import \
-    --hf-model unsloth/gpt-oss-20b-BF16 \
+    --hf-model openai/gpt-oss-20b \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b \
     --trust-remote-code
 ```
 
 ### Export Megatron → HF
+
+The export uses `unsloth/gpt-oss-20b-BF16` as the reference so the saved HF checkpoint matches that unquantized format:
 
 ```bash
 python examples/conversion/convert_checkpoints.py export \
@@ -93,13 +98,13 @@ W&B report coming soon.
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequenece packing by default.
+See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequence packing by default.
 
 W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequenece packing by default.
+See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default.
 
 W&B report coming soon.
 

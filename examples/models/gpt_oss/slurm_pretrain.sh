@@ -71,7 +71,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
-PARALLELISM_CONFIGS=("2,4,4,1,True" "4,2,4,1,True")
+PARALLELISM_CONFIGS=("2,4,4,1,True" "4,2,4,1,True" "2,4,4,2,True")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -176,7 +176,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         CLI_OVERRIDES="$CLI_OVERRIDES $DCLM_DATASET_OVERRIDES"
     fi
 
-    CMD="python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
+    CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
     CMD="$CMD $CLI_OVERRIDES"
 
