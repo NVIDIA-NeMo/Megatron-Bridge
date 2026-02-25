@@ -37,6 +37,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -948,6 +949,9 @@ class LoggerConfig:
 
     # ---------------- Logging config. ----------------
 
+    skip_train_metrics_log: bool = False
+    """Skips logging of training metrics to all logging backends and to the console as well."""
+
     log_interval: int = 100
     """Report loss and timing interval."""
 
@@ -1113,7 +1117,16 @@ class ProfilingConfig:
     use_pytorch_profiler: bool = False
     """Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard."""
 
-    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    pytorch_profiler_collect_shapes: bool = False
+    """Collect tensor shape in pytorch profiler."""
+
+    pytorch_profiler_collect_callstack: bool = False
+    """Collect callstack in pytorch profiler."""
+
+    pytorch_profiler_collect_chakra: bool = False
+    """Collect chakra trace in pytorch profiler."""
+
+    profile_ranks: list[int] = field(default_factory=lambda: [])
     """Global ranks to profile."""
 
     record_memory_history: bool = False
@@ -1348,7 +1361,7 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaModelProvider
+    model: GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
         default_factory=OptimizerConfigOverrideProvider
@@ -1483,6 +1496,8 @@ class ConfigContainer(Container):
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
+        if self.model.cuda_graph_impl == "none":
+            self.model.cuda_graph_scope = []
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1726,7 +1741,9 @@ class ConfigContainer(Container):
         # Non-Mcore configs - log all values
         non_mcore_configs = [
             ("train", self.train),
+            ("validation", self.validation),
             ("scheduler", self.scheduler),
+            ("dataset", self.dataset),
             ("checkpoint", self.checkpoint),
             ("logger", self.logger),
             ("tokenizer", self.tokenizer),

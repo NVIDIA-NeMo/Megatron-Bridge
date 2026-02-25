@@ -249,7 +249,7 @@ class Gemma3SelfAttention(SelfAttention):
         attention_mask: Tensor,
         key_value_states: Optional[Tensor] = None,
         inference_context: Optional[BaseInferenceContext] = None,
-        rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
+        rotary_pos_emb: Optional[Tensor] = None,
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
         rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
@@ -260,7 +260,7 @@ class Gemma3SelfAttention(SelfAttention):
         inference_params: Optional[BaseInferenceContext] = None,
     ) -> Tuple[Tensor, Tensor]:
         """Switch to either local or global rope embedding before forward"""
-        assert isinstance(rotary_pos_emb, tuple)
+        assert isinstance(rotary_pos_emb, torch.Tensor) and rotary_pos_emb.ndim >= 1 and rotary_pos_emb.size(0) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
         if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
@@ -382,7 +382,7 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
         if cp_group is not None:
             rope_global = super().forward(max_seq_len, offset, packed_seq, cp_group)
             rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, cp_group)
-            return rope_local, rope_global
+            return torch.stack([rope_local, rope_global], dim=0)
         return self._forward_cached(max_seq_len, offset, packed_seq)
 
     @lru_cache(maxsize=32)
@@ -395,7 +395,7 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
         """Cached forward for hashable parameters only."""
         rope_global = super().forward(max_seq_len, offset, packed_seq, None)
         rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, None)
-        return rope_local, rope_global
+        return torch.stack([rope_local, rope_global], dim=0)
 
 
 def _is_local_attn_layer(

@@ -189,7 +189,10 @@ class TestGLM45VModelForward:
 
         # Setup image feature mocks with correct dimensions for masked_scatter
         batch_size, seq_len, hidden_size, num_tokens = 2, 10, 4096, 4
-        model.get_image_features = Mock(return_value=[torch.randn(batch_size * num_tokens, hidden_size)])
+        # Return object with pooler_output attribute as expected by the code
+        mock_image_output = Mock()
+        mock_image_output.pooler_output = [torch.randn(batch_size * num_tokens, hidden_size)]
+        model.get_image_features = Mock(return_value=mock_image_output)
         image_mask = torch.zeros(batch_size, seq_len, hidden_size, dtype=torch.bool)
         image_mask[:, :num_tokens, :] = True
         model.get_placeholder_mask = Mock(return_value=(image_mask, None))
@@ -227,7 +230,10 @@ class TestGLM45VModelForward:
 
         # Setup video feature mocks with correct dimensions
         batch_size, seq_len, hidden_size, num_tokens = 2, 10, 4096, 4
-        model.get_video_features = Mock(return_value=[torch.randn(batch_size * num_tokens, hidden_size)])
+        # Return object with pooler_output attribute as expected by the code
+        mock_video_output = Mock()
+        mock_video_output.pooler_output = [torch.randn(batch_size * num_tokens, hidden_size)]
+        model.get_video_features = Mock(return_value=mock_video_output)
         video_mask = torch.zeros(batch_size, seq_len, hidden_size, dtype=torch.bool)
         video_mask[:, :num_tokens, :] = True
         model.get_placeholder_mask = Mock(return_value=(None, video_mask))

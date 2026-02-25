@@ -11,3 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from megatron.bridge.models.common.base import (
+    BuildConfigT,
+    ModelBuilder,
+    ModelConfig,
+    ModelT,
+    Serializable,
+    compose_hooks,
+)
+from megatron.bridge.models.common.unimodal import build_virtual_pipeline_stages, unimodal_build_distributed_models
+
+
+__all__ = [
+    "BuildConfigT",
+    "ModelBuilder",
+    "ModelConfig",
+    "ModelT",
+    "Serializable",
+    "compose_hooks",
+    "build_virtual_pipeline_stages",
+    "unimodal_build_distributed_models",
+]

@@ -19,6 +19,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.deepseek import MoonlightModelProvider16B
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common
@@ -157,30 +158,11 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses MoonlightModelProvider16B instead of AutoBridge
-    cfg.model = MoonlightModelProvider16B(
-        tensor_model_parallel_size=2,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=8,
-        sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
-    )
-
-    # Pipeline split settings (asymmetric stages)
-    cfg.model.account_for_embedding_in_pipeline_split = False
-    cfg.model.account_for_loss_in_pipeline_split = False
-    cfg.model.num_layers_in_first_pipeline_stage = None
-    cfg.model.num_layers_in_last_pipeline_stage = None
-
-    # Set pipeline layout
-    cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
+    # Model config via AutoBridge (dispatches to DeepSeekV3Bridge)
+    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B").to_megatron_provider(load_weights=False)
+    # TEMPFIX(yuya): Moonlight has no Q LoRA compression (HF q_lora_rank=null),
+    # but CONFIG_MAPPING skips None so MLATransformerConfig default (512) would be used
+    cfg.model.q_lora_rank = None
 
     # Tokenizer - uses NullTokenizer with model vocab_size
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -189,9 +171,23 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
     cfg.dataset.split = "99990,8,2"
+
+    # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.seq_length = 4096
+
+    # Set pipeline layout
+    cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -207,11 +203,11 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Optimizer
+    # Scheduler config
     cfg.scheduler.lr_warmup_iters = 2000
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
 
-    # Precision-aware optimizer settings
+    # Optimizer settings - precision-aware optimizer with bf16 moments
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.bfloat16
@@ -226,7 +222,7 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # Kernel selections
+    # Kernel selections (includes MoE-specific kernels)
     cfg.model.attention_backend = None
     cfg.model.moe_router_fusion = False
     cfg.model.moe_permute_fusion = True
@@ -234,19 +230,21 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
-    # Memory saving (recompute & offloading) - already set in MoonlightModelProvider16B
-    # cfg.model.recompute_granularity = "selective"
-    # cfg.model.recompute_modules = None
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # Mixed precision - Moonlight uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
+    # Mixed precision - custom MixedPrecisionConfig (NOT "bf16_mixed" string)
     cfg.mixed_precision = MixedPrecisionConfig(
         bf16=True,
         params_dtype=torch.bfloat16,
         pipeline_dtype=torch.bfloat16,
         autocast_enabled=False,
-        grad_reduce_in_fp32=False,  # Different from _pretrain_common
+        grad_reduce_in_fp32=False,
     )
     # FP8 settings (commented - enable if using FP8)
     # cfg.mixed_precision.fp8_recipe = "tensorwise"
@@ -273,15 +271,15 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = False  # Different from _pretrain_common
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
-    if cfg.model.apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
-
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    if cfg.model.apply_rope_fusion:
+        cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
     return cfg
 
@@ -420,7 +418,7 @@ def _moonlight_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,

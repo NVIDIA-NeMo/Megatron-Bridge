@@ -21,8 +21,17 @@ from pathlib import Path
 
 import pytest
 import torch
+from torch import nn
 from transformers import AutoConfig, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+
+def _fix_tied_weights_keys(model: nn.Module):
+    """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
+    for module in model.modules():
+        tied = getattr(module, "_tied_weights_keys", None)
+        if isinstance(tied, list):
+            module._tied_weights_keys = {k: k for k in tied}
 
 
 # Overrides for 8B size (same as test_nemotron_h_conversion.py)
@@ -103,6 +112,7 @@ class TestNemotronHQuantizationWorkflow:
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory
+        _fix_tied_weights_keys(model)
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
