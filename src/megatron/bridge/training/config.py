@@ -1741,7 +1741,9 @@ class ConfigContainer(Container):
         # Non-Mcore configs - log all values
         non_mcore_configs = [
             ("train", self.train),
+            ("validation", self.validation),
             ("scheduler", self.scheduler),
+            ("dataset", self.dataset),
             ("checkpoint", self.checkpoint),
             ("logger", self.logger),
             ("tokenizer", self.tokenizer),

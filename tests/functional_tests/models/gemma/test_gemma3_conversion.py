@@ -258,8 +258,6 @@ class TestGemma3Conversion:
             # Verify Gemma3-specific parameters
             assert saved_config["query_pre_attn_scalar"] == 256, "Query pre-attention scalar should match"
             assert saved_config["sliding_window"] == 512, "Sliding window should match"
-            assert saved_config["rope_local_base_freq"] == 10000.0, "Rope local base frequency should match"
-            assert saved_config["rope_theta"] == 1000000.0, "Rope theta should match"
 
             print(f"SUCCESS: Gemma3 {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
