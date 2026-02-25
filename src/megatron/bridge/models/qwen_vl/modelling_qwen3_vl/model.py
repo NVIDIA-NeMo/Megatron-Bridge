@@ -84,7 +84,8 @@ class Qwen3VLModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+        if hasattr(language_transformer_layer_spec, "submodules"):
+            language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process

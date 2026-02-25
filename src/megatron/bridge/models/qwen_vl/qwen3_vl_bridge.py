@@ -457,19 +457,35 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
 class ExpertMLPDownProjMapping(AutoMapping):
     """Mapping for expert MLP down projection weights between HF and Megatron formats."""
 
+    def __init__(self, transpose=True, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.transpose = transpose
+
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         # hf_weights: [num_experts, down_in, mlp_out]
-        expert_weight = hf_weights[global_expert_number].transpose(0, 1).contiguous()
+        expert_weight = hf_weights[global_expert_number].contiguous()
+        if self.transpose:
+            expert_weight = expert_weight.transpose(0, 1)
         return super().hf_to_megatron(expert_weight, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
         # [ep_size, down_in, mlp_out]
         # experts need subsequently merged by maybe_modify_converted_hf_weight
         converted_weights_dict = super().megatron_to_hf(megatron_weights, megatron_module)
-        for key in converted_weights_dict:
-            converted_weights_dict[key] = converted_weights_dict[key].transpose(-1, -2).contiguous()
+        if self.transpose:
+            for key in converted_weights_dict:
+                converted_weights_dict[key] = converted_weights_dict[key].transpose(-1, -2).contiguous()
         return converted_weights_dict
+
+    def resolve(self, captures):
+        """Return a new resolved mapping, using keyword args to avoid positional mismatch with *transpose*."""
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            megatron_param=resolved_megatron_param,
+            hf_param=resolved_hf_param,
+            transpose=self.transpose,
+        )
 
     def _validate_patterns(self, *args, **kwargs):
         # allow number of wildcards to mismatch in this mapping
@@ -479,7 +495,7 @@ class ExpertMLPDownProjMapping(AutoMapping):
 class ExpertMLPGateUpProjMapping(AutoMapping):
     """Mapping for expert MLP gate+up projection using shared GatedMLPMapping logic."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, transpose=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # Qwen3-VL MoE expert shards use mismatched wildcard counts; relax validation globally.
@@ -492,11 +508,14 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
             gate=f"{self.hf_param}.gate",
             up=f"{self.hf_param}.up",
         )
+        self.transpose = transpose
 
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         # hf_weights: [num_experts, mlp_in, fused_gate_up_out]
-        expert_weight = hf_weights[global_expert_number].transpose(0, 1).contiguous()
+        expert_weight = hf_weights[global_expert_number].contiguous()
+        if self.transpose:
+            expert_weight = expert_weight.transpose(0, 1)
 
         # HF gate_up_proj is [2 * hidden, hidden]; Megatron expects transposed.
         gate, up = torch.chunk(expert_weight, 2, dim=0)
@@ -515,9 +534,13 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
             if name.endswith(".gate"):
                 base_name = name[: -len(".gate")]
                 # [ep_size, mlp_in, gate_out]
-                gate_tensor = tensor.transpose(-1, -2).contiguous()
+                gate_tensor = tensor.contiguous()
+                if self.transpose:
+                    gate_tensor = gate_tensor.transpose(-1, -2)
                 # [ep_size, mlp_in, up_out]
-                up_tensor = converted.get(f"{base_name}.up").transpose(-1, -2).contiguous()
+                up_tensor = converted.get(f"{base_name}.up").contiguous()
+                if self.transpose:
+                    up_tensor = up_tensor.transpose(-1, -2)
                 assert up_tensor is not None
                 # Back to HF fused layout: stack [gate; up] along dim 0.
                 # [ep_size, 2, mlp_in, gate_out/up_out]
@@ -525,6 +548,15 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
 
         # experts need subsequently merged by maybe_modify_converted_hf_weight
         return fused
+
+    def resolve(self, captures):
+        """Return a new resolved mapping, using keyword args to avoid positional mismatch with *transpose*."""
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            megatron_param=resolved_megatron_param,
+            hf_param=resolved_hf_param,
+            transpose=self.transpose,
+        )
 
     def _validate_patterns(self, *args, **kwargs):
         # allow number of wildcards to mismatch in this mapping
