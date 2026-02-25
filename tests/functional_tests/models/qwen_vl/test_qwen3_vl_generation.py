@@ -78,7 +78,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
         "spatial_merge_size": 2,
         "temporal_patch_size": 2,
         "out_hidden_size": 256,
-        "deepstack_visual_indexes": [1, 2, 3],
+        "deepstack_visual_indexes": [1],
     },
     "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
     "text_config": {
@@ -90,7 +90,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
         "vocab_size": 152064,
         "max_position_embeddings": 32768,
         "rope_theta": 1000000.0,
-        "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "rope_scaling": {"rope_type": "default", "mrope_section": [16, 24, 24]},
         "torch_dtype": "bfloat16",
     },
     "vocab_size": 152064,
@@ -137,7 +137,7 @@ HF_QWEN3_VL_MOE_TOY_MODEL_CONFIG = {
         "spatial_merge_size": 2,
         "temporal_patch_size": 2,
         "out_hidden_size": 2048,
-        "deepstack_visual_indexes": [1, 2, 3],
+        "deepstack_visual_indexes": [1],
     },
     "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
     "text_config": {
@@ -153,7 +153,7 @@ HF_QWEN3_VL_MOE_TOY_MODEL_CONFIG = {
         "num_experts_per_tok": 2,
         "moe_intermediate_size": 384,
         "decoder_sparse_step": 1,
-        "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "rope_scaling": {"rope_type": "default", "mrope_section": [16, 24, 24]},
         "torch_dtype": "bfloat16",
     },
     "vocab_size": 152064,  # Keep full vocab to match tokenizer (embeddings are cheap)
@@ -185,9 +185,14 @@ class TestQwen3VLGeneration:
         config = Qwen3VLConfig(**HF_QWEN3_VL_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16
 
-        # Set rope_scaling on text_config
+        # Set rope_parameters on text_config (transformers 5.0+ uses rope_parameters with rope_type)
+        # rope_type must be "default" - MRoPE is indicated by the mrope_section parameter
         if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_scaling = {"type": "mrope", "mrope_section": [16, 24, 24]}
+            config.text_config.rope_parameters = {
+                "rope_type": "default",
+                "mrope_section": [16, 24, 24],
+                "rope_theta": 1000000.0,
+            }
 
         # Create model with random weights and convert to bfloat16
         model = Qwen3VLForConditionalGeneration(config)
@@ -258,9 +263,14 @@ class TestQwen3VLGeneration:
         config = Qwen3VLMoeConfig(**HF_QWEN3_VL_MOE_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16
 
-        # Set rope_scaling on text_config
+        # Set rope_parameters on text_config (transformers 5.0+ uses rope_parameters with rope_type)
+        # rope_type must be "default" - MRoPE is indicated by the mrope_section parameter
         if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_scaling = {"type": "mrope", "mrope_section": [16, 24, 24]}
+            config.text_config.rope_parameters = {
+                "rope_type": "default",
+                "mrope_section": [16, 24, 24],
+                "rope_theta": 5000000.0,
+            }
 
         # Create model with random weights and convert to bfloat16
         model = Qwen3VLMoeForConditionalGeneration(config)
