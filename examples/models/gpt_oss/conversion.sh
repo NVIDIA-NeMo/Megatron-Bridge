@@ -19,7 +19,7 @@ set -xeuo pipefail
 WORKSPACE=${WORKSPACE:-/workspace}
 
 MODEL_NAME=gpt-oss-20b
-HF_MODEL_ID=openai/$MODEL_NAME
+HF_MODEL_ID=unsloth/gpt-oss-20b-BF16
 
 # Import HF → Megatron
 uv run python examples/conversion/convert_checkpoints.py import \
@@ -31,8 +31,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model $HF_MODEL_ID \
     --megatron-path ${WORKSPACE}/models/$MODEL_NAME/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/$MODEL_NAME-hf-export \
-    --not-strict
+    --hf-path ${WORKSPACE}/models/$MODEL_NAME-hf-export
 
 # Round-trip validation
 uv run python -m torch.distributed.run --nproc_per_node=8 \
@@ -40,5 +39,4 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
     --hf-model-id $HF_MODEL_ID \
     --megatron-load-path ${WORKSPACE}/models/$MODEL_NAME/iter_0000000 \
     --tp 2 --pp 2 \
-    --trust-remote-code \
-    --not-strict
+    --trust-remote-code

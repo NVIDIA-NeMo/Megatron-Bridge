@@ -30,7 +30,7 @@
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
-#SBATCH --time=04:00:00
+#SBATCH --time=24:00:00
 #SBATCH --partition=batch
 #SBATCH --account=coreai_dlalgo_llm
 #SBATCH --output=logs/gpt_oss_sft_%j.out
