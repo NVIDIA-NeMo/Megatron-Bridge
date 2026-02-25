@@ -132,7 +132,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "======================================"
 
     # Build CLI overrides for this config
-    CLI_OVERRIDES=" \
+    CLI_OVERRIDES="\
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
@@ -153,14 +153,12 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         dataset.packed_sequence_specs.pad_seq_to_mult=$((CP * 2)) \
         dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
-        model.seq_length=$SEQ_LENGTH
-    "
+        model.seq_length=$SEQ_LENGTH"
 
-    CMD="python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
+    CMD="uv run --no-sync python scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
     CMD="$CMD --peft_scheme lora"
-    # Collapse newlines so bash -c receives a single command
-    CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
+    CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."
     echo $CMD
