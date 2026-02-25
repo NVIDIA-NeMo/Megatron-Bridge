@@ -88,17 +88,22 @@ class NVRxStragglerDetectionManager:
         )
 
         self.initialized = True
-        self.logger.debug("NVRx straggler detection initialized successfully.")
+        self.logger.info(f"NVRx straggler detection enabled (report_interval={self.config.report_time_interval}s)")
 
     def wrap_train_step_function(self, train_step_func: Callable) -> Callable:
         """
         Wrap the training step function with straggler detection monitoring.
 
+        The NVRx straggler detector instruments functions to measure CUDA kernel
+        execution times. This method wraps the train_step function so that each
+        call is profiled for straggler detection.
+
         Args:
             train_step_func: The actual training step function to wrap for monitoring.
 
         Returns:
-            The wrapped training step function.
+            The wrapped training step function that should be used instead of the original.
+            If wrapping fails or is disabled, returns the original function.
         """
 
         if not self.initialized or not self.config.enabled:
@@ -106,30 +111,29 @@ class NVRxStragglerDetectionManager:
 
         if self.wrapped_function is not None:
             self.logger.warning("Train step function already wrapped. Skipping.")
-            return train_step_func
+            return self.wrapped_function
 
         try:
-            # Create a wrapper object with train_step method for nvidia-resiliency-ext
-            # TODO: See if NVRx can support functions directly without needing them attached to a class
+            # Create a wrapper object with train_step method for nvidia-resiliency-ext.
+            # NVRx requires a method on an object, not a standalone function.
+            # We store the wrapper object to prevent garbage collection.
             class TrainStepWrapper:
                 def __init__(self, func):
                     self.train_step = func
-                    self._original_func = func
 
                 def __call__(self, *args, **kwargs):
-                    return self._original_func(*args, **kwargs)
+                    return self.train_step(*args, **kwargs)
 
             wrapper_obj = TrainStepWrapper(train_step_func)
 
             # Create a callable ID for the training step function
+            # wrap_callables modifies wrapper_obj.train_step in-place to add instrumentation
             callable_id = straggler.CallableId(wrapper_obj, "train_step")
             straggler.Detector.wrap_callables(callable_ids=[callable_id])
 
-            self.wrapped_function = train_step_func
-            self.logger.debug("Train step function wrapped for NVRx straggler detection.")
-
-            # Return the original function since the wrapper is just for nvidia-resiliency-ext
-            return train_step_func
+            # Store the wrapped function to prevent garbage collection and enable reuse
+            self.wrapped_function = wrapper_obj
+            return wrapper_obj
 
         except Exception as e:
             self.logger.warning(f"Failed to wrap train step function with NVRx: {e}. Continuing without wrapping.")
@@ -145,7 +149,6 @@ class NVRxStragglerDetectionManager:
         Returns:
             True if stragglers were detected and stop_if_detected is True, False otherwise.
         """
-
         if not self.initialized or not self.config.enabled:
             return False
 
@@ -242,7 +245,7 @@ class NVRxStragglerDetectionManager:
                 num_best=self.config.num_gpu_perf_scores_to_print,
                 num_worst=self.config.num_gpu_perf_scores_to_print,
             )
-            self.logger.info(f"\nGPU relative performance:\n{rel_perf_str}")
+            self.logger.info(f"GPU relative performance:\n{rel_perf_str}")
 
         if self.config.calc_individual_gpu_perf:
             indiv_perf_str = self._format_gpu_scores(
@@ -251,7 +254,7 @@ class NVRxStragglerDetectionManager:
                 num_best=self.config.num_gpu_perf_scores_to_print,
                 num_worst=self.config.num_gpu_perf_scores_to_print,
             )
-            self.logger.info(f"\nGPU individual performance:\n{indiv_perf_str}")
+            self.logger.info(f"GPU individual performance:\n{indiv_perf_str}")
 
     def _log_gpu_scores(self, report) -> None:
         """Log GPU performance scores as structured data."""
@@ -299,11 +302,9 @@ class NVRxStragglerDetectionManager:
     def shutdown(self) -> None:
         """Shutdown the straggler detector."""
         if self.initialized and self.config.enabled:
-            self.logger.info("Shutting down NVRx straggler detection...")
             straggler.Detector.shutdown()
             self.initialized = False
             self.wrapped_function = None
-            self.logger.info("NVRx straggler detection shutdown complete.")
 
 
 def check_nvrx_straggler_detection(nvrx_straggler_manager: Optional["NVRxStragglerDetectionManager"]) -> bool:

@@ -18,9 +18,15 @@ from typing import Iterable
 
 import modelopt.torch.distill as mtd
 import torch
+from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
+from megatron.core.utils import (
+    get_batch_on_this_cp_rank,
+    get_model_config,
+    is_te_min_version,
+    unwrap_model,
+)
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
@@ -31,6 +37,52 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+
+def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
+    """Partition THD/packed batches across context-parallel ranks.
+
+    Uses transformer_engine's `thd_get_partitioned_indices` to slice sequence
+    dimension aligned with packed cu_seqlens. This avoids the generic
+    `get_batch_on_this_cp_rank` slicing which assumes contiguous sequence tokens.
+    """
+
+    err_msg = "Please update Transformer Engine to >= 1.10 to use Context Parallel with THD format data"
+    try:
+        import transformer_engine_torch as tex
+
+        if not is_te_min_version("1.10.0"):
+            logger.error(err_msg)
+            raise RuntimeError(err_msg)
+    except ModuleNotFoundError as e:
+        logger.error(err_msg)
+        raise e
+
+    cp_rank = parallel_state.get_context_parallel_rank()
+    cu_seqlens = batch["cu_seqlens"]
+    if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
+        raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
+    cu_seqlens = cu_seqlens.squeeze()
+    cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")
+    if cu_seqlens_unpadded is not None:
+        batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded.squeeze()
+
+    skip_keys = {
+        "cu_seqlens",
+        "cu_seqlens_unpadded",
+        "cu_seqlens_argmin",
+        "cu_seqlens_unpadded_argmin",
+        "max_seqlen",
+        "token_count",
+    }
+
+    for key, val in batch.items():
+        if val is None or key in skip_keys:
+            continue
+        index = tex.thd_get_partitioned_indices(cu_seqlens, val.size(1), cp_size, cp_rank)
+        batch[key] = val.index_select(1, index)
+
+    return batch
 
 
 def get_batch_from_iterator(
@@ -61,8 +113,12 @@ def get_batch_from_iterator(
 
     if "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
+        if "cu_seqlens_unpadded" in batch:
+            required_device_keys.add("cu_seqlens_unpadded")
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
+        if "cu_seqlens_unpadded_argmin" in batch:
+            required_host_keys.add("cu_seqlens_unpadded_argmin")
 
     if is_first_pp_stage or use_mtp:
         required_device_keys.update(("tokens", "position_ids"))
@@ -92,6 +148,8 @@ def get_batch(
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
 ]:
     """Generate a batch.
 
@@ -102,13 +160,14 @@ def get_batch(
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, and max_seqlen
+        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded, and
+        cu_seqlens_unpadded_argmin
     """
     # Determine pipeline stage role via process group collection
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
     if (not is_first) and (not is_last):
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -118,18 +177,27 @@ def get_batch(
         is_last_pp_stage=is_last,
     )
 
-    # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank(batch)
+    cp_size = pg_collection.cp.size()
+    has_packed = batch.get("cu_seqlens") is not None
+    if has_packed and cp_size > 1:
+        batch = _partition_packed_batch_for_cp(batch, cp_size)
+    else:
+        # slice batch along sequence dimension for context parallelism
+        batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],
         batch["labels"],
         batch["loss_mask"],
-        batch["attention_mask"],
+        batch.get(
+            "attention_mask"
+        ),  # Attention_mask is optional for pre-training as a casual mask is generated automatically.
         batch["position_ids"],
         batch.get("cu_seqlens"),
         batch.get("cu_seqlens_argmin"),
         batch.get("max_seqlen"),
+        batch.get("cu_seqlens_unpadded"),
+        batch.get("cu_seqlens_unpadded_argmin"),
     )
 
 
@@ -156,9 +224,18 @@ def _forward_step_common(
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
-        tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = get_batch(
-            data_iterator, state.cfg, use_mtp, pg_collection=pg_collection
-        )
+        (
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            cu_seqlens,
+            cu_seqlens_argmin,
+            max_seqlen,
+            cu_seqlens_unpadded,
+            cu_seqlens_unpadded_argmin,
+        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
     forward_args = {
@@ -174,6 +251,8 @@ def _forward_step_common(
             "cu_seqlens": cu_seqlens,
             "cu_seqlens_argmin": cu_seqlens_argmin,
             "max_seqlen": max_seqlen,
+            "cu_seqlens_unpadded": cu_seqlens_unpadded,
+            "cu_seqlens_unpadded_argmin": cu_seqlens_unpadded_argmin,
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 

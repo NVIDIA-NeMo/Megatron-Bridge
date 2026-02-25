@@ -731,11 +731,10 @@ def _get_samples_mapping(
     binary_head,
     index_mapping_dir: str = None,
     samples_mapping: Any = None,
-    sanity_check_dist_workers: bool = True,
 ):
     """Get a list that maps a sample index to a starting sentence index, end sentence index, and length"""
-
-    from megatron.core import parallel_state
+    is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
+    rank = torch.distributed.get_rank() if is_distributed else 0
 
     if not num_epochs:
         if not max_num_samples:
@@ -760,7 +759,7 @@ def _get_samples_mapping(
     indexmap_filename += ".npy"
 
     # Build the indexed mapping if not exist and not provided externally.
-    if samples_mapping is None and torch.distributed.get_rank() == 0 and not os.path.isfile(indexmap_filename):
+    if samples_mapping is None and rank == 0 and not os.path.isfile(indexmap_filename):
         # Fake index mapping if missing
         if (getattr(indexed_dataset, "doc_idx", None) is None) and (getattr(indexed_dataset, "sizes", None) is None):
             _make_indexed_dataset_compatibility(indexed_dataset)
@@ -776,7 +775,7 @@ def _get_samples_mapping(
         assert indexed_dataset.sizes.dtype == np.int32
 
         # Build samples mapping
-        verbose = torch.distributed.get_rank() == 0
+        verbose = rank == 0
         start_time = time.time()
         logger.info(" > building samples index mapping for {} ...".format(name))
         # First compile and then import.
@@ -806,15 +805,11 @@ def _get_samples_mapping(
             " > elasped time to build and save samples mapping (seconds): {:4f}".format(time.time() - start_time)
         )
 
-    if sanity_check_dist_workers:
+    # Ensure the mapping exists before all ranks attempt to load it.
+    # Skip barrier when invoked from a rank-0-only data preparation flow (see `rank_0_prepare_data()`).
+    if is_distributed and not rank_0_prepare_data():
         torch.distributed.barrier()
-        counts = torch.cuda.LongTensor([1])
-        torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group(with_context_parallel=True))
-        torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
-        assert counts[0].item() == (
-            torch.distributed.get_world_size()
-            // torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group())
-        )
+
     # Load indexed dataset if not given externally.
     if samples_mapping is None:
         logger.info(" > loading indexed mapping from {}".format(indexmap_filename))

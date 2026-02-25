@@ -14,7 +14,7 @@
 
 import logging
 
-import torch
+from megatron.core.activations import squared_relu
 from megatron.core.models.mamba import MambaModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -28,13 +28,18 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronHModelProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 logger = logging.getLogger(__name__)
 
 
-@MegatronModelBridge.register_bridge(source="NemotronHForCausalLM", target=MambaModel)
+@MegatronModelBridge.register_bridge(
+    source="NemotronHForCausalLM",
+    target=MambaModel,
+    provider=MambaModelProvider,
+    model_type="nemotron_h",
+)
 class NemotronHBridge(MegatronModelBridge):
     """
     Megatron Bridge for Nemotron-H Causal LM.
@@ -49,36 +54,49 @@ class NemotronHBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronHModelProvider:
+    # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        # Mamba-specific fields
+        ("mamba_head_dim", "mamba_head_dim"),
+        ("mamba_num_heads", "mamba_num_heads"),
+        ("n_groups", "mamba_num_groups"),
+        ("ssm_state_size", "mamba_state_dim"),
+        ("hybrid_override_pattern", "hybrid_override_pattern"),
+        ("residual_in_fp32", "fp32_residual_connection"),
+        ("use_bias", "add_bias_linear"),
+        ("layer_norm_epsilon", "layernorm_epsilon"),
+        # MoE-specific fields (already in base but with different HF names)
+        ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
+    ]
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MambaModelProvider:
+        """Convert HuggingFace Nemotron-H config to MambaModelProvider."""
+        # Use base class for common config conversion
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        return NemotronHModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            add_bias_linear=hf_config.use_bias,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            kv_channels=getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None),
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.layer_norm_epsilon,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            vocab_size=hf_config.vocab_size,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            fp32_residual_connection=hf_config.residual_in_fp32,
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            attention_dropout=hf_config.attention_dropout,
-            hidden_dropout=hf_config.hidden_dropout,
-            hybrid_override_pattern=hf_config.hybrid_override_pattern,
-            mamba_head_dim=hf_config.mamba_head_dim,
-            mamba_num_heads=hf_config.mamba_num_heads,
-            mamba_num_groups=hf_config.n_groups,
-            mamba_state_dim=hf_config.ssm_state_size,
-            add_qkv_bias=hf_config.attention_bias,
-        )
+        # Nemotron-H specific defaults
+        provider.activation_func = squared_relu
+        provider.masked_softmax_fusion = True
+        provider.apply_query_key_layer_scaling = False
+        provider.persist_layer_norm = True
+        provider.attention_softmax_in_fp32 = False
+        provider.first_last_layers_bf16 = True
+        provider.is_hybrid_model = True
+
+        # MoE-specific defaults (only if MoE is enabled)
+        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
+            provider.moe_aux_loss_coeff = 0.0001
+            provider.moe_router_score_function = "sigmoid"
+            provider.moe_router_enable_expert_bias = True
+            provider.moe_router_load_balancing_type = "seq_aux_loss"
+            provider.moe_router_dtype = "fp32"
+            provider.moe_grouped_gemm = True
+            provider.moe_token_dispatcher_type = "alltoall"
+            provider.moe_permute_fusion = True
+            provider.moe_shared_expert_overlap = True
+
+        return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
@@ -105,6 +123,13 @@ class NemotronHBridge(MegatronModelBridge):
             # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
             "embedding.word_embeddings.weight": "backbone.embeddings.weight",
             "output_layer.weight": "lm_head.weight",
+            # MoE layers
+            "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
+            "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
+            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
         }
 
         mapping_list = []

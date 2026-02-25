@@ -266,13 +266,26 @@ class LoRAMerge(PEFT):
         if not isinstance(module, LoRALinear):
             return module
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_device = module.to_wrap.weight.device
-        merged_weight = self.merge(
-            module.to_wrap.weight,
-            module.adapter.linear_out.weight.to(base_device),
-            module.adapter.linear_in.weight.to(base_device),
-            module.adapter.alpha,
-            module.adapter.dim,
-        )
-        module.to_wrap.weight.data = merged_weight
+
+        if hasattr(module.to_wrap, "weight"):
+            base_device = module.to_wrap.weight.device
+            merged_weight = self.merge(
+                module.to_wrap.weight,
+                module.adapter.linear_out.weight.to(base_device),
+                module.adapter.linear_in.weight.to(base_device),
+                module.adapter.alpha,
+                module.adapter.dim,
+            )
+            module.to_wrap.weight.data = merged_weight
+        else:  # TE Grouped Linear
+            for i in range(module.to_wrap.num_gemms):
+                base_device = getattr(module.to_wrap, f"weight{i}").device
+                merged_weight = self.merge(
+                    getattr(module.to_wrap, f"weight{i}"),
+                    module.adapter.linear_out.weight.to(base_device),
+                    module.adapter.linear_in.weight.to(base_device),
+                    module.adapter.alpha,
+                    module.adapter.dim,
+                )
+                getattr(module.to_wrap, f"weight{i}").data = merged_weight
         return module

@@ -151,12 +151,14 @@ def main(
         console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
 
+    all_match = True
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             match = torch.allclose(
                 param, original_param.to(param.device), atol=1e-1
             )  # Increased tolerance for bfloat16
+            all_match = all_match and match
             table.add_row(
                 name,
                 str(tuple(param.shape)),
@@ -176,6 +178,9 @@ def main(
         if is_rank_0:
             console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
         bridge.save_megatron_model(megatron_model, megatron_save_path)
+
+    if not all_match:
+        raise ValueError("Weight mismatch detected")
 
 
 if __name__ == "__main__":

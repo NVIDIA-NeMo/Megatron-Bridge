@@ -150,7 +150,8 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, syst
             image_paths = image_path.split(",")
             content = []
             for i, path in enumerate(image_paths):
-                content.append({"type": "text", "text": f"{'\n' if i > 0 else ''}Image-{i + 1}: "})
+                prefix = "\n" if i > 0 else ""
+                content.append({"type": "text", "text": f"{prefix}Image-{i + 1}: "})
                 content.append({"type": "image", "image": path})
             content.append({"type": "text", "text": "\n" + prompt})
         else:

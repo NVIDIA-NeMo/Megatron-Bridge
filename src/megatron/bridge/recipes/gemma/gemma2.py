@@ -22,19 +22,18 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
@@ -116,167 +115,250 @@ class Gemma2FinetuneKwargs(TypedDict, total=False):
 
 
 # Pretrain Configs
-def gemma2_2b_pretrain_config(**user_kwargs: Unpack[Gemma2CommonKwargs]) -> ConfigContainer:
+def gemma2_2b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Gemma2 2B.
 
     Default parallelism: TP=2, PP=1
     """
-    recommended_kwargs: Gemma2CommonKwargs = {
-        "hf_path": "google/gemma-2-2b",
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 1,
-    }
-    combined_kwargs: Gemma2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _gemma2_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-2b").to_megatron_provider(load_weights=False)
+
+    # Tokenizer - uses HuggingFaceTokenizer
+    cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
+    cfg.tokenizer.tokenizer_model = "google/gemma-2-2b"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8  # --num-workers for dataloader
+
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+
+    # Training config - all match _pretrain_common defaults
+    # Note: train_iters=300000, global_batch_size=32, micro_batch_size=2, eval_interval=500 are defaults
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # Gemma2 uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - uses "bf16_mixed" from _pretrain_common
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Optimizer settings (commented - enable for precision-aware optimizer)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config - matches _pretrain_common defaults (save_interval=500)
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _pretrain_common. To override:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config (Gemma2 doesn't set grad_reduce_in_fp32/average_in_collective, uses megatron-core defaults)
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+
+    return cfg
 
 
-def gemma2_9b_pretrain_config(**user_kwargs: Unpack[Gemma2CommonKwargs]) -> ConfigContainer:
+def gemma2_9b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Gemma2 9B.
 
     Default parallelism: TP=8, PP=1
     """
-    recommended_kwargs: Gemma2CommonKwargs = {
-        "hf_path": "google/gemma-2-9b",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 1,
-        "pipeline_dtype": torch.bfloat16,
-    }
-    combined_kwargs: Gemma2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _gemma2_common(**combined_kwargs)
+    cfg = _pretrain_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-9b").to_megatron_provider(load_weights=False)
+
+    # Tokenizer - uses HuggingFaceTokenizer
+    cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
+    cfg.tokenizer.tokenizer_model = "google/gemma-2-9b"
+
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
+
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16  # Required for larger models
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # Gemma2 uses native
+
+    # Memory saving
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - uses "bf16_mixed" from _pretrain_common
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Optimizer settings (commented - enable for precision-aware optimizer)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+
+    return cfg
 
 
-def gemma2_27b_pretrain_config(**user_kwargs: Unpack[Gemma2CommonKwargs]) -> ConfigContainer:
+def gemma2_27b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for Gemma2 27B.
 
     Default parallelism: TP=8, PP=2
     """
-    recommended_kwargs: Gemma2CommonKwargs = {
-        "hf_path": "google/gemma-2-27b",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 2,
-        "pipeline_dtype": torch.bfloat16,
-    }
-    combined_kwargs: Gemma2CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _gemma2_common(**combined_kwargs)
+    cfg = _pretrain_common()
 
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-27b").to_megatron_provider(load_weights=False)
 
-def _gemma2_common(
-    hf_path: str,
-    dir: Optional[str] = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
-    mock: bool = False,
-    # Model configuration
-    tensor_model_parallel_size: int = 1,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
-    context_parallel_size: int = 1,
-    sequence_parallel: bool = False,
-    use_megatron_fsdp: bool = False,
-    # Training hyperparameters
-    train_iters: int = 300000,
-    global_batch_size: int = 32,
-    micro_batch_size: int = 2,
-    seq_length: int = 4096,
-    lr: float = 3e-4,
-    min_lr: float = 3e-5,
-    lr_warmup_iters: int = 500,
-    lr_decay_iters: Optional[int] = None,
-    eval_interval: int = 500,
-    save_interval: int = 500,
-    use_null_tokenizer: bool = False,
-    # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-) -> ConfigContainer:
-    """Create a pre-training configuration for Gemma2 models."""
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    # Tokenizer - uses HuggingFaceTokenizer
+    cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
+    cfg.tokenizer.tokenizer_model = "google/gemma-2-27b"
 
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
-    )
+    # Dataset config - mock data by default
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.num_workers = 8
 
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
-    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
-    model_cfg.pipeline_dtype = pipeline_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
-    model_cfg.context_parallel_size = context_parallel_size
-    model_cfg.sequence_parallel = sequence_parallel
-    model_cfg.seq_length = seq_length
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16  # Required for PP > 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        max_lr=lr,
-        min_lr=min_lr,
-    )
+    # Training config
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
 
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,
-        ),
-        dataset=GPTDatasetConfig(
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            seq_length=seq_length,
-            num_dataset_builder_threads=1,
-            blend=blend,
-            blend_per_split=blend_per_split,
-            split=split,
-            data_sharding=True,
-            dataloader_type="single",
-            skip_getting_attention_mask_from_dataset=True,
-        ),
-        logger=LoggerConfig(
-            log_interval=10,
-            tensorboard_dir=tensorboard_dir,
-            log_timers_to_tensorboard=True,
-        ),
-        tokenizer=TokenizerConfig(
-            tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
-            tokenizer_model=hf_path if not use_null_tokenizer else None,
-            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
-        ),
-        checkpoint=CheckpointConfig(
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
-    )
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # Gemma2 uses native
+
+    # Memory saving
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - uses "bf16_mixed" from _pretrain_common
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Optimizer settings (commented - enable for precision-aware optimizer)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     return cfg
 
@@ -340,7 +422,7 @@ def _gemma2_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Union[str, PEFT, None] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 100,
     global_batch_size: Optional[int] = None,
@@ -422,8 +504,10 @@ def _gemma2_finetune_common(
     if not is_full_sft:
         opt_cfg.use_distributed_optimizer = False
 
+    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
+
     # Dataset config
-    dataset_config = default_squad_config(seq_length, packed_sequence)
+    dataset_config = default_squad_config(seq_length, packed_sequence, pad_seq_to_mult)
 
     # Logger
     logger_cfg = LoggerConfig(
@@ -455,10 +539,12 @@ def _gemma2_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=10,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=10,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
