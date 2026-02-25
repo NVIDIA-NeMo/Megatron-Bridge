@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from megatron.bridge.training.losses import (
-    SPIKY_LOSS_FACTOR,
+    _DEFAULT_SPIKY_LOSS_FACTOR,
     create_masked_next_token_loss_function,
     masked_next_token_loss,
 )
@@ -312,7 +312,7 @@ class TestCreateMaskedNextTokenLossFunction:
 class TestConstants:
     """Test module constants."""
 
-    def test_spiky_loss_factor(self):
-        """Test that SPIKY_LOSS_FACTOR has expected value."""
-        assert SPIKY_LOSS_FACTOR == 10, "SPIKY_LOSS_FACTOR should be 10"
-        assert isinstance(SPIKY_LOSS_FACTOR, int), "SPIKY_LOSS_FACTOR should be an integer"
+    def test_default_spiky_loss_factor(self):
+        """Test that _DEFAULT_SPIKY_LOSS_FACTOR has expected value."""
+        assert _DEFAULT_SPIKY_LOSS_FACTOR == 10.0, "_DEFAULT_SPIKY_LOSS_FACTOR should be 10.0"
+        assert isinstance(_DEFAULT_SPIKY_LOSS_FACTOR, float), "_DEFAULT_SPIKY_LOSS_FACTOR should be a float"

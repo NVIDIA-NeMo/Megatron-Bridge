@@ -27,7 +27,6 @@ from megatron.bridge.data.datasets.packed_parquet import (
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
-from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -314,6 +313,7 @@ class FinetuningDatasetBuilder:
             is_test=is_test,
             pack_metadata_file_path=effective_metadata_path,
             pad_cu_seqlens=False if is_not_packing else self._pad_cu_seqlens,
+            pad_seq_to_mult=1 if is_not_packing else self._pad_seq_to_mult,
             **kwargs,
         )
 
@@ -415,21 +415,13 @@ class FinetuningDatasetBuilder:
     def _extract_tokenizer_model_name(self) -> str:
         """Automatically get the model name from model path."""
         # Legacy tokenizer compatibility
-        if getattr(self.tokenizer, "legacy", False):
-            tokenizer_cls = _HuggingFaceTokenizer
-            tokenizer_instance = self.tokenizer
-        else:
-            tokenizer_cls = HuggingFaceTokenizer
-            tokenizer_instance = self.tokenizer._tokenizer
+        tokenizer_cls = HuggingFaceTokenizer
+        tokenizer_instance = self.tokenizer._tokenizer
 
         if self.packed_sequence_specs and self.packed_sequence_specs.tokenizer_model_name is not None:
             return self.packed_sequence_specs.tokenizer_model_name
         elif isinstance(tokenizer_instance, tokenizer_cls):
-            # Legacy tokenizer compatibility
-            if getattr(self.tokenizer, "legacy", False):
-                name = self.tokenizer._tokenizer.name_or_path
-            else:
-                name = self.tokenizer.path
+            name = self.tokenizer.path
 
             if name.endswith("context/nemo_tokenizer"):
                 # NEMO_HOME/hf_org/hf_model/context/nemo_tokenizer => hf_org--hf_model

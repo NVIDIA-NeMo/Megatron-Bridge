@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 import unittest.mock as mock
 from dataclasses import dataclass
@@ -132,6 +133,7 @@ class TestTrainingLog:
         config.logger.log_world_size_to_tensorboard = True
         config.logger.log_memory_to_tensorboard = False
         config.logger.log_throughput = False
+        config.logger.timing_log_level = 0
 
         # Training config
         config.train.micro_batch_size = 2
@@ -409,6 +411,144 @@ class TestTrainingLog:
         # Verify tensorboard logging was called
         mock_global_state.tensorboard_logger.add_scalar.assert_called()
         mock_global_state.timers.write.assert_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_timing_log_level_1(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test that timing_log_level=1 includes level 1 timers."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        # Set timing_log_level to 1
+        mock_config.logger.timing_log_level = 1
+        mock_global_state.train_state.step = 100
+        mock_config.logger.tensorboard_log_interval = 10
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        # Verify timers.write was called with level 1 timers
+        mock_global_state.timers.write.assert_called()
+        call_args = mock_global_state.timers.write.call_args
+        timers_to_log = call_args[0][0]
+
+        # Level 1 timers should be present
+        assert "forward-backward" in timers_to_log
+        assert "optimizer" in timers_to_log
+        assert "layernorm-grads-all-reduce" in timers_to_log
+
+        # Level 2 timers should NOT be present
+        assert "batch-generator" not in timers_to_log
+        assert "forward-compute" not in timers_to_log
+        assert "backward-compute" not in timers_to_log
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_timing_log_level_2(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test that timing_log_level=2 includes both level 1 and level 2 timers."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        # Set timing_log_level to 2
+        mock_config.logger.timing_log_level = 2
+        mock_global_state.train_state.step = 100
+        mock_config.logger.tensorboard_log_interval = 10
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        # Verify timers.write was called with both level 1 and level 2 timers
+        mock_global_state.timers.write.assert_called()
+        call_args = mock_global_state.timers.write.call_args
+        timers_to_log = call_args[0][0]
+
+        # Level 1 timers should be present
+        assert "forward-backward" in timers_to_log
+        assert "optimizer" in timers_to_log
+        assert "layernorm-grads-all-reduce" in timers_to_log
+
+        # Level 2 timers should also be present
+        assert "batch-generator" in timers_to_log
+        assert "forward-compute" in timers_to_log
+        assert "backward-compute" in timers_to_log
+        assert "forward-recv" in timers_to_log
+        assert "backward-send" in timers_to_log
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -2458,3 +2598,327 @@ class TestCalcParamsL2Norm:
         # This currently raises a TypeError because None is passed to multi_tensor_l2norm
         with pytest.raises(TypeError, match="incompatible function arguments"):
             calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+    # ==================== MoE BF16 main_param tests ====================
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_moe_params_bf16_with_main_param(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test calc_params_l2_norm with MoE params in BF16 mode using main_param.
+
+        This tests the memory optimization where MoE params use the existing
+        main_param (FP32 copy from optimizer) instead of creating a new FP32 copy.
+        """
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Mark as MoE param and add main_param attribute
+        for param in model.parameters():
+            torch.nn.init.constant_(param, 1.0)
+            param.allreduce = False  # MoE parameter
+            param.main_param = torch.ones_like(param, dtype=torch.float32).cuda()
+            param.main_param_sharded = False
+
+        expected_norm = 5.0  # sqrt(25)
+
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        assert result == pytest.approx(expected_norm, rel=1e-5)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_moe_params_bf16_with_sharded_main_param(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test calc_params_l2_norm with MoE params using sharded main_param (distributed optimizer).
+
+        When MoE params have main_param_sharded=True, they should be added to
+        sharded_params_data for proper all-reduce across DP groups.
+        """
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Mark as MoE param with sharded main_param
+        for param in model.parameters():
+            torch.nn.init.constant_(param, 1.0)
+            param.allreduce = False  # MoE parameter
+            param.main_param = torch.ones(13, dtype=torch.float32).cuda()  # Sharded to 13 elements
+            param.main_param_sharded = True
+
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        # Should use sharded params path and call all_reduce
+        assert isinstance(result, float)
+        assert result > 0
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_moe_params_bf16_without_main_param(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test calc_params_l2_norm with MoE params in BF16 mode without main_param.
+
+        When main_param is not available, should fallback to creating FP32 copy
+        from bf16 data.
+        """
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Mark as MoE param without main_param attribute
+        for param in model.parameters():
+            torch.nn.init.constant_(param, 1.0)
+            param.allreduce = False  # MoE parameter
+            # No main_param attribute - should fallback to param.data.float()
+
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        # Should create FP32 copy from bf16 params
+        expected_norm = 5.0  # sqrt(25)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_moe_params_force_create_fp32_copy(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test force_create_fp32_copy flag ignores main_param for MoE params."""
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Mark as MoE param with main_param that should be ignored
+        for param in model.parameters():
+            torch.nn.init.constant_(param, 1.0)
+            param.allreduce = False  # MoE parameter
+            # Set main_param to zeros - it should be ignored with force_create_fp32_copy=True
+            param.main_param = torch.zeros_like(param, dtype=torch.float32).cuda()
+            param.main_param_sharded = False
+
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=True)
+
+        # Should create FP32 copy from bf16 params (value 1.0), not use main_param (value 0.0)
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_moe_main_param_none_with_sharded(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test MoE params when main_param is None with main_param_sharded=True.
+
+        When main_param_sharded=True but main_param is None, the parameter is skipped
+        (nothing is added to sharded_params_data list).
+        """
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Mark as MoE param with main_param=None and main_param_sharded=True
+        for param in model.parameters():
+            torch.nn.init.constant_(param, 1.0)
+            param.allreduce = False  # MoE parameter
+            param.main_param = None
+            param.main_param_sharded = True
+
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        # Parameter is skipped, so norm should be 0
+        assert result == pytest.approx(0.0, abs=1e-5)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_moe_main_param_none_without_sharded(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test MoE params when main_param is None with main_param_sharded=False.
+
+        This is an edge case that causes an error because None is added to
+        moe_params_data, and multi_tensor_l2norm doesn't accept None values.
+        """
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Mark as MoE param with main_param=None and main_param_sharded=False
+        for param in model.parameters():
+            torch.nn.init.constant_(param, 1.0)
+            param.allreduce = False  # MoE parameter
+            param.main_param = None
+            param.main_param_sharded = False
+
+        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
+        with pytest.raises(TypeError, match="incompatible function arguments"):
+            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
+    @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
+    @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
+    @mock.patch("megatron.core.parallel_state.get_data_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_model_parallel_group")
+    @mock.patch("megatron.core.parallel_state.get_expert_tensor_model_pipeline_parallel_group")
+    @mock.patch("torch.distributed.get_process_group_ranks")
+    @mock.patch("torch.distributed.all_reduce")
+    def test_mixed_dense_and_moe_params_bf16_with_main_param(
+        self,
+        mock_all_reduce,
+        mock_get_ranks,
+        mock_get_expert_group,
+        mock_get_model_group,
+        mock_get_dp_group,
+        mock_to_local,
+        mock_is_not_tp_dup,
+        mock_get_dp_group_if_dtensor,
+        mock_model_config_bf16,
+    ):
+        """Test calc_params_l2_norm with mixed dense and MoE params in BF16 with main_param.
+
+        Both dense and MoE params should use main_param optimization when available.
+        """
+        # Create a model with multiple layers
+        model = torch.nn.Sequential(
+            torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16),
+            torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16),
+        ).cuda()
+
+        # Setup mocks
+        mock_get_dp_group_if_dtensor.return_value = None
+        mock_is_not_tp_dup.return_value = True
+        mock_to_local.side_effect = lambda x: x
+        mock_get_ranks.return_value = [0]
+
+        # Initialize all params and add main_param
+        params = list(model.parameters())
+        for param in params:
+            torch.nn.init.constant_(param, 1.0)
+            param.main_param = torch.ones_like(param, dtype=torch.float32).cuda()
+            param.main_param_sharded = False
+
+        # Mark first layer as dense, second as MoE
+        params[0].allreduce = True
+        params[1].allreduce = False
+
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        # Both layers contribute: sqrt(25 + 25) = sqrt(50)
+        expected_norm = math.sqrt(50)
+        assert result == pytest.approx(expected_norm, rel=1e-5)

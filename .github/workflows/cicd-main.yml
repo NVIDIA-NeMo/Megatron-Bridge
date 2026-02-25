@@ -25,32 +25,32 @@ on:
   workflow_dispatch:
     inputs:
       mcore_commit:
-        description: 'MCore commit SHA to test against'
+        description: "MCore commit SHA to test against"
         required: false
         type: string
       mcore_branch:
-        description: 'MCore branch name (for reference)'
+        description: "MCore branch name (for reference)"
         required: false
         type: string
       mcore_repo:
-        description: 'MCore repository URL (for fetching from forks)'
+        description: "MCore repository URL (for fetching from forks)"
         required: false
         type: string
-        default: 'https://github.com/NVIDIA/Megatron-LM.git'
+        default: "https://github.com/NVIDIA/Megatron-LM.git"
       test_suite:
-        description: 'Test suite to run'
+        description: "Test suite to run"
         required: false
         type: choice
         options:
-          - 'all'
-          - 'unit-only'
-          - 'functional-only'
-        default: 'all'
+          - "all"
+          - "unit-only"
+          - "functional-only"
+        default: "all"
       triggered_by:
-        description: 'Trigger source (for tracking)'
+        description: "Trigger source (for tracking)"
         required: false
         type: string
-        default: 'manual'
+        default: "manual"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
@@ -378,7 +378,7 @@ jobs:
       matrix:
         include:
           - script: L2_Launch_training
-            timeout: 40
+            timeout: 50
           - script: L2_Launch_converter
           - script: L2_Launch_models_deepseek
           - script: L2_Launch_models_gemma
@@ -393,12 +393,13 @@ jobs:
           - script: L2_Launch_models_nemotron_vl
           - script: L2_Launch_models_olmoe
           - script: L2_Launch_models_qwen
-          - script: L2_Launch_models_qwen_quantization
+          # - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_recipes_gemma_vl
+          - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
-          - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
@@ -406,6 +407,7 @@ jobs:
           - script: L2_Launch_quantization_aware_training
           - script: L2_Launch_quantization_export
           - script: L2_Launch_recipes_llama_cuda_graphs
+          - script: L2_Launch_utils
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |

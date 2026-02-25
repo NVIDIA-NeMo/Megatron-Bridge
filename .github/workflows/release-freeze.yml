@@ -42,9 +42,11 @@ jobs:
       release-type: ${{ inputs.release-type }}
       freeze-commit: ${{ inputs.freeze-commit }}
       dry-run: ${{ inputs.dry-run }}
+      use-pat: true
     secrets:
       SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
       SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
+      PAT: ${{ secrets.PAT }}
 
   bump-docs-versions:
     needs: [code-freeze]
@@ -87,6 +89,7 @@ jobs:
 
       - name: Switch to release branch
         run: |
+          git fetch origin ${{ needs.code-freeze.outputs.release-branch }}
           git checkout ${{ needs.code-freeze.outputs.release-branch }}
 
       - name: Cherry-pick docs-versions commit

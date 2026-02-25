@@ -18,13 +18,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import GenerationConfig, Qwen2Config, Qwen3ForCausalLM
+from transformers import Qwen2Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
 
 
 class TestMegatronQwen3Bridge:
@@ -75,7 +75,6 @@ class TestMegatronQwen3Bridge:
         """Create a mock PreTrainedCausalLM with Qwen3 model."""
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = qwen3_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained
@@ -93,8 +92,8 @@ class TestMegatronQwen3Bridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Check that it returns a Qwen3ModelProvider instance
-        assert isinstance(result, Qwen3ModelProvider)
+        # Check that it returns a GPTModelProvider instance (after refactoring)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == qwen3_config.num_hidden_layers
@@ -168,7 +167,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = qwen3_config
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -185,7 +183,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = qwen3_config
         mock_pretrained.config.torch_dtype = torch.float16  # Set config dtype to fp16
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -202,8 +199,8 @@ class TestMegatronQwen3Bridge:
         # Pass model only
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Just verify that we got a valid Qwen3ModelProvider
-        assert isinstance(result, Qwen3ModelProvider)
+        # Just verify that we got a valid GPTModelProvider
+        assert isinstance(result, GPTModelProvider)
 
     def test_provider_bridge_without_tie_embeddings(self, qwen3_config):
         """Test provider_bridge when tie_word_embeddings is not present."""
@@ -216,7 +213,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = config
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.float32
-        mock_pretrained.generation_config = None
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -246,15 +242,6 @@ class TestMegatronQwen3Bridge:
         # The method should calculate a reasonable divisor based on vocab size
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
-
-    def test_provider_bridge_generation_config(self, mock_pretrained_qwen3):
-        """Test that generation config is passed through."""
-        bridge = Qwen3Bridge()
-
-        result = bridge.provider_bridge(mock_pretrained_qwen3)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_qwen3.generation_config
 
 
 class TestAutoBridgeIntegration:
@@ -405,7 +392,7 @@ class TestAutoBridgeIntegration:
                     "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
                 ) as mock_get_bridge:
                     mock_bridge = Mock()
-                    mock_provider = Mock(spec=Qwen3ModelProvider)
+                    mock_provider = Mock(spec=GPTModelProvider)
                     mock_bridge.provider_bridge.return_value = mock_provider
                     mock_get_bridge.return_value = mock_bridge
 

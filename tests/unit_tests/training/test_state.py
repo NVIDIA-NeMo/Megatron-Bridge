@@ -14,6 +14,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 
 from megatron.bridge.training.state import FaultToleranceState, GlobalState, TrainState
@@ -229,6 +230,7 @@ class TestGlobalState:
         assert state._tokenizer is None
         assert state._tensorboard_logger is None
         assert state._wandb_logger is None
+        assert state._mlflow_logger is None
         assert state._timers is None
         assert state._train_state is None
         assert state.rank_monitor_client is None
@@ -649,6 +651,166 @@ class TestGlobalState:
             mock_dsh.assert_not_called()
             assert state._signal_handler is None
 
+    def test_mlflow_logger_property_disabled(self):
+        """Test mlflow logger when disabled."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = None
+        state._cfg = mock_config
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+        ):
+            logger = state.mlflow_logger
+
+            assert logger is None
+            assert state._mlflow_logger is None
+
+    def test_mlflow_logger_property_when_cfg_is_none(self):
+        """Test mlflow logger returns None when cfg is None."""
+        state = GlobalState()
+        state._cfg = None
+
+        logger = state.mlflow_logger
+
+        assert logger is None
+        assert state._mlflow_logger is None
+
+    def test_mlflow_logger_property_enabled_rank_n_minus_1(self):
+        """Test mlflow logger enabled for rank N-1."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = "test_experiment"
+        mock_config.logger.mlflow_run_name = "test_run"
+        mock_config.logger.mlflow_tracking_uri = "http://localhost:5000"
+        mock_config.logger.mlflow_tags = {"env": "test"}
+        mock_config.to_dict.return_value = {"config": "data"}
+        state._cfg = mock_config
+
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = None
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            patch.dict("sys.modules", {"mlflow": mock_mlflow}),
+        ):
+            # Need to reimport to use the patched mlflow
+            import importlib
+
+            import megatron.bridge.training.state as state_module
+
+            importlib.reload(state_module)
+
+            # Re-create state after reload
+            state = state_module.GlobalState()
+            state._cfg = mock_config
+
+            with (
+                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            ):
+                logger = state.mlflow_logger
+
+                mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
+                mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
+                mock_mlflow.start_run.assert_called_once_with(run_name="test_run", tags={"env": "test"})
+                mock_mlflow.log_params.assert_called_once()
+                assert logger == mock_mlflow
+                assert state._mlflow_logger == mock_mlflow
+
+    def test_mlflow_logger_property_missing_run_name(self):
+        """Test mlflow logger raises error when run name is empty."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = "test_experiment"
+        mock_config.logger.mlflow_run_name = ""
+        state._cfg = mock_config
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+        ):
+            try:
+                _ = state.mlflow_logger
+                assert False, "Expected ValueError"
+            except ValueError as e:
+                assert "mlflow_run_name" in str(e)
+
+    def test_mlflow_logger_property_with_active_run_and_tags(self):
+        """Test mlflow logger sets tags when there's an active run."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = "test_experiment"
+        mock_config.logger.mlflow_run_name = "test_run"
+        mock_config.logger.mlflow_tracking_uri = None
+        mock_config.logger.mlflow_tags = {"env": "test"}
+        mock_config.to_dict.return_value = {"config": "data"}
+        state._cfg = mock_config
+
+        mock_mlflow = MagicMock()
+        mock_active_run = MagicMock()
+        mock_mlflow.active_run.return_value = mock_active_run
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            patch.dict("sys.modules", {"mlflow": mock_mlflow}),
+        ):
+            import importlib
+
+            import megatron.bridge.training.state as state_module
+
+            importlib.reload(state_module)
+
+            state = state_module.GlobalState()
+            state._cfg = mock_config
+
+            with (
+                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            ):
+                _ = state.mlflow_logger
+
+                # Should not start a new run since one is active
+                mock_mlflow.start_run.assert_not_called()
+                # Should set tags on the active run
+                mock_mlflow.set_tags.assert_called_once_with({"env": "test"})
+
+    def test_mlflow_logger_not_on_last_rank(self):
+        """Test mlflow logger is None when not on last rank."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = "test_experiment"
+        mock_config.logger.mlflow_run_name = "test_run"
+        state._cfg = mock_config
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=0),  # Not last rank
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+        ):
+            logger = state.mlflow_logger
+
+            assert logger is None
+            assert state._mlflow_logger is None
+
+    def test_timers_property_has_write_to_mlflow(self):
+        """Test that timers property patches write_to_mlflow method."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.timing_log_level = 1
+        mock_config.logger.timing_log_option = "minmax"
+        state._cfg = mock_config
+
+        mock_timers = MagicMock()
+
+        with patch("megatron.bridge.training.state.Timers", return_value=mock_timers):
+            _ = state.timers
+
+            # Verify write_to_mlflow method is patched
+            assert hasattr(mock_timers, "write_to_mlflow")
+
     def test_reset_for_restart(self):
         """Test reset_for_restart method clears all stateful components."""
         state = GlobalState()
@@ -658,6 +820,7 @@ class TestGlobalState:
         state._train_state = MagicMock()
         state._tensorboard_logger = MagicMock()
         state._wandb_logger = MagicMock()
+        state._mlflow_logger = MagicMock()
         state._energy_monitor = MagicMock()
         state._energy_monitor_created = True
         state._signal_handler = MagicMock()
@@ -673,6 +836,7 @@ class TestGlobalState:
         assert state._train_state is None
         assert state._tensorboard_logger is None
         assert state._wandb_logger is None
+        assert state._mlflow_logger is None
         assert state._energy_monitor is None
         assert state._energy_monitor_created is False
         assert state._signal_handler is None
@@ -703,3 +867,118 @@ class TestGlobalState:
         assert state._cfg == mock_config
         assert state._async_calls_queue == mock_async_queue
         assert state.rank_monitor_client is not None
+
+
+class TestTimersWriteToMlflow:
+    """Test suite for _timers_write_to_mlflow function."""
+
+    def test_writes_metrics_to_mlflow(self):
+        """Test that timer metrics are logged to MLFlow."""
+        from megatron.bridge.training.state import _timers_write_to_mlflow
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {
+            "forward": (0.1, 0.5),
+            "backward": (0.2, 0.8),
+        }
+
+        mock_mlflow = MagicMock()
+
+        _timers_write_to_mlflow(
+            mock_timers, names=["forward", "backward"], logger=mock_mlflow, iteration=100, normalizer=1.0
+        )
+
+        mock_timers._get_global_min_max_time.assert_called_once_with(["forward", "backward"], True, False, 1.0)
+        mock_mlflow.log_metrics.assert_called_once()
+        call_args = mock_mlflow.log_metrics.call_args
+        metrics = call_args[0][0]
+        assert "forward-time" in metrics
+        assert "backward-time" in metrics
+        assert metrics["forward-time"] == 0.5
+        assert metrics["backward-time"] == 0.8
+        assert call_args[1]["step"] == 100
+
+    def test_sanitizes_metric_names(self):
+        """Test that timer names with slashes are sanitized."""
+        from megatron.bridge.training.state import _timers_write_to_mlflow
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {
+            "train/forward": (0.1, 0.5),
+            "train/backward/compute": (0.2, 0.8),
+        }
+
+        mock_mlflow = MagicMock()
+
+        _timers_write_to_mlflow(
+            mock_timers, names=["train/forward", "train/backward/compute"], logger=mock_mlflow, iteration=100
+        )
+
+        call_args = mock_mlflow.log_metrics.call_args
+        metrics = call_args[0][0]
+        assert "train_forward-time" in metrics
+        assert "train_backward_compute-time" in metrics
+
+    def test_noop_when_logger_is_none(self):
+        """Test that no error is raised when logger is None."""
+        from megatron.bridge.training.state import _timers_write_to_mlflow
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {"forward": (0.1, 0.5)}
+
+        # Should not raise any exception
+        _timers_write_to_mlflow(mock_timers, names=["forward"], logger=None, iteration=100)
+
+    def test_handles_exception_gracefully(self):
+        """Test that exceptions from MLFlow are caught and logged as warning."""
+        import warnings
+
+        from megatron.bridge.training.state import _timers_write_to_mlflow
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {"forward": (0.1, 0.5)}
+
+        mock_mlflow = MagicMock()
+        mock_mlflow.log_metrics.side_effect = Exception("MLFlow connection error")
+
+        # Should not raise exception but emit warning
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _timers_write_to_mlflow(mock_timers, names=["forward"], logger=mock_mlflow, iteration=100)
+
+            assert len(w) == 1
+            assert "Failed to log timer metrics to MLFlow" in str(w[0].message)
+
+    def test_with_custom_normalizer(self):
+        """Test timer metrics with custom normalizer."""
+        from megatron.bridge.training.state import _timers_write_to_mlflow
+
+        mock_timers = MagicMock()
+        mock_timers._get_global_min_max_time.return_value = {"forward": (0.1, 0.5)}
+
+        mock_mlflow = MagicMock()
+
+        _timers_write_to_mlflow(
+            mock_timers,
+            names=["forward"],
+            logger=mock_mlflow,
+            iteration=100,
+            normalizer=2.0,
+            reset=False,
+            barrier=True,
+        )
+
+        mock_timers._get_global_min_max_time.assert_called_once_with(["forward"], False, True, 2.0)
+
+    def test_asserts_positive_normalizer(self):
+        """Test that normalizer must be positive."""
+        from megatron.bridge.training.state import _timers_write_to_mlflow
+
+        mock_timers = MagicMock()
+        mock_mlflow = MagicMock()
+
+        with pytest.raises(AssertionError):
+            _timers_write_to_mlflow(mock_timers, names=["forward"], logger=mock_mlflow, iteration=100, normalizer=0.0)
+
+        with pytest.raises(AssertionError):
+            _timers_write_to_mlflow(mock_timers, names=["forward"], logger=mock_mlflow, iteration=100, normalizer=-1.0)

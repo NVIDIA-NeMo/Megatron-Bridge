@@ -1,7 +1,7 @@
 name: Dependabot
 on:
-  schedule:
-    - cron: "0 8 * * *"
+  # schedule:
+  #   - cron: "0 8 * * *"
   workflow_dispatch: # Allow manual triggering
 
 permissions:
@@ -27,8 +27,8 @@ jobs:
             tail -n1)
           echo "megatron_bridge_release_branch=$latest_branch" | tee -a $GITHUB_OUTPUT
 
-          mcore_latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA/Megatron-LM.git 'refs/heads/core_dev_r*' | 
-            grep -o 'core_dev_r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
+          mcore_latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA/Megatron-LM.git 'refs/heads/core_r*' | 
+            grep -o 'core_r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
             sort -V | 
             tail -n1)
           echo "mcore_latest_branch=$mcore_latest_branch" | tee -a $GITHUB_OUTPUT
@@ -42,7 +42,7 @@ jobs:
           - target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
             mcore-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
           - target-branch: main
-            mcore-branch: dev
+            mcore-branch: main
     uses: ./.github/workflows/_update_dependencies.yml
     with:
       target-branch: ${{ matrix.target-branch }}

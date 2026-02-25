@@ -67,6 +67,9 @@ class HFDatasetConversationProvider(DatasetProvider):
     # DataloaderConfig fields are inherited (num_workers, dataloader_type, etc.)
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
 
+    # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
+    pack_sequences_in_batch: bool = False
+
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         registry: Dict[str, Callable[..., List[Dict[str, Any]]]] = {
             "make_rdr_dataset": make_rdr_dataset,
