@@ -147,7 +147,6 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
 
     cfg.model.init_method_std = 0.0173
     cfg.model.apply_rope_fusion = False
-    cfg.model.async_tensor_model_parallel_allreduce = True
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.use_fused_weighted_squared_relu = True
 
@@ -180,7 +179,6 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
         expert_tensor_parallel_size=1,
         expert_model_parallel_size=8,
         apply_rope_fusion=False,
-        async_tensor_model_parallel_allreduce=True,
         attention_backend="fused",
         gradient_accumulation_fusion=True,
         init_method_std=0.0173,
