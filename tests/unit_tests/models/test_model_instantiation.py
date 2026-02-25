@@ -14,7 +14,6 @@
 
 from unittest.mock import Mock, patch
 
-import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
