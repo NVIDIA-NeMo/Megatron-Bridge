@@ -158,8 +158,13 @@ def benchmark(
     batch_size: int = 2,
     vocab_size: int = 151_936,
     n_active: int = 200,
-):
-    """Run full benchmark comparing full vocab vs sliced vocab training steps."""
+) -> None:
+    """Run full benchmark comparing full vocab vs sliced vocab training steps.
+
+    Note: This benchmark re-implements slicing logic with a standalone ToyGPTModel
+    rather than importing the production ``vocab_slice`` module, so that it runs
+    without the full Megatron-Bridge dependency chain.
+    """
     print(f"{'=' * 60}")
     print("Output Vocab Slice Benchmark")
     print(f"{'=' * 60}")
@@ -255,7 +260,7 @@ def benchmark(
     print(f"{'=' * 60}")
     print(f"  Full vocab:   {t_full * 1000:>8.1f} ms/step")
     print(f"  Sliced vocab: {t_sliced * 1000:>8.1f} ms/step")
-    print(f"  Speedup:      {t_full / t_sliced:>8.2f}x")
+    print(f"  Speedup:      {t_full / max(t_sliced, 1e-9):>8.2f}x")
     print()
 
     # ================================================================
@@ -277,7 +282,7 @@ def benchmark(
     print("Breakdown: Output Matmul (forward only)")
     print(f"  Full vocab:   {t_mat_full * 1000:>8.2f} ms")
     print(f"  Sliced vocab: {t_mat_sliced * 1000:>8.2f} ms")
-    print(f"  Speedup:      {t_mat_full / t_mat_sliced:>8.0f}x")
+    print(f"  Speedup:      {t_mat_full / max(t_mat_sliced, 1e-9):>8.0f}x")
     print()
 
     # ================================================================
@@ -299,7 +304,7 @@ def benchmark(
     print("Breakdown: Cross-Entropy Loss")
     print(f"  Full vocab:   {t_ce_full * 1000:>8.2f} ms")
     print(f"  Sliced vocab: {t_ce_sliced * 1000:>8.2f} ms")
-    print(f"  Speedup:      {t_ce_full / t_ce_sliced:>8.0f}x")
+    print(f"  Speedup:      {t_ce_full / max(t_ce_sliced, 1e-9):>8.0f}x")
     print()
 
     # ================================================================
@@ -318,7 +323,7 @@ def benchmark(
         print("Peak GPU Memory")
         print(f"  Full vocab:   {mem_full:>8.0f} MB")
         print(f"  Sliced vocab: {mem_sliced:>8.0f} MB")
-        print(f"  Saved:        {mem_full - mem_sliced:>8.0f} MB ({(mem_full - mem_sliced) / mem_full * 100:.0f}%)")
+        print(f"  Saved:        {mem_full - mem_sliced:>8.0f} MB ({(mem_full - mem_sliced) / max(mem_full, 1e-9) * 100:.0f}%)")
         print()
 
 

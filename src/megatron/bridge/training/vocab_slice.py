@@ -43,7 +43,7 @@ See: https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/2473
 """
 
 import logging
-from typing import Optional
+from collections.abc import Callable
 
 import torch
 import torch.nn.functional as F
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 def collect_active_vocab_ids(
     dataset: Dataset,
-    max_samples: Optional[int] = None,
+    max_samples: int | None = None,
 ) -> torch.Tensor:
     """Scan an SFT dataset to collect unique token IDs that appear in answers.
 
@@ -95,10 +95,17 @@ def collect_active_vocab_ids(
                 for k in range(end - start - 1):
                     if loss_mask[start + k]:
                         active_ids.add(int(input_ids[start + k + 1]))
+        elif "loss_mask" in item:
+            # Standard dataset with explicit loss_mask: collect label IDs
+            # at positions where loss_mask > 0 (label at k is input_ids[k+1]).
+            loss_mask = item["loss_mask"]
+            for k in range(len(loss_mask)):
+                if loss_mask[k] and k + 1 < len(input_ids):
+                    active_ids.add(int(input_ids[k + 1]))
         else:
-            # Standard SFT dataset: answer tokens start at answer_start_idx.
-            # Labels are input_ids shifted by 1, so answer labels are
-            # input_ids[answer_start_idx:].
+            # Standard SFT dataset without per-item loss_mask (e.g., GPTSFTDataset
+            # computes loss_mask at collation time). Collect all tokens from
+            # answer_start_idx onwards -- a conservative superset.
             answer_start = item["answer_start_idx"]
             for token_id in input_ids[answer_start:]:
                 active_ids.add(int(token_id))
@@ -139,12 +146,20 @@ def install_vocab_slice(model: torch.nn.Module, active_ids: torch.Tensor) -> Non
     device = next(gpt_model.parameters()).device
     active_ids = active_ids.to(device)
 
+    if len(active_ids) > 0 and active_ids.max().item() >= vocab_size:
+        raise ValueError(
+            f"active_ids contains token ID {active_ids.max().item()} "
+            f">= vocab_size {vocab_size}"
+        )
+
     remap = torch.zeros(vocab_size, dtype=torch.long, device=device)
     remap[active_ids] = torch.arange(len(active_ids), dtype=torch.long, device=device)
 
     n_active = len(active_ids)
 
-    # 1. Patch output_layer to slice weight to active_ids rows
+    # 1. Patch output_layer to slice weight to active_ids rows.
+    # runtime_gather_output is part of the Megatron ColumnParallelLinear
+    # interface but unused here since we bypass the parallel output layer.
     def _sliced_output_forward(input_, weight=None, runtime_gather_output=None):
         if weight is not None:
             weight = weight[active_ids]
@@ -173,8 +188,8 @@ def install_vocab_slice(model: torch.nn.Module, active_ids: torch.Tensor) -> Non
 
 def create_vocab_sliced_forward_step(
     active_ids: torch.Tensor,
-    base_forward_step=None,
-):
+    base_forward_step: Callable | None = None,
+) -> Callable:
     """Create a forward_step wrapper that auto-installs vocab slicing.
 
     The vocab slice is installed lazily on the first call, when the model
@@ -201,13 +216,13 @@ def create_vocab_sliced_forward_step(
 
         base_forward_step = forward_step
 
-    installed = False
+    installed_model_id: int | None = None
 
     def _wrapper(state, data_iterator, model, return_schedule_plan=False):
-        nonlocal installed
-        if not installed:
+        nonlocal installed_model_id
+        if installed_model_id != id(model):
             install_vocab_slice(model, active_ids)
-            installed = True
+            installed_model_id = id(model)
         return base_forward_step(state, data_iterator, model, return_schedule_plan)
 
     return _wrapper

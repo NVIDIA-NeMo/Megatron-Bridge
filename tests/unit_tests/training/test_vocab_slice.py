@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,6 +29,7 @@ from torch.utils.data import Dataset
 # Import vocab_slice directly from file to avoid triggering the heavy
 # megatron.bridge.__init__ import chain (which requires transformer_engine etc.)
 _module_path = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "training" / "vocab_slice.py"
+assert _module_path.exists(), f"vocab_slice.py not found at {_module_path}"
 _spec = importlib.util.spec_from_file_location("vocab_slice", _module_path)
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["megatron.bridge.training.vocab_slice"] = _mod
@@ -83,6 +85,7 @@ class FakeGPTModel(nn.Module):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestCollectActiveVocabIds:
     def test_standard_sft_dataset(self):
         """Test collecting active IDs from standard (non-packed) SFT examples."""
@@ -100,32 +103,36 @@ class TestCollectActiveVocabIds:
 
     def test_packed_dataset(self):
         """Test collecting active IDs from packed SFT examples."""
-        # Packed example with 2 sub-sequences:
-        # Sub-seq 0: boundaries [0, 5], loss_mask active at positions 3,4
-        #   -> labels at positions 3,4 are input_ids[4] and input_ids[5-1=4]
-        # Sub-seq 1: boundaries [5, 8], loss_mask active at position 5,6
+        # Two sub-sequences packed together.
+        # Sub-seq 0 (boundaries [0,5]): loss_mask[3]=1 -> label is input_ids[4]=8
+        # Sub-seq 1 (boundaries [5,8]): loss_mask[6]=1 -> label is input_ids[7]=13
         examples = [
             {
                 "input_ids": [100, 200, 300, 7, 8, 500, 12, 13],
                 "seq_boundaries": [0, 5, 8],
                 "loss_mask": [0, 0, 0, 1, 0, 0, 1, 0],
-                # Sub-seq 0: labels = input_ids[1:5] = [200, 300, 7, 8]
-                #   loss_mask[0:4] = [0, 0, 0, 1] -> active label = input_ids[3+1]=8? No...
-                # Wait, let me recalculate:
-                # Sub-seq 0: start=0, end=5, range(4):
-                #   k=0: loss_mask[0]=0, skip
-                #   k=1: loss_mask[1]=0, skip
-                #   k=2: loss_mask[2]=0, skip
-                #   k=3: loss_mask[3]=1 -> input_ids[0+3+1]=input_ids[4]=8
-                # Sub-seq 1: start=5, end=8, range(2):
-                #   k=0: loss_mask[5]=0, skip
-                #   k=1: loss_mask[6]=1 -> input_ids[5+1+1]=input_ids[7]=13
             }
         ]
         ds = FakeSFTDataset(examples)
         active_ids = collect_active_vocab_ids(ds)
 
         expected = torch.tensor([8, 13], dtype=torch.long)
+        assert torch.equal(active_ids, expected)
+
+    def test_standard_sft_dataset_with_loss_mask(self):
+        """Test that loss_mask is used when available in standard dataset items."""
+        examples = [
+            {
+                "input_ids": [100, 200, 5, 10, 15],
+                # loss_mask[k]=1 means label at input_ids[k+1] is active
+                "loss_mask": [0, 0, 1, 1, 0],
+                # Active labels: input_ids[3]=10 (k=2), input_ids[4]=15 (k=3)
+            },
+        ]
+        ds = FakeSFTDataset(examples)
+        active_ids = collect_active_vocab_ids(ds)
+
+        expected = torch.tensor([10, 15], dtype=torch.long)
         assert torch.equal(active_ids, expected)
 
     def test_max_samples_limit(self):
@@ -165,6 +172,7 @@ class TestCollectActiveVocabIds:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestInstallVocabSlice:
     def test_logits_shape_reduced(self):
         """Test that output logits have reduced vocab dimension."""
@@ -262,6 +270,16 @@ class TestInstallVocabSlice:
         logits, _ = inner_model.output_layer(hidden, weight=inner_model.shared_embedding_or_output_weight())
         assert logits.shape[-1] == 3
 
+    def test_active_ids_out_of_bounds(self):
+        """Test that active_ids >= vocab_size raises ValueError."""
+        vocab_size = 50
+        hidden_size = 8
+        model = FakeGPTModel(vocab_size, hidden_size)
+
+        active_ids = torch.tensor([1, 2, 999])  # 999 >= vocab_size
+        with pytest.raises(ValueError, match="active_ids contains token ID"):
+            install_vocab_slice(model, active_ids)
+
     def test_without_shared_weight(self):
         """Test that output_layer works when weight is not passed (uses shared weight)."""
         vocab_size = 50
@@ -282,6 +300,7 @@ class TestInstallVocabSlice:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestCreateVocabSlicedForwardStep:
     def test_wraps_base_forward_step(self):
         """Test that the wrapper calls the base forward_step."""
@@ -294,12 +313,13 @@ class TestCreateVocabSlicedForwardStep:
 
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice") as mock_install:
+        with patch.object(_mod, "install_vocab_slice") as mock_install:
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_forward_step)
 
-            # Call twice
-            fwd(None, None, MagicMock())
-            fwd(None, None, MagicMock())
+            # Call twice with same model
+            model = MagicMock()
+            fwd(None, None, model)
+            fwd(None, None, model)
 
         assert call_count == 2, "Base forward_step should be called each time"
         assert mock_install.call_count == 1, "install_vocab_slice should only be called once"
@@ -308,7 +328,7 @@ class TestCreateVocabSlicedForwardStep:
         """Test that vocab slice is installed on first call and not subsequent ones."""
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice") as mock_install:
+        with patch.object(_mod, "install_vocab_slice") as mock_install:
             mock_base = MagicMock(return_value=(torch.tensor(0.0), None))
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_base)
 
@@ -319,6 +339,24 @@ class TestCreateVocabSlicedForwardStep:
 
         # install called exactly once, with the model from the first call
         mock_install.assert_called_once_with(model, active_ids)
+
+    def test_reinstalls_on_model_change(self):
+        """Test that vocab slice is re-installed when model identity changes."""
+        active_ids = torch.tensor([1, 2, 3])
+
+        with patch.object(_mod, "install_vocab_slice") as mock_install:
+            mock_base = MagicMock(return_value=(torch.tensor(0.0), None))
+            fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_base)
+
+            model_a = MagicMock()
+            model_b = MagicMock()
+            fwd(None, None, model_a)
+            fwd(None, None, model_a)  # Same model, no re-install
+            fwd(None, None, model_b)  # Different model, re-install
+
+        assert mock_install.call_count == 2
+        mock_install.assert_any_call(model_a, active_ids)
+        mock_install.assert_any_call(model_b, active_ids)
 
     def test_passes_all_arguments(self):
         """Test that all arguments are forwarded to the base forward_step."""
@@ -333,7 +371,7 @@ class TestCreateVocabSlicedForwardStep:
 
         active_ids = torch.tensor([1, 2, 3])
 
-        with patch("megatron.bridge.training.vocab_slice.install_vocab_slice"):
+        with patch.object(_mod, "install_vocab_slice"):
             fwd = create_vocab_sliced_forward_step(active_ids, base_forward_step=mock_forward_step)
 
             state = MagicMock()
@@ -352,6 +390,7 @@ class TestCreateVocabSlicedForwardStep:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestEndToEnd:
     def test_sliced_logits_match_full_for_active_tokens(self):
         """End-to-end: sliced logits exactly match full logits for active token positions."""
