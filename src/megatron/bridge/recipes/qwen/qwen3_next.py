@@ -19,6 +19,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.qwen.qwen_provider import Qwen3NextMambaModelProvider80B_A3B
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
@@ -118,9 +119,14 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(
-        load_weights=False
+    # Model config - using MambaModel with GDN layers
+    cfg.model = Qwen3NextMambaModelProvider80B_A3B(
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=4,
+        pipeline_dtype=torch.bfloat16,
+        virtual_pipeline_model_parallel_size=None,
+        context_parallel_size=1,
+        sequence_parallel=False,
     )
 
     # Tokenizer
@@ -132,15 +138,9 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg.dataset.mmap_bin_files = False  # Qwen3-Next specific setting
 
     # Parallelism settings (MoE-specific: includes expert_model_parallel_size)
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.pipeline_dtype = torch.bfloat16
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = False
     cfg.model.seq_length = 4096
     cfg.model.init_method_std = 0.02
 
