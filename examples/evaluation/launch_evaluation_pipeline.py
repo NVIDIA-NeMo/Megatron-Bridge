@@ -42,11 +42,9 @@ except (ImportError, ModuleNotFoundError):
 try:
     from argument_parser import parse_cli_args
     from utils.executors import kuberay_executor, slurm_executor
-    from utils.utils import NUM_GPUS_PER_NODE_MAP
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.executors import kuberay_executor, slurm_executor
-    from .utils.utils import NUM_GPUS_PER_NODE_MAP
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -82,19 +80,12 @@ class CustomJobDetailsRay(SlurmJobDetails):
 def main(args):
     """Deploys the inference and evaluation server with NemoRun."""
 
-    gpus_per_node = args.gpus_per_node
-    if gpus_per_node is None:
-        if args.gpu in NUM_GPUS_PER_NODE_MAP:
-            gpus_per_node = NUM_GPUS_PER_NODE_MAP[args.gpu]
-        else:
-            gpus_per_node = 8
-
     if not args.dgxc_cluster:
         executor = slurm_executor(
             account=args.account,
             partition=args.partition,
-            nodes=-(args.num_gpus // -gpus_per_node),
-            num_gpus_per_node=gpus_per_node,
+            nodes=-(args.num_gpus // -args.gpus_per_node),
+            num_gpus_per_node=args.gpus_per_node,
             time_limit=args.time_limit,
             container_image=args.container_image,
             custom_mounts=args.custom_mounts,
@@ -103,8 +94,8 @@ def main(args):
         )
     else:
         executor = kuberay_executor(
-            nodes=-(args.num_gpus // -gpus_per_node),
-            num_gpus_per_node=gpus_per_node,
+            nodes=-(args.num_gpus // -args.gpus_per_node),
+            num_gpus_per_node=args.gpus_per_node,
             dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
             dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
             custom_env_vars=args.custom_env_vars,
