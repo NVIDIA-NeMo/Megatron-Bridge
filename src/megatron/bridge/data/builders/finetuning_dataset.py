@@ -106,8 +106,6 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size <= 0:
             return
 
-        from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
-
         self._prepare_packed_split(
             split_name="training",
             packed_path=self.train_path_packed,

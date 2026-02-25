@@ -21,12 +21,11 @@ and the validate_row helper.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
+
 
 # Optional dependency — skip the entire module when pyarrow is missing.
 pa = pytest.importorskip("pyarrow")
@@ -42,6 +41,7 @@ from megatron.bridge.data.datasets.packed_parquet import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_tokenizer_mock():
     """Return a minimal tokenizer mock sufficient for GPTSFTPackedDataset."""
@@ -83,6 +83,7 @@ def _write_parquet(path: str | Path, rows: list[dict], row_group_size: int = 500
 # Tests: is_packed_parquet_file
 # ---------------------------------------------------------------------------
 
+
 class TestIsPackedParquetFile:
     def test_direct_idx_parquet(self):
         assert is_packed_parquet_file("data.idx.parquet") is True
@@ -103,6 +104,7 @@ class TestIsPackedParquetFile:
 # ---------------------------------------------------------------------------
 # Tests: _resolve_parquet_paths
 # ---------------------------------------------------------------------------
+
 
 class TestResolveParquetPaths:
     def test_single_file(self, tmp_path):
@@ -137,6 +139,7 @@ class TestResolveParquetPaths:
 # ---------------------------------------------------------------------------
 # Tests: GPTSFTPackedParquetDataset
 # ---------------------------------------------------------------------------
+
 
 def _make_dataset(file_path, max_num_samples=None, **kwargs):
     """Construct a GPTSFTPackedParquetDataset with minimal config."""

@@ -37,10 +37,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+
 
 if TYPE_CHECKING:
     from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -174,13 +174,9 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
                     if hasattr(msc_parent_path, "glob"):
                         paths = [str(p) for p in msc_parent_path.glob(pattern)]
                     else:
-                        raise ValueError(
-                            f"MSC backend does not support glob operations for pattern: {path_str}"
-                        )
+                        raise ValueError(f"MSC backend does not support glob operations for pattern: {path_str}")
                 else:
-                    raise ValueError(
-                        f"MSC backend does not support glob operations for pattern: {path_str}"
-                    )
+                    raise ValueError(f"MSC backend does not support glob operations for pattern: {path_str}")
         else:
             paths = glob.glob(path_str)
 
@@ -190,8 +186,7 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
 
         if not paths:
             raise ValueError(
-                f"No Parquet files found matching pattern: {path_str}. "
-                f"Files must end with .parquet or .pq"
+                f"No Parquet files found matching pattern: {path_str}. Files must end with .parquet or .pq"
             )
         return paths
 
@@ -221,10 +216,7 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
         paths = sorted(set(paths))
 
         if not paths:
-            raise ValueError(
-                f"No Parquet files found in directory: {path_str}. "
-                f"Files must end with .parquet or .pq"
-            )
+            raise ValueError(f"No Parquet files found in directory: {path_str}. Files must end with .parquet or .pq")
         return paths
 
     # Single file - verify it exists
@@ -278,11 +270,13 @@ def write_packed_parquet(
     """
     pa, pq = _lazy_import_pyarrow()
 
-    table = pa.table({
-        "input_ids": [row["input_ids"] for row in rows],
-        "loss_mask": [row["loss_mask"] for row in rows],
-        "seq_start_id": [row["seq_start_id"] for row in rows],
-    })
+    table = pa.table(
+        {
+            "input_ids": [row["input_ids"] for row in rows],
+            "loss_mask": [row["loss_mask"] for row in rows],
+            "seq_start_id": [row["seq_start_id"] for row in rows],
+        }
+    )
 
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
@@ -388,9 +382,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
         # Resolve file paths
         self._parquet_paths = _resolve_parquet_paths(self._file_path_spec)
 
-        logger.info(
-            f"Resolved {len(self._parquet_paths)} packed Parquet file(s) from: {self._file_path_spec}"
-        )
+        logger.info(f"Resolved {len(self._parquet_paths)} packed Parquet file(s) from: {self._file_path_spec}")
 
         # Build cumulative offsets
         self._file_offsets = [0]
@@ -431,9 +423,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             # Build row group offsets for this file
             row_group_offsets = [0]
             for i in range(metadata.num_row_groups):
-                row_group_offsets.append(
-                    row_group_offsets[-1] + metadata.row_group(i).num_rows
-                )
+                row_group_offsets.append(row_group_offsets[-1] + metadata.row_group(i).num_rows)
             self._file_row_group_offsets.append(row_group_offsets)
 
             # Update cumulative file offset
@@ -441,21 +431,17 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             self._file_offsets.append(self._file_offsets[-1] + file_rows)
 
             logger.debug(
-                f"  File {file_idx}: {parquet_path}, "
-                f"{file_rows} rows in {metadata.num_row_groups} row groups"
+                f"  File {file_idx}: {parquet_path}, {file_rows} rows in {metadata.num_row_groups} row groups"
             )
 
         self._num_rows = self._file_offsets[-1]
 
         # Validate dataset is not empty
         if self._num_rows == 0:
-            raise ValueError(
-                f"Packed Parquet dataset is empty (0 rows) for path: {self._file_path_spec}"
-            )
+            raise ValueError(f"Packed Parquet dataset is empty (0 rows) for path: {self._file_path_spec}")
 
         logger.info(
-            f"Loaded packed Parquet dataset: {self._num_rows} total rows "
-            f"across {len(self._parquet_paths)} file(s)"
+            f"Loaded packed Parquet dataset: {self._num_rows} total rows across {len(self._parquet_paths)} file(s)"
         )
 
     @staticmethod
@@ -475,9 +461,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             ValueError: If any invariant is violated.
         """
         if len(loss_mask) != len(input_ids):
-            raise ValueError(
-                f"Row {idx}: loss_mask length ({len(loss_mask)}) != input_ids length ({len(input_ids)})"
-            )
+            raise ValueError(f"Row {idx}: loss_mask length ({len(loss_mask)}) != input_ids length ({len(input_ids)})")
 
         if not seq_start_id or seq_start_id[0] != 0:
             raise ValueError(
@@ -486,13 +470,10 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
 
         for i, start in enumerate(seq_start_id):
             if start >= len(input_ids):
-                raise ValueError(
-                    f"Row {idx}: seq_start_id[{i}]={start} >= len(input_ids)={len(input_ids)}"
-                )
+                raise ValueError(f"Row {idx}: seq_start_id[{i}]={start} >= len(input_ids)={len(input_ids)}")
             if i > 0 and start < seq_start_id[i - 1]:
                 raise ValueError(
-                    f"Row {idx}: seq_start_id is not non-decreasing at index {i}: "
-                    f"{seq_start_id[i - 1]} > {start}"
+                    f"Row {idx}: seq_start_id is not non-decreasing at index {i}: {seq_start_id[i - 1]} > {start}"
                 )
 
     def _ensure_reader(self, file_idx: int):
@@ -520,10 +501,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
                 self._parquet_files[file_idx] = (pf, handle)
             else:
                 # MVP fallback: load entire file into memory for non-seekable streams
-                logger.warning(
-                    f"MSC stream is not seekable, loading entire Parquet file into memory: "
-                    f"{parquet_path}"
-                )
+                logger.warning(f"MSC stream is not seekable, loading entire Parquet file into memory: {parquet_path}")
                 content = handle.read()
                 handle.close()
                 buffer = pyarrow.BufferReader(content)

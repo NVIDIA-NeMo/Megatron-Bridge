@@ -21,7 +21,6 @@ import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.packed_parquet import (
-    is_packed_parquet_file,
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
 )
@@ -119,7 +118,9 @@ def tokenize_dataset(
                     data[key] = val
             return
 
-        ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
+        def ceil_to_nearest(n, m):
+            return (n + m - 1) // m * m
+
         for data in dataset:
             max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
             pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id)
@@ -299,9 +300,7 @@ class PackedSequenceSpecs:
                 path_obj = Path(path_str)
 
             if not path_obj.exists():
-                raise FileNotFoundError(
-                    f"{attr_name} file does not exist: {path_str}"
-                )
+                raise FileNotFoundError(f"{attr_name} file does not exist: {path_str}")
             setattr(self, attr_name, path_obj)
             return
 
@@ -311,13 +310,9 @@ class PackedSequenceSpecs:
             try:
                 resolved_paths = resolve_packed_parquet_paths(path_str)
                 if len(resolved_paths) == 0:
-                    raise FileNotFoundError(
-                        f"{attr_name} resolved to no files: {path_str}"
-                    )
+                    raise FileNotFoundError(f"{attr_name} resolved to no files: {path_str}")
             except ValueError as e:
-                raise FileNotFoundError(
-                    f"{attr_name} could not be resolved: {path_str}. Error: {e}"
-                ) from e
+                raise FileNotFoundError(f"{attr_name} could not be resolved: {path_str}. Error: {e}") from e
 
             # Store the original string spec (not Path) to preserve globs
             # The dataset loader will handle resolution
