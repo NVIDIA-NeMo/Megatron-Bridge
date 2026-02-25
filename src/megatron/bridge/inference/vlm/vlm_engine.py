@@ -15,9 +15,9 @@
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.inference.common_inference_params import CommonInferenceParams
 from megatron.core.inference.engines.mcore_engine import MCoreEngine
 from megatron.core.inference.inference_request import InferenceRequest
+from megatron.core.inference.sampling_params import SamplingParams
 from PIL.Image import Image
 
 
@@ -29,7 +29,7 @@ class VLMEngine(MCoreEngine):
         self,
         prompts: List[str],
         images: Optional[List[Union[Image, List[Image]]]] = None,
-        common_inference_params: Optional[CommonInferenceParams] = None,
+        sampling_params: Optional[SamplingParams] = None,
     ) -> List[InferenceRequest]:
         # pylint: disable=C0115,C0116
         request_ids: List[str] = []
@@ -50,7 +50,7 @@ class VLMEngine(MCoreEngine):
                 prompt=prompt,
                 prompt_tokens=prompt_tokens,
                 encoder_prompt=image_dict,
-                inference_parameters=common_inference_params,
+                sampling_params=sampling_params,
             )
             request_ids.append(request_id)
 

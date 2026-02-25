@@ -47,6 +47,7 @@ class _Keys(str, Enum):
     PARTIAL = "_partial_"
     CALL = "_call_"
     ARGS = "_args_"
+    NAME = "_name_"
 
 
 def instantiate(

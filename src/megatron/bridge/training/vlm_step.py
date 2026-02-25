@@ -403,9 +403,11 @@ def forward_step(
 
     # Add packed sequence support
     if cu_seqlens is not None:
+        cu_seqlens_argmin = torch.tensor(len(cu_seqlens))  # no padding in cu_seqlens since packing is done in-batch
         packed_seq_params = {
             "cu_seqlens": cu_seqlens,
             "max_seqlen": max_seqlen,
+            "cu_seqlens_argmin": cu_seqlens_argmin,
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 

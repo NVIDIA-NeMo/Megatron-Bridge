@@ -58,6 +58,7 @@ def create_test_config(**kwargs):
         SchedulerConfig,
         TokenizerConfig,
         TrainingConfig,
+        ValidationConfig,
     )
 
     # Extract model-specific args
@@ -92,14 +93,16 @@ def create_test_config(**kwargs):
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             exit_signal_handler=False,
             exit_signal_handler_for_dataloader=False,
             manual_gc=False,
             manual_gc_interval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=2000,
+            eval_iters=32,
         ),
         optimizer=OptimizerConfig(
             optimizer="adam",
@@ -110,7 +113,7 @@ def create_test_config(**kwargs):
             fp16=False,
             adam_beta1=0.9,
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             use_distributed_optimizer=True,
             clip_grad=1.0,
         ),

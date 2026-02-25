@@ -225,7 +225,9 @@ class Ministral3Model(MegatronModule):
 
             if pixel_values is not None:
                 # Get image features using HF's method (monkey-patched)
-                image_features = self.get_image_features(pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes)
+                image_features = self.get_image_features(
+                    pixel_values.to(inputs_embeds.dtype), image_sizes=image_sizes
+                ).pooler_output
                 image_features = torch.cat(image_features, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
 
                 # Replace image tokens in text embeddings with image features

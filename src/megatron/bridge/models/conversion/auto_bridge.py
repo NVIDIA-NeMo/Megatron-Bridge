@@ -430,6 +430,8 @@ class AutoBridge(Generic[MegatronModelT]):
         source_path: Optional[Union[str, Path]] = None,
         strict: bool = True,
         merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -456,6 +458,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 the path will be automatically determined from the HuggingFace configuration.
             strict: Whether to perform strict validation during weight export
             merge_adapter_weights: Whether to gather/merge LoRA adapter weights into base tensors during export.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently. When False (default), only rank 0 performs
+                the save operation after gathering weights from all ranks.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+                This is useful for reducing I/O pressure when dealing with large-scale distributed
+                training. Only effective when distributed_save=True. Default is 1 (all ranks save).
 
 
         Example:
@@ -491,6 +500,8 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress,
             strict,
             merge_adapter_weights=merge_adapter_weights,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
         )
 
     def save_hf_weights(
@@ -500,6 +511,8 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         strict: bool = True,
         merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -521,6 +534,10 @@ class AutoBridge(Generic[MegatronModelT]):
             path: Directory path where weight files will be saved
             show_progress: Display progress bar during export
             merge_adapter_weights: Whether to gather/merge LoRA adapter weights into base tensors during export.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
 
         Raises:
             ValueError: If the state source doesn't support streaming save
@@ -556,7 +573,13 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
+            self.hf_pretrained.state.source.save_generator(
+                generator,
+                path,
+                strict=strict,
+                distributed_save=distributed_save,
+                save_every_n_ranks=save_every_n_ranks,
+            )
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
@@ -1020,7 +1043,14 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        bridge = model_bridge.get_model_bridge(self._causal_lm_architecture)
+        hf_config = getattr(self.hf_pretrained, "hf_config", None)
+        if hf_config is None:
+            if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+                hf_config = self.hf_pretrained.config
+            else:
+                hf_config = self.hf_pretrained
+
+        bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
         bridge.export_weight_dtype = self.export_weight_dtype
         return bridge
 

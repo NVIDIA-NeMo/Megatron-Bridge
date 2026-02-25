@@ -32,6 +32,7 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
 
 
 __all__ = [
+    "NemotronHBridge",
     "NemotronHModelProvider",
     "NemotronHModelProvider4B",
     "NemotronHModelProvider8B",

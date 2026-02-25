@@ -252,15 +252,15 @@ class TestNemotronNanoV2FinetuneRecipes:
         # Override to use smaller model for faster testing
         config.model.seq_length = seq_length
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 2
 
         # Calculate proper dataset splits
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
 
@@ -520,15 +520,15 @@ class TestNemotron3NanoFinetuneRecipes:
         # Override to use smaller model for faster testing
         config.model.seq_length = seq_length
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 2
 
         # Calculate proper dataset splits
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
 
