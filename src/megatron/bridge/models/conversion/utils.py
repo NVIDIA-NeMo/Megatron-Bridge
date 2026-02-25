@@ -282,3 +282,12 @@ def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tens
             if local_name not in getattr(mod, "_non_persistent_buffers_set", set()):
                 full_name = f"{mod_prefix + '.' if mod_prefix else ''}{local_name}"
                 yield full_name, buffer
+
+
+def is_modelopt_dynamic_module(module):
+    """Check if a module is a modelopt dynamic module."""
+    try:
+        from modelopt.torch.opt.dynamic import DynamicModule
+        return isinstance(module, DynamicModule)
+    except ImportError:
+        return False
