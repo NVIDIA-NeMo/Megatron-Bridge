@@ -454,7 +454,6 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         vp_stage: Optional[int] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
     ):
-        assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(
             config=config,
             spec=spec,
