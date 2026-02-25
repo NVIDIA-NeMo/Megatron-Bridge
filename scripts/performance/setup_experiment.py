@@ -31,12 +31,12 @@ try:
     from argument_parser import parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
-    from utils.utils import NUM_GPUS_PER_NODE_MAP, NUM_GPUS_PER_NODE_MAP, select_config_variant_interactive
+    from utils.utils import NUM_GPUS_PER_NODE_MAP, get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
-    from .utils.utils import get_exp_name_config, NUM_GPUS_PER_NODE_MAP, select_config_variant_interactive
+    from .utils.utils import NUM_GPUS_PER_NODE_MAP, get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
