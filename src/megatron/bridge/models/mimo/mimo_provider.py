@@ -107,6 +107,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     # Parallelism config (Bridge's value-add)
     mimo_parallelism_config: Optional[MimoParallelismConfig] = None
 
+    # Cached grids after build_model() - used by data loading
+    _grids: Optional[Dict[str, "HyperCommGrid"]] = field(default=None, repr=False)
+
     # Freezing options
     freeze_language_model: bool = False
     freeze_modality_encoders: Dict[str, bool] = field(default_factory=dict)
@@ -119,9 +122,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     use_cpu_initialization: bool = False
     init_model_with_meta_device: bool = False
     virtual_pipeline_model_parallel_size: Optional[int] = None
-
-    # Internal state
-    _cached_infra: Optional[MimoModelInfra] = field(default=None, repr=False)
 
     @property
     def tensor_model_parallel_size(self) -> int:
@@ -170,6 +170,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             grids = {}
             pg_collections = {}
             topology = {}
+
+        # Cache grids for later use (e.g., data loading)
+        object.__setattr__(self, "_grids", grids)
 
         participating_modules = [name for name, pg in pg_collections.items() if pg is not None]
 
@@ -395,6 +398,11 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
 
         if wrap_with_ddp and ddp_config is None:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
+
+        if use_megatron_fsdp or use_torch_fsdp2:
+            raise NotImplementedError(
+                "FSDP is not yet supported for MIMO models. Use DDP (wrap_with_ddp=True) instead."
+            )
 
         # Finalize parallelism config
         self.finalize()
