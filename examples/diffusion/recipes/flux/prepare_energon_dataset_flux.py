@@ -406,7 +406,7 @@ def _save_individual_sample(
         cv2.imwrite(str(sample_dir / "processed_image.jpg"), image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
 
-def main():
+def main():  # noqa: D103
     import argparse
 
     parser = argparse.ArgumentParser(

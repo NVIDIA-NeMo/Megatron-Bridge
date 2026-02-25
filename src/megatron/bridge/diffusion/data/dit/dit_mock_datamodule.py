@@ -18,9 +18,9 @@ from dataclasses import dataclass
 
 import torch
 from einops import rearrange
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from torch.utils.data import DataLoader, Dataset
 
+from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.dit.dit_taskencoder import PosID3D
 
 
@@ -38,7 +38,7 @@ class _MockDataset(Dataset):
         return {}
 
 
-def mock_batch(
+def mock_batch(  # noqa: D103
     F_latents: int,
     H_latents: int,
     W_latents: int,
@@ -121,7 +121,7 @@ def mock_batch(
 
 
 @dataclass(kw_only=True)
-class DiTMockDataModuleConfig(DatasetProvider):
+class DiTMockDataModuleConfig(DatasetProvider):  # noqa: D101
     path: str = ""
     seq_length: int
     packing_buffer_size: int

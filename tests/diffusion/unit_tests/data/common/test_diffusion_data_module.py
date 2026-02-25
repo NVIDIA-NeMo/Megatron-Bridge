@@ -23,7 +23,9 @@ def test_diffusion_data_module_config_initialization():
     """Test DiffusionDataModuleConfig initialization and default values."""
 
     # Mock the DiffusionDataModule to avoid actual dataset loading
-    with patch("megatron.bridge.diffusion.data.common.diffusion_energon_datamodule.DiffusionDataModule") as mock_data_module:
+    with patch(
+        "megatron.bridge.diffusion.data.common.diffusion_energon_datamodule.DiffusionDataModule"
+    ) as mock_data_module:
         # Setup the mock to return a mock dataset with seq_length attribute
         mock_dataset_instance = Mock()
         mock_dataset_instance.seq_length = 2048

@@ -16,6 +16,10 @@ from typing import Mapping
 
 import torch
 from diffusers import FluxTransformer2DModel
+
+from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
+from megatron.bridge.diffusion.models.flux.flux_model import Flux
+from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -23,10 +27,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
-
-from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
-from megatron.bridge.diffusion.models.flux.flux_model import Flux
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 
 
 @MegatronModelBridge.register_bridge(source=FluxTransformer2DModel, target=Flux)
@@ -231,7 +231,7 @@ class FluxBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
 
-class SplitRowParallelMapping(RowParallelMapping):
+class SplitRowParallelMapping(RowParallelMapping):  # noqa: D101
     def __init__(self, megatron_param: str, hf_param: str):
         super().__init__(megatron_param, hf_param)
         self.allow_hf_name_mismatch = True

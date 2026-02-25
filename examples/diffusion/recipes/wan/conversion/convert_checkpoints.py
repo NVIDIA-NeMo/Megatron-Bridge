@@ -53,15 +53,15 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+
 from megatron.bridge import AutoBridge
+from megatron.bridge.diffusion.conversion.wan.wan_bridge import WanBridge
+from megatron.bridge.diffusion.conversion.wan.wan_hf_pretrained import PreTrainedWAN
 from megatron.bridge.training.model_load_save import (
     load_megatron_model,
     save_megatron_model,
     temporary_distributed_context,
 )
-
-from megatron.bridge.diffusion.conversion.wan.wan_bridge import WanBridge
-from megatron.bridge.diffusion.conversion.wan.wan_hf_pretrained import PreTrainedWAN
 
 
 def validate_path(path: str, must_exist: bool = False) -> Path:

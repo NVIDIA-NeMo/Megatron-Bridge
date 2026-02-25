@@ -43,7 +43,7 @@ class Wan3DRopeEmbeddings(torch.nn.Module):
         return freqs
 
     def forward(self, n_head, dim_head, cu_seqlens_q_padded, grid_sizes, device):
-        n, c = n_head, dim_head // 2
+        _, c = n_head, dim_head // 2
 
         # split freqs
         freqs = self.freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)

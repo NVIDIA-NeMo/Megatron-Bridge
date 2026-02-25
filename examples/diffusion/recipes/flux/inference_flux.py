@@ -19,7 +19,7 @@ import torch
 import torch.distributed as dist
 
 
-def parse_args():
+def parse_args():  # noqa: D103
     parser = argparse.ArgumentParser(description="FLUX inference")
     parser.add_argument("--flux_ckpt", type=str, required=True, help="Path to FLUX checkpoint")
     parser.add_argument("--vae_ckpt", type=str, default=None, help="Path to VAE")
@@ -41,14 +41,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main():  # noqa: D103
     args = parse_args()
 
     # Initialize megatron parallel state
     rank = int(os.getenv("RANK", 0))
     world_size = int(os.getenv("WORLD_SIZE", 1))
     local_rank = int(os.getenv("LOCAL_RANK", 0))
-    device = local_rank
     if world_size > 1:
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)

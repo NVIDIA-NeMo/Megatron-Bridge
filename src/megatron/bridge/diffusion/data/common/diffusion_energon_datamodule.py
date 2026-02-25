@@ -19,16 +19,16 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Literal
 
-from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.energon import DefaultTaskEncoder, get_train_dataset
 from torch import int_repr
 
+from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
+from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.dit.dit_taskencoder import DiTTaskEncoder
 
 
 @dataclass(kw_only=True)
-class DiffusionDataModuleConfig(DatasetProvider):
+class DiffusionDataModuleConfig(DatasetProvider):  # noqa: D101
     path: str
     seq_length: int
     micro_batch_size: int

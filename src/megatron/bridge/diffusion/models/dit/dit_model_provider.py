@@ -16,13 +16,13 @@ import logging
 from dataclasses import dataclass
 
 import torch
-from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.core import parallel_state
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.diffusion.common.utils.dynamic_import import dynamic_import
 from megatron.bridge.diffusion.models.dit.dit_model import DiTCrossAttentionModel
+from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,9 @@ class DiTModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):
 
     bf16: bool = True
     params_dtype: torch.dtype = torch.bfloat16
-    vae_module: str = "megatron.bridge.diffusion.common.tokenizers.cosmos.cosmos1.causal_video_tokenizer.CausalVideoTokenizer"
+    vae_module: str = (
+        "megatron.bridge.diffusion.common.tokenizers.cosmos.cosmos1.causal_video_tokenizer.CausalVideoTokenizer"
+    )
     vae_name: str = "Cosmos-0.1-Tokenizer-CV4x8x8"
     vae_cache_folder: str = None
     sigma_data: float = 0.5

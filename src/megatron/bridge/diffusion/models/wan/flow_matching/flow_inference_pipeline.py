@@ -28,7 +28,6 @@ import torch.distributed as dist
 from diffusers import AutoencoderKLWan
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.schedulers.scheduling_unipc_multistep import UniPCMultistepScheduler
-from megatron.bridge.training.model_load_save import load_megatron_model as _load_megatron_model
 from megatron.core import parallel_state
 from megatron.core.inference.communication_utils import (
     broadcast_from_last_pipeline_stage,
@@ -42,6 +41,7 @@ from transformers import AutoTokenizer, UMT5EncoderModel
 
 from megatron.bridge.diffusion.models.wan.utils import grid_sizes_calculation, patchify, unpatchify
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
+from megatron.bridge.training.model_load_save import load_megatron_model as _load_megatron_model
 
 
 @torch.no_grad()
@@ -68,7 +68,7 @@ def _encode_text(
     return outputs
 
 
-class FlowInferencePipeline:
+class FlowInferencePipeline:  # noqa: D101
     def __init__(
         self,
         inference_cfg,

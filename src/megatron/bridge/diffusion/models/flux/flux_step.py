@@ -19,13 +19,13 @@ from functools import lru_cache, partial
 from typing import Iterable
 
 import torch
-from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.state import GlobalState
 from megatron.core import parallel_state
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.diffusion.models.flux.flow_matching.flux_inference_pipeline import FlowMatchEulerDiscreteScheduler
+from megatron.bridge.training.losses import masked_next_token_loss
+from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)

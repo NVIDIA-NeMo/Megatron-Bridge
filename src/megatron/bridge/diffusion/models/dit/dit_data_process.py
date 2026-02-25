@@ -17,7 +17,7 @@ from megatron.core import parallel_state as ps
 from megatron.core.packed_seq_params import PackedSeqParams
 
 
-def dit_data_step(qkv_format, dataloader_iter):
+def dit_data_step(qkv_format, dataloader_iter):  # noqa: D103
     batch = next(dataloader_iter)
     batch["is_preprocessed"] = True  # assume data is preprocessed
     batch = {k: v.to(device="cuda", non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
@@ -26,7 +26,7 @@ def dit_data_step(qkv_format, dataloader_iter):
     return batch
 
 
-def encode_seq_length(batch, format):
+def encode_seq_length(batch, format):  # noqa: D103
     if ("seq_len_q" in batch) and ("seq_len_kv" in batch):
         zero = torch.zeros([1], dtype=torch.int32, device="cuda")
 

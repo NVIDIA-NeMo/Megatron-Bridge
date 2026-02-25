@@ -164,7 +164,6 @@ def test_flux_safetensors_state_source_save_generator(monkeypatch, tmp_path):
             return "success"
 
     # Temporarily replace SafeTensorsStateSource for testing
-    original_base = flux_hf_module.SafeTensorsStateSource
     monkeypatch.setattr(flux_hf_module, "SafeTensorsStateSource", FakeParentClass)
 
     # Need to recreate the class with the new base

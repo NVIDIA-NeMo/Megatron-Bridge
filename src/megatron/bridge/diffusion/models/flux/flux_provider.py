@@ -17,12 +17,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
-from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.transformer.utils import openai_gelu
 
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
+from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 
 
 logger = logging.getLogger(__name__)

@@ -16,7 +16,7 @@ import imageio
 import numpy as np
 
 
-def save_video(
+def save_video(  # noqa: D103
     grid: np.ndarray,
     fps: int,
     H: int,

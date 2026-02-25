@@ -16,11 +16,11 @@ import os
 import tempfile
 
 import pytest
-from megatron.bridge.training.config import ConfigContainer
 
 from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.diffusion.recipes.flux.flux import model_config, pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = [pytest.mark.unit]

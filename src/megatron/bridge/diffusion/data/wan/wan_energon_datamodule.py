@@ -16,15 +16,18 @@
 
 from dataclasses import dataclass
 
-from megatron.bridge.data.utils import DatasetBuildContext
 from torch import int_repr
 
-from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import DiffusionDataModule, DiffusionDataModuleConfig
+from megatron.bridge.data.utils import DatasetBuildContext
+from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import (
+    DiffusionDataModule,
+    DiffusionDataModuleConfig,
+)
 from megatron.bridge.diffusion.data.wan.wan_taskencoder import WanTaskEncoder
 
 
 @dataclass(kw_only=True)
-class WanDataModuleConfig(DiffusionDataModuleConfig):
+class WanDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
     path: str
     seq_length: int
     packing_buffer_size: int

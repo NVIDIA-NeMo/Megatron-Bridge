@@ -24,17 +24,17 @@ from functools import partial
 from typing import Iterable
 
 import torch
-from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.state import GlobalState
+
+# Import automodel pipeline components
+from dfm.src.automodel.flow_matching.flow_matching_pipeline import FlowMatchingPipeline
 from megatron.core import parallel_state
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.utils import get_model_config
 
-# Import automodel pipeline components
-from dfm.src.automodel.flow_matching.flow_matching_pipeline import FlowMatchingPipeline
-
 # Import MegatronFluxAdapter from flow_matching module
 from megatron.bridge.diffusion.models.flux.flow_matching.flux_adapter import MegatronFluxAdapter
+from megatron.bridge.training.losses import masked_next_token_loss
+from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ class FluxForwardStepWithAutomodel:
         timers = state.timers
         straggler_timer = state.straggler_timer
 
-        config = get_model_config(model)
+        config = get_model_config(model)  # noqa: F841
 
         timers("batch-generator", log_level=2).start()
 

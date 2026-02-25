@@ -164,10 +164,6 @@ def test_flux_provider_virtual_pipeline_validation_fails(monkeypatch):
         pipeline_model_parallel_size=2,
     )
 
-    total_layers = provider.num_joint_layers + provider.num_single_layers
-    p_size = provider.pipeline_model_parallel_size
-    vp_size = provider.virtual_pipeline_model_parallel_size
-
     # Should fail: (30 // 2) % 3 == 15 % 3 == 0 ✓ (actually this passes)
     # Let's create a failing case: (10 // 2) % 3 == 5 % 3 == 2 ≠ 0
     provider.num_joint_layers = 5

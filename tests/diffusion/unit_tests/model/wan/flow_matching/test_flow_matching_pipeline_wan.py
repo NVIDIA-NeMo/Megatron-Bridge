@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-
 from dfm.src.automodel.flow_matching.adapters.base import FlowMatchingContext
+
 from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan import (
     WanAdapter,
     WanFlowMatchingPipeline,
@@ -56,7 +56,9 @@ class TestWanAdapter:
         return ctx
 
     def test_prepare_inputs_no_cp(self, adapter, context):
-        with patch("megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state") as mock_ps:
+        with patch(
+            "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state"
+        ) as mock_ps:
             mock_ps.get_context_parallel_world_size.return_value = 1
 
             inputs = adapter.prepare_inputs(context)
@@ -83,7 +85,9 @@ class TestWanAdapter:
 
     def test_prepare_inputs_with_cp(self, adapter, context):
         with (
-            patch("megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state") as mock_ps,
+            patch(
+                "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state"
+            ) as mock_ps,
             patch(
                 "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.thd_split_inputs_cp"
             ) as mock_split,
@@ -158,7 +162,9 @@ class TestWanFlowMatchingPipeline:
             patch(
                 "dfm.src.automodel.flow_matching.flow_matching_pipeline.FlowMatchingPipeline.compute_loss"
             ) as mock_super_loss,
-            patch("megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state") as mock_ps,
+            patch(
+                "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state"
+            ) as mock_ps,
         ):
             mock_ps.get_context_parallel_world_size.return_value = 1
             mock_super_loss.return_value = (1, 2, 3, 4, 5, batch["loss_mask"])
@@ -185,7 +191,9 @@ class TestWanFlowMatchingPipeline:
             patch(
                 "dfm.src.automodel.flow_matching.flow_matching_pipeline.FlowMatchingPipeline.compute_loss"
             ) as mock_super_loss,
-            patch("megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state") as mock_ps,
+            patch(
+                "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state"
+            ) as mock_ps,
             patch(
                 "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.thd_split_inputs_cp"
             ) as mock_split,

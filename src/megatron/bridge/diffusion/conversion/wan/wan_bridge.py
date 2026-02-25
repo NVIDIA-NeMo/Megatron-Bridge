@@ -14,6 +14,10 @@
 
 import torch
 from diffusers import WanTransformer3DModel
+
+from megatron.bridge.diffusion.conversion.wan.wan_hf_pretrained import PreTrainedWAN
+from megatron.bridge.diffusion.models.wan.wan_model import WanModel
+from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -23,10 +27,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
-
-from megatron.bridge.diffusion.conversion.wan.wan_hf_pretrained import PreTrainedWAN
-from megatron.bridge.diffusion.models.wan.wan_model import WanModel
-from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=WanTransformer3DModel, target=WanModel)

@@ -49,7 +49,7 @@ from megatron.bridge.diffusion.models.common.normalization import RMSNorm
 
 
 @dataclass
-class DiTWithAdaLNSubmodules(TransformerLayerSubmodules):
+class DiTWithAdaLNSubmodules(TransformerLayerSubmodules):  # noqa: D101
     full_self_attention: Union[ModuleSpec, type] = IdentityOp
 
 
@@ -226,7 +226,7 @@ class DiTLayerWithAdaLN(TransformerLayer):
         return output, context
 
 
-def get_dit_adaln_block_with_transformer_engine_spec() -> ModuleSpec:
+def get_dit_adaln_block_with_transformer_engine_spec() -> ModuleSpec:  # noqa: D103
     params = {"attn_mask_type": AttnMaskType.padding}
     return ModuleSpec(
         module=DiTLayerWithAdaLN,

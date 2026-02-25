@@ -19,19 +19,19 @@ from typing import Callable
 
 import torch
 import torch.nn.functional as F
-from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.core import parallel_state
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 
 from megatron.bridge.diffusion.models.wan.wan_model import WanModel
+from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):
+class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # noqa: D101
     crossattn_emb_size: int = 1536  # cross attention emebedding size after linear projection
     add_bias_linear: bool = True
     gated_linear_unit: bool = False

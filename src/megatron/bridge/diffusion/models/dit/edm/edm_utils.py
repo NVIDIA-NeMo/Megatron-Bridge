@@ -23,7 +23,7 @@ from torch import nn
 from tqdm import tqdm
 
 
-class EDMScaling:
+class EDMScaling:  # noqa: D101
     def __init__(self, sigma_data: float = 0.5):
         self.sigma_data = sigma_data
 
@@ -35,7 +35,7 @@ class EDMScaling:
         return c_skip, c_out, c_in, c_noise
 
 
-class EDMSDE:
+class EDMSDE:  # noqa: D101
     def __init__(
         self,
         p_mean: float = -1.2,

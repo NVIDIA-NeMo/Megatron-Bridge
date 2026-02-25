@@ -34,7 +34,7 @@ def rand_name(length=8, suffix=""):
     return name
 
 
-def cache_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize=True, value_range=(-1, 1), retry=5):
+def cache_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize=True, value_range=(-1, 1), retry=5):  # noqa: D103
     # cache file
     cache_file = osp.join("/tmp", rand_name(suffix=suffix)) if save_file is None else save_file
 
@@ -67,21 +67,19 @@ def cache_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize
         return None
 
 
-def cache_image(tensor, save_file, nrow=8, normalize=True, value_range=(-1, 1), retry=5):
+def cache_image(tensor, save_file, nrow=8, normalize=True, value_range=(-1, 1), retry=5):  # noqa: D103
     # cache file
     suffix = osp.splitext(save_file)[1]
     if suffix.lower() not in [".jpg", ".jpeg", ".png", ".tiff", ".gif", ".webp"]:
         suffix = ".png"
 
     # save to cache
-    error = None
     for _ in range(retry):
         try:
             tensor = tensor.clamp(min(value_range), max(value_range))
             torchvision.utils.save_image(tensor, save_file, nrow=nrow, normalize=normalize, value_range=value_range)
             return save_file
-        except Exception as e:
-            error = e
+        except Exception:
             continue
 
 

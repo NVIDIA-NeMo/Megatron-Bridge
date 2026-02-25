@@ -16,6 +16,10 @@ import os
 from typing import List, Optional, Union
 
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig
+
+from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
+from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -28,10 +32,6 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
-from megatron.core.distributed import DistributedDataParallelConfig
-
-from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 
 
 def model_config(

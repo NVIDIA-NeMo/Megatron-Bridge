@@ -46,7 +46,7 @@ from megatron.bridge.diffusion.models.common.dit_attention import (
 
 
 @dataclass
-class WanWithAdaLNSubmodules(TransformerLayerSubmodules):
+class WanWithAdaLNSubmodules(TransformerLayerSubmodules):  # noqa: D101
     temporal_self_attention: Union[ModuleSpec, type] = IdentityOp
     full_self_attention: Union[ModuleSpec, type] = IdentityOp
     norm1: Union[ModuleSpec, type] = None
@@ -263,7 +263,7 @@ class WanLayerWithAdaLN(TransformerLayer):
         return output, context
 
 
-def get_wan_block_with_transformer_engine_spec() -> ModuleSpec:
+def get_wan_block_with_transformer_engine_spec() -> ModuleSpec:  # noqa: D103
     params = {"attn_mask_type": AttnMaskType.padding}
     return ModuleSpec(
         module=WanLayerWithAdaLN,

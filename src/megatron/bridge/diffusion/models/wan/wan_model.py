@@ -38,7 +38,7 @@ from megatron.bridge.diffusion.models.wan.wan_layer_spec import (
 from .rope_utils import Wan3DRopeEmbeddings
 
 
-def sinusoidal_embedding_1d(dim, position):
+def sinusoidal_embedding_1d(dim, position):  # noqa: D103
     # preprocess
     assert dim % 2 == 0
     half = dim // 2
@@ -50,7 +50,7 @@ def sinusoidal_embedding_1d(dim, position):
     return x
 
 
-class Head(nn.Module):
+class Head(nn.Module):  # noqa: D101
     def __init__(self, dim, out_dim, patch_size, eps=1e-6):
         super().__init__()
         self.dim = dim

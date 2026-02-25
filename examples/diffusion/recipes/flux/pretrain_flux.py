@@ -66,6 +66,10 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
+from omegaconf import OmegaConf
+
+from megatron.bridge.diffusion.models.flux.flux_step_with_automodel import create_flux_forward_step
+from megatron.bridge.diffusion.recipes.flux.flux import pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -74,10 +78,6 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     parse_hydra_overrides,
 )
 from megatron.bridge.utils.common_utils import get_rank_safe
-from omegaconf import OmegaConf
-
-from megatron.bridge.diffusion.models.flux.flux_step_with_automodel import create_flux_forward_step
-from megatron.bridge.diffusion.recipes.flux.flux import pretrain_config
 
 
 logger: logging.Logger = logging.getLogger(__name__)

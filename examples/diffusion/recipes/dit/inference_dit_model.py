@@ -39,7 +39,7 @@ EXAMPLE_PROMPT = (
 )
 
 
-def parse_args():
+def parse_args():  # noqa: D103
     parser = argparse.ArgumentParser(description="Video foundation model inference")
     parser.add_argument(
         "--prompt",
@@ -77,7 +77,7 @@ def parse_args():
     return args
 
 
-def print_rank_0(string: str):
+def print_rank_0(string: str):  # noqa: D103
     rank = torch.distributed.get_rank()
     if rank == 0:
         print(string)
@@ -118,7 +118,7 @@ def encode_for_batch(tokenizer: T5TokenizerFast, encoder: T5EncoderModel, prompt
     return encoded_text
 
 
-class PosID3D:
+class PosID3D:  # noqa: D101
     def __init__(self, *, max_t=32, max_h=128, max_w=128):
         self.max_t = max_t
         self.max_h = max_h
@@ -144,7 +144,7 @@ class PosID3D:
         return self.grid[:t, :h, :w]
 
 
-def prepare_data_batch(args, tokenizer, text_encoder, t5_embeding_max_length=512):
+def prepare_data_batch(args, tokenizer, text_encoder, t5_embeding_max_length=512):  # noqa: D103
     print("[args.prompt]: ", args.prompt)
     # Encode text to T5 embedding
     out = encode_for_batch(tokenizer, text_encoder, [args.prompt])
@@ -152,7 +152,6 @@ def prepare_data_batch(args, tokenizer, text_encoder, t5_embeding_max_length=512
     B, L, C = encoded_text.shape
     t5_embed = torch.zeros(B, t5_embeding_max_length, C, dtype=torch.bfloat16)
     t5_embed[:, :L, :] = encoded_text
-    neg_t5_embed = None
     t, h, w = args.num_video_frames, args.height, args.width
     pt, ph, pw = 1, 2, 2
     state_shape = [
@@ -259,7 +258,7 @@ def load_model_from_checkpoint(args):
     return model, diffusion_pipeline, model_config
 
 
-def data_preprocess(data_batch, state_shape):
+def data_preprocess(data_batch, state_shape):  # noqa: D103
     from megatron.bridge.diffusion.models.dit.dit_data_process import encode_seq_length
 
     data_batch = {k: v.cuda() if torch.is_tensor(v) else v for k, v in data_batch.items()}
@@ -273,7 +272,7 @@ def data_preprocess(data_batch, state_shape):
     return data_batch
 
 
-def initialize_distributed(tensor_model_parallel_size=1, pipeline_model_parallel_size=1, context_parallel_size=1):
+def initialize_distributed(tensor_model_parallel_size=1, pipeline_model_parallel_size=1, context_parallel_size=1):  # noqa: D103
     ps.destroy_model_parallel()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
@@ -283,7 +282,7 @@ def initialize_distributed(tensor_model_parallel_size=1, pipeline_model_parallel
     )
 
 
-def main(args):
+def main(args):  # noqa: D103
     # Initialize distributed environment and model parallel groups
     initialize_distributed(1, 1, context_parallel_size=args.cp_size)
     model_parallel_cuda_manual_seed(args.seed)

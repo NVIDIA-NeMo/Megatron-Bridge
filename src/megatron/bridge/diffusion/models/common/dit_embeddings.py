@@ -124,7 +124,7 @@ class SinCosPosEmb3D(MegatronModule):
         return self.pos_embedding(pos_id)
 
 
-class FactorizedLearnable3DEmbedding(MegatronModule):
+class FactorizedLearnable3DEmbedding(MegatronModule):  # noqa: D101
     def __init__(
         self,
         config,

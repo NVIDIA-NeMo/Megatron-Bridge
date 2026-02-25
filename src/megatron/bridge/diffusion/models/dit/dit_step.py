@@ -20,8 +20,6 @@ from typing import Iterable
 import torch
 import wandb
 from einops import rearrange
-from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.state import GlobalState
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.utils import get_model_config
@@ -29,12 +27,14 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.diffusion.common.utils.save_video import save_video
 from megatron.bridge.diffusion.models.dit.dit_data_process import dit_data_step
 from megatron.bridge.diffusion.models.dit.edm.edm_pipeline import EDMPipeline
+from megatron.bridge.training.losses import masked_next_token_loss
+from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
 
 
-class DITForwardStep:
+class DITForwardStep:  # noqa: D101
     def __init__(self):
         self.diffusion_pipeline = EDMPipeline(sigma_data=0.5)
         self.valid = False

@@ -18,19 +18,22 @@ from functools import partial
 from typing import Iterable
 
 import torch
-from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.state import GlobalState
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan import WanAdapter, WanFlowMatchingPipeline
+from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan import (
+    WanAdapter,
+    WanFlowMatchingPipeline,
+)
+from megatron.bridge.training.losses import masked_next_token_loss
+from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
 
 
-def wan_data_step(qkv_format, dataloader_iter):
+def wan_data_step(qkv_format, dataloader_iter):  # noqa: D103
     batch = next(dataloader_iter)
     batch = {k: v.to(device="cuda", non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
     # Construct packed sequence parameters
@@ -72,7 +75,7 @@ def wan_data_step(qkv_format, dataloader_iter):
     return batch
 
 
-class WanForwardStep:
+class WanForwardStep:  # noqa: D101
     def __init__(
         self,
         use_sigma_noise: bool = True,

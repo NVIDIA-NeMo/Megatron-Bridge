@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Union
 
 from diffusers import FluxTransformer2DModel
+from transformers import AutoConfig
+
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
-from transformers import AutoConfig
 
 
 class FluxSafeTensorsStateSource(SafeTensorsStateSource):

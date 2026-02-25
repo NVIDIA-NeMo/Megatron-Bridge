@@ -45,7 +45,7 @@ class DiTCrossAttentionSubmodules:
     k_layernorm: Union[ModuleSpec, type] = None
 
 
-class DiTSelfAttention(SelfAttention):
+class DiTSelfAttention(SelfAttention):  # noqa: D101
     def __init__(
         self,
         config: TransformerConfig,
@@ -183,7 +183,7 @@ class DiTSelfAttention(SelfAttention):
         return query, key, value
 
 
-class DiTCrossAttention(CrossAttention):
+class DiTCrossAttention(CrossAttention):  # noqa: D101
     def __init__(
         self,
         config: TransformerConfig,

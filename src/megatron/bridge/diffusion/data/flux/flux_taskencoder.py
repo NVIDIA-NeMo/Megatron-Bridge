@@ -24,7 +24,9 @@ from megatron.energon.task_encoder.base import stateless
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
-from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import DiffusionTaskEncoderWithSequencePacking
+from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import (
+    DiffusionTaskEncoderWithSequencePacking,
+)
 
 
 def cook(sample: dict) -> dict:

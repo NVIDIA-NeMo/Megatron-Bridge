@@ -22,7 +22,9 @@ from megatron.core import parallel_state
 from megatron.energon import SkipSample, stateless
 
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
-from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import DiffusionTaskEncoderWithSequencePacking
+from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import (
+    DiffusionTaskEncoderWithSequencePacking,
+)
 
 
 class DiTTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
@@ -168,7 +170,7 @@ class DiTTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         )
 
 
-class PosID3D:
+class PosID3D:  # noqa: D101
     def __init__(self, *, max_t=32, max_h=128, max_w=128):
         self.max_t = max_t
         self.max_h = max_h

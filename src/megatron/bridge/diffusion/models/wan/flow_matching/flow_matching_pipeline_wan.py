@@ -16,10 +16,10 @@ from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
-from megatron.core import parallel_state
-
 from dfm.src.automodel.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 from dfm.src.automodel.flow_matching.flow_matching_pipeline import FlowMatchingPipeline
+from megatron.core import parallel_state
+
 from megatron.bridge.diffusion.models.wan.utils import thd_split_inputs_cp
 
 
@@ -33,8 +33,8 @@ class WanAdapter(ModelAdapter):
     def prepare_inputs(self, context: FlowMatchingContext) -> Dict[str, Any]:
         grid_sizes = context.batch["grid_sizes"]
         noisy_latents = context.noisy_latents
-        video_latents = context.video_latents
-        loss_mask = context.batch["loss_mask"]
+        video_latents = context.video_latents  # noqa: F841
+        loss_mask = context.batch["loss_mask"]  # noqa: F841
         context_embeddings = context.batch["context_embeddings"]
         timesteps = context.timesteps
         packed_seq_params = context.batch["packed_seq_params"]

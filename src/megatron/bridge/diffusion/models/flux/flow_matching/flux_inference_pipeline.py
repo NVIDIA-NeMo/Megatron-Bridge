@@ -21,12 +21,12 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from megatron.bridge.training.model_load_save import load_megatron_model as _load_megatron_model
 from PIL import Image
 from torch import nn
 from tqdm import tqdm
 
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
+from megatron.bridge.training.model_load_save import load_megatron_model as _load_megatron_model
 
 
 @dataclass

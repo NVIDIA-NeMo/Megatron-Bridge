@@ -17,7 +17,9 @@ from typing import List
 import torch
 
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
-from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import DiffusionTaskEncoderWithSequencePacking
+from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import (
+    DiffusionTaskEncoderWithSequencePacking,
+)
 
 
 class ConcreteDiffusionTaskEncoder(DiffusionTaskEncoderWithSequencePacking):

@@ -147,10 +147,6 @@ class TestEDMPipeline:
         # Initialize with monkeypatch
         self.setup_method(None, monkeypatch)
 
-        # Create test inputs
-        data_batch = {"video": self.x0}
-        x0_from_data_batch = self.x0
-
         # Call compute_loss_with_epsilon_and_sigma
         output_batch, pred_mse, edm_loss = self.pipeline.compute_loss_with_epsilon_and_sigma(
             self.x0, self.condition, self.epsilon, self.sigma

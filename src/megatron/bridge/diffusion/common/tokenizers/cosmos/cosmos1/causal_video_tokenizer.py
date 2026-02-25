@@ -34,7 +34,7 @@ from megatron.bridge.diffusion.common.tokenizers.cosmos.cosmos1.video_tokenizer_
 )
 
 
-class CausalVideoTokenizer(torch.nn.Module):
+class CausalVideoTokenizer(torch.nn.Module):  # noqa: D101
     def __init__(
         self,
         checkpoint_dir: str = None,

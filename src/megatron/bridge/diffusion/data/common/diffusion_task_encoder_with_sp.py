@@ -47,7 +47,7 @@ def cook(sample: dict) -> dict:
     )
 
 
-class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):
+class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):  # noqa: D101
     cookers = [
         Cooker(cook),
     ]
