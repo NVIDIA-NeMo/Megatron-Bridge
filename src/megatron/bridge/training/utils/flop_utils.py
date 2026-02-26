@@ -21,6 +21,8 @@ from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
+_lora_seq_stats_cache: dict = {}
+
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
@@ -194,6 +196,15 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         is_llama3_70b = cfg.model.hidden_size == 8192 and cfg.model.num_layers == 80
         packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)
         packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
+        # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
+        # computes this path dynamically, but dataset_root is available from the config).
+        if packed_data_path is None and packed_specs is not None:
+            dataset_root = getattr(cfg.dataset, "dataset_root", None)
+            seq_size = getattr(packed_specs, "packed_sequence_size", None)
+            if dataset_root is not None and seq_size is not None:
+                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
+                if matches:
+                    packed_data_path = str(matches[0])
         if (
             is_lora
             and is_squad
@@ -203,9 +214,12 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         ):
             gbs = cfg.train.global_batch_size
             seq_len = cfg.model.seq_length
-            _, avg_tokens, _, avg_seqlen2 = calculate_avg_seqlen(
-                packed_data_path, gbs, seq_len, drop_remainder=True
-            )
+            cache_key = (packed_data_path, gbs, seq_len)
+            if cache_key not in _lora_seq_stats_cache:
+                _lora_seq_stats_cache[cache_key] = calculate_avg_seqlen(
+                    packed_data_path, gbs, seq_len, drop_remainder=True
+                )
+            _, avg_tokens, _, avg_seqlen2 = _lora_seq_stats_cache[cache_key]
 
             hs = cfg.model.hidden_size
             n_layers = cfg.model.num_layers
