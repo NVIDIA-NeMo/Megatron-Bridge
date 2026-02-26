@@ -14,7 +14,7 @@
 | NeMo | 2.7.0 |
 | NeMo Run | 0.8.0 |
 | Nvidia-ModelOpt | 0.41.0 |
-| NVRX | 0.5.0 |
+| NVRX | 0.4.1 |
 | CUDA | 13.0.2 |
 | cuDNN | 9.18.0.50 |
 | TRT-LLM | 1.1.0 |
