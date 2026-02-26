@@ -32,7 +32,7 @@ python merge_lora.py \
     --hf-model-path   path/to/hf_model \
     --output          path/to/merged_ckpt \
     [--pretrained path/to/base_ckpt] \
-    [--tp 1] [--pp 1] [--ep 1]
+    [--tp 1] [--pp 1] [--ep 1] [--cpu]
 """
 
 from __future__ import annotations
@@ -88,6 +88,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
+    parser.add_argument("--cpu", action="store_true", help="Load and merge entirely on CPU (no GPU required)")
 
     return parser.parse_args()
 
@@ -130,7 +131,7 @@ def merge_lora(
         lora_dir (Path): Path to the directory containing the LoRA fine-tuned checkpoint.
         out_dir (Path): Path to the directory where the merged model checkpoint should be saved.
         hf_model_path (str): HuggingFace model name or local path to the model architecture/configuration.
-        args (argparse.Namespace): Command-line arguments containing parallelism settings.
+        args (argparse.Namespace): Command-line arguments containing parallelism and device settings.
 
     This routine reconstructs the model architecture from HuggingFace config,
     loads the dense base model weights, then loads the LoRA adapter weights
@@ -148,7 +149,12 @@ def merge_lora(
     model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
+    if args.cpu:
+        assert args.tp == args.pp == args.ep == 1, "TP, PP, and EP must be 1 when using CPU merge"
+        if not torch.distributed.is_initialized():
+            torch.distributed.init_process_group("gloo")
     model_provider.initialize_model_parallel(seed=0)
+
 
     # 1) Load base model weights
     model = bridge.load_megatron_model(str(base_dir), wrap_with_ddp=False)
@@ -250,13 +256,23 @@ def main() -> None:
     base_dir = _resolve_pretrained(lora_dir, args.pretrained)
     if not base_dir.exists():
         raise FileNotFoundError(f"Pre-trained checkpoint not found: {base_dir}")
-    merge_lora(
-        base_dir=base_dir,
-        lora_dir=lora_dir,
-        out_dir=Path(args.output).expanduser().resolve(),
-        hf_model_path=args.hf_model_path,
-        args=args,
-    )
+    try:
+        merge_lora(
+            base_dir=base_dir,
+            lora_dir=lora_dir,
+            out_dir=Path(args.output).expanduser().resolve(),
+            hf_model_path=args.hf_model_path,
+            args=args,
+        )
+    except torch.cuda.OutOfMemoryError:
+        logger.error("Out of memory error during merge. Trying CPU merge...")
+        merge_lora(
+            base_dir=base_dir,
+            lora_dir=lora_dir,
+            out_dir=Path(args.output).expanduser().resolve(),
+            hf_model_path=args.hf_model_path,
+            args=args,
+        )
 
 
 if __name__ == "__main__":
