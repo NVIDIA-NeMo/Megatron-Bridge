@@ -49,6 +49,8 @@ def nemotron_3_nano_pretrain_config_gb300(
     cfg.mixed_precision = precision_config
     set_nemotron_3_nano_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
     return cfg
 
@@ -71,6 +73,8 @@ def nemotron_3_nano_pretrain_config_gb200(
     cfg.mixed_precision = precision_config
     set_nemotron_3_nano_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
     return cfg
 
@@ -93,6 +97,8 @@ def nemotron_3_nano_pretrain_config_b300(
     cfg.mixed_precision = precision_config
     set_nemotron_3_nano_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
     return cfg
 
@@ -115,6 +121,8 @@ def nemotron_3_nano_pretrain_config_b200(
     cfg.mixed_precision = precision_config
     set_nemotron_3_nano_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
     return cfg
 
@@ -137,5 +145,7 @@ def nemotron_3_nano_pretrain_config_h100(
     cfg.mixed_precision = precision_config
     set_nemotron_3_nano_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
     return cfg

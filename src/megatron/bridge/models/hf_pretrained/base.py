@@ -68,25 +68,37 @@ class PreTrainedBase(ABC):
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
 
-    def _copy_custom_modeling_files(self, source_path: Union[str, Path], target_path: Union[str, Path]) -> None:
-        """Copy custom modeling files from source to target directory.
+    def _copy_custom_modeling_files(
+        self,
+        source_path: Union[str, Path],
+        target_path: Union[str, Path],
+        file_patterns: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Copy files matching patterns from source to target directory.
 
         This preserves custom modeling files that were used during model loading
-        with trust_remote_code=True, ensuring the saved model can be loaded properly.
+        with trust_remote_code=True, or copies additional files specified by patterns.
 
         Args:
-            source_path: Source directory containing custom modeling files
+            source_path: Source directory or HuggingFace Hub ID containing files
             target_path: Target directory to copy files to
+            file_patterns: Optional list of file names or patterns to copy.
+                Supports both exact file names (e.g., "vocab.json") and glob patterns
+                (e.g., "*.json"). If not provided, defaults to self.custom_file_patterns.
+
+        Returns:
+            List of successfully copied file names
         """
         source_path = Path(source_path)
         target_path = Path(target_path)
+        patterns = file_patterns if file_patterns is not None else self.custom_file_patterns
 
         copied_files = []
 
         # First, try to copy from local directory if it exists
         if source_path.exists() and source_path.is_dir():
-            for pattern in self.custom_file_patterns:
-                for file_path in source_path.glob(pattern):
+            for file_spec in patterns:
+                for file_path in source_path.glob(file_spec):
                     if file_path.is_file():
                         target_file = target_path / file_path.name
                         try:
@@ -97,29 +109,28 @@ class PreTrainedBase(ABC):
                             pass
 
         # If no files were copied and source_path looks like a HuggingFace Hub ID,
-        # try to download the custom modeling files directly from the Hub
+        # try to download the files directly from the Hub
         if not copied_files and "/" in str(source_path) and not source_path.exists():
             try:
                 from huggingface_hub import hf_hub_download, list_repo_files
 
-                # Get list of Python files in the repository
+                # Get list of all files in the repository
                 repo_files = list_repo_files(str(source_path))
-                python_files = [f for f in repo_files if f.endswith(".py")]
 
-                for py_file in python_files:
-                    # Check if it matches our custom file patterns
-                    if any(
-                        py_file.startswith(pattern.replace("*.py", "").replace("*", ""))
-                        for pattern in self.custom_file_patterns
-                    ):
+                # Use fnmatch for both patterns and exact file names
+                import fnmatch
+
+                for file_spec in patterns:
+                    matching_files = [f for f in repo_files if fnmatch.fnmatch(f, file_spec)]
+                    for repo_file in matching_files:
                         try:
                             _ = hf_hub_download(
                                 repo_id=str(source_path),
-                                filename=py_file,
+                                filename=repo_file,
                                 local_dir=target_path,
                                 local_dir_use_symlinks=False,
                             )
-                            copied_files.append(py_file)
+                            copied_files.append(repo_file)
                         except Exception:
                             # Silently skip files that can't be downloaded
                             pass
@@ -131,7 +142,10 @@ class PreTrainedBase(ABC):
         return copied_files
 
     def save_artifacts(
-        self, save_directory: Union[str, Path], original_source_path: Optional[Union[str, Path]] = None
+        self,
+        save_directory: Union[str, Path],
+        original_source_path: Optional[Union[str, Path]] = None,
+        additional_files: Optional[List[str]] = None,
     ):
         """
         Saves all loaded, generic artifacts that have a `save_pretrained` method
@@ -140,6 +154,13 @@ class PreTrainedBase(ABC):
         If the model was loaded with trust_remote_code=True, this method will also
         attempt to preserve any custom modeling files to ensure the saved model
         can be loaded properly.
+
+        Args:
+            save_directory: Directory to save artifacts to
+            original_source_path: Optional path to the original source for custom modeling files
+            additional_files: Optional list of additional file names or patterns to download/copy
+                from the source. Supports both exact file names (e.g., "vocab.json") and glob
+                patterns (e.g., "*.json"). These files will be copied from the source path.
         """
         save_path = Path(save_directory)
         save_path.mkdir(parents=True, exist_ok=True)
@@ -165,6 +186,14 @@ class PreTrainedBase(ABC):
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
                 artifact.save_pretrained(save_path)
+
+        # Download/copy additional files if specified
+        if additional_files:
+            self._copy_custom_modeling_files(
+                source_path=original_source_path or self.model_name_or_path,
+                target_path=save_path,
+                file_patterns=additional_files,
+            )
 
         # Preserve custom modeling files if trust_remote_code was used
         if hasattr(self, "trust_remote_code") and self.trust_remote_code:
