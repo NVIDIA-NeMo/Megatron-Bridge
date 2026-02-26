@@ -255,6 +255,15 @@ class DataloaderConfig:
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
 
+    broadcast_data_across_tp: bool = False
+    """When True, only TP-rank-0 loads data and broadcasts to other TP ranks.
+
+    This eliminates redundant I/O across tensor-parallel ranks and is critical
+    for storage backends with high contention costs (e.g. VAST / network-attached
+    storage).  When False (default), every rank loads data independently, which
+    works well on low-latency parallel file-systems like Lustre.
+    """
+
 
 @dataclass(frozen=True)
 class DatasetBuildContext:

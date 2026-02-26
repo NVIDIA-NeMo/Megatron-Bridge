@@ -32,6 +32,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.batch_utils import get_batch_on_this_tp_rank
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -169,13 +170,19 @@ def get_batch(
     if (not is_first) and (not is_last):
         return None, None, None, None, None, None, None, None, None, None
 
-    batch = get_batch_from_iterator(
-        data_iterator,
-        use_mtp,
-        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
-    )
+    broadcast_data = getattr(cfg.dataset, "broadcast_data_across_tp", False)
+    if broadcast_data:
+        # TP-rank-0 loads data and broadcasts to other TP ranks.
+        # Reduces I/O by a factor of TP on high-latency storage.
+        batch = get_batch_on_this_tp_rank(data_iterator, cfg, use_mtp, pg_collection=pg_collection)
+    else:
+        batch = get_batch_from_iterator(
+            data_iterator,
+            use_mtp,
+            getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+            is_first_pp_stage=is_first,
+            is_last_pp_stage=is_last,
+        )
 
     cp_size = pg_collection.cp.size()
     has_packed = batch.get("cu_seqlens") is not None
