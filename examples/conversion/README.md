@@ -449,3 +449,27 @@ Each log entry captures detailed tensor information for every module:
 - **Model Verification**: Compare intermediate results between HuggingFace and Megatron models
 - **Numerical Debugging**: Identify divergence points in model conversion
 
+### 9. `adapter/` — LoRA/DoRA Adapter Export & Verification
+
+Scripts for exporting Megatron-Bridge LoRA/DoRA adapter weights to HuggingFace PEFT format and verifying correctness. See [`adapter/README.md`](adapter/README.md) for full details.
+
+| Script | Description |
+|---|---|
+| `adapter/export_adapter.py` | Export a Megatron PEFT checkpoint to HF PEFT format (CPU-only) |
+| `adapter/verify_adapter.py` | Verify exported adapter via logit comparison |
+| `adapter/stream_adapter_weights.py` | Stream individual adapter tensors for custom workflows |
+
+**Quick start:**
+```bash
+# Export
+python examples/conversion/adapter/export_adapter.py \
+    --hf-model-id meta-llama/Llama-3.2-1B \
+    --megatron-peft-checkpoint /path/to/finetune_ckpt \
+    --output-hf-path ./my_adapter
+
+# Verify
+python examples/conversion/adapter/verify_adapter.py \
+    --hf-model-id meta-llama/Llama-3.2-1B \
+    --hf-adapter-path ./my_adapter
+```
+
