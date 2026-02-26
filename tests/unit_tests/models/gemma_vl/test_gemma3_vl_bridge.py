@@ -44,6 +44,7 @@ def mock_text_config():
     config.rope_theta = 1000000.0
     config.query_pre_attn_scalar = 256
     config.rope_scaling = None
+    config.rope_parameters = None
     config.hidden_act = "gelu_pytorch_tanh"
     # Set MLA-specific fields to None (these are auto-mapped in CONFIG_MAPPING)
     config.q_lora_rank = None
@@ -382,6 +383,7 @@ class TestGemma3VLBridgeEdgeCases:
         text_config.rope_theta = 1000000.0
         text_config.query_pre_attn_scalar = 256
         text_config.rope_scaling = None
+        text_config.rope_parameters = None
         text_config.hidden_act = "gelu_pytorch_tanh"
         # Set MLA-specific fields to None
         text_config.q_lora_rank = None
