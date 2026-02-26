@@ -24,6 +24,101 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     if hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)
 
+    def vision_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> float:
+        """Estimate FLOPs for the vision tower + projector (patch merger).
+
+        This complements the LM FLOPs estimate with a *vision-side* estimate for VLMs (e.g.,
+        Qwen3-VL). Vision FLOPs depend on runtime inputs (image/video resolution, #frames),
+        so this function prefers runtime statistics populated during `vlm_step.forward_step`.
+        """
+        vision_cfg = getattr(cfg.model, "vision_config", None)
+        if vision_cfg is None:
+            return 0.0
+
+        depth = getattr(vision_cfg, "depth", None)
+        d_model = getattr(vision_cfg, "hidden_size", None)
+        d_ff = getattr(vision_cfg, "intermediate_size", None)
+        n_heads = getattr(vision_cfg, "num_heads", None)
+        spatial_merge_size = getattr(vision_cfg, "spatial_merge_size", None)
+        out_hidden_size = getattr(vision_cfg, "out_hidden_size", None)
+        num_position_embeddings = getattr(vision_cfg, "num_position_embeddings", None)
+        in_channels = getattr(vision_cfg, "in_channels", 3)
+        patch_size = getattr(vision_cfg, "patch_size", None)
+        temporal_patch_size = getattr(vision_cfg, "temporal_patch_size", 1)
+
+        critical = [
+            depth,
+            d_model,
+            d_ff,
+            n_heads,
+            spatial_merge_size,
+            out_hidden_size,
+            num_position_embeddings,
+        ]
+        if any(v is None for v in critical):
+            return 0.0
+
+        merge_sq = int(spatial_merge_size) ** 2
+        n_pre_runtime = getattr(cfg, "_runtime_vision_tokens_pre_per_sample", None)
+        n_post_runtime = getattr(cfg, "_runtime_vision_tokens_post_per_sample", None)
+        if n_pre_runtime is not None:
+            n_pre = float(n_pre_runtime)
+            n_post = float(n_post_runtime) if n_post_runtime is not None else n_pre / float(max(1, merge_sq))
+        else:
+            # Config-only fallback: assume one image per sample at the max grid size.
+            n_pre = float(num_position_embeddings)
+            n_post = n_pre / float(max(1, merge_sq))
+
+        # Vision attention in Qwen3-VL is packed per-frame (each frame is a separate sequence
+        # of length h*w). If runtime statistics are provided, prefer using sum(L^2) instead
+        # of (sum L)^2 for the attention matmul term.
+        sum_seqlen_sq_pre_runtime = getattr(cfg, "_runtime_vision_sum_seqlen_sq_pre_per_sample", None)
+
+        # FLOPs are counted as 2 * MACs for GEMM/conv.
+        # For training, we approximate backward as 2x forward -> total ≈ 3x forward.
+        fwd_to_train_multiplier = 3.0
+
+        # Patch embedding conv3d FLOPs:
+        # FLOPs ≈ 2 * n_pre * d_model * (C * kt * kh * kw)
+        flops_patch_embed_fwd = 0.0
+        if patch_size is not None and temporal_patch_size is not None:
+            kt = int(temporal_patch_size)
+            kh = int(patch_size)
+            kw = int(patch_size)
+            flops_patch_embed_fwd = 2.0 * n_pre * float(d_model) * (int(in_channels) * kt * kh * kw)
+
+        # Vision transformer block FLOPs (ViT-style, rough but standard):
+        # - QKV projections + output projection: 8 * N * D^2
+        # - Attention score + value: 4 * sum(L_i^2) * D (or 4 * N^2 * D if not packed)
+        # - MLP: 4 * N * D * D_ff
+        n = float(n_pre)
+        if sum_seqlen_sq_pre_runtime is not None and float(sum_seqlen_sq_pre_runtime) > 0:
+            attn_quad = 4.0 * float(sum_seqlen_sq_pre_runtime) * float(d_model)
+        else:
+            attn_quad = 4.0 * (n**2) * float(d_model)
+
+        flops_vit_layer_fwd = (8.0 * n * (float(d_model) ** 2)) + attn_quad + (4.0 * n * float(d_model) * float(d_ff))
+        flops_vit_fwd = float(depth) * flops_vit_layer_fwd
+
+        # Patch merger / projector FLOPs:
+        # First projection: (D*merge^2 -> D*merge^2)
+        # Second projection: (D*merge^2 -> out_hidden_size)
+        d_merge = float(d_model) * float(merge_sq)
+        flops_merger_fwd = (2.0 * float(n_post) * d_merge * d_merge) + (
+            2.0 * float(n_post) * d_merge * float(out_hidden_size)
+        )
+
+        # Deepstack mergers: approximate each as a patch merger.
+        deepstack_idxs = getattr(vision_cfg, "deepstack_visual_indexes", None)
+        num_deepstack = len(deepstack_idxs) if isinstance(deepstack_idxs, (list, tuple)) else 0
+        flops_deepstack_mergers_fwd = float(num_deepstack) * flops_merger_fwd
+
+        flops_vision_fwd_per_sample = (
+            flops_patch_embed_fwd + flops_vit_fwd + flops_merger_fwd + flops_deepstack_mergers_fwd
+        )
+        flops_vision_fwd = float(batch_size) * float(flops_vision_fwd_per_sample)
+        return flops_vision_fwd * fwd_to_train_multiplier
+
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, MLP, and MoE layers."""
         if hasattr(cfg.model, "hybrid_override_pattern") and cfg.model.hybrid_override_pattern:
@@ -324,39 +419,71 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             logging_enabled=False,
         )
 
-        total_floating_point_operations = (
-            batch_size
-            * cfg.model.seq_length
+        # ---------------------------------------------------------------------
+        # Runtime token statistics (packed / padded)
+        # ---------------------------------------------------------------------
+        tokens_padded_per_sample = getattr(cfg, "_runtime_lm_total_tokens_padded_per_sample", None)
+        sum_seqlen_sq_padded_per_sample = getattr(cfg, "_runtime_lm_sum_seqlen_sq_padded_per_sample", None)
+
+        if tokens_padded_per_sample is None or float(tokens_padded_per_sample) <= 0:
+            tokens_padded_per_sample = float(cfg.model.seq_length)
+        tokens_total = float(batch_size) * float(tokens_padded_per_sample)
+
+        if sum_seqlen_sq_padded_per_sample is None or float(sum_seqlen_sq_padded_per_sample) <= 0:
+            sum_seqlen_sq_total = float(batch_size) * float(cfg.model.seq_length) * float(cfg.model.seq_length)
+        else:
+            sum_seqlen_sq_total = float(batch_size) * float(sum_seqlen_sq_padded_per_sample)
+
+        # MLP (linear in tokens_total).
+        mlp_total = (
+            tokens_total
+            * expansion_factor
+            * float(num_layers)
+            * float(cfg.model.hidden_size)
             * (
-                # MLP
-                expansion_factor
-                * num_layers
-                * cfg.model.hidden_size
-                * (
-                    # dense layer (deepseek v2, v3 style)
-                    (cfg.model.ffn_hidden_size * gated_linear_multiplier) * (num_dense_layers / num_layers)
-                    # routed experts
-                    + (moe_ffn_hidden_size * num_experts_routed_to * gated_linear_multiplier)
-                    * (num_moe_layers / num_layers)
-                    # Shared Experts.
-                    + (shared_expert_ffn_hidden_size * gated_linear_multiplier) * (num_moe_layers / num_layers)
-                )
-                # Self Attention
-                + self_attn_term
-                # MTP norms and proj
-                + 3
-                * 2
-                * mtp_num_layers
-                * (
-                    # MTP eh norm + final nrom
-                    3 * cfg.model.hidden_size
-                    # MTH eh proj
-                    + 2 * cfg.model.hidden_size * cfg.model.hidden_size
-                )
-                # Logit.
-                + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
+                (float(cfg.model.ffn_hidden_size) * float(gated_linear_multiplier)) * (float(num_dense_layers) / float(num_layers))
+                + (float(moe_ffn_hidden_size) * float(num_experts_routed_to) * float(gated_linear_multiplier))
+                * (float(num_moe_layers) / float(num_layers))
+                + (float(shared_expert_ffn_hidden_size) * float(gated_linear_multiplier)) * (float(num_moe_layers) / float(num_layers))
             )
         )
+
+        # MTP norms and proj (linear in tokens_total).
+        mtp_total = (
+            tokens_total
+            * 3
+            * 2
+            * float(mtp_num_layers)
+            * (
+                3 * float(cfg.model.hidden_size)
+                + 2 * float(cfg.model.hidden_size) * float(cfg.model.hidden_size)
+            )
+        )
+
+        # Logit (linear in tokens_total).
+        logit_total = tokens_total * 3 * 2 * float(cfg.model.hidden_size) * float(padded_vocab_size) * float(mtp_num_layers + 1)
+
+        # Self-attention:
+        # - projection and output terms scale with sum(L_i)
+        # - attention matmul terms scale with sum(L_i^2) (causal uses ~half, reflected by /2)
+        if cfg.model.multi_latent_attention:
+            # Keep the existing MLA approximation (uses cfg.model.seq_length).
+            self_attn_total = float(batch_size) * float(cfg.model.seq_length) * float(self_attn_term)
+        else:
+            attn_linear_factor = 1.0 + (float(num_query_groups) / float(cfg.model.num_attention_heads))
+            attn_base = (
+                expansion_factor
+                * float(num_layers)
+                * float(cfg.model.hidden_size)
+                * float(cfg.model.hidden_size)
+                * float(query_projection_to_hidden_size_ratio)
+            )
+            self_attn_total = attn_base * (
+                attn_linear_factor * tokens_total + (sum_seqlen_sq_total / (2.0 * float(cfg.model.hidden_size)))
+            )
+
+        total_floating_point_operations = mlp_total + self_attn_total + mtp_total + logit_total
+        total_floating_point_operations += vision_floating_point_operations(cfg, batch_size)
         return total_floating_point_operations
 
     # Main entrypoint for FLOPs calculation.
@@ -374,7 +501,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         )
 
         # Compute hybrid model FLOPs.
-        return hybrid_flops(
+        total_floating_point_operations = hybrid_flops(
             batch_size=batch_size,
             seq_len=cfg.model.seq_length,
             hidden_size=cfg.model.hidden_size,
@@ -405,6 +532,8 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             num_experts_routed_to=getattr(cfg.model, "moe_router_topk", 1),
             vocab_size=padded_vocab_size,
         )
+        total_floating_point_operations += vision_floating_point_operations(cfg, batch_size)
+        return total_floating_point_operations
     else:
         # Compute standard Transformer model FLOPs.
         return transformer_flops()
