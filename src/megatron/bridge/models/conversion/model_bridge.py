@@ -242,6 +242,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
 
+    # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
+    # Set this in bridge subclasses to include model-specific files beyond standard artifacts
+    ADDITIONAL_FILE_PATTERNS = None
+
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped
     CONFIG_MAPPING = [
