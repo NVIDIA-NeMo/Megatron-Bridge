@@ -78,6 +78,8 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
         tokenizer_library = "null-text" if config.tokenizer_type == "NullTokenizer" else "null-multimodal"
         if config.vocab_size:
             kwargs["vocab_size"] = config.vocab_size - 1
+        # TODO(mcore-guard): Remove try/except once mcore main and dev both support
+        # "null-text"/"null-multimodal" tokenizer library names (dev renamed "null" → split names).
         try:
             metadata = {"library": tokenizer_library}
             tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
