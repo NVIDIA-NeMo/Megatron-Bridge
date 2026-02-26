@@ -251,6 +251,8 @@ class NemotronHBridge(MegatronModelBridge):
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
     ]
 
+    # Additional files to copy during HF export (reasoning parser utilities)
+    ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
     def __init__(self):
         super().__init__()
