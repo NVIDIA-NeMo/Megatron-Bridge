@@ -51,6 +51,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -363,6 +366,14 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 value = getattr(hf_config, hf_name, None)
             if value is not None:
                 provider_kwargs[megatron_name] = value
+
+        # Extract rotary_base via compat function (handles both legacy rope_theta
+        # attribute and transformers 5.0+ rope_parameters dict)
+        if "rotary_base" not in provider_kwargs:
+            try:
+                provider_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
+            except ValueError:
+                pass
 
         # Handle rope scaling: extract params from rope_scaling dict
         # HF configs use either "type" or "rope_type" key for the scaling type
@@ -945,7 +956,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
@@ -1107,11 +1118,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         return model.config
 
     def _share_embeddings_and_output_weights(
-        self, model_config: TransformerConfig, model: Optional[MegatronModule]
+        self,
+        model_config: TransformerConfig,
     ) -> bool:
-        """Fallback-aware accessor for shared embedding setting."""
-        fallback = getattr(model, "share_embeddings_and_output_weights", False) if model else False
-        return getattr(model_config, "share_embeddings_and_output_weights", fallback)
+        """Shared embedding setting."""
+        return getattr(model_config, "share_embeddings_and_output_weights")
 
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
@@ -1147,7 +1158,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        share_embeddings = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
@@ -1190,7 +1201,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
