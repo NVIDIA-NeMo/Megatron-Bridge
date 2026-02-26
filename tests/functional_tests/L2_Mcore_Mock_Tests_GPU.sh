@@ -11,4 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-CUDA_VISIBLE_DEVICES="0,1" pytest tests/diffusion/unit_tests -m "not pleasefixme" --with_downloads
+CUDA_VISIBLE_DEVICES="0,1" pytest tests/functional_tests/diffusion/recipes -m "not pleasefixme" --with_downloads -v
