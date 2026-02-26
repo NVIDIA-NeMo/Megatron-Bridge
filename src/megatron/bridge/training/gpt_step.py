@@ -183,7 +183,7 @@ def get_batch(
         batch = _partition_packed_batch_for_cp(batch, cp_size)
     else:
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch)
+        batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],

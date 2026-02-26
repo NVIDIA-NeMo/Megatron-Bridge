@@ -38,6 +38,7 @@ HF_GLM45_TOY_MODEL_CONFIG = {
     "moe_intermediate_size": 512,
     "n_routed_experts": 8,
     "n_shared_experts": 1,
+    "num_local_experts": 8,
     "n_group": 1,
     "topk_group": 1,
     "norm_topk_prob": True,
@@ -57,6 +58,31 @@ HF_GLM45_TOY_MODEL_CONFIG = {
     "use_qk_norm": True,
     "vocab_size": 151552,
 }
+
+
+def _get_num_experts(moe_experts) -> int | None:
+    """Best-effort expert count across transformers versions."""
+    if moe_experts is None:
+        return None
+
+    for attr in ("num_experts", "n_routed_experts", "num_local_experts"):
+        value = getattr(moe_experts, attr, None)
+        if isinstance(value, int):
+            return value
+
+    for attr in ("experts", "local_experts"):
+        nested = getattr(moe_experts, attr, None)
+        if nested is None:
+            continue
+        try:
+            return len(nested)
+        except TypeError:
+            pass
+
+    try:
+        return len(moe_experts)
+    except TypeError:
+        return None
 
 
 class TestGLM45Conversion:
@@ -94,6 +120,9 @@ class TestGLM45Conversion:
         model = Glm4MoeForCausalLM(config)
 
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
+        for k, v in model.named_buffers():
+            if "e_score_correction_bias" in k:
+                v.data = v.data.to(torch.float32)
 
         # Debug: Check model dtype before saving
         for name, param in model.named_parameters():
@@ -190,7 +219,8 @@ class TestGLM45Conversion:
             assert hasattr(second_layer, "mlp")
             # GLM 4.5 MoE structure check (may vary based on implementation)
             if hasattr(second_layer.mlp, "experts"):
-                assert len(second_layer.mlp.experts) == 8  # n_routed_experts
+                num_experts = _get_num_experts(second_layer.mlp.experts)
+                assert num_experts == 8  # n_routed_experts
 
             print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")

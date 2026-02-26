@@ -39,8 +39,8 @@ Updated values are based on observed intervals.
 ft_launcher \
     --rdzv_backend=c10d --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
     --nnodes=${NUM_NODES} --nproc-per-node=${NUM_GPUS_PER_NODE} \
-    --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
-    --ft-param-rank_out_of_section_timeout=300 \
+    --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
+    --ft-rank_out_of_section_timeout=300 \
     train_script_with_ft.py
 ```
 """
@@ -117,6 +117,8 @@ def on_training_step_start(global_state: GlobalState) -> None:
     Args:
         global_state: Global training state.
     """
+    if global_state.cfg.ft is None:
+        return
     rmon_cli = global_state.rank_monitor_client
     ft_state = global_state.fault_tolerance_state
     if rmon_cli is not None:
@@ -137,6 +139,8 @@ def on_training_step_end(global_state: GlobalState) -> None:
     Args:
         global_state: Global training state.
     """
+    if global_state.cfg.ft is None:
+        return
     rmon_cli = global_state.rank_monitor_client
     ft_state = global_state.fault_tolerance_state
     if rmon_cli is not None:
@@ -189,6 +193,8 @@ def on_checkpointing_start(global_state: GlobalState) -> None:
     Args:
         global_state: Global training state.
     """
+    if global_state.cfg.ft is None:
+        return
     rmon_cli = global_state.rank_monitor_client
     if rmon_cli is not None:
         rmon_cli.start_section("checkpointing")
@@ -203,6 +209,8 @@ def on_checkpointing_end(is_async_finalization: bool, global_state: GlobalState)
         is_async_finalization: True if called after async checkpoint finalization.
         global_state: Global training state.
     """
+    if global_state.cfg.ft is None:
+        return
     rmon_cli = global_state.rank_monitor_client
     ft_state = global_state.fault_tolerance_state
     if rmon_cli is not None:

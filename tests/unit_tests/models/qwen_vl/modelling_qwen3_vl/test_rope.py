@@ -20,10 +20,8 @@ import torch
 from transformers import Qwen3VLMoeTextConfig
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
-    Qwen3VLMoETextRotaryEmbedding,
-    Qwen3VLTextRotaryEmbedding,
-)
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +36,10 @@ class TestQwen3VLTextRotaryEmbedding:
     def test_qwen3_vl_text_rotary_embedding(self, hf_config):
         """Test that MBridge RoPE output matches HuggingFace implementation."""
         hf_rope_embedding = Qwen3VLMoeTextRotaryEmbedding(hf_config)
-        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+        )
 
         seq_len = 1024
         batch_size = 1
@@ -55,6 +56,11 @@ class TestQwen3VLTextRotaryEmbedding:
         # Get MBridge output: (seq_len, bs, 1, head_dim) raw freqs with concatenation applied
         # The implementation now concatenates freqs: emb = torch.cat((freqs, freqs), dim=-1)
         mbridge_rope_output = mbridge_rope_embedding(position_ids_3d, mrope_section)
+
+        if torch.cuda.is_available():
+            hf_cos = hf_cos.to(torch.cuda.current_device())
+            hf_sin = hf_sin.to(torch.cuda.current_device())
+            mbridge_rope_output = mbridge_rope_output.to(torch.cuda.current_device())
 
         # MBridge returns concatenated freqs with attention_scaling already applied
         # Megatron Core will compute cos/sin internally, but for testing we compute them here
@@ -73,8 +79,11 @@ class TestQwen3VLTextRotaryEmbedding:
         torch.testing.assert_close(hf_sin, mbridge_sin, rtol=1e-4, atol=1e-4)
 
     def test_qwen3_vl_text_rotary_embedding_2d_position_ids(self, hf_config):
-        """Test Qwen3VLTextRotaryEmbedding with 2D position_ids (should auto-expand to 3D)."""
-        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+        """Test Qwen3VLMultimodalRotaryEmbedding with 2D position_ids (should auto-expand to 3D)."""
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+        )
 
         seq_len = 512
         batch_size = 2
@@ -93,8 +102,11 @@ class TestQwen3VLTextRotaryEmbedding:
         assert mbridge_rope_output.shape[2] == 1
 
     def test_qwen3_vl_text_rotary_embedding_default_mrope_section(self, hf_config):
-        """Test Qwen3VLTextRotaryEmbedding with None mrope_section (should use default)."""
-        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+        """Test Qwen3VLMultimodalRotaryEmbedding with None mrope_section (should use default)."""
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+        )
 
         seq_len = 256
         batch_size = 1
@@ -109,8 +121,11 @@ class TestQwen3VLTextRotaryEmbedding:
         assert mbridge_rope_output.shape[1] == batch_size
 
     def test_qwen3_vl_moe_text_rotary_embedding(self, hf_config):
-        """Test Qwen3VLMoETextRotaryEmbedding forward pass."""
-        mbridge_moe_rope = Qwen3VLMoETextRotaryEmbedding(hf_config)
+        """Test Qwen3VLMultimodalRotaryEmbedding forward pass."""
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+        )
 
         seq_len = 512
         batch_size = 2
@@ -119,7 +134,7 @@ class TestQwen3VLTextRotaryEmbedding:
         mrope_section = [24, 20, 20]
 
         # Forward pass through MoE RoPE
-        output = mbridge_moe_rope(position_ids_3d, mrope_section)
+        output = mbridge_rope_embedding(position_ids_3d, mrope_section)
 
         # Verify output shape: (seq_len, bs, 1, head_dim)
         assert output.shape[0] == seq_len

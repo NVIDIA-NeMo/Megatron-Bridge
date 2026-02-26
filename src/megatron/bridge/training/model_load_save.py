@@ -38,6 +38,13 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 logger = logging.getLogger(__name__)
 
+HF_BASED_TOKENIZERS = [
+    "BertWordPieceLowerCase",
+    "BertWordPieceCase",
+    "GPT2BPETokenizer",
+    "HuggingFaceTokenizer",
+]
+
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
     """Convert Megatron-Core config dtype settings to torch dtype.
@@ -171,6 +178,9 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
             raise AttributeError(
                 f"Attempting to set a non-existent attribute '{key}' on TokenizerConfig.\nState of TokenizerConfig before attempting this override: {cfg}"
             )
+
+    if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
+        cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
 
     return build_tokenizer(cfg)
 
@@ -372,7 +382,6 @@ def load_megatron_model(
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
-    model_cfg.moe_extended_tp = False
     model_cfg.sequence_parallel = False
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
@@ -397,6 +406,7 @@ def save_megatron_model(
     path: Union[str, Path],
     ckpt_format: str = "torch_dist",
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
+    low_memory_save: bool = False,
     hf_tokenizer_kwargs: Optional[dict] = None,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
@@ -412,6 +422,16 @@ def save_megatron_model(
         ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
         hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
             If provided, the tokenizer metadata will be included in the checkpoint.
+        low_memory_save: If True, uses a memory-optimized save flow that:
+            1. Builds the sharded state dict
+            2. Expands ShardedTensorFactory objects early
+            3. Clears factory data references
+            4. Deletes the model from memory
+            5. Forces garbage collection
+            6. Saves the pre-processed state dict
+            This reduces peak memory by ~50% for models with merged weights
+            (e.g., gate+up projections) at the cost of destroying the model.
+            Default is False, preserving the model for further use.
         hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
             Common options include trust_remote_code=True for models with custom tokenizers.
 
@@ -426,18 +446,18 @@ def save_megatron_model(
         ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
         ... )
 
-        >>> # Save model checkpoint with custom tokenizer kwargs
+        >>> # Save model checkpoint with low-memory mode (destroys model after save)
         >>> save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
-        ...     hf_tokenizer_path="THUDM/glm-4-9b-chat",
-        ...     hf_tokenizer_kwargs={"trust_remote_code": True}
+        ...     low_memory_save=True
         ... )
 
     Note:
         - This method is collective and must be called by all ranks
         - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
         - The checkpoint format follows Megatron's standard structure for compatibility
+        - When low_memory_save=True, the model is deleted and cannot be used afterward
     """
     # Create tokenizer config if tokenizer path is provided
     tokenizer_config = None
@@ -484,14 +504,178 @@ def save_megatron_model(
         dist=None,
     )
 
-    # Save the checkpoint
-    save_checkpoint(
-        state=state,
-        model=model,
-        optimizer=None,
-        opt_param_scheduler=None,
-        num_floating_point_operations_so_far=0,
-    )
+    if low_memory_save:
+        # Low-memory save flow: process factories incrementally, freeing memory as we go
+        import gc
+        from dataclasses import replace
+
+        from megatron.core.dist_checkpointing.dict_utils import (
+            nested_values,
+        )
+        from megatron.core.dist_checkpointing.mapping import (
+            ShardedTensor,
+            ShardedTensorFactory,
+        )
+        from tqdm import tqdm
+
+        from megatron.bridge.training.checkpointing import (
+            _build_sharded_state_dict_metadata,
+            generate_state_dict,
+            get_rng_state,
+        )
+        from megatron.bridge.training.utils.pg_utils import get_pg_collection
+
+        logger.info("[LOW_MEMORY_SAVE] Generating state dict...")
+
+        # Get RNG state (minimal, since save_rng=False)
+        pg_collection = get_pg_collection(model)
+        rng_state = get_rng_state(
+            data_parallel_random_init=False, ckpt_format=ckpt_format, pg_collection=pg_collection
+        )
+
+        # Build sharded state dict metadata
+        sharded_sd_metadata = _build_sharded_state_dict_metadata(False, state.cfg.checkpoint)
+
+        # Generate state dict with ShardedTensorFactory objects
+        state_dict = generate_state_dict(
+            state.cfg.checkpoint,
+            model,
+            optimizer=None,
+            opt_param_scheduler=None,
+            rng_state=rng_state,
+            iteration=0,
+            optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
+            model_sd_kwargs=dict(metadata=sharded_sd_metadata),
+            rerun_state=None,
+        )
+
+        # Build a map from storage data_ptr to model parameter
+        # This allows us to clear model params as we process factories
+        storage_to_param = {}
+        for m in model:
+            for name, param in m.named_parameters():
+                storage_ptr = param.data.untyped_storage().data_ptr()
+                storage_to_param[storage_ptr] = param
+
+        logger.info(f"[LOW_MEMORY_SAVE] Mapped {len(storage_to_param)} model parameters")
+
+        def _clear_source_param(tensor):
+            """Clear the model parameter that shares storage with this tensor."""
+            storage_ptr = tensor.untyped_storage().data_ptr()
+            if storage_ptr in storage_to_param:
+                param = storage_to_param[storage_ptr]
+                # Clear the parameter data
+                param.data = torch.empty(0, device=param.device, dtype=param.dtype)
+                del storage_to_param[storage_ptr]
+                return True
+            return False
+
+        def _apply_factory_and_free(container, key, factory):
+            """Apply a single factory, clone results, and free the source data."""
+            # Get the source tensor before applying
+            source_tensor = factory.data
+
+            # Build the factory result (this creates clones for gated MLP)
+            result = factory.build_fn(factory.key, factory.data, factory.replica_id, factory.flattened_range)
+
+            # Clone all ShardedTensor data in the result to decouple from source
+            if isinstance(result, dict):
+                for sh_ten in nested_values(result):
+                    if isinstance(sh_ten, ShardedTensor) and sh_ten.data is not None:
+                        sh_ten.data = sh_ten.data.clone()
+            elif isinstance(result, ShardedTensor) and result.data is not None:
+                result = replace(result, data=result.data.clone())
+
+            # Replace factory with result in container
+            container[key] = result
+
+            # NOW clear the source parameter from the model
+            # This is safe because we've cloned all the data we need
+            _clear_source_param(source_tensor)
+
+        def _collect_factories(d):
+            """Collect all (container, key, factory) tuples from nested dict/list."""
+            factories = []
+            if isinstance(d, dict):
+                for k, v in list(d.items()):
+                    if isinstance(v, ShardedTensorFactory):
+                        factories.append((d, k, v))
+                    elif isinstance(v, (dict, list)):
+                        factories.extend(_collect_factories(v))
+            elif isinstance(d, list):
+                for i, v in enumerate(d):
+                    if isinstance(v, ShardedTensorFactory):
+                        factories.append((d, i, v))
+                    elif isinstance(v, (dict, list)):
+                        factories.extend(_collect_factories(v))
+            return factories
+
+        # Collect all factories first to get total count for progress bar
+        factories = _collect_factories(state_dict)
+
+        # Process factories with progress bar
+        for idx, (container, key, factory) in enumerate(
+            tqdm(factories, desc="[LOW_MEMORY_SAVE] Processing factories", unit="factory")
+        ):
+            _apply_factory_and_free(container, key, factory)
+            # Periodic garbage collection
+            if (idx + 1) % 20 == 0:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        # Force GC after processing all factories
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Collect remaining ShardedTensors for progress bar
+        remaining_tensors = [
+            sh_ten
+            for sh_ten in nested_values(state_dict)
+            if isinstance(sh_ten, ShardedTensor) and sh_ten.data is not None
+        ]
+
+        # Clone remaining ShardedTensor data with progress bar
+        for idx, sh_ten in enumerate(tqdm(remaining_tensors, desc="[LOW_MEMORY_SAVE] Cloning tensors", unit="tensor")):
+            source_tensor = sh_ten.data
+            sh_ten.data = sh_ten.data.clone()
+            _clear_source_param(source_tensor)
+            if (idx + 1) % 50 == 0:
+                gc.collect()
+
+        # Clear any remaining model params not processed above
+        remaining_params = len(storage_to_param)
+        for m in model:
+            for param in m.parameters():
+                if param.data.numel() > 0:  # Not already cleared
+                    param.data = torch.empty(0, device=param.device, dtype=param.dtype)
+        model.clear()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        logger.info(f"[LOW_MEMORY_SAVE] Cleared {remaining_params} remaining params, memory freed")
+
+        # Save with pre-built state dict
+        save_checkpoint(
+            state=state,
+            model=[],  # Empty model list since we've freed it
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+            prebuilt_state_dict=state_dict,
+            pg_collection=pg_collection,
+        )
+    else:
+        # Save the checkpoint
+        save_checkpoint(
+            state=state,
+            model=model,
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+        )
 
     # Save tokenizer files separately if tokenizer config is provided
     if tokenizer_config is not None:

@@ -180,7 +180,7 @@ torchrun --nproc-per-node=8 run/run_recipe.py \
 - Gemma 3 1B: https://huggingface.co/google/gemma-3-1b-it
 
 ## Related Docs
-- Gemma3 Vision-Language Models: [Gemma 3 VL](../vlm/gemma3-vl.md)
+- Gemma3 Vision-Language Models: [Gemma 3 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/gemma3_vl/README.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)

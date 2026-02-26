@@ -249,7 +249,7 @@ class Gemma3SelfAttention(SelfAttention):
         attention_mask: Tensor,
         key_value_states: Optional[Tensor] = None,
         inference_context: Optional[BaseInferenceContext] = None,
-        rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
+        rotary_pos_emb: Optional[Tensor] = None,
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
         rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
@@ -260,7 +260,7 @@ class Gemma3SelfAttention(SelfAttention):
         inference_params: Optional[BaseInferenceContext] = None,
     ) -> Tuple[Tensor, Tensor]:
         """Switch to either local or global rope embedding before forward"""
-        assert isinstance(rotary_pos_emb, tuple)
+        assert isinstance(rotary_pos_emb, torch.Tensor) and rotary_pos_emb.ndim >= 1 and rotary_pos_emb.size(0) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
         if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
@@ -367,12 +367,35 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
             **kwargs,
         )
 
+    def forward(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+        cp_group: torch.distributed.ProcessGroup | None = None,
+    ) -> Tensor:
+        """Get global and local rope embedding.
+
+        Note: Caching is bypassed when cp_group is provided since ProcessGroup is unhashable.
+        """
+        # ProcessGroup is unhashable, so bypass caching when cp_group is provided
+        if cp_group is not None:
+            rope_global = super().forward(max_seq_len, offset, packed_seq, cp_group)
+            rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, cp_group)
+            return torch.stack([rope_local, rope_global], dim=0)
+        return self._forward_cached(max_seq_len, offset, packed_seq)
+
     @lru_cache(maxsize=32)
-    def forward(self, max_seq_len: int, offset: int = 0, packed_seq: bool = False) -> Tensor:
-        """Get global and local rope embedding"""
-        rope_global = super().forward(max_seq_len, offset, packed_seq)
-        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq)
-        return rope_local, rope_global
+    def _forward_cached(
+        self,
+        max_seq_len: int,
+        offset: int = 0,
+        packed_seq: bool = False,
+    ) -> Tensor:
+        """Cached forward for hashable parameters only."""
+        rope_global = super().forward(max_seq_len, offset, packed_seq, None)
+        rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, None)
+        return torch.stack([rope_local, rope_global], dim=0)
 
 
 def _is_local_attn_layer(

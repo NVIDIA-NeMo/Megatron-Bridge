@@ -44,9 +44,9 @@
 # ==============================================================================
 
 # Training script to run
-TRAINING_SCRIPT="pretrain_decoder.py"
+TRAINING_SCRIPT="run_recipe.py"
 # Options:
-# TRAINING_SCRIPT="finetune_gpt.py"
+# TRAINING_SCRIPT="run_recipe.py"
 # TRAINING_SCRIPT="pretrain_vlm.py"  # For VLM models
 # TRAINING_SCRIPT="finetune_vlm.py"  # For VLM finetuning
 
@@ -58,9 +58,8 @@ RECIPE="llama32_1b_pretrain_config"
 # RECIPE="llama3_8b_pretrain_config"
 # RECIPE="qwen25_vl_pretrain_config"  # For VLM models
 
-# Optional: YAML config file
-CONFIG_FILE=""
-# CONFIG_FILE="conf/my_custom_config.yaml"
+# Forward step type (gpt or vlm)
+STEP_TYPE="gpt"
 
 # Optional: CLI overrides (Hydra-style dot notation)
 CLI_OVERRIDES=""
@@ -128,11 +127,7 @@ CMD="$CMD --master_addr=\$(scontrol show hostname \$SLURM_NODELIST | head -n1)"
 CMD="$CMD --master_port=29500"
 CMD="$CMD $SCRIPT_PATH"
 CMD="$CMD --recipe $RECIPE"
-
-# Add config file if specified
-if [ -n "$CONFIG_FILE" ]; then
-    CMD="$CMD --config-file $CONFIG_FILE"
-fi
+CMD="$CMD --step $STEP_TYPE"
 
 # Add CLI overrides if specified
 if [ -n "$CLI_OVERRIDES" ]; then

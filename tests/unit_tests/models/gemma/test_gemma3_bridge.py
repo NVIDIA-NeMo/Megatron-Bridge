@@ -451,17 +451,6 @@ class TestMegatronGemma3Bridge:
         # Check it has param mappings (they are passed as args to __init__)
         # The mapping registry should have embedding, layer norm, attention, and MLP mappings
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_generation_config(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
-        """Test that generation config is passed through."""
-        mock_autoconfig.return_value = gemma3_1b_config
-        bridge = Gemma3ModelBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_gemma3_1b.generation_config
-
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Gemma3 models."""

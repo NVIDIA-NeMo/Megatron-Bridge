@@ -183,11 +183,11 @@ class TestQwen3MoEConversion:
             first_layer = model.model.layers[0]
             assert hasattr(first_layer, "mlp")
             assert hasattr(first_layer.mlp, "experts")
-            assert len(first_layer.mlp.experts) == 4  # num_experts
+            assert model.config.num_experts == 4
 
             print(f"SUCCESS: Qwen3 MoE toy model created and validated at {qwen3_moe_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")
-            print(f"MoE structure validated: {len(first_layer.mlp.experts)} experts per layer")
+            print(f"MoE structure validated: {model.config.num_experts} experts per layer")
 
         except Exception as e:
             assert False, f"Failed to load created toy MoE model: {e}"
@@ -290,14 +290,17 @@ class TestQwen3MoEConversion:
             assert saved_config["hidden_size"] == 2048, "Hidden size should match toy config"
             assert saved_config["num_attention_heads"] == 32, "Number of attention heads should match toy config"
             # Verify MoE specific parameters are preserved
-            assert saved_config["num_experts"] == 4, "Number of experts should match toy config"
+            # Qwen3MoeConfig uses attribute_map {"num_experts": "num_local_experts"},
+            # so save_pretrained() serializes the internal name "num_local_experts".
+            num_experts_key = "num_local_experts" if "num_local_experts" in saved_config else "num_experts"
+            assert saved_config[num_experts_key] == 4, "Number of experts should match toy config"
             assert saved_config["num_experts_per_tok"] == 4, "Number of experts per token should match toy config"
             assert saved_config["moe_intermediate_size"] == 768, "MoE intermediate size should match toy config"
 
             print(f"SUCCESS: Qwen3 MoE {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
             print(
-                f"MoE parameters preserved: {saved_config['num_experts']} experts, {saved_config['num_experts_per_tok']} per token"
+                f"MoE parameters preserved: {saved_config[num_experts_key]} experts, {saved_config['num_experts_per_tok']} per token"
             )
 
         except Exception as e:

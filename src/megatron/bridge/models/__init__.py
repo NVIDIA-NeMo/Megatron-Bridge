@@ -105,24 +105,8 @@ from megatron.bridge.models.llama_nemotron import (
     LlamaNemotronBridge,
     LlamaNemotronHeterogeneousProvider,
 )
-from megatron.bridge.models.mamba.mamba_provider import (
-    MambaModelProvider,
-    MambaModelProvider1P3B,
-    MambaModelProvider2P7B,
-    MambaModelProvider130M,
-    MambaModelProvider370M,
-    MambaModelProvider780M,
-    MambaProvider,
-    MambaProvider1_3B,
-    MambaProvider2_7B,
-    MambaProvider130M,
-    MambaProvider370M,
-    MambaProvider780M,
-    NVIDIAMambaHybridModelProvider8B,
-    NVIDIAMambaHybridProvider8B,
-    NVIDIAMambaModelProvider8B,
-    NVIDIAMambaProvider8B,
-)
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -151,6 +135,7 @@ from megatron.bridge.models.nemotron_vl import (
     NemotronVLModel,
 )
 from megatron.bridge.models.nemotronh.nemotron_h_provider import (
+    Nemotron3NanoProvider,
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
@@ -326,22 +311,9 @@ __all__ = [
     "NemotronHModel56BProvider",
     "NemotronNano9Bv2Provider",
     "NemotronNano12Bv2Provider",
+    "Nemotron3NanoProvider",
     "MambaModelProvider",
-    "MambaModelProvider1P3B",
-    "MambaModelProvider2P7B",
-    "MambaModelProvider130M",
-    "MambaModelProvider370M",
-    "MambaModelProvider780M",
-    "NVIDIAMambaHybridModelProvider8B",
-    "NVIDIAMambaModelProvider8B",
-    "MambaProvider",
-    "MambaProvider1_3B",
-    "MambaProvider2_7B",
-    "MambaProvider130M",
-    "MambaProvider370M",
-    "MambaProvider780M",
-    "NVIDIAMambaHybridProvider8B",
-    "NVIDIAMambaProvider8B",
+    "MimoBridge",
     # Nemotron Models
     "NemotronBridge",
     "NemotronModelProvider",

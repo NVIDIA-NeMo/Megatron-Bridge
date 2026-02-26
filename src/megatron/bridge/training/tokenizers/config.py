@@ -21,9 +21,6 @@ from typing import Any, Literal, Optional, Union
 class TokenizerConfig:
     """Configuration settings for the tokenizer."""
 
-    legacy_tokenizer: Optional[bool] = False
-    """To use Megatron-Bridge legacy tokenizer system."""
-
     metadata_path: Optional[Union[str | dict]] = None
     """Path to the tokenizer metadata file."""
 
@@ -50,7 +47,9 @@ class TokenizerConfig:
             "Llama2Tokenizer",
             "TikTokenizer",
             "MultimodalTokenizer",
+            "NullMultimodalTokenizer",
             "NullTokenizer",
+            "SFTTokenizer",
         ]
     ] = None
     """What type of tokenizer to use."""
@@ -75,6 +74,7 @@ class TokenizerConfig:
 
     tokenizer_prompt_format: Optional[str] = None
     image_tag_type: Optional[str] = None
+    force_system_message: Optional[bool] = False
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
