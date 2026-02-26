@@ -40,7 +40,7 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=f"{ensure_test_data}/tokenizers/huggingface",
     )
-    tokenizer = build_tokenizer(tokenizer_config=tokenizer_config)
+    tokenizer = build_tokenizer(config=tokenizer_config)
 
     if dataset_type == "sft":
         dataset = GPTSFTDataset(

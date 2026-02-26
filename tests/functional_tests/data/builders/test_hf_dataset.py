@@ -40,7 +40,7 @@ def get_tokenizer(ensure_test_data):
         tokenizer_model=f"{ensure_test_data}/tokenizers/huggingface",
     )
     tokenizer = build_tokenizer(
-        tokenizer_config=tokenizer_config,
+        config=tokenizer_config,
         make_vocab_size_divisible_by=128,
         tensor_model_parallel_size=1,
     )

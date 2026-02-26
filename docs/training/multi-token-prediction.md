@@ -66,12 +66,13 @@ where:
 Here's a minimal example using the Qwen3 30B-A3B recipe with MTP enabled:
 
 ```python
-from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain
+from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.config import ConfigContainer
 
-log_dir = f"/path/to/log/dir"
+log_dir = "/path/to/log/dir"
 cfg: ConfigContainer = qwen3_30b_a3b_pretrain_config()
-cfg.logger.log_dir = log_dir
 cfg.logger.tensorboard_dir = log_dir + "/tb_logs"
 cfg.checkpoint.save = log_dir + "/checkpoints"
 cfg.checkpoint.load = log_dir + "/checkpoints"
@@ -82,10 +83,11 @@ cfg.dataset.blend=[[
 ], None]
 cfg.dataset.split="9999,8,2"
 cfg.dataset.path_to_cache = "/path/to/cache"
+# cfg.model.num_layers = 8  # train a smaller model if OOM
 # MTP Configuration
-cfg.mtp_num_layers = 1
-cfg.mtp_loss_scaling_factor = 0.1
-pretrain(cfg)
+cfg.model.mtp_num_layers = 1
+cfg.model.mtp_loss_scaling_factor = 0.1
+pretrain(cfg, forward_step)
 ```
 Follow the [DCLM Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm) to prepare the training data 
 

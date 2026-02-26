@@ -30,12 +30,20 @@ on:
         required: true
         default: true
         type: boolean
+      generate-changelog:
+        description: Generate changelog
+        required: false
+        default: true
+        type: boolean
+      publish-docs:
+        description: Publish docs
+        required: false
+        default: true
+        type: boolean
       version-bump-branch:
         description: Branch for version bump
         required: true
         type: string
-  schedule:
-    - cron: "0 6 * * 1"
 
 permissions:
   contents: write # To read repository content
@@ -43,7 +51,7 @@ permissions:
 
 jobs:
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.54.3
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.76.0
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
       python-package: megatron.bridge
@@ -58,11 +66,14 @@ jobs:
       runner: linux-amd64-cpu16
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}
+      gh-release-use-changelog-builder: ${{ inputs.generate-changelog }}
+      publish-docs: ${{ inputs.publish-docs }}
+      docs-target-path: nemo/megatron-bridge
     secrets:
-      TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
-      TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
-      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
+      TWINE_USERNAME: __token__
+      TWINE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SVC_PYPI_TOKEN || secrets.SVC_PYPI_TEST_TOKEN }}
+      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
+      SLACK_WEBHOOK: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SLACK_MAIN_CHANNEL_WEBHOOK || secrets.SLACK_CI_CHANNEL_WEBHOOK }}
       PAT: ${{ secrets.PAT }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
       SSH_PWD: ${{ secrets.SSH_PWD }}

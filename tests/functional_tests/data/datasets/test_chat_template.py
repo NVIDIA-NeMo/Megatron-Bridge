@@ -103,7 +103,7 @@ def chat_tokenizer():
 
     # Override with custom template that has generation tags (like NeMo does)
     # This enables proper context/answer splitting via return_assistant_tokens_mask
-    tokenizer = build_tokenizer(tokenizer_config=tokenizer_config)
+    tokenizer = build_tokenizer(config=tokenizer_config)
 
     return tokenizer
 

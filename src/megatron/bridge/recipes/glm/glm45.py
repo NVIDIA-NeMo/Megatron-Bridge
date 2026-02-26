@@ -400,6 +400,7 @@ def glm45_355b_finetune_config(**user_kwargs: Unpack[GLM45FinetuneKwargs]) -> Co
         "expert_model_parallel_size": 16 if is_full_sft else 4,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+        "packed_sequence": False,  # Packed sequence is not supported for GLM 4.5
     }
     kwargs: GLM45FinetuneKwargs = {**recommended, **user_kwargs}
     return _glm45_finetune_common(**kwargs)
@@ -422,6 +423,7 @@ def glm45_air_106b_finetune_config(**user_kwargs: Unpack[GLM45FinetuneKwargs]) -
         "expert_model_parallel_size": 8 if is_full_sft else 4,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+        "packed_sequence": False,  # Packed sequence is not supported for GLM 4.5
     }
     kwargs: GLM45FinetuneKwargs = {**recommended, **user_kwargs}
     return _glm45_finetune_common(**kwargs)
@@ -443,7 +445,7 @@ def _glm45_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
