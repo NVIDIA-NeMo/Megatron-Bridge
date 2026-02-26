@@ -21,6 +21,7 @@ import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.energon.base_energon_datamodule import (
     EnergonDataloader,
@@ -129,10 +130,11 @@ class TestEnergonMultiModalDataModuleFunctional:
     def test_datamodule_distributed_initialization(self, mock_energon_dependencies):
         """
         Test that the DataModule correctly initializes in a distributed environment
-        (using the real parallel_state).
+        (using pg_collection from parallel_state).
         """
 
         # 1. Initialization
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         datamodule = EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
             tokenizer=MagicMock(),
@@ -141,21 +143,18 @@ class TestEnergonMultiModalDataModuleFunctional:
             micro_batch_size=2,
             global_batch_size=4,
             num_workers=2,
+            pg_collection=pg_collection,
         )
 
         # 2. Build DataLoaders
-        # This triggers worker_config creation using real parallel_state
         train_loader, val_loader = datamodule.build()
 
         assert isinstance(train_loader, EnergonDataloader)
         assert isinstance(val_loader, EnergonDataloader)
 
-        # 3. Verify WorkerConfig was created correctly
-        # We can inspect the calls to get_train_dataset to see what worker_config was passed
+        # 3. Verify WorkerConfig was created correctly from pg_collection
         args, kwargs = mock_energon_dependencies["get_train_dataset"].call_args_list[0]  # First call (train)
         worker_config = kwargs["worker_config"]
-
-        # Verify worker config properties derived from parallel_state
         assert worker_config.rank == 0
         assert worker_config.world_size == 1
         assert worker_config.num_workers == 2
@@ -178,7 +177,7 @@ class TestEnergonDataModuleCPHandling:
     """
     Unit tests for Context Parallelism (CP) handling in the energon datamodule.
 
-    These tests mock parallel_state to simulate various CP/DP configurations
+    These tests use mock pg_collection to simulate various CP/DP configurations
     without requiring real distributed initialization.
     """
 
@@ -206,16 +205,23 @@ class TestEnergonDataModuleCPHandling:
                 "loader": mock_loader,
             }
 
-    @pytest.fixture
-    def mock_parallel_state(self):
-        """Mock parallel_state with configurable DP/CP ranks."""
-        with patch(f"{self.MODULE_PATH}.parallel_state") as mock_ps:
-            mock_ps.is_initialized.return_value = True
-            mock_dp_group = MagicMock()
-            mock_ps.get_data_parallel_group.return_value = mock_dp_group
-            yield mock_ps
+    @staticmethod
+    def _make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1):
+        """Create a mock ProcessGroupCollection with configurable DP/CP ranks."""
+        mock_dp = MagicMock()
+        mock_dp.rank.return_value = dp_rank
+        mock_dp.size.return_value = dp_world_size
 
-    def _make_datamodule(self, num_workers=2, num_val_workers=None, **kwargs):
+        mock_cp = MagicMock()
+        mock_cp.rank.return_value = cp_rank
+        mock_cp.size.return_value = cp_size
+
+        pg_collection = MagicMock(spec=ProcessGroupCollection)
+        pg_collection.dp = mock_dp
+        pg_collection.cp = mock_cp
+        return pg_collection
+
+    def _make_datamodule(self, num_workers=2, num_val_workers=None, pg_collection=None, **kwargs):
         """Helper to create an EnergonMultiModalDataModule with sensible defaults."""
         return EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
@@ -226,6 +232,7 @@ class TestEnergonDataModuleCPHandling:
             global_batch_size=8,
             num_workers=num_workers,
             num_val_workers=num_val_workers,
+            pg_collection=pg_collection,
             **kwargs,
         )
 
@@ -237,29 +244,25 @@ class TestEnergonDataModuleCPHandling:
     # CP handling: train_dataloader
     # ----------------------------------------------------------------
 
-    def test_train_dataloader_uses_pure_dp_rank_with_cp(self, mock_energon, mock_parallel_state):
+    def test_train_dataloader_uses_pure_dp_rank_with_cp(self, mock_energon):
         """
         With CP=2 and DP=4, the train dataloader should use the pure DP rank
         (not the combined DP-CP rank), so CP ranks within the same DP replica
         read the same data shard.
         """
-        mock_parallel_state.get_data_parallel_rank.return_value = 1
-        mock_parallel_state.get_data_parallel_world_size.return_value = 4
-        mock_parallel_state.get_context_parallel_rank.return_value = 1
-        mock_parallel_state.get_context_parallel_world_size.return_value = 2
+        pg = self._make_pg_collection(dp_rank=1, dp_world_size=4, cp_rank=1, cp_size=2)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         dm.train_dataloader()
 
         wc = self._get_worker_config(mock_energon)
         assert wc.rank == 1
         assert wc.world_size == 4
-        # Verify pure DP functions were called (without with_context_parallel=True)
-        mock_parallel_state.get_data_parallel_rank.assert_called_once_with()
-        mock_parallel_state.get_data_parallel_world_size.assert_called_once_with()
-        mock_parallel_state.get_data_parallel_group.assert_called_once_with()
+        # Verify pure DP group was used (not dp_cp)
+        pg.dp.rank.assert_called()
+        pg.dp.size.assert_called()
 
-    def test_train_cp_ranks_in_same_dp_replica_get_same_config(self, mock_energon, mock_parallel_state):
+    def test_train_cp_ranks_in_same_dp_replica_get_same_config(self, mock_energon):
         """
         Two CP ranks (cp_rank=0 and cp_rank=1) within the same DP replica (dp_rank=0)
         should produce identical WorkerConfig (same rank, world_size).
@@ -270,31 +273,25 @@ class TestEnergonDataModuleCPHandling:
             mock_energon["get_train_dataset"].reset_mock()
             mock_energon["get_savable_loader"].reset_mock()
 
-            mock_parallel_state.get_data_parallel_rank.return_value = 0
-            mock_parallel_state.get_data_parallel_world_size.return_value = 2
-            mock_parallel_state.get_context_parallel_rank.return_value = cp_rank
-            mock_parallel_state.get_context_parallel_world_size.return_value = 2
+            pg = self._make_pg_collection(dp_rank=0, dp_world_size=2, cp_rank=cp_rank, cp_size=2)
 
-            dm = self._make_datamodule()
+            dm = self._make_datamodule(pg_collection=pg)
             dm.train_dataloader()
             configs.append(self._get_worker_config(mock_energon))
 
         assert configs[0].rank == configs[1].rank == 0
         assert configs[0].world_size == configs[1].world_size == 2
 
-    def test_train_different_dp_ranks_get_different_config(self, mock_energon, mock_parallel_state):
+    def test_train_different_dp_ranks_get_different_config(self, mock_energon):
         """Different DP ranks should receive different worker config ranks for data sharding."""
         configs = []
         for dp_rank in [0, 1]:
             mock_energon["get_train_dataset"].reset_mock()
             mock_energon["get_savable_loader"].reset_mock()
 
-            mock_parallel_state.get_data_parallel_rank.return_value = dp_rank
-            mock_parallel_state.get_data_parallel_world_size.return_value = 2
-            mock_parallel_state.get_context_parallel_rank.return_value = 0
-            mock_parallel_state.get_context_parallel_world_size.return_value = 2
+            pg = self._make_pg_collection(dp_rank=dp_rank, dp_world_size=2, cp_rank=0, cp_size=2)
 
-            dm = self._make_datamodule()
+            dm = self._make_datamodule(pg_collection=pg)
             dm.train_dataloader()
             configs.append(self._get_worker_config(mock_energon))
 
@@ -302,14 +299,11 @@ class TestEnergonDataModuleCPHandling:
         assert configs[1].rank == 1
         assert configs[0].world_size == configs[1].world_size == 2
 
-    def test_train_dataloader_cp1_equivalent_to_no_cp(self, mock_energon, mock_parallel_state):
+    def test_train_dataloader_cp1_equivalent_to_no_cp(self, mock_energon):
         """With CP=1, behavior should be identical to no context parallelism."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 3
-        mock_parallel_state.get_data_parallel_world_size.return_value = 8
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=3, dp_world_size=8, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         dm.train_dataloader()
 
         wc = self._get_worker_config(mock_energon)
@@ -320,90 +314,74 @@ class TestEnergonDataModuleCPHandling:
     # CP handling: val_dataloader
     # ----------------------------------------------------------------
 
-    def test_val_dataloader_uses_pure_dp_rank_with_cp(self, mock_energon, mock_parallel_state):
+    def test_val_dataloader_uses_pure_dp_rank_with_cp(self, mock_energon):
         """Val dataloader should also use the pure DP rank, not combined DP-CP."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 2
-        mock_parallel_state.get_data_parallel_world_size.return_value = 4
-        mock_parallel_state.get_context_parallel_rank.return_value = 1
-        mock_parallel_state.get_context_parallel_world_size.return_value = 2
+        pg = self._make_pg_collection(dp_rank=2, dp_world_size=4, cp_rank=1, cp_size=2)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         dm.val_dataloader()
 
         wc = self._get_worker_config(mock_energon)
         assert wc.rank == 2
         assert wc.world_size == 4
 
-    def test_val_dataloader_uses_num_val_workers(self, mock_energon, mock_parallel_state):
+    def test_val_dataloader_uses_num_val_workers(self, mock_energon):
         """Val dataloader should use num_val_workers, not num_workers."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule(num_workers=4, num_val_workers=8)
+        dm = self._make_datamodule(num_workers=4, num_val_workers=8, pg_collection=pg)
         dm.val_dataloader()
 
         wc = self._get_worker_config(mock_energon)
         assert wc.num_workers == 8
 
-    def test_val_dataloader_defaults_num_val_workers_to_num_workers(self, mock_energon, mock_parallel_state):
+    def test_val_dataloader_defaults_num_val_workers_to_num_workers(self, mock_energon):
         """When num_val_workers is not set, it should default to num_workers."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule(num_workers=6)
+        dm = self._make_datamodule(num_workers=6, pg_collection=pg)
         dm.val_dataloader()
 
         wc = self._get_worker_config(mock_energon)
         assert wc.num_workers == 6
 
     # ----------------------------------------------------------------
-    # Uninitialized parallel state fallback
+    # No pg_collection fallback
     # ----------------------------------------------------------------
 
     @pytest.mark.usefixtures("mock_energon")
-    def test_train_dataloader_uninitialized_uses_default_worker_config(self):
-        """When parallel_state is not initialized, should use WorkerConfig.default_worker_config."""
-        with patch(f"{self.MODULE_PATH}.parallel_state") as mock_ps:
-            mock_ps.is_initialized.return_value = False
-            with patch(f"{self.MODULE_PATH}.WorkerConfig") as mock_wc_cls:
-                mock_default_wc = MagicMock()
-                mock_wc_cls.default_worker_config.return_value = mock_default_wc
+    def test_train_dataloader_no_pg_collection_uses_default_worker_config(self):
+        """When pg_collection is None, should use WorkerConfig.default_worker_config."""
+        with patch(f"{self.MODULE_PATH}.WorkerConfig") as mock_wc_cls:
+            mock_default_wc = MagicMock()
+            mock_wc_cls.default_worker_config.return_value = mock_default_wc
 
-                dm = self._make_datamodule(num_workers=3)
-                dm.train_dataloader()
+            dm = self._make_datamodule(num_workers=3)
+            dm.train_dataloader()
 
-                mock_wc_cls.default_worker_config.assert_called_once_with(3)
+            mock_wc_cls.default_worker_config.assert_called_once_with(3)
 
     @pytest.mark.usefixtures("mock_energon")
-    def test_val_dataloader_uninitialized_uses_default_worker_config(self):
-        """Val path should use num_val_workers with default_worker_config when uninitialized."""
-        with patch(f"{self.MODULE_PATH}.parallel_state") as mock_ps:
-            mock_ps.is_initialized.return_value = False
-            with patch(f"{self.MODULE_PATH}.WorkerConfig") as mock_wc_cls:
-                mock_default_wc = MagicMock()
-                mock_wc_cls.default_worker_config.return_value = mock_default_wc
+    def test_val_dataloader_no_pg_collection_uses_default_worker_config(self):
+        """Val path should use num_val_workers with default_worker_config when pg_collection is None."""
+        with patch(f"{self.MODULE_PATH}.WorkerConfig") as mock_wc_cls:
+            mock_default_wc = MagicMock()
+            mock_wc_cls.default_worker_config.return_value = mock_default_wc
 
-                dm = self._make_datamodule(num_workers=3, num_val_workers=5)
-                dm.val_dataloader()
+            dm = self._make_datamodule(num_workers=3, num_val_workers=5)
+            dm.val_dataloader()
 
-                mock_wc_cls.default_worker_config.assert_called_once_with(5)
+            mock_wc_cls.default_worker_config.assert_called_once_with(5)
 
     # ----------------------------------------------------------------
     # Dataloader caching
     # ----------------------------------------------------------------
 
-    def test_train_dataloader_is_cached(self, mock_energon, mock_parallel_state):
+    def test_train_dataloader_is_cached(self, mock_energon):
         """Second call to train_dataloader should not rebuild the underlying loader."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         loader1 = dm.train_dataloader()
         assert isinstance(loader1, EnergonDataloader)
 
@@ -413,14 +391,11 @@ class TestEnergonDataModuleCPHandling:
         # energon loader is cached and not recreated on subsequent calls.
         assert mock_energon["get_savable_loader"].call_count == 1
 
-    def test_val_dataloader_is_cached(self, mock_energon, mock_parallel_state):
+    def test_val_dataloader_is_cached(self, mock_energon):
         """Second call to val_dataloader should not rebuild the underlying loader."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         loader1 = dm.val_dataloader()
         assert isinstance(loader1, EnergonDataloader)
 
@@ -466,28 +441,22 @@ class TestEnergonDataModuleCPHandling:
         assert dm.test_dataloader() is None
 
     @pytest.mark.usefixtures("mock_energon")
-    def test_build_returns_train_and_val(self, mock_parallel_state):
+    def test_build_returns_train_and_val(self):
         """build() should return (train_dataloader, val_dataloader)."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         train_loader, val_loader = dm.build()
 
         assert isinstance(train_loader, EnergonDataloader)
         assert isinstance(val_loader, EnergonDataloader)
 
     @pytest.mark.usefixtures("mock_energon")
-    def test_energon_dataloader_cyclic_iteration(self, mock_parallel_state):
+    def test_energon_dataloader_cyclic_iteration(self):
         """EnergonDataloader should cycle through data indefinitely."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         loader = dm.train_dataloader()
 
         # Iterate beyond the 10 mock items to verify cycling
@@ -497,14 +466,11 @@ class TestEnergonDataModuleCPHandling:
         # Item 10 should cycle back to the beginning
         assert items[10] == {"id": 0}
 
-    def test_energon_dataloader_save_state(self, mock_energon, mock_parallel_state):
+    def test_energon_dataloader_save_state(self, mock_energon):
         """EnergonDataloader.save_state() should delegate to the underlying loader."""
-        mock_parallel_state.get_data_parallel_rank.return_value = 0
-        mock_parallel_state.get_data_parallel_world_size.return_value = 1
-        mock_parallel_state.get_context_parallel_rank.return_value = 0
-        mock_parallel_state.get_context_parallel_world_size.return_value = 1
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
 
-        dm = self._make_datamodule()
+        dm = self._make_datamodule(pg_collection=pg)
         loader = dm.train_dataloader()
         state = loader.save_state()
 
@@ -569,26 +535,35 @@ class TestEnergonDataShardingVerification:
 
         return loader_factory
 
+    @staticmethod
+    def _make_pg_collection(dp_rank, dp_world_size, cp_rank, cp_size):
+        """Create a mock ProcessGroupCollection with configurable DP/CP ranks."""
+        mock_dp = MagicMock()
+        mock_dp.rank.return_value = dp_rank
+        mock_dp.size.return_value = dp_world_size
+
+        mock_cp = MagicMock()
+        mock_cp.rank.return_value = cp_rank
+        mock_cp.size.return_value = cp_size
+
+        pg_collection = MagicMock(spec=ProcessGroupCollection)
+        pg_collection.dp = mock_dp
+        pg_collection.cp = mock_cp
+        return pg_collection
+
     def _build_loader_for_rank(self, dp_rank, dp_world_size, cp_rank, cp_size, seed):
         """
         Construct a datamodule + dataloader for a simulated (dp_rank, cp_rank),
         using rank-aware mocks. Returns the list of batches drawn from the loader.
         """
         with (
-            patch(f"{self.MODULE_PATH}.parallel_state") as mock_ps,
             patch(f"{self.MODULE_PATH}.get_train_dataset") as mock_get_dataset,
             patch(f"{self.MODULE_PATH}.get_savable_loader") as mock_get_loader,
         ):
-            mock_ps.is_initialized.return_value = True
-            mock_ps.get_data_parallel_rank.return_value = dp_rank
-            mock_ps.get_data_parallel_world_size.return_value = dp_world_size
-            mock_ps.get_data_parallel_group.return_value = MagicMock()
-            mock_ps.get_context_parallel_rank.return_value = cp_rank
-            mock_ps.get_context_parallel_world_size.return_value = cp_size
-
             mock_get_dataset.return_value = MagicMock()
             mock_get_loader.side_effect = self._make_rank_aware_energon_mocks(seed)
 
+            pg = self._make_pg_collection(dp_rank, dp_world_size, cp_rank, cp_size)
             dm = EnergonMultiModalDataModule(
                 path="/tmp/mock_dataset",
                 tokenizer=MagicMock(),
@@ -597,6 +572,7 @@ class TestEnergonDataShardingVerification:
                 micro_batch_size=self.MICRO_BATCH_SIZE,
                 global_batch_size=self.MICRO_BATCH_SIZE * dp_world_size,
                 num_workers=1,
+                pg_collection=pg,
             )
             loader = dm.train_dataloader()
             batches = [next(loader) for _ in range(self.NUM_BATCHES)]

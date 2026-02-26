@@ -46,6 +46,7 @@ class EnergonProvider(DatasetProvider):
             micro_batch_size=self.micro_batch_size,
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,
+            pg_collection=context.pg_collection,
         )
         return (
             iter(dataset.train_dataloader()),

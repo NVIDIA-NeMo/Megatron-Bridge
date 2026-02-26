@@ -24,6 +24,7 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import (
     ParamGroupOverride,
@@ -268,12 +269,14 @@ class DatasetBuildContext:
         valid_samples: Number of samples for validation dataset
         test_samples: Number of samples for test dataset
         tokenizer: Optional tokenizer instance for text processing
+        pg_collection: Optional process group collection for distributed training
     """
 
     train_samples: int
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+    pg_collection: Optional[ProcessGroupCollection] = None
 
 
 @dataclass(frozen=True)
