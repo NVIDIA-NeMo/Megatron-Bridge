@@ -18,7 +18,11 @@ from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
 
-from megatron.bridge.recipes.llama import llama3_8b_finetune_config, llama3_70b_finetune_config
+from megatron.bridge.recipes.llama import (
+    llama3_8b_sft_config,
+    llama3_70b_peft_config,
+    llama3_70b_sft_config,
+)
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
 )
@@ -57,12 +61,12 @@ def llama3_8b_sft_config_gb200(precision: str = "bf16", config_variant: str = "v
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_finetune_config(
-        peft="none",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=16384,
-    )
+    cfg = llama3_8b_sft_config()
+    cfg.mixed_precision = precision_config
+    seq_length = 16384
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -81,12 +85,12 @@ def llama3_8b_sft_config_h100(precision: str = "bf16", config_variant: str = "v1
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_8b_finetune_config(
-        peft="none",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_8b_sft_config()
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -105,12 +109,12 @@ def llama3_70b_sft_config_gb300(precision: str = "bf16", config_variant: str = "
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="none",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_sft_config()
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -141,12 +145,12 @@ def llama3_70b_sft_config_gb200(precision: str = "bf16", config_variant: str = "
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="none",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_sft_config()
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -171,12 +175,12 @@ def llama3_70b_sft_config_h100(precision: str = "bf16", config_variant: str = "v
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="none",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_sft_config()
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -201,12 +205,12 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="lora",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_peft_config(peft_scheme="lora")
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
@@ -238,12 +242,11 @@ def llama3_70b_lora_config_gb200(precision: str = "bf16", config_variant: str = 
     # BF16 uses seq_length=2048, FP8 variants use seq_length=4096
     seq_length = 2048 if precision.lower() == "bf16" else 4096
 
-    cfg = llama3_70b_finetune_config(
-        peft="lora",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=seq_length,
-    )
+    cfg = llama3_70b_peft_config(peft_scheme="lora")
+    cfg.mixed_precision = precision_config
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
@@ -271,12 +274,12 @@ def llama3_70b_lora_config_h100(precision: str = "bf16", config_variant: str = "
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="lora",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_peft_config(peft_scheme="lora")
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))

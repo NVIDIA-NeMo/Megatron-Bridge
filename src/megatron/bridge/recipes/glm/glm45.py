@@ -12,129 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-from typing import List, Optional, Union
 
 import torch
-from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DatasetProvider,
-    DistributedDataParallelConfig,
-    FinetuningDatasetConfig,
-    GPTDatasetConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-)
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-
-
-class GLM45CommonKwargs(TypedDict, total=False):
-    """Typed options accepted by GLM 4.5 recipe helpers."""
-
-    # Core identifiers
-    hf_path: str
-    dir: Optional[str]
-    name: str
-    # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
-    mock: bool
-    # Provide dataset directly
-    dataset: Optional[Union[GPTDatasetConfig, FinetuningDatasetConfig, DatasetProvider]]
-    # Model configuration
-    num_layers: int  # for ci testing
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
-    context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
-    sequence_parallel: bool
-    use_megatron_fsdp: bool
-    account_for_embedding_in_pipeline_split: bool
-    account_for_loss_in_pipeline_split: bool
-    cp_comm_type: Optional[str]
-    # Recompute configuration
-    recompute_granularity: Optional[str]
-    recompute_modules: Optional[List[str]]
-    recompute_method: Optional[str]
-    recompute_num_layers: Optional[int]
-    # MTP support
-    mtp_num_layers: Optional[int]
-    mtp_loss_scaling_factor: Optional[float]
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: int
-    micro_batch_size: int
-    seq_length: int
-    lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
-    eval_interval: int
-    save_interval: int
-    use_null_tokenizer: bool
-    # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
-    # Checkpointing
-    pretrained_checkpoint: Optional[str]
-
-
-class GLM45FinetuneKwargs(TypedDict, total=False):
-    """Typed options accepted by GLM 4.5 finetune recipe helpers."""
-
-    # Core identifiers
-    hf_path: str
-    dir: Optional[str]
-    name: str
-    # Model parallelism
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
-    context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
-    sequence_parallel: bool
-    use_megatron_fsdp: bool
-    # Finetuning specifics
-    pretrained_checkpoint: Optional[str]
-    peft: Optional[Union[str, PEFT]]
-    packed_sequence: bool
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: Optional[int]
-    micro_batch_size: int
-    seq_length: int
-    finetune_lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
-    eval_interval: int
-    save_interval: int
-    # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
-    # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+from megatron.bridge.training.config import ConfigContainer
 
 
 def glm45_355b_pretrain_config() -> ConfigContainer:
@@ -382,167 +268,553 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def glm45_355b_finetune_config(**user_kwargs: Unpack[GLM45FinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for GLM 4.5 355B-A32B variant.
+# =============================================================================
+# SFT Configs
+# =============================================================================
 
-    Default configuration:
-    - LoRA/DoRA: TP=2, PP=4, EP=4 (32 GPUs), LR=1e-4
-    - Full SFT: TP=2, PP=8, EP=16 (256 GPUs, same as pretrain), LR=5e-6
+
+def glm45_355b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for GLM-4.5 355B-A32B.
+
+    Default parallelism: TP=2, PP=8, EP=16
+
+    Note: Packed sequence is NOT supported for GLM-4.5.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for GLM-4.5 355B SFT.
     """
-    peft_value = user_kwargs.get("peft", "lora")
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+    # Get base SFT config with packed_sequence=False (not supported for GLM-4.5)
+    cfg = _sft_common()
 
-    recommended: GLM45FinetuneKwargs = {
-        "hf_path": "zai-org/GLM-4.5",
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 8 if is_full_sft else 4,
-        "expert_model_parallel_size": 16 if is_full_sft else 4,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    kwargs: GLM45FinetuneKwargs = {**recommended, **user_kwargs}
-    return _glm45_finetune_common(**kwargs)
+    # Override dataset - GLM-4.5 does NOT support packed_sequence
+    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
 
+    # Model config from HuggingFace
+    hf_path = "zai-org/GLM-4.5"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
 
-def glm45_air_106b_finetune_config(**user_kwargs: Unpack[GLM45FinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for GLM 4.5 Air 106B-A12B variant.
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
 
-    Default configuration:
-    - LoRA/DoRA: TP=1, PP=2, EP=4 (8 GPUs, 1 node), LR=1e-4
-    - Full SFT: TP=1, PP=4, EP=8 (32 GPUs, same as pretrain), LR=5e-6
-    """
-    peft_value = user_kwargs.get("peft", "lora")
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+    # Sequence length
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
-    recommended: GLM45FinetuneKwargs = {
-        "hf_path": "zai-org/GLM-4.5-Air",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 4 if is_full_sft else 2,
-        "expert_model_parallel_size": 8 if is_full_sft else 4,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    kwargs: GLM45FinetuneKwargs = {**recommended, **user_kwargs}
-    return _glm45_finetune_common(**kwargs)
+    # Parallelism settings (MoE-specific)
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.sequence_parallel = False
 
-
-def _glm45_finetune_common(
-    hf_path: str,
-    dir: Optional[str] = None,
-    name: str = "default",
-    # Model configuration
-    tensor_model_parallel_size: int = 1,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
-    context_parallel_size: int = 1,
-    expert_model_parallel_size: int = 1,
-    sequence_parallel: bool = False,
-    use_megatron_fsdp: bool = False,
-    # Finetuning-specific params
-    pretrained_checkpoint: Optional[str] = None,
-    peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
-    # Training params
-    train_iters: int = 1000,
-    global_batch_size: int = 128,
-    micro_batch_size: int = 1,
-    seq_length: int = 2048,
-    eval_interval: int = 50,
-    save_interval: int = 50,
-    # Optimizer
-    finetune_lr: float = 1e-4,
-    min_lr: float = 0.0,
-    lr_warmup_iters: int = 50,
-    lr_decay_iters: Optional[int] = None,
-    # Precision / overlap
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-    # W&B
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
-) -> ConfigContainer:
-    """Common finetuning configuration for GLM 4.5 models using a given HuggingFace path."""
-
-    # Setup directories
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-
-    assert not packed_sequence, "Packed sequence is not supported for GLM 4.5 finetuning"
-
-    # Create model config
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
-    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
-    model_cfg.pipeline_dtype = pipeline_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
-    model_cfg.context_parallel_size = context_parallel_size
-    model_cfg.expert_model_parallel_size = expert_model_parallel_size
-    model_cfg.sequence_parallel = sequence_parallel
-    model_cfg.seq_length = seq_length
-
-    # Optimizer and LR scheduler
-    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        max_lr=finetune_lr,
-        min_lr=min_lr,
-        adam_beta1=0.9,
-        adam_beta2=0.95,
-        adam_eps=1e-8,
-        weight_decay=0.1,
+    # MoE Token Dispatcher settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GLM-4.5 has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
     )
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Mixed precision - use bf16_mixed string (matches old config)
+    cfg.mixed_precision = "bf16_mixed"
+
+    # Training config
+    cfg.train.train_iters = 1000
+    cfg.train.eval_interval = 50
+    cfg.train.eval_iters = 32
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+
+    # Logger config
+    cfg.logger.log_interval = 1
+
+    # Optimizer config - GLM uses specific adam parameters
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Scheduler config
+    cfg.scheduler.lr_warmup_iters = 50
+    cfg.scheduler.max_lr = 5e-6
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # GLM uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # MoE Overlap settings
+    cfg.model.moe_shared_expert_overlap = True  # Default from GLM model provider
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    # RNG seed
+    cfg.rng.seed = 5678
+
+    return cfg
+
+
+def glm45_air_106b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for GLM-4.5 Air 106B-A12B.
+
+    Default parallelism: TP=1, PP=4, EP=8
+
+    Note: Packed sequence is NOT supported for GLM-4.5.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for GLM-4.5 Air 106B SFT.
+    """
+    # Get base SFT config with packed_sequence=False (not supported for GLM-4.5)
+    cfg = _sft_common()
+
+    # Override dataset - GLM-4.5 does NOT support packed_sequence
+    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+
+    # Model config from HuggingFace
+    hf_path = "zai-org/GLM-4.5-Air"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
+
+    # Sequence length
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+
+    # Parallelism settings (MoE-specific)
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+
+    # MoE Token Dispatcher settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GLM-4.5 has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Mixed precision - use bf16_mixed string (matches old config)
+    cfg.mixed_precision = "bf16_mixed"
+
+    # Training config
+    cfg.train.train_iters = 1000
+    cfg.train.eval_interval = 50
+    cfg.train.eval_iters = 32
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+
+    # Logger config
+    cfg.logger.log_interval = 1
+
+    # Optimizer config - GLM uses specific adam parameters
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Scheduler config
+    cfg.scheduler.lr_warmup_iters = 50
+    cfg.scheduler.max_lr = 5e-6
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # GLM uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # MoE Overlap settings
+    cfg.model.moe_shared_expert_overlap = True  # Default from GLM model provider
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    # RNG seed
+    cfg.rng.seed = 5678
+
+    return cfg
+
+
+# =============================================================================
+# PEFT Configs
+# =============================================================================
+
+
+def glm45_355b_peft_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GLM-4.5 355B-A32B.
+
+    Default parallelism: TP=2, PP=4, EP=4
+
+    Note: Packed sequence is NOT supported for GLM-4.5.
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for GLM-4.5 355B PEFT.
+    """
+    # Get base PEFT config with packed_sequence=False (not supported for GLM-4.5)
+    cfg = _peft_common()
+
+    # Override dataset - GLM-4.5 does NOT support packed_sequence
+    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+
+    # Model config from HuggingFace
+    hf_path = "zai-org/GLM-4.5"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
+
+    # Sequence length
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
-    peft_config = default_peft_config(peft)
+    peft_cfg = default_peft_config(peft_scheme)
+    cfg.peft = peft_cfg
 
-    # Logger
-    logger_cfg = LoggerConfig(
-        log_interval=1,
-        tensorboard_dir=tensorboard_dir,
-        log_timers_to_tensorboard=True,
-        wandb_project=wandb_project,
-        wandb_entity=wandb_entity,
-        wandb_exp_name=wandb_exp_name,
+    # Parallelism settings (MoE-specific) - PEFT uses smaller parallelism
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.sequence_parallel = False
+
+    # MoE Token Dispatcher settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GLM-4.5 has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
     )
+    cfg.model.moe_hybridep_num_sms = 16
 
-    # Always use HF tokenizer for finetuning
-    tokenizer_cfg = TokenizerConfig(
-        tokenizer_type="HuggingFaceTokenizer",
-        tokenizer_model=hf_path,
+    # Mixed precision - use bf16_mixed string (matches old config)
+    cfg.mixed_precision = "bf16_mixed"
+
+    # Training config
+    cfg.train.train_iters = 1000
+    cfg.train.eval_interval = 50
+    cfg.train.eval_iters = 32
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+
+    # Logger config
+    cfg.logger.log_interval = 1
+
+    # Optimizer config - GLM uses specific adam parameters, PEFT uses higher LR
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Scheduler config - PEFT uses higher learning rate
+    cfg.scheduler.lr_warmup_iters = 50
+    cfg.scheduler.max_lr = 1e-4
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # GLM uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # MoE Overlap settings
+    cfg.model.moe_shared_expert_overlap = True  # Default from GLM model provider
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    # RNG seed
+    cfg.rng.seed = 5678
+
+    return cfg
+
+
+def glm45_air_106b_peft_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GLM-4.5 Air 106B-A12B.
+
+    Default parallelism: TP=1, PP=2, EP=4
+
+    Note: Packed sequence is NOT supported for GLM-4.5.
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for GLM-4.5 Air 106B PEFT.
+    """
+    # Get base PEFT config with packed_sequence=False (not supported for GLM-4.5)
+    cfg = _peft_common()
+
+    # Override dataset - GLM-4.5 does NOT support packed_sequence
+    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+
+    # Model config from HuggingFace
+    hf_path = "zai-org/GLM-4.5-Air"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
+
+    # Sequence length
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+
+    # PEFT config
+    peft_cfg = default_peft_config(peft_scheme)
+    cfg.peft = peft_cfg
+
+    # Parallelism settings (MoE-specific) - PEFT uses smaller parallelism
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.sequence_parallel = False
+
+    # MoE Token Dispatcher settings
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # GLM-4.5 has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
     )
+    cfg.model.moe_hybridep_num_sms = 16
 
-    pad_seq_to_mult = context_parallel_size * 2 if packed_sequence and context_parallel_size > 1 else 1
+    # Mixed precision - use bf16_mixed string (matches old config)
+    cfg.mixed_precision = "bf16_mixed"
 
-    return ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-        ),
-        optimizer=opt_cfg,
-        scheduler=scheduler_cfg,
-        ddp=DistributedDataParallelConfig(check_for_nan_in_grad=True, use_megatron_fsdp=use_megatron_fsdp),
-        dataset=default_squad_config(seq_length, packed_sequence, pad_seq_to_mult),
-        logger=logger_cfg,
-        tokenizer=tokenizer_cfg,
-        checkpoint=CheckpointConfig(
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            pretrained_checkpoint=pretrained_checkpoint,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=5678),
-        peft=peft_config,
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
-    )
+    # Training config
+    cfg.train.train_iters = 1000
+    cfg.train.eval_interval = 50
+    cfg.train.eval_iters = 32
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+
+    # Logger config
+    cfg.logger.log_interval = 1
+
+    # Optimizer config - GLM uses specific adam parameters, PEFT uses higher LR
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Scheduler config - PEFT uses higher learning rate
+    cfg.scheduler.lr_warmup_iters = 50
+    cfg.scheduler.max_lr = 1e-4
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # GLM uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # MoE Overlap settings
+    cfg.model.moe_shared_expert_overlap = True  # Default from GLM model provider
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.use_megatron_fsdp = False
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    # RNG seed
+    cfg.rng.seed = 5678
+
+    return cfg

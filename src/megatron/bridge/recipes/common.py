@@ -16,6 +16,8 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
+from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -120,6 +122,209 @@ def _pretrain_common() -> ConfigContainer:
         comm_overlap=None,
         # Mixed precision - bf16 by default
         mixed_precision="bf16_mixed",
+    )
+
+    return cfg
+
+
+def _sft_common() -> ConfigContainer:
+    """Create a base SFT (Supervised Fine-Tuning) ConfigContainer with common defaults.
+
+    This function returns a ConfigContainer template with sensible defaults for full SFT
+    (not LoRA/DoRA). The caller MUST set `cfg.model` and `cfg.tokenizer.tokenizer_model`
+    before use.
+
+    Key differences from pre-training:
+    - Uses HFDatasetConfig with SQuAD as default dataset
+    - Lower learning rate (5e-6) suitable for full fine-tuning
+    - Fewer training iterations (1000)
+    - Smaller batch sizes
+    - Supports pretrained_checkpoint loading
+    - No PEFT (full parameter training)
+
+    Returns:
+        ConfigContainer: Base configuration template for full SFT.
+    """
+    # Default output directories
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "default")
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Default sequence length for SFT
+    seq_length = 2048
+
+    # Packed sequence is enabled by default for training efficiency
+    # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
+    packed_sequence = True
+    pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
+
+    # Optimizer and scheduler with lower LR for full SFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=50,
+        lr_decay_iters=None,  # Defaults to train_iters during validation
+        max_lr=5e-6,  # Lower LR for full fine-tuning
+        min_lr=0.0,
+        adam_beta2=0.98,  # Common for fine-tuning
+    )
+
+    cfg = ConfigContainer(
+        # Model - MUST be set by each recipe before use
+        model=None,  # type: ignore[arg-type]
+        # Training config - shorter training for SFT
+        train=TrainingConfig(
+            train_iters=1000,
+            global_batch_size=128,
+            micro_batch_size=1,
+            eval_interval=100,
+            eval_iters=32,
+        ),
+        # Optimizer and scheduler
+        optimizer=opt_cfg,
+        scheduler=scheduler_cfg,
+        # DDP config - minimal settings, model-specific configs can override
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+        ),
+        # Dataset config - uses SQuAD with packed sequences by default
+        dataset=default_squad_config(
+            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+        ),
+        # Logger config
+        logger=LoggerConfig(
+            log_interval=1,
+            tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
+        ),
+        # Tokenizer - placeholder, each recipe should set tokenizer_model
+        tokenizer=TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=None,  # Must be set by each recipe
+        ),
+        # Checkpoint config with pretrained_checkpoint support
+        checkpoint=CheckpointConfig(
+            save_interval=100,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=None,  # Set to load from pretrained weights
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        # RNG config - different seed from pretrain
+        rng=RNGConfig(seed=5678),
+        # Distributed init config
+        dist=DistributedInitConfig(),
+        comm_overlap=None,
+        # Mixed precision - bf16 by default
+        mixed_precision="bf16_mixed",
+        # No PEFT for full SFT
+        peft=None,
+    )
+
+    return cfg
+
+
+def _peft_common() -> ConfigContainer:
+    """Create a base PEFT (Parameter-Efficient Fine-Tuning) ConfigContainer with LoRA defaults.
+
+    This function returns a ConfigContainer template with sensible defaults for PEFT
+    using LoRA. The caller MUST set `cfg.model` and `cfg.tokenizer.tokenizer_model`
+    before use.
+
+    Key differences from full SFT:
+    - Higher learning rate (1e-4) suitable for adapter training
+    - LoRA enabled by default with standard settings (dim=32, alpha=32)
+    - Targets all linear layers: linear_qkv, linear_proj, linear_fc1, linear_fc2
+
+    Returns:
+        ConfigContainer: Base configuration template for PEFT with LoRA.
+    """
+    # Default output directories
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "default")
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Default sequence length for PEFT
+    seq_length = 2048
+
+    # Packed sequence is enabled by default for training efficiency
+    # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
+    packed_sequence = True
+    pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
+
+    # Optimizer and scheduler with higher LR for PEFT (only training adapters)
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=50,
+        lr_decay_iters=None,  # Defaults to train_iters during validation
+        max_lr=1e-4,  # Higher LR for adapter training
+        min_lr=0.0,
+        adam_beta2=0.98,  # Common for fine-tuning
+    )
+
+    cfg = ConfigContainer(
+        # Model - MUST be set by each recipe before use
+        model=None,  # type: ignore[arg-type]
+        # Training config - shorter training for PEFT
+        train=TrainingConfig(
+            train_iters=1000,
+            global_batch_size=128,
+            micro_batch_size=1,
+            eval_interval=100,
+            eval_iters=32,
+        ),
+        # Optimizer and scheduler
+        optimizer=opt_cfg,
+        scheduler=scheduler_cfg,
+        # DDP config - minimal settings for PEFT
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+        ),
+        # Dataset config - uses SQuAD with packed sequences by default
+        dataset=default_squad_config(
+            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+        ),
+        # Logger config
+        logger=LoggerConfig(
+            log_interval=1,
+            tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
+        ),
+        # Tokenizer - placeholder, each recipe should set tokenizer_model
+        tokenizer=TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=None,  # Must be set by each recipe
+        ),
+        # Checkpoint config with pretrained_checkpoint support
+        checkpoint=CheckpointConfig(
+            save_interval=100,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=None,  # Set to load from pretrained weights
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        # RNG config - different seed from pretrain
+        rng=RNGConfig(seed=5678),
+        # Distributed init config
+        dist=DistributedInitConfig(),
+        comm_overlap=None,
+        # Mixed precision - bf16 by default
+        mixed_precision="bf16_mixed",
+        # LoRA config with standard defaults
+        peft=LoRA(
+            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+            dim=32,
+            alpha=32,
+            dropout=0.0,
+            dropout_position="pre",
+            lora_A_init_method="xavier",
+            lora_B_init_method="zero",
+            a2a_experimental=False,
+            lora_dtype=None,  # Uses model's dtype
+        ),
     )
 
     return cfg
