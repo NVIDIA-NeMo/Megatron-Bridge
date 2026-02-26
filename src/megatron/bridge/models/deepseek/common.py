@@ -13,66 +13,6 @@
 # limitations under the License.
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-
-
-try:
-    import apex  # noqa: F401
-
-    HAVE_APEX = True
-except ImportError:
-    HAVE_APEX = False
-
-
-def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
-    """
-    Returns a dictionary of common configurations for the DeepSeek family of models.
-    """
-    hf_config = hf_pretrained.config
-
-    configs = {}
-
-    if not HAVE_APEX:
-        configs["gradient_accumulation_fusion"] = False
-
-    if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling is not None:
-        configs["rotary_scaling_factor"] = hf_config.rope_scaling["factor"]
-        configs["mscale"] = hf_config.rope_scaling["mscale"]
-        configs["mscale_all_dim"] = hf_config.rope_scaling["mscale_all_dim"]
-    else:
-        configs["rotary_scaling_factor"] = 1.0
-        configs["mscale"] = 1.0
-        configs["mscale_all_dim"] = 1.0
-
-    configs["num_layers"] = hf_config.num_hidden_layers
-    configs["hidden_size"] = hf_config.hidden_size
-    configs["ffn_hidden_size"] = hf_config.intermediate_size
-    configs["num_attention_heads"] = hf_config.num_attention_heads
-    configs["num_query_groups"] = hf_config.num_key_value_heads
-    configs["q_lora_rank"] = hf_config.q_lora_rank
-    configs["num_moe_experts"] = hf_config.n_routed_experts
-    configs["moe_ffn_hidden_size"] = hf_config.moe_intermediate_size
-    configs["moe_shared_expert_intermediate_size"] = hf_config.moe_intermediate_size * hf_config.n_shared_experts
-    configs["moe_layer_freq"] = [0] * hf_config.first_k_dense_replace + [1] * (
-        hf_config.num_hidden_layers - hf_config.first_k_dense_replace
-    )
-    configs["moe_router_topk"] = hf_config.num_experts_per_tok
-    configs["moe_router_num_groups"] = hf_config.n_group
-    configs["moe_router_group_topk"] = hf_config.topk_group
-    configs["moe_router_topk_scaling_factor"] = hf_config.routed_scaling_factor
-    configs["kv_lora_rank"] = hf_config.kv_lora_rank
-    configs["qk_head_dim"] = hf_config.qk_nope_head_dim
-    configs["qk_pos_emb_head_dim"] = hf_config.qk_rope_head_dim
-    configs["v_head_dim"] = hf_config.v_head_dim
-
-    # Ensure MLA is enabled
-    configs["multi_latent_attention"] = True
-    configs["vocab_size"] = hf_config.vocab_size
-    configs["rotary_base"] = hf_config.rope_theta
-    configs["init_method_std"] = hf_config.initializer_range
-    configs["layernorm_epsilon"] = hf_config.rms_norm_eps
-
-    return configs
 
 
 def get_common_mapping_list() -> list:

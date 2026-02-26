@@ -35,19 +35,6 @@ from megatron.bridge.utils.common_utils import print_rank_0
 logger = logging.getLogger(__name__)
 
 
-def transformer_engine_mamba_stack_spec() -> ModuleSpec:
-    """Return the default Mamba stack spec with Transformer Engine layers.
-
-    This is a named function (not a lambda) to allow proper serialization
-    and reconstruction from checkpoints. Named functions can be imported
-    via their module path, unlike lambdas.
-
-    Returns:
-        Default Mamba stack specification from megatron.core
-    """
-    return default_mamba_stack_spec
-
-
 def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     """Mamba stack specification for quantization with ModelOpt.
 
@@ -66,6 +53,19 @@ def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     )
 
 
+def transformer_engine_mamba_stack_spec() -> ModuleSpec:
+    """Return the default Mamba stack spec with Transformer Engine layers.
+
+    This is a named function (not a lambda) to allow proper serialization
+    and reconstruction from checkpoints. Named functions can be imported
+    via their module path, unlike lambdas.
+
+    Returns:
+        Default Mamba stack specification from megatron.core
+    """
+    return default_mamba_stack_spec
+
+
 def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     """Determine the most appropriate Mamba stack specification based on configuration.
 
@@ -75,10 +75,7 @@ def get_default_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
     Returns:
         ModuleSpec: Appropriate module specification based on config
     """
-    if config.restore_modelopt_state:
-        return modelopt_mamba_stack_spec(config)
-    else:
-        return transformer_engine_mamba_stack_spec()
+    return transformer_engine_mamba_stack_spec()
 
 
 @dataclass
@@ -147,7 +144,6 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
-    # When resuming modelopt_state, we also change the mamba_stack_spec to use quantization-ready layers.
     restore_modelopt_state: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
