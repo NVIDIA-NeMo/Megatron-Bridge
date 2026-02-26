@@ -426,6 +426,32 @@ def test_additional_files_with_original_source_path():
         print("✅ test_additional_files_with_original_source_path passed")
 
 
+def test_additional_files_empty_list():
+    """Test that empty additional_files list works correctly."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+
+        mock_config = Mock()
+        mock_config.save_pretrained = Mock()
+        base._config = mock_config
+
+        # Call save_artifacts with empty list
+        base.save_artifacts(target_dir, additional_files=[])
+
+        # Verify no additional files were copied
+        assert not (target_dir / "vocab.json").exists()
+
+        print("✅ test_additional_files_empty_list passed")
+
+
 def main():
     """Run all tests."""
     print("Running PreTrainedBase custom modeling file preservation tests...")
@@ -445,6 +471,7 @@ def main():
         test_save_artifacts_with_additional_files()
         test_save_artifacts_with_additional_files_and_trust_remote_code()
         test_additional_files_with_original_source_path()
+        test_additional_files_empty_list()
 
         print("\n🎉 All tests passed!")
         return 0

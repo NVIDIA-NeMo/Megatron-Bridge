@@ -420,7 +420,6 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
-        additional_files: Optional[List[str]] = None,
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -454,11 +453,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
                 This is useful for reducing I/O pressure when dealing with large-scale distributed
                 training. Only effective when distributed_save=True. Default is 1 (all ranks save).
-            additional_files: Optional list of additional file names or patterns to download/copy
-                from the source HuggingFace model. Supports both exact file names (e.g., "vocab.json")
-                and glob patterns (e.g., "*.json", "images/*.png"). Useful for preserving extra files
-                beyond standard artifacts like tokenizer and config. The files will be copied from
-                source_path if provided, otherwise from the original model path.
 
         Example:
             >>> # Save model after training
@@ -479,6 +473,12 @@ class AutoBridge(Generic[MegatronModelT]):
                 "AutoBridge.from_hf_config() creates a config-only bridge; "
                 "use AutoBridge.from_hf_pretrained(...) instead."
             )
+
+        # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
+        additional_files = None
+        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
+            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+
         if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
             if dist.get_rank() == 0:
@@ -782,7 +782,6 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         strict: bool = False,
         source_path: Optional[Union[str, Path]] = None,
-        additional_files: Optional[List[str]] = None,
     ) -> None:
         """
         Export a Megatron checkpoint to HuggingFace format.
@@ -802,8 +801,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 This is useful when converting from Megatron checkpoints where the original
                 HuggingFace model with custom modeling files needs to be referenced. If not specified,
                 the path will be automatically determined from the HuggingFace configuration.
-            additional_files: Optional list of additional file names or patterns to download/copy
-                from the source HuggingFace model. See save_hf_pretrained for details.
 
         Example:
             >>> # Basic export
@@ -847,7 +844,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 show_progress=show_progress,
                 source_path=source_path,
                 strict=strict,
-                additional_files=additional_files,
             )
 
     def push_to_hub(self, path: str | Path) -> None: ...
