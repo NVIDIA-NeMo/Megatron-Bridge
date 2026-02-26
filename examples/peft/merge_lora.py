@@ -155,9 +155,14 @@ def merge_lora(
             torch.distributed.init_process_group("gloo")
     model_provider.initialize_model_parallel(seed=0)
 
+    mp_overrides = {
+        "tensor_model_parallel_size": args.tp,
+        "pipeline_model_parallel_size": args.pp,
+        "expert_model_parallel_size": args.ep,
+    }
 
     # 1) Load base model weights
-    model = bridge.load_megatron_model(str(base_dir), wrap_with_ddp=False)
+    model = bridge.load_megatron_model(str(base_dir), mp_overrides=mp_overrides)
 
     # 2) Patch the model with LoRA adapter *structure* (no weights yet)
     # Load LoRA hyper-parameters from the fine-tuning run_config.yaml so we
