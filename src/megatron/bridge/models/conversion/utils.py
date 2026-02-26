@@ -288,6 +288,7 @@ def is_modelopt_dynamic_module(module):
     """Check if a module is a modelopt dynamic module."""
     try:
         from modelopt.torch.opt.dynamic import DynamicModule
+
         return isinstance(module, DynamicModule)
     except ImportError:
         return False

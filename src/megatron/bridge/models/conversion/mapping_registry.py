@@ -114,7 +114,7 @@ class MegatronMappingRegistry:
 
         if extra_mappings:
             self.mappings.extend(extra_mappings)
-    
+
     def _add_quantization_mappings(self) -> None:
         """Add quantization mappings for weight quantizers and input quantizers."""
         original_mappings = list(self.mappings)

@@ -23,9 +23,7 @@ class AmaxFanoutMapping(AmaxMapping):
         # Use the first target as the canonical HF name for HF->Megatron loading
         super().__init__(megatron_param, hf_params[0])
 
-    def megatron_to_hf(
-        self, megatron_weights, megatron_module
-    ):
+    def megatron_to_hf(self, megatron_weights, megatron_module):
         base = super().megatron_to_hf(megatron_weights, megatron_module)
         if not base:
             return {}
@@ -62,46 +60,48 @@ class AmaxFanoutMapping(AmaxMapping):
         return new_mapping
 
 
-def convert_to_amax_map(mappings: list[MegatronParamMapping], mapped_name='.weight_quantizer._amax') -> list[MegatronParamMapping]:
+def convert_to_amax_map(
+    mappings: list[MegatronParamMapping], mapped_name=".weight_quantizer._amax"
+) -> list[MegatronParamMapping]:
     """Convert weight mappings to amax mappings for quantization.
-    
-    This function converts parameter mappings for weights to their corresponding 
+
+    This function converts parameter mappings for weights to their corresponding
     amax (absolute maximum) parameter mappings used in quantization. For example:
     - "layer.weight" -> "layer.weight_quantizer._amax"
-    
+
     Args:
         mappings: List of MegatronParamMapping objects for weight parameters
-        
+
     Returns:
         List of new MegatronParamMapping objects for amax parameters
-        
+
     Note:
         Only mappings with parameter names ending in '.weight' are converted.
         Other mappings are ignored.
     """
     extended_mapping = []
-    
+
     for mapping in mappings:
-        if not mapping.megatron_param.endswith('.weight'):
+        if not mapping.megatron_param.endswith(".weight"):
             continue
-        
-        new_megatron_param = mapping.megatron_param.replace('.weight', mapped_name)
-        
+
+        new_megatron_param = mapping.megatron_param.replace(".weight", mapped_name)
+
         if isinstance(mapping.hf_param, dict):
             # For dict-based hf_param (e.g., QKVMapping, GatedMLPMapping)
             new_hf_param = {
-                key: value.replace('.weight', mapped_name) if value.endswith('.weight') else value
+                key: value.replace(".weight", mapped_name) if value.endswith(".weight") else value
                 for key, value in mapping.hf_param.items()
             }
         elif isinstance(mapping.hf_param, str):
-            if mapping.hf_param.endswith('.weight'):
-                new_hf_param = mapping.hf_param.replace('.weight', mapped_name)
+            if mapping.hf_param.endswith(".weight"):
+                new_hf_param = mapping.hf_param.replace(".weight", mapped_name)
             else:
                 continue
         else:
             print(f"Unknown hf_param type: {type(mapping.hf_param)}")
             continue
-        
+
         # Amax tensors are small scalars and should not be TP-sharded. Always map
         # them as replicated parameters to avoid any TP chunking logic.
         # For dict-based mappings (e.g., QKV or gate/up), emit one fan-out mapping
@@ -120,5 +120,5 @@ def convert_to_amax_map(mappings: list[MegatronParamMapping], mapped_name='.weig
                 hf_param=new_hf_param,
             )
             extended_mapping.append(new_mapping)
-    
+
     return extended_mapping
