@@ -63,10 +63,10 @@ class TestLlamaBridgeConfigConverter:
                 "original_max_position_embeddings": 8192,
                 "rope_type": "llama3",
             },
-            "rope_theta": 500000.0,
+            "rope_parameters": {"rope_type": "llama3", "rope_theta": 500000.0},
             "tie_word_embeddings": True,
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.45.0.dev0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 128256,
         }
@@ -155,7 +155,7 @@ class TestLlamaBridgeConfigConverter:
         assert result.num_attention_heads == llama_config.num_attention_heads
         assert result.num_query_groups == llama_config.num_key_value_heads
         assert result.seq_length == llama_config.max_position_embeddings
-        assert result.rotary_base == llama_config.rope_theta
+        assert result.rotary_base == llama_config.rope_parameters["rope_theta"]
         assert result.vocab_size == llama_config.vocab_size
         assert result.layernorm_epsilon == llama_config.rms_norm_eps
         assert result.init_method_std == llama_config.initializer_range
@@ -224,6 +224,8 @@ class TestLlamaBridgeConfigConverter:
         # RoPE scaling is now handled via Megatron Core's built-in support
         assert result.rope_scaling is True
         assert result.rope_scaling_factor == 32.0
+        # Check position embedding
+        assert result.rotary_base == mock_pretrained_llama.config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_embedding_sharing(self, llama_config):
         """Test embedding sharing configuration."""
@@ -355,7 +357,7 @@ class TestBaseClassHelperMethods:
             "intermediate_size": 11008,
             "vocab_size": 32000,
             "max_position_embeddings": 4096,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "rms_norm_eps": 1e-05,
             "tie_word_embeddings": False,
             "model_type": "llama",
@@ -473,7 +475,7 @@ class TestLlamaBridgeBidirectionalConversion:
             "intermediate_size": 14336,
             "vocab_size": 128256,
             "max_position_embeddings": 8192,
-            "rope_theta": 500000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 500000.0},
             "rms_norm_eps": 1e-05,
             "tie_word_embeddings": False,
             "model_type": "llama",
@@ -506,7 +508,7 @@ class TestLlamaBridgeBidirectionalConversion:
         assert result_hf_config["num_key_value_heads"] == hf_config_dict["num_key_value_heads"]
         assert result_hf_config["vocab_size"] == hf_config_dict["vocab_size"]
         assert result_hf_config["max_position_embeddings"] == hf_config_dict["max_position_embeddings"]
-        assert result_hf_config["rope_theta"] == hf_config_dict["rope_theta"]
+        assert result_hf_config["rope_theta"] == hf_config_dict["rope_parameters"]["rope_theta"]
         assert result_hf_config["rms_norm_eps"] == hf_config_dict["rms_norm_eps"]
         assert result_hf_config["tie_word_embeddings"] == hf_config_dict["tie_word_embeddings"]
         # Check new mappings are preserved
@@ -654,7 +656,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 8192,
                 "vocab_size": 128256,
                 "max_position_embeddings": 131072,
-                "rope_theta": 500000.0,
+                "rope_parameters": {"rope_type": "llama3", "rope_theta": 500000.0},
                 "rms_norm_eps": 1e-05,
                 "tie_word_embeddings": True,
                 "rope_scaling": {
@@ -675,7 +677,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 11008,
                 "vocab_size": 32000,
                 "max_position_embeddings": 4096,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-05,
                 "tie_word_embeddings": False,
                 # No rope_scaling for Llama 2
