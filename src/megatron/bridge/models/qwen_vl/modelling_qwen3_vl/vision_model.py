@@ -55,6 +55,8 @@ class Qwen3VLVisionModel(VisionModule):
         self.spatial_merge_size = transformer_config.spatial_merge_size
         self.patch_size = transformer_config.patch_size
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
+        self.pg_collection = pg_collection
+        self.tp_group = self.pg_collection.tp
 
         assert transformer_config.context_parallel_size == 1, (
             f"context_parallel_size should be 1 in vision model but got {transformer_config.context_parallel_size}"
@@ -79,6 +81,7 @@ class Qwen3VLVisionModel(VisionModule):
             post_process=self.post_process,
             post_layer_norm=False,
             patch_merger_spec=patch_merger_spec,
+            pg_collection=self.pg_collection,
         )
 
         self.merger = None

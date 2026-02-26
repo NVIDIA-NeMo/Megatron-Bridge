@@ -237,6 +237,7 @@ def train(
             seq_length=config.model.seq_length,
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
+            pg_collection=pg_collection,
         )
 
     # Track train step elapsed time for throughput logging

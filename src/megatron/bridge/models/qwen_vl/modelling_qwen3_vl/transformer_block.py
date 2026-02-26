@@ -22,7 +22,7 @@ from contextlib import nullcontext
 from typing import Optional, Union
 
 import torch
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.enums import Fp8Recipe
@@ -50,6 +50,7 @@ if HAVE_TE:
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 class Qwen3VLVisionTransformerBlock(TransformerBlock):
@@ -67,6 +68,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         # model_comm_pgs: ModelCommProcessGroups = None,
         vp_stage: Optional[int] = None,
         patch_merger_spec: ModuleSpec = None,
+        pg_collection: Optional[torch.distributed.ProcessGroup] = None,
     ):
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(
@@ -77,7 +79,13 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             post_process=post_process,
             # model_comm_pgs=model_comm_pgs,
             vp_stage=vp_stage,
+            pg_collection=pg_collection,
         )
+        self.pg_collection = pg_collection
+        self.cp_group = pg_collection.cp
+        self.tp_group = pg_collection.tp
+        self.pp_group = pg_collection.pp
+
         self.deepstack_visual_indexes = config.deepstack_visual_indexes
         self.deepstack_merger_list = nn.ModuleList(
             [
@@ -141,7 +149,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     forward_func,
                     self.config.distribute_saved_activations,
                     tensor_parallel.random.get_cuda_rng_tracker,
-                    parallel_state.get_tensor_model_parallel_group(),
+                    self.tp_group,
                     hidden_states,
                     attention_mask,
                     context,
@@ -503,7 +511,7 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     forward_func,
                     self.config.distribute_saved_activations,
                     tensor_parallel.random.get_cuda_rng_tracker,
-                    parallel_state.get_tensor_model_parallel_group(),
+                    self.tp_group,
                     hidden_states,
                     attention_mask,
                     context,
