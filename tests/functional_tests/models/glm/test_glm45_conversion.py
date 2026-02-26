@@ -60,8 +60,6 @@ HF_GLM45_TOY_MODEL_CONFIG = {
 }
 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 def _get_num_experts(moe_experts) -> int | None:
     """Best-effort expert count across transformers versions."""
     if moe_experts is None:
@@ -85,84 +83,7 @@ def _get_num_experts(moe_experts) -> int | None:
         return len(moe_experts)
     except TypeError:
         return None
-=======
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
 
-
-def _create_glm45_toy_model(model_dir: Path) -> None:
-    model_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create GLM 4.5 config from the toy model config using AutoConfig
-    config = AutoConfig.from_pretrained("zai-org/GLM-4.5")
-
-    # Override with toy model config
-    for key, value in HF_GLM45_TOY_MODEL_CONFIG.items():
-        setattr(config, key, value)
-
-    config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
-
-    # Create model with random weights and convert to bfloat16
-    from transformers import Glm4MoeForCausalLM
-
-    model = Glm4MoeForCausalLM(config)
-
-    model = model.bfloat16()  # Use .bfloat16() method instead of .to()
-    for k, v in model.named_buffers():
-        if "e_score_correction_bias" in k:
-            v.data = v.data.to(torch.float32)
-
-    # Download and save tokenizer from a reference GLM model
-    tokenizer = AutoTokenizer.from_pretrained("zai-org/GLM-4.5")
-    tokenizer.save_pretrained(model_dir)
-
-    # Save model and config to directory
-    model.save_pretrained(model_dir, safe_serialization=True)
-
-    # Also save config.json explicitly to ensure compatibility with correct torch_dtype
-    config_to_save = HF_GLM45_TOY_MODEL_CONFIG.copy()
-    config_path = model_dir / "config.json"
-    with open(config_path, "w") as f:
-        json.dump(config_to_save, f, indent=2)
-
-
-def _build_roundtrip_cmd(
-    model_path: str, output_dir: Path, tp: int, pp: int, ep: int, repo_root: Path
-) -> list[str]:
-    cmd = [
-        sys.executable,
-        "-m",
-        "torch.distributed.run",
-        "--nproc_per_node=2",
-        "--nnodes=1",
-    ]
-
-    if os.environ.get("MBRIDGE_USE_COVERAGE") == "1":
-        cmd += [
-            "-m",
-            "coverage",
-            "run",
-            "--data-file",
-            str(repo_root / ".coverage"),
-            "--source",
-            str(repo_root),
-            "--parallel-mode",
-        ]
-
-    cmd += [
-        "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
-        "--hf-model-id",
-        model_path,
-        "--output-dir",
-        str(output_dir),
-        "--tp",
-        str(tp),
-        "--pp",
-        str(pp),
-        "--ep",
-        str(ep),
-    ]
-    return cmd
 
 class TestGLM45Conversion:
     """
@@ -277,7 +198,6 @@ class TestGLM45Conversion:
         assert config_data["moe_intermediate_size"] == 512
 
         # Try loading the model to verify it's valid
-
         try:
             from transformers import Glm4MoeForCausalLM
 
@@ -292,7 +212,6 @@ class TestGLM45Conversion:
             assert hasattr(model, "model")
             assert hasattr(model.model, "layers")
             assert len(model.model.layers) == 2  # num_hidden_layers
-<<<<<<< HEAD
 
             # Verify MoE structure
             # First layer is dense, second layer should have MoE structure
@@ -302,18 +221,6 @@ class TestGLM45Conversion:
             if hasattr(second_layer.mlp, "experts"):
                 num_experts = _get_num_experts(second_layer.mlp.experts)
                 assert num_experts == 8  # n_routed_experts
-
-            print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
-            print("Model weights are correctly in bfloat16 format")
-            print(f"MoE structure validated: {config_data['n_routed_experts']} experts")
-
-            # Verify MoE structure
-            # First layer is dense, second layer should have MoE structure
-            second_layer = model.model.layers[1]
-            assert hasattr(second_layer, "mlp")
-            # GLM 4.5 MoE structure check (may vary based on implementation)
-            if hasattr(second_layer.mlp, "experts"):
-                assert len(second_layer.mlp.experts) == 8  # n_routed_experts
 
             print(f"SUCCESS: GLM 4.5 MoE toy model created and validated at {glm45_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")

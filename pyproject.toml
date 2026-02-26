@@ -66,11 +66,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-<<<<<<< HEAD
     "transformers>=5.0.0",
-=======
-    "transformers<5.0.0",
->>>>>>> revert uv lock and pyproject changes
     "datasets>=2.20.0",
     "accelerate",
     "omegaconf>=2.3.0",
@@ -123,13 +119,10 @@ override-dependencies = [
     "urllib3>=2.6.3"    # To address CVE-2026-21441
 ]
 
-<<<<<<< HEAD
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 
-=======
->>>>>>> revert uv lock and pyproject changes
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
