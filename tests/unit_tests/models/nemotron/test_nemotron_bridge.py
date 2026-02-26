@@ -45,7 +45,7 @@ class TestNemotronBridge:
             "num_hidden_layers": 32,
             "num_key_value_heads": 8,
             "partial_rotary_factor": 0.5,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "tie_word_embeddings": False,
             "torch_dtype": "bfloat16",
             "use_cache": True,
@@ -96,7 +96,7 @@ class TestNemotronBridge:
         assert provider.num_query_groups == nemotron_config.num_key_value_heads
         assert provider.seq_length == nemotron_config.max_position_embeddings
         assert provider.layernorm_epsilon == nemotron_config.norm_eps
-        assert provider.rotary_base == nemotron_config.rope_theta
+        assert provider.rotary_base == nemotron_config.rope_parameters["rope_theta"]
         assert provider.rotary_percent == nemotron_config.partial_rotary_factor
         assert provider.vocab_size == nemotron_config.vocab_size
         assert provider.share_embeddings_and_output_weights == nemotron_config.tie_word_embeddings

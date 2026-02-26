@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.olmoe.olmoe_7b import (
-    olmoe_7b_peft_config,
-    olmoe_7b_pretrain_config,
-    olmoe_7b_sft_config,
-)
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+export CUDA_VISIBLE_DEVICES="0,1"
 
-__all__ = [
-    "olmoe_7b_pretrain_config",
-    "olmoe_7b_sft_config",
-    "olmoe_7b_peft_config",
-]
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/quantization/models/qwen_vl
+coverage combine -q
+
