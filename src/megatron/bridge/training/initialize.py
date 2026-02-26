@@ -16,7 +16,8 @@ import datetime
 import os
 import time
 import warnings
-from typing import Callable, Optional
+from copy import copy
+from typing import Callable, Optional, Tuple
 
 import torch
 import torch.distributed
@@ -43,6 +44,7 @@ from megatron.core.utils import (
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
+from megatron.bridge.training.utils.train_utils import is_rank_in_pg
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
     get_master_addr_safe,
@@ -50,7 +52,6 @@ from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
 )
-
 
 def initialize_megatron(
     cfg: ConfigContainer,
@@ -159,7 +160,7 @@ def torch_dist_init(
     skip_mpu_initialization: bool,
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
-) -> Callable[[], None] | ProcessGroupCollection | None:
+) -> Tuple[ProcessGroupCollection, Optional[dict[str, HyperCommGrid]], Optional[dict[str, ProcessGroupCollection]]]:        
     """Initialize torch.distributed and dependent components.
 
     Handles the core distributed setup, including process group initialization,
@@ -177,13 +178,14 @@ def torch_dist_init(
         skip_mpu_initialization: If True, returns a function to finish MPU setup later.
 
     Returns:
-        An optional callable to finish MPU initialization if skip_mpu_initialization
-        or lazy_mpu_init is True, otherwise None.
+        pg_collection: The process group collection initialized for this run.
+        grid_dict: A dictionary mapping module names to HyperCommGrids.
+        pg_collection_dict: A dictionary mapping module names to ProcessGroupCollections.
     """
 
     def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
-        pg_collection = _initialize_distributed(
+        pg_collection, grid_dict, pg_collection_dict = _initialize_distributed(
             model_config=model_config,
             dist_config=dist_config,
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
@@ -207,10 +209,10 @@ def torch_dist_init(
 
         if model_config.num_moe_experts is not None:
             MoEAuxLossAutoScaler.set_loss_scale(torch.ones(1, device=torch.cuda.current_device()))
-        return pg_collection
+        return pg_collection, grid_dict, pg_collection_dict
 
     if skip_mpu_initialization:
-        return None
+        return None, None, None
 
     if dist_config.lazy_init:
         # delayed initialization of DDP-related stuff
@@ -219,14 +221,14 @@ def torch_dist_init(
         # and return function for external DDP manager
         # to call when it has DDP initialized
         parallel_state.set_tensor_model_parallel_rank(get_rank_safe())
-        return finish_mpu_init
+        return finish_mpu_init, None, None
     # Megatron's MPU is the master. Complete initialization right away.
-    pg_collection = finish_mpu_init()
+    pg_collection, grid_dict, pg_collection_dict = finish_mpu_init()
 
     if model_config.tp_comm_overlap:
         _initialize_tp_communicators(model_config, micro_batch_size)
 
-    return pg_collection
+    return pg_collection, grid_dict, pg_collection_dict
 
 
 def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> None:
@@ -386,9 +388,14 @@ def _create_pg_collection(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-) -> ProcessGroupCollection:
-    """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
-    world_size = torch.distributed.get_world_size()
+    world_size: int = None,
+    rank_offset: int = None,
+) -> Tuple[ProcessGroupCollection, HyperCommGrid]:
+    """Create all process groups via HyperCommGrid and return a ProcessGroupCollection and a HyperCommGrid."""
+    if world_size is None:
+        world_size = torch.distributed.get_world_size()
+    if rank_offset is None:
+        rank_offset = 0
     tp_size = int(model_config.tensor_model_parallel_size)
     pp_size = int(model_config.pipeline_model_parallel_size)
     cp_size = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
@@ -400,7 +407,7 @@ def _create_pg_collection(
     grid = HyperCommGrid(
         shape=[tp_size, cp_size, dp_size, pp_size],
         dim_names=["tp", "cp", "dp", "pp"],
-        rank_offset=0,
+        rank_offset=rank_offset,
         backend="nccl",
     )
     # Core groups
@@ -440,7 +447,7 @@ def _create_pg_collection(
         expert_grid = HyperCommGrid(
             shape=[expert_tp_size, ep_size, inner_expt_dp_size, num_distributed_optimizer_instances, pp_size],
             dim_names=["tp", "ep", "inner_dp", "outer_dp", "pp"],
-            rank_offset=0,
+            rank_offset=rank_offset,
             backend="nccl",
         )
         dp_group_dims: list[str] = ["inner_dp", "outer_dp"]
@@ -450,7 +457,7 @@ def _create_pg_collection(
         expert_grid = HyperCommGrid(
             shape=[expert_tp_size, ep_size, expt_dp_size, pp_size],
             dim_names=["tp", "ep", "dp", "pp"],
-            rank_offset=0,
+            rank_offset=rank_offset,
             backend="nccl",
         )
         dp_group_dims = ["dp"]
@@ -522,7 +529,7 @@ def _create_pg_collection(
         inter_dist_opt=inter_dist_opt_pg,
         intra_dist_opt=intra_dist_opt_pg,
     )
-    return pg_collection
+    return pg_collection, grid
 
 
 def _initialize_distributed(
@@ -533,8 +540,13 @@ def _initialize_distributed(
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
-) -> ProcessGroupCollection:
-    """Initialize torch.distributed and core model parallel."""
+) -> Tuple[ProcessGroupCollection, Optional[dict[str, HyperCommGrid]], Optional[dict[str, ProcessGroupCollection]]]:
+    """Initialize torch.distributed and core model parallel.
+    Returns:
+        pg_collection: The process group collection initialized for this run.
+        grid_dict: A dictionary mapping module names to HyperCommGrids.
+        pg_collection_dict: A dictionary mapping module names to ProcessGroupCollections.
+    """
 
     device_count = torch.cuda.device_count()
     if torch.distributed.is_initialized():
@@ -597,19 +609,66 @@ def _initialize_distributed(
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
         parallel_state._set_global_memory_buffer()
-        pg_collection = _create_pg_collection(
-            model_config,
-            num_distributed_optimizer_instances,
-            get_embedding_ranks=get_embedding_ranks,
-            get_position_embedding_ranks=get_position_embedding_ranks,
-        )
-        if get_rank_safe() == 0:
-            tp = int(model_config.tensor_model_parallel_size)
-            pp = int(model_config.pipeline_model_parallel_size)
-            cp = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
-            dp = torch.distributed.get_world_size() // (tp * pp * cp)
-            print(f"> initialized HyperCommGrid with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
-        return pg_collection
+        if hasattr(model_config, "use_dist_train") and model_config.use_dist_train:
+            vision_model_config = copy(model_config)
+            vision_model_config.world_size = model_config.vision_world_size
+            vision_model_config.rank_offset = 0
+            vision_model_config.tensor_model_parallel_size = model_config.vision_tensor_model_parallel_size
+            vision_model_config.pipeline_model_parallel_size = model_config.vision_pipeline_model_parallel_size
+            vision_model_config.context_parallel_size = model_config.vision_context_parallel_size
+            vision_model_config.expert_tensor_parallel_size = model_config.vision_expert_tensor_parallel_size
+            vision_model_config.expert_model_parallel_size = model_config.vision_expert_model_parallel_size
+            language_model_config = copy(model_config)
+            language_model_config.world_size = model_config.language_world_size
+            language_model_config.rank_offset = model_config.vision_world_size
+            vision_pg_collection, vision_grid = _create_pg_collection(
+                vision_model_config,
+                num_distributed_optimizer_instances,
+                get_embedding_ranks=get_embedding_ranks,
+                get_position_embedding_ranks=get_position_embedding_ranks,
+                world_size=model_config.vision_world_size,
+                rank_offset=0,
+            )
+            language_pg_collection, language_grid = _create_pg_collection(
+                language_model_config,
+                num_distributed_optimizer_instances,
+                get_embedding_ranks=get_embedding_ranks,
+                get_position_embedding_ranks=get_position_embedding_ranks,
+                world_size=model_config.language_world_size,
+                rank_offset=model_config.vision_world_size,
+            )
+            grid_dict = {'vision_module': vision_grid, 'language_module': language_grid}
+            pg_collection_dict = {'vision_module': vision_pg_collection, 'language_module': language_pg_collection}
+            assert is_rank_in_pg(language_pg_collection) or is_rank_in_pg(vision_pg_collection), f"Rank {get_rank_safe()} should be in either the language or vision process group collection."
+            assert not (is_rank_in_pg(language_pg_collection) and is_rank_in_pg(vision_pg_collection)), f"Rank {get_rank_safe()} should not be in both the language and vision process group collection."
+            pg_collection = vision_pg_collection if is_rank_in_pg(vision_pg_collection) else language_pg_collection
+            if get_rank_safe() == 0:
+                tp = int(vision_model_config.tensor_model_parallel_size)
+                pp = int(vision_model_config.pipeline_model_parallel_size)
+                cp = int(vision_model_config.context_parallel_size) if getattr(vision_model_config, "context_parallel_size", 1) else 1
+                dp = vision_model_config.vision_world_size // (tp * pp * cp)
+                print(f"> initialized HyperCommGrid for vision model with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+                tp = int(language_model_config.tensor_model_parallel_size)
+                pp = int(language_model_config.pipeline_model_parallel_size)
+                cp = int(language_model_config.context_parallel_size) if getattr(language_model_config, "context_parallel_size", 1) else 1
+                dp = language_model_config.language_world_size // (tp * pp * cp)
+                print(f"> initialized HyperCommGrid for language model with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+        else:
+            pg_collection, grid = _create_pg_collection(
+                model_config,
+                num_distributed_optimizer_instances,
+                get_embedding_ranks=get_embedding_ranks,
+                get_position_embedding_ranks=get_position_embedding_ranks,
+            )
+            grid_dict = {'language_module': grid}
+            pg_collection_dict = {'language_module': pg_collection}
+            if get_rank_safe() == 0:
+                tp = int(model_config.tensor_model_parallel_size)
+                pp = int(model_config.pipeline_model_parallel_size)
+                cp = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
+                dp = torch.distributed.get_world_size() // (tp * pp * cp)
+                print(f"> initialized HyperCommGrid with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+        return pg_collection, grid_dict, pg_collection_dict
     else:
         # Use the original mcore parallel_state.initialize_model_parallel approach
         if parallel_state.model_parallel_is_initialized():
@@ -645,7 +704,7 @@ def _initialize_distributed(
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
         # Return a ProcessGroupCollection using mpu process groups
-        return ProcessGroupCollection.use_mpu_process_groups()
+        return ProcessGroupCollection.use_mpu_process_groups(), None, None
 
 
 def _set_random_seed(

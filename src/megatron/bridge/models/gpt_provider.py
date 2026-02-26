@@ -195,6 +195,24 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     _pg_collection: Optional[ProcessGroupCollection] = None
 
+    # vision model type will be used to override the vision model config.
+    # if None, the vision model config will be used as is.
+    # currently, only vit_2b is supported.
+    vision_model_type: Optional[str] = None
+
+    # parameters for DistTrain
+    use_dist_train: bool = False
+    dist_train_vision_chunk_size: Optional[int] = 1
+    vision_world_size: Optional[int] = None
+    language_world_size: Optional[int] = None
+    vision_tensor_model_parallel_size: Optional[int] = None
+    vision_pipeline_model_parallel_size: Optional[int] = None
+    vision_context_parallel_size: Optional[int] = None
+    vision_expert_tensor_parallel_size: Optional[int] = None
+    vision_expert_model_parallel_size: Optional[int] = None
+    add_vision_module: bool = True
+    add_language_module: bool = True
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 

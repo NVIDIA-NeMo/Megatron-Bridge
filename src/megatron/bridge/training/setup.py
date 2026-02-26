@@ -27,6 +27,7 @@ from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.loaders import setup_data_iterators
@@ -49,7 +50,7 @@ from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
-
+from megatron.bridge.training.utils.train_utils import is_rank_in_pg
 
 
 class SetupOutput(NamedTuple):
@@ -133,12 +134,39 @@ def setup(
     # pg_collection is returned from initialize_megatron:
     # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
     # - When use_decentralized_pg=False: uses mpu's global parallel state
-    pg_collection = initialize_megatron(
+    pg_collection, grid_dict, pg_collection_dict = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         restart_store=restart_store,
     )
+    cfg.model.pg_collection = pg_collection
+    # cfg.model.grid_dict = grid_dict
+    # cfg.model.pg_collection_dict = pg_collection_dict
+    if hasattr(cfg.model, "use_dist_train") and cfg.model.use_dist_train:
+        assert pg_collection is not None, "pg_collection is required"
+        assert pg_collection_dict['language_module'] is not None, "pg_collection for language module is required"
+        assert pg_collection_dict['vision_module'] is not None, "pg_collection for vision module is required"
+        assert grid_dict is not None, "grid_dict is required"
+        topology = {
+            'vision_module': ['language_module'],  # vision_module sends forward results to language_module
+            'language_module': [],  # language_module is the last stage here
+        }
+        # Create multimodule communicator
+        cfg.model.p2p_communicator = MultiModulePipelineCommunicator(
+            grid_dict, topology, cfg.model, dim_mapping={'b': 0, 's': 1, 'h': 2}
+        )
+
+        if is_rank_in_pg(pg_collection_dict['vision_module']):
+            cfg.model.add_encoder = True
+            # TODO(shifang): support different data parallel size for vision and language model in the future.
+            cfg.dataset.num_images = int(cfg.dataset.num_images/cfg.model.dist_train_vision_chunk_size)
+        else:
+            cfg.model.add_encoder = False
+        if is_rank_in_pg(pg_collection_dict['language_module']):
+            cfg.model.add_decoder = True
+        else:
+            cfg.model.add_decoder = False
 
     # Set CPU affinity for optimal host-device transfers when fine-grained activation offloading is enabled
     if cfg.model.fine_grained_activation_offloading:

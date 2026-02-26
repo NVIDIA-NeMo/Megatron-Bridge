@@ -1403,8 +1403,13 @@ class ConfigContainer(Container):
         This method calculates the data parallel size needed by setup methods, without
         triggering full validation or finalization of Megatron Core configs.
         """
+        if hasattr(self.model, "use_dist_train") and self.model.use_dist_train:
+            # use language world size to calculate data parallel size
+            world_size = self.model.language_world_size
+        else:
+            # use total world size to calculate data parallel size
+            world_size = get_world_size_safe()        
         # Calculate data parallel size (needed for comm overlap setup)
-        world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
 
         # Set data_parallel_size on comm_overlap config if present
@@ -1476,7 +1481,13 @@ class ConfigContainer(Container):
 
         # Distributed - ensure data_parallel_size is calculated (might already be set by set_data_parallel_size)
         if not hasattr(self, "data_parallel_size") or self.data_parallel_size is None:
-            world_size = get_world_size_safe()
+            if hasattr(self.model, "use_dist_train") and self.model.use_dist_train:
+                # use language world size to calculate data parallel size
+                world_size = self.model.language_world_size
+            else:
+                # use total world size to calculate data parallel size
+                world_size = get_world_size_safe()
+            # Calculate data parallel size (needed for comm overlap setup)
             self.data_parallel_size = self.get_data_parallel_size(world_size)
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:

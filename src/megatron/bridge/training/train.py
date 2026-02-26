@@ -36,8 +36,12 @@ from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
-from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator   
+from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
+from megatron.core.pipeline_parallel.schedules import (
+    get_forward_backward_func,
+    forward_backward_pipelining_without_interleaving,
+)
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -244,11 +248,14 @@ def train(
     if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
 
-    # Wrap forward_backward_func for Full iteration CUDA graph
     forward_backward_func = get_forward_backward_func(
         pp_size=pg_collection.pp.size(),
         vp_size=config.model.virtual_pipeline_model_parallel_size,
     )
+    if config.model.use_dist_train:
+        # currently, dist train only support non-interleaved pipeline parallel schedule.
+        forward_backward_func = forward_backward_pipelining_without_interleaving
+    # Wrap forward_backward_func for Full iteration CUDA graph
     if config.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
@@ -258,6 +265,9 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+    if config.model.use_dist_train:
+        p2p_communicator = config.model.p2p_communicator
+        assert isinstance(p2p_communicator, MultiModulePipelineCommunicator), "p2p_communicator must be a MultiModulePipelineCommunicator while use_dist_train is True"
     dp_size = pg_collection.dp.size()
 
     if should_fire(callback_manager, "on_train_start"):
@@ -732,6 +742,10 @@ def train_step(
             adjust_tensor_shapes_fn = None
 
         # Forward pass.
+        if cfg.model.use_dist_train:
+            assert isinstance(p2p_communicator, MultiModulePipelineCommunicator), "p2p_communicator must be a MultiModulePipelineCommunicator while use_dist_train is True"
+        else:
+            assert isinstance(p2p_communicator, P2PCommunicator), "p2p_communicator must be a P2PCommunicator while use_dist_train is False"
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -790,7 +804,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if is_pp_last_stage(pg_collection.pp):
+    if cfg.model.p2p_communicator.is_pp_last_stage:
         # Average loss across microbatches.
         loss_reduced = {}
 
