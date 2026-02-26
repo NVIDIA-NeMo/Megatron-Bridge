@@ -12,115 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-from typing import List, Optional, Union
-
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
-from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-    ValidationConfig,
-)
+from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
-
-
-class Qwen3MoeCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Qwen3 MoE recipe helpers."""
-
-    # Core identifiers
-    hf_path: str
-    dir: Optional[str]
-    name: str
-    # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
-    mock: bool
-    # Model configuration
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
-    context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
-    expert_tensor_parallel_size: int
-    sequence_parallel: bool
-    use_megatron_fsdp: bool
-    enable_recompute: bool
-    account_for_embedding_in_pipeline_split: bool
-    account_for_loss_in_pipeline_split: bool
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: int
-    micro_batch_size: int
-    seq_length: int
-    lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
-    eval_interval: int
-    save_interval: int
-    use_null_tokenizer: bool
-    # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
-    moe_flex_dispatcher_backend: str | None
-
-
-class Qwen3MoeFinetuneKwargs(TypedDict, total=False):
-    """Typed options accepted by Qwen3 MoE finetuning recipe helper functions.
-
-    This is separate from Qwen3MoeCommonKwargs to avoid confusion - finetuning
-    uses SQuAD dataset by default, not the data path fields.
-    """
-
-    # Core identifiers
-    dir: Optional[str]
-    name: str
-
-    # Finetuning-specific
-    pretrained_checkpoint: Optional[str]
-    peft: Union[str, PEFT, None]
-    packed_sequence: bool
-
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: Optional[int]
-    micro_batch_size: int
-    seq_length: Optional[int]
-    eval_interval: int
-    save_interval: int
-
-    # Optimizer
-    finetune_lr: Optional[float]
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
-
-    # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
-
-    # Precision
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
@@ -154,8 +54,9 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
     cfg.model.init_method_std = 0.02
 
     # MoE Token Dispatcher settings
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config
@@ -206,6 +107,7 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False  # Delay wgrad compute for overlap
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False  # MoE-specific: Overlap EP communication
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 
     # Checkpoint config (paths set in _pretrain_common)
@@ -222,6 +124,8 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -263,6 +167,7 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     cfg.model.account_for_loss_in_pipeline_split = True
 
     # MoE Token Dispatcher settings
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_hybridep_num_sms = 16
@@ -315,6 +220,7 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 
     # Checkpoint config
@@ -332,266 +238,566 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+
     return cfg
 
 
-def qwen3_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3MoeFinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for Qwen3-30B-A3B MoE.
+# =============================================================================
+# Qwen3 MoE SFT (Full Fine-Tuning) Configs
+# =============================================================================
 
-    Default configuration: 1 node, 8 GPUs, LoRA
-    - LoRA (default): TP=4, PP=1, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
-    - DoRA: TP=4, PP=1, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
-    - Full SFT (peft=None): TP=4, PP=2, EP=4, LR=5e-6, SP=True
 
-    Matches NeMo2 recipe at nemo/collections/llm/recipes/qwen3_30b_a3b.py
+def qwen3_30b_a3b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen3-30B-A3B MoE.
+
+    Recommended parallelism: TP=4, PP=2, EP=4 (1 node, 8 GPUs with SP=True)
     """
-    peft = user_kwargs.pop("peft", "lora")
-    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+    cfg = _sft_common()
 
-    # Auto-select LR if not specified
-    finetune_lr = user_kwargs.get("finetune_lr")
-    if finetune_lr is None:
-        finetune_lr = 5e-6 if is_full_sft else 1e-4
-        user_kwargs["finetune_lr"] = finetune_lr
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
 
-    # Build base config
-    config = _qwen3_moe_finetune_common(hf_path="Qwen/Qwen3-30B-A3B", **user_kwargs)
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
 
-    # Model-specific parallelism settings (match NeMo pattern)
-    if is_full_sft:
-        config.model.tensor_model_parallel_size = 4
-        config.model.expert_model_parallel_size = 4
-        config.model.pipeline_model_parallel_size = 2
-        config.model.expert_tensor_parallel_size = 1
-        config.model.sequence_parallel = True
-        config.peft = None
-    else:
-        # PEFT (LoRA, DoRA, or custom)
-        config.model.tensor_model_parallel_size = 4
-        config.model.expert_model_parallel_size = 4
-        config.model.pipeline_model_parallel_size = 1
-        config.model.expert_tensor_parallel_size = 1
-        config.model.sequence_parallel = True
+    # Parallelism settings (MoE-specific: includes expert parallelism)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
 
-        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
-            config.peft = default_peft_config(peft)
-            config.peft.dim = 8
-            config.peft.alpha = 16
-            config.peft.target_modules = ["linear_qkv", "linear_proj"]
-        else:
-            config.peft = peft
+    # Sequence length (2048 for packed sequences)
+    cfg.model.seq_length = 2048
 
-    return config
+    # Global batch size is 32 for MoE packed sequences
+    cfg.train.global_batch_size = 32
+    # Set pad_seq_to_mult for context parallelism
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # MoE Token Dispatcher settings, may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Mixed precision - use bf16_mixed config object
+    cfg.mixed_precision = bf16_mixed()
+
+    # Training config
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # Optimizer and scheduler overrides for MoE
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.optimizer.adam_beta2 = 0.95
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap
+    # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
+    # cfg.comm_overlap.delay_wgrad_compute = False
+    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_shared_expert_overlap = False
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 100
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config - MoE SFT uses these settings
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+
+    return cfg
 
 
-def qwen3_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3MoeFinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for Qwen3-235B-A22B MoE.
+def qwen3_235b_a22b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen3-235B-A22B MoE.
 
-    Default configuration: 8 nodes (LoRA) or 16 nodes (Full SFT), 8 GPUs per node
-    - LoRA (default): TP=4, PP=4, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
-      Total: 64 GPUs (8 nodes)
-    - DoRA: TP=4, PP=4, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
-      Total: 64 GPUs (8 nodes)
-    - Full SFT (peft=None): TP=4, PP=16, EP=4, LR=5e-6, SP=True
-      Total: 64 GPUs (8 nodes)
-
-    Matches NeMo2 recipe at nemo/collections/llm/recipes/qwen3_235b_a22b.py
-
-    Note: Uses account_for_embedding_in_pipeline_split and account_for_loss_in_pipeline_split
-    for proper layer distribution in pipeline parallelism.
+    Recommended parallelism: TP=4, PP=16, EP=4 (8 nodes, 64 GPUs with SP=True)
+    Uses account_for_embedding_in_pipeline_split and account_for_loss_in_pipeline_split.
     """
-    peft = user_kwargs.pop("peft", "lora")
-    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+    cfg = _sft_common()
 
-    # Auto-select LR if not specified
-    finetune_lr = user_kwargs.get("finetune_lr")
-    if finetune_lr is None:
-        finetune_lr = 5e-6 if is_full_sft else 1e-4
-        user_kwargs["finetune_lr"] = finetune_lr
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
 
-    # Build base config
-    config = _qwen3_moe_finetune_common(hf_path="Qwen/Qwen3-235B-A22B", **user_kwargs)
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
 
-    # Enable pipeline split accounting (required for 235B model)
-    config.model.account_for_embedding_in_pipeline_split = True
-    config.model.account_for_loss_in_pipeline_split = True
+    # Parallelism settings (MoE-specific: includes expert parallelism)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
 
-    # Model-specific parallelism settings (match NeMo pattern)
-    if is_full_sft:
-        config.model.tensor_model_parallel_size = 4
-        config.model.pipeline_model_parallel_size = 16
-        config.model.expert_model_parallel_size = 4
-        config.model.expert_tensor_parallel_size = 1
-        config.model.sequence_parallel = True
-        config.peft = None
-    else:
-        # PEFT (LoRA, DoRA, or custom)
-        config.model.tensor_model_parallel_size = 4
-        config.model.pipeline_model_parallel_size = 4
-        config.model.expert_model_parallel_size = 4
-        config.model.expert_tensor_parallel_size = 1
-        config.model.sequence_parallel = True
+    # Pipeline split accounting (required for 235B model)
+    cfg.model.account_for_embedding_in_pipeline_split = True
+    cfg.model.account_for_loss_in_pipeline_split = True
 
-        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
-            config.peft = default_peft_config(peft)
-            config.peft.dim = 8
-            config.peft.alpha = 16
-            config.peft.target_modules = ["linear_qkv", "linear_proj"]
-        else:
-            config.peft = peft
+    # Sequence length (2048 for packed sequences)
+    cfg.model.seq_length = 2048
 
-    return config
+    # Global batch size is 32 for MoE packed sequences
+    cfg.train.global_batch_size = 32
+    # Set pad_seq_to_mult for context parallelism
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+    )
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Mixed precision - use bf16_mixed config object
+    cfg.mixed_precision = bf16_mixed()
+
+    # Training config
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # Optimizer and scheduler overrides for MoE
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.optimizer.adam_beta2 = 0.95
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap
+    # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
+    # cfg.comm_overlap.delay_wgrad_compute = False
+    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_shared_expert_overlap = False
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 100
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config - MoE SFT uses these settings
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+
+    return cfg
 
 
-def _qwen3_moe_finetune_common(
-    hf_path: str,
-    dir: Optional[str] = None,
-    name: str = "default",
-    # Finetuning-specific
-    pretrained_checkpoint: Optional[str] = None,
-    packed_sequence: bool = False,
-    # Training hyperparameters
-    train_iters: int = 100,
-    global_batch_size: Optional[int] = None,
-    micro_batch_size: int = 1,
-    seq_length: Optional[int] = None,
-    eval_interval: int = 50,
-    save_interval: int = 100,
-    # Optimizer
-    finetune_lr: Optional[float] = None,
-    min_lr: float = 0.0,
-    lr_warmup_iters: int = 10,
-    lr_decay_iters: Optional[int] = None,
-    # W&B logging
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
-    # Precision
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
-    moe_flex_dispatcher_backend: Optional[str] = None,
-) -> ConfigContainer:
-    """
-    Create a finetuning configuration for Qwen3 MoE models using a given HuggingFace path.
+# =============================================================================
+# Qwen3 MoE PEFT (Parameter-Efficient Fine-Tuning) Configs
+# =============================================================================
+
+
+def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Qwen3-30B-A3B MoE.
 
     Args:
-        hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B").
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the finetuning run.
-        pretrained_checkpoint (Optional[str]): Path to pretrained checkpoint to load.
-        packed_sequence (bool): Whether to use packed sequences for training efficiency.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (Optional[int]): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (Optional[int]): Sequence length for training data.
-        eval_interval (int): Evaluation interval.
-        save_interval (int): Checkpoint save interval.
-        finetune_lr (Optional[float]): Learning rate for finetuning.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
-        wandb_project (Optional[str]): Weights & Biases project name.
-        wandb_entity (Optional[str]): Weights & Biases entity name.
-        wandb_exp_name (Optional[str]): Weights & Biases experiment name.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        moe_flex_dispatcher_backend (str | None): Token dispatcher type [deepep, hybridep].
-    Returns:
-        ConfigContainer: Configuration for finetuning.
+        peft_scheme: PEFT scheme - 'lora', 'dora', or a PEFT instance. Default: 'lora'
+
+    Recommended parallelism: TP=4, PP=1, EP=4 (1 node, 8 GPUs with SP=True)
+    LoRA/DoRA uses dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
     """
-    # Default sequence length for finetuning
-    if seq_length is None:
-        seq_length = 2048 if packed_sequence else 4096
+    cfg = _peft_common()
 
-    # Default global batch size
-    if global_batch_size is None:
-        global_batch_size = 32
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
 
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
 
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    # Parallelism settings (MoE-specific: includes expert parallelism)
+    # PEFT uses PP=1 (less parallelism needed since only adapters are trained)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
 
-    # Precision configuration
-    if precision_config is None:
-        precision_config = bf16_mixed()
-    elif isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
+    # Sequence length (2048 for packed sequences)
+    cfg.model.seq_length = 2048
 
-    # Sequence length
-    model_cfg.seq_length = seq_length
-    model_cfg.cross_entropy_fusion_impl = "te"
+    # PEFT config - use user-provided scheme or default to LoRA
+    # MoE LoRA uses smaller dim and specific target modules
+    peft_cfg = default_peft_config(peft_scheme)
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        peft_cfg.dim = 8
+        peft_cfg.alpha = 16
+        peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
+    cfg.peft = peft_cfg
 
-    apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
+    # Global batch size is 32 for MoE packed sequences
+    cfg.train.global_batch_size = 32
+    # Set pad_seq_to_mult for context parallelism
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-    # Optimizer and scheduler
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=finetune_lr if finetune_lr is not None else 1e-4,
-        min_lr=min_lr,
+    # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
     )
+    cfg.model.moe_hybridep_num_sms = 16
 
-    pad_seq_to_mult = (
-        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
-    )
-    # Dataset configuration (SQuAD by default)
-    dataset_config = default_squad_config(
-        seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
-    )
+    # Mixed precision - use bf16_mixed config object
+    cfg.mixed_precision = bf16_mixed()
 
-    # W&B logger configuration
-    logger_config = LoggerConfig(
-        log_interval=10,
-        tensorboard_dir=tensorboard_dir,
-        log_timers_to_tensorboard=True,
-        wandb_project=wandb_project,
-        wandb_entity=wandb_entity,
-        wandb_exp_name=wandb_exp_name,
-    )
+    # Training config
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
 
-    # Config Container
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        validation=ValidationConfig(
-            eval_interval=eval_interval,
-            eval_iters=10,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,
-            use_distributed_optimizer=True,
-        ),
-        dataset=dataset_config,
-        logger=logger_config,
-        tokenizer=TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model=hf_path,
-        ),
-        checkpoint=CheckpointConfig(
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            pretrained_checkpoint=pretrained_checkpoint,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=5678),  # Different seed for finetuning
-        mixed_precision=precision_config,
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # Optimizer and scheduler overrides for MoE
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.optimizer.adam_beta2 = 0.95
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap
+    # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
+    # cfg.comm_overlap.delay_wgrad_compute = False
+    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_shared_expert_overlap = False
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 100
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config - MoE PEFT uses these settings
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+
+    return cfg
+
+
+def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Qwen3-235B-A22B MoE.
+
+    Args:
+        peft_scheme: PEFT scheme - 'lora', 'dora', or a PEFT instance. Default: 'lora'
+
+    Recommended parallelism: TP=4, PP=4, EP=4 (8 nodes, 64 GPUs with SP=True)
+    LoRA/DoRA uses dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
+    Uses account_for_embedding_in_pipeline_split and account_for_loss_in_pipeline_split.
+    """
+    cfg = _peft_common()
+
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
+
+    # Parallelism settings (MoE-specific: includes expert parallelism)
+    # PEFT uses PP=4 (less than SFT's PP=16)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+
+    # Pipeline split accounting (required for 235B model)
+    cfg.model.account_for_embedding_in_pipeline_split = True
+    cfg.model.account_for_loss_in_pipeline_split = True
+
+    # Sequence length (2048 for packed sequences)
+    cfg.model.seq_length = 2048
+
+    # PEFT config - use user-provided scheme or default to LoRA
+    # MoE LoRA uses smaller dim and specific target modules
+    peft_cfg = default_peft_config(peft_scheme)
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        peft_cfg.dim = 8
+        peft_cfg.alpha = 16
+        peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
+    cfg.peft = peft_cfg
+
+    # Global batch size is 32 for MoE packed sequences
+    cfg.train.global_batch_size = 32
+    # Set pad_seq_to_mult for context parallelism
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = (
+        "deepep"  # qwen3 moe has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
     )
+    cfg.model.moe_hybridep_num_sms = 16
+
+    # Mixed precision - use bf16_mixed config object
+    cfg.mixed_precision = bf16_mixed()
+
+    # Training config
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # Optimizer and scheduler overrides for MoE
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.optimizer.adam_beta2 = 0.95
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections (includes MoE-specific kernels)
+    cfg.model.attention_backend = None
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+    cfg.model.moe_router_padding_for_fp8 = False  # MoE FP8 setting
+
+    # Optimizer precision settings
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap
+    # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
+    # cfg.comm_overlap.delay_wgrad_compute = False
+    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_shared_expert_overlap = False
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 100
+    # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config - MoE PEFT uses these settings
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+
+    # MoE Force Load Balancing
+    cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg

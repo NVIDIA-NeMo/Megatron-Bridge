@@ -22,6 +22,7 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -62,6 +63,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_shared_expert_overlap = True
+        provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
@@ -74,7 +76,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.async_tensor_model_parallel_allreduce = True
         provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0
@@ -139,7 +140,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         inv_freq = getattr(self, "_deepseek_inv_freq", None)
         if inv_freq is None:
             rotary_dim = self.hf_config.qk_rope_head_dim
-            rotary_base = self.hf_config.rope_theta
+            rotary_base = rope_theta_from_hf(self.hf_config)
             inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
             self._deepseek_inv_freq = inv_freq
 

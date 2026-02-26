@@ -64,10 +64,13 @@ class TestGptOssConversion:
         except Exception:
             pass
 
-        # Save model and an explicit config.json with our overrides
+        # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
-        with open(model_dir / "config.json", "w") as f:
-            json.dump(GPT_OSS_TOY_OVERRIDES, f, indent=2)
+
+        # Also save config.json explicitly to ensure compatibility with correct torch_dtype
+        config_path = model_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(model.config.to_dict(), f, indent=2)
 
         return str(model_dir)
 

@@ -220,16 +220,6 @@ def train(
         config.optimizer.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
-    # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
-    # or random initialization don't propagate to all ranks in first all-gather (which is a
-    # no-op if things work correctly).
-    if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model, param_sync=False)
-        # Also remove param_sync_func temporarily so that sync calls made in
-        # `forward_backward_func` are no-ops.
-        param_sync_func = model_config.param_sync_func
-        model_config.param_sync_func = None
-        pre_hook_enabled = False
     # Also, check weight hash across DP replicas to be very pedantic.
     if train_config.check_weight_hash_across_dp_replicas_interval is not None:
         assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
@@ -281,9 +271,17 @@ def train(
                 scheduler=scheduler,
             ),
         )
-    is_any_logging_enabled = any(
-        [config.logger.tensorboard_dir, global_state.wandb_logger, global_state.mlflow_logger]
-    )
+
+    # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
+    # or random initialization don't propagate to all ranks in first all-gather (which is a
+    # no-op if things work correctly).
+    if should_toggle_forward_pre_hook:
+        disable_forward_pre_hook(model, param_sync=False)
+        # Also remove param_sync_func temporarily so that sync calls made in
+        # `forward_backward_func` are no-ops.
+        param_sync_func = model_config.param_sync_func
+        model_config.param_sync_func = None
+        pre_hook_enabled = False
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -469,7 +467,7 @@ def train(
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if is_any_logging_enabled:
+        if not config.logger.skip_train_metrics_log:
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 loss_scale = optimizer.get_loss_scale().item()
             else:

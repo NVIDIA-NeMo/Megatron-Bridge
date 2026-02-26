@@ -444,9 +444,10 @@ class TestGemma3CustomComponents:
             # Verify rope_local.forward was called with cp_group
             mock_rope_local.forward.assert_called_once_with(1024, 0, False, mock_cp_group)
 
-            # Verify return is (rope_local, rope_global) tuple
-            assert isinstance(result, tuple)
-            assert len(result) == 2
+            # Verify return is tensor with (rope_local, rope_global) as first dim
+            assert isinstance(result, torch.Tensor)
+            assert result.ndim >= 1
+            assert result.size(0) == 2
             rope_local_result, rope_global_result = result
             assert torch.equal(rope_local_result, mock_local_output)
             assert torch.equal(rope_global_result, mock_global_output)
@@ -457,7 +458,7 @@ class TestGemma3CustomComponents:
         rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
 
         # Mock the _forward_cached method
-        mock_cached_result = (torch.tensor([1.0, 2.0]), torch.tensor([3.0, 4.0]))
+        mock_cached_result = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         rope_emb._forward_cached = Mock(return_value=mock_cached_result)
 
         # Call forward without cp_group (None)
@@ -467,7 +468,8 @@ class TestGemma3CustomComponents:
         rope_emb._forward_cached.assert_called_once_with(1024, 0, False)
 
         # Verify result matches cached result
-        assert result == mock_cached_result
+        compare_results = torch.all(result == mock_cached_result)
+        assert compare_results.item()
 
     def test_gemma3_rotary_embedding_forward_cached(self):
         """Test Gemma3RotaryEmbedding _forward_cached method."""
@@ -492,9 +494,10 @@ class TestGemma3CustomComponents:
             # Verify rope_local.forward was called with cp_group=None
             mock_rope_local.forward.assert_called_once_with(512, 10, True, None)
 
-            # Verify return is (rope_local, rope_global) tuple
-            assert isinstance(result, tuple)
-            assert len(result) == 2
+            # Verify return is tensor with (rope_local, rope_global) as first dim
+            assert isinstance(result, torch.Tensor)
+            assert result.ndim >= 1
+            assert result.size(0) == 2
 
     def test_te_row_parallel_linear_layer_norm(self):
         """Test TERowParallelLinearLayerNorm initialization and forward."""
