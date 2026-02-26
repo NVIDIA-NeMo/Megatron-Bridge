@@ -316,8 +316,9 @@ def gemma2_2b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma2 uses 4096 for non-packed, 2048 for packed
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -419,8 +420,9 @@ def gemma2_9b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma2 uses 4096 for non-packed, 2048 for packed
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -522,8 +524,9 @@ def gemma2_27b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma2 uses 4096 for non-packed, 2048 for packed
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -635,8 +638,9 @@ def gemma2_2b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -746,8 +750,9 @@ def gemma2_9b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -857,8 +862,9 @@ def gemma2_27b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)

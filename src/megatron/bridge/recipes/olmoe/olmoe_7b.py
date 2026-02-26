@@ -212,7 +212,11 @@ def olmoe_7b_sft_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_olmoe_pipeline_layout(1, 1)
 
     # Sequence length
-    cfg.model.seq_length = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    # Dataset config - packed_sequence=True by default (from _sft_common)
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -273,9 +277,6 @@ def olmoe_7b_sft_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
-    # Dataset config - packed_sequence=True by default (from _sft_common)
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -362,7 +363,11 @@ def olmoe_7b_peft_config(
     cfg.model.pipeline_model_parallel_layout = _get_olmoe_pipeline_layout(1, 1)
 
     # Sequence length
-    cfg.model.seq_length = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    # Dataset config - packed_sequence=True by default (from _peft_common)
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -439,9 +444,6 @@ def olmoe_7b_peft_config(
             lora_B_init_method="zero",
         )
 
-    # Dataset config - packed_sequence=True by default (from _peft_common)
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2

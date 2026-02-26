@@ -163,9 +163,10 @@ def gemma3_1b_sft_config() -> ConfigContainer:
 
     # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
     # With packed_sequence=True (default), seq_length is 4096
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -286,9 +287,10 @@ def gemma3_1b_peft_config(
 
     # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
     # With packed_sequence=True (default), seq_length is 4096
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - Gemma3 uses dim=8, alpha=16 for LoRA/DoRA
     peft_cfg = default_peft_config(peft_scheme)

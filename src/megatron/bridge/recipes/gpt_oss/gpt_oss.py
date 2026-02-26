@@ -273,8 +273,9 @@ def gpt_oss_20b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -398,8 +399,9 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -533,8 +535,9 @@ def gpt_oss_20b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -667,8 +670,9 @@ def gpt_oss_120b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)

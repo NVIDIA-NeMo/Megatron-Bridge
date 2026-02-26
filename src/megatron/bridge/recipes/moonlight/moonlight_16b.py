@@ -221,7 +221,11 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
 
     # Sequence length
-    cfg.model.seq_length = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    # Dataset config - packed_sequence=True by default
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # MoE performance optimizations
     cfg.model.moe_permute_fusion = True
@@ -285,9 +289,6 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Dataset config - packed_sequence=True by default
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -391,7 +392,11 @@ def moonlight_16b_peft_config(
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
 
     # Sequence length
-    cfg.model.seq_length = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    # Dataset config - packed_sequence=True by default
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # MoE performance optimizations
     cfg.model.moe_permute_fusion = True
@@ -459,9 +464,6 @@ def moonlight_16b_peft_config(
     cfg.train.manual_gc_interval = 5
     cfg.train.manual_gc_eval = 5
 
-    # Dataset config - packed_sequence=True by default
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2

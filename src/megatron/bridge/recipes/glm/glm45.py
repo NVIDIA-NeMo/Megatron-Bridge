@@ -297,8 +297,9 @@ def glm45_355b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Parallelism settings (MoE-specific)
     cfg.model.pipeline_model_parallel_layout = None
@@ -427,8 +428,9 @@ def glm45_air_106b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # Parallelism settings (MoE-specific)
     cfg.model.pipeline_model_parallel_layout = None
@@ -567,8 +569,9 @@ def glm45_355b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -706,8 +709,9 @@ def glm45_air_106b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)

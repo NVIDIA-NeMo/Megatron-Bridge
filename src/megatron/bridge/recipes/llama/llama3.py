@@ -1218,9 +1218,10 @@ def llama32_1b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1328,9 +1329,10 @@ def llama32_3b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1436,9 +1438,10 @@ def llama3_8b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1538,9 +1541,10 @@ def llama31_8b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1640,9 +1644,10 @@ def llama3_70b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1742,9 +1747,10 @@ def llama31_70b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1845,9 +1851,10 @@ def llama31_405b_sft_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - 405B uses 2048 always
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -1970,9 +1977,10 @@ def llama32_1b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -2082,9 +2090,10 @@ def llama32_3b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -2194,9 +2203,10 @@ def llama3_8b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - 8B uses dim=8, alpha=16
     peft_cfg = default_peft_config(peft_scheme)
@@ -2309,9 +2319,10 @@ def llama31_8b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - 8B uses dim=8, alpha=16
     peft_cfg = default_peft_config(peft_scheme)
@@ -2424,9 +2435,10 @@ def llama3_70b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - 70B uses dim=16, alpha=32
     peft_cfg = default_peft_config(peft_scheme)
@@ -2539,9 +2551,10 @@ def llama31_70b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - 70B uses dim=16, alpha=32
     peft_cfg = default_peft_config(peft_scheme)
@@ -2655,9 +2668,10 @@ def llama31_405b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - 405B uses 2048
-    cfg.model.seq_length = 2048
-    cfg.dataset.seq_length = 2048
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 2048
+    seq_length = 2048
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - 405B uses dim=16, alpha=32, target_modules=["linear_qkv"]
     peft_cfg = default_peft_config(peft_scheme)
