@@ -49,6 +49,16 @@ on:
         required: false
         type: string
         default: ""
+      skip-wheel-build:
+        description: Skip building the wheel
+        required: false
+        type: boolean
+        default: false
+      skip-version-bump:
+        description: Skip version bump
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write # To read repository content
@@ -56,7 +66,7 @@ permissions:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.73.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@bca02be047c64092f6bc74ef5017f30c033c6682
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -88,6 +98,8 @@ jobs:
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
       gh-release-from-tag: ${{ inputs.gh-release-from-tag }}
+      skip-wheel-build: ${{ inputs.skip-wheel-build }}
+      skip-version-bump: ${{ inputs.skip-version-bump }}
     secrets:
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SVC_PYPI_TOKEN || secrets.SVC_PYPI_TEST_TOKEN }}
