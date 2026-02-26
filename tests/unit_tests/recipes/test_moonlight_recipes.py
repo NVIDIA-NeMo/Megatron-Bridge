@@ -33,58 +33,44 @@ _MOONLIGHT_RECIPE_FUNCS = [
     if callable(getattr(_moonlight_module, name, None))
 ]
 
-# Moonlight finetune-specific tests
-_MOONLIGHT_FINETUNE_FUNCS = [
+# Moonlight SFT-specific tests
+_MOONLIGHT_SFT_FUNCS = [
     getattr(_moonlight_module, name)
-    for name in ["moonlight_16b_finetune_config"]
+    for name in ["moonlight_16b_sft_config"]
+    if callable(getattr(_moonlight_module, name, None))
+]
+
+# Moonlight PEFT-specific tests
+_MOONLIGHT_PEFT_FUNCS = [
+    getattr(_moonlight_module, name)
+    for name in ["moonlight_16b_peft_config"]
     if callable(getattr(_moonlight_module, name, None))
 ]
 
 
 def _safe_overrides_for(name: str) -> dict:
-    # Detect if this is a finetune recipe
-    is_finetune = "finetune" in name.lower()
+    """Return overrides for recipe functions.
 
-    overrides = {
-        "name": f"unit_{name}",
-        "dir": ".",
-        "train_iters": 10,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
-    }
+    All configs now use the new parameterless API (return empty dict).
+    """
+    return {}
 
-    if is_finetune:
-        # Finetuning-specific overrides
-        overrides.update(
-            {
-                "tokenizer_path": "moonshotai/Moonlight-16B-A3B",
-                "finetune_lr": 1e-4,
-                "global_batch_size": 2,
-                # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
-            }
-        )
-    else:
-        # Pretrain-specific overrides
-        overrides.update(
-            {
-                "mock": True,
-                "global_batch_size": 2,
-                "lr": 1e-4,
-                "tensor_model_parallel_size": 1,
-                "pipeline_model_parallel_size": 1,
-                "context_parallel_size": 1,
-                "expert_model_parallel_size": 1,
-                "sequence_parallel": False,
-                "recompute_granularity": "selective",
-                "enable_deepep": False,
-                "apply_rope_fusion": False,
-                "optimizer_type": "adam",
-            }
-        )
 
-    return overrides
+def _apply_test_overrides(cfg, name: str):
+    """Apply test-friendly overrides to a config after creation."""
+    # Apply common test overrides
+    cfg.train.train_iters = 10
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seq_length = 64
+    cfg.scheduler.min_lr = 1e-5
+    cfg.scheduler.lr_warmup_iters = 2
+    cfg.optimizer.lr = 1e-4
+    cfg.logger.name = f"unit_{name}"
+    cfg.logger.dir = "."
+    cfg.train.global_batch_size = 2
+    cfg.tokenizer.tokenizer_model = "moonshotai/Moonlight-16B-A3B"
+
+    return cfg
 
 
 class _FakeMoonlightModelProvider16B:
@@ -149,16 +135,22 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
     # Monkeypatch the MoonlightModelProvider16B class
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
+    func_name = recipe_func.__name__
+    is_peft = "peft" in func_name.lower()
+    is_sft = "sft" in func_name.lower()
 
-    cfg = recipe_func(**overrides)
+    # New API: SFT configs are parameterless, PEFT has optional peft_scheme
+    if is_peft:
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
     # Ensure tokenizer choice matches recipe type
-    is_finetune = "finetune" in recipe_func.__name__.lower()
-    if is_finetune:
-        # Finetuning recipes always use HF tokenizer
+    is_sft_or_peft = is_sft or is_peft
+    if is_sft_or_peft:
+        # SFT/PEFT recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
@@ -171,19 +163,19 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
 
 
-@pytest.mark.parametrize("recipe_func", _MOONLIGHT_FINETUNE_FUNCS)
-def test_moonlight_finetune_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each Moonlight finetune recipe builds a valid config."""
+@pytest.mark.parametrize("recipe_func", _MOONLIGHT_SFT_FUNCS)
+def test_moonlight_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each Moonlight SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    cfg = recipe_func(**overrides)
+    cfg = recipe_func()
+    _apply_test_overrides(cfg, recipe_func.__name__)
 
     _assert_basic_config(cfg)
 
-    # Finetuning always uses HF tokenizer
+    # SFT always uses HF tokenizer
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model is not None
 
@@ -192,40 +184,61 @@ def test_moonlight_finetune_config_builds(recipe_func: Callable, monkeypatch: py
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
 
+    # SFT should not have PEFT config
+    assert cfg.peft is None
 
-@pytest.mark.parametrize("recipe_func", _MOONLIGHT_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "dora", None])
-def test_moonlight_finetune_peft_vs_full_sft(recipe_func: Callable, peft, monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT and full SFT configurations are correctly applied."""
+
+@pytest.mark.parametrize("recipe_func", _MOONLIGHT_PEFT_FUNCS)
+def test_moonlight_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each Moonlight PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    overrides["peft"] = peft
+    cfg = recipe_func(peft_scheme="lora")
+    _apply_test_overrides(cfg, recipe_func.__name__)
 
-    cfg = recipe_func(**overrides)
+    _assert_basic_config(cfg)
+
+    # PEFT always uses HF tokenizer
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model is not None
+
+    # Check parallelism
+    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
+
+    # PEFT should have PEFT config
+    assert cfg.peft is not None
+
+
+@pytest.mark.parametrize("recipe_func", _MOONLIGHT_PEFT_FUNCS)
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_moonlight_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT configurations are correctly applied with different schemes."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    cfg = recipe_func(peft_scheme=peft_scheme)
+    _apply_test_overrides(cfg, recipe_func.__name__)
 
     _assert_basic_config(cfg)
 
     # Check PEFT config presence
-    if peft in ["lora", "dora"]:
-        assert cfg.peft is not None
-    elif peft is None:
-        assert cfg.peft is None
+    assert cfg.peft is not None
 
 
-def test_moonlight_16b_finetune_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+def test_moonlight_16b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that Moonlight-16B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+    from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = moonlight_16b_finetune_config(**overrides)
+    cfg = moonlight_16b_peft_config(peft_scheme="lora")
+    _apply_test_overrides(cfg, "moonlight_16b_peft_config")
 
     _assert_basic_config(cfg)
 
@@ -240,17 +253,15 @@ def test_moonlight_16b_finetune_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_moonlight_16b_finetune_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+def test_moonlight_16b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that Moonlight-16B DoRA has correct default parallelism."""
-    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+    from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
-    overrides["peft"] = "dora"
-
-    cfg = moonlight_16b_finetune_config(**overrides)
+    cfg = moonlight_16b_peft_config(peft_scheme="dora")
+    _apply_test_overrides(cfg, "moonlight_16b_peft_config")
 
     _assert_basic_config(cfg)
 
@@ -265,17 +276,15 @@ def test_moonlight_16b_finetune_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_moonlight_16b_finetune_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+def test_moonlight_16b_sft_full_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that Moonlight-16B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+    from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
-    overrides["peft"] = None
-
-    cfg = moonlight_16b_finetune_config(**overrides)
+    cfg = moonlight_16b_sft_config()
+    _apply_test_overrides(cfg, "moonlight_16b_sft_config")
 
     _assert_basic_config(cfg)
 
@@ -290,15 +299,15 @@ def test_moonlight_16b_finetune_full_sft_defaults(monkeypatch: pytest.MonkeyPatc
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_moonlight_16b_finetune_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch):
-    """Test that Moonlight-16B finetune uses precision-aware optimizer settings."""
-    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+def test_moonlight_16b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B SFT uses precision-aware optimizer settings."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
-    cfg = moonlight_16b_finetune_config(**overrides)
+    cfg = moonlight_16b_sft_config()
+    _apply_test_overrides(cfg, "moonlight_16b_sft_config")
 
     _assert_basic_config(cfg)
 
@@ -312,15 +321,14 @@ def test_moonlight_16b_finetune_precision_aware_optimizer(monkeypatch: pytest.Mo
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
 
 
-def test_moonlight_16b_finetune_tokenizer_with_trust_remote_code(monkeypatch: pytest.MonkeyPatch):
-    """Test that Moonlight-16B finetune uses HF tokenizer with trust_remote_code."""
-    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+def test_moonlight_16b_sft_tokenizer_with_trust_remote_code(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B SFT uses HF tokenizer with trust_remote_code."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
-    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
-    cfg = moonlight_16b_finetune_config(**overrides)
+    cfg = moonlight_16b_sft_config()
 
     _assert_basic_config(cfg)
 

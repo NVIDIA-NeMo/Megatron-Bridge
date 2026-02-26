@@ -116,7 +116,6 @@ override-dependencies = [
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt~=0.41.0",
-    "nvidia-resiliency-ext @ git+https://github.com/NVIDIA/nvidia-resiliency-ext.git@v0.4.1",  # Requires a source install to compile cupti for cuda13
     "urllib3>=2.6.3",    # To address CVE-2026-21441
 ]
 

@@ -58,8 +58,9 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
     If someone accidentally breaks the quantization loading logic (e.g., in
     has_modelopt_state or build_and_load_model), this check will catch it.
 
-    We check for QuantRowParallelLinear and QuantColumnParallelLinear as these
-    are present in all quantized model architectures (GPT, Llama, Qwen, Nemotron-H, etc).
+    We check for quantized layer types that indicate successful quantization:
+    - Local spec: QuantRowParallelLinear, QuantColumnParallelLinear
+    - TE spec: QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear
 
     Args:
         model: The unwrapped model to validate
@@ -68,25 +69,36 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
     Raises:
         RuntimeError: If the model doesn't contain expected quantized layers
     """
-    # Check for quantized layer types that are universal across all architectures
     model_str = str(model)
 
-    required_quant_layers = [
+    # Local spec quantized layers
+    local_spec_layers = [
         "QuantRowParallelLinear",
         "QuantColumnParallelLinear",
     ]
 
-    missing_layers = [layer for layer in required_quant_layers if layer not in model_str]
+    # TE spec quantized layers
+    te_spec_layers = [
+        "QuantTERowParallelLinear",
+        "QuantTELayerNormColumnParallelLinear",
+    ]
 
-    if missing_layers:
+    # Check if model has local spec quantized layers
+    has_local_spec = all(layer in model_str for layer in local_spec_layers)
+
+    # Check if model has TE spec quantized layers
+    has_te_spec = all(layer in model_str for layer in te_spec_layers)
+
+    if not has_local_spec and not has_te_spec:
         error_msg = (
             f"\n{'=' * 80}\n"
             f"QUANTIZATION VALIDATION FAILED!\n"
             f"{'=' * 80}\n"
             f"Expected quantized layers not found in the loaded model.\n"
             f"This indicates the quantized checkpoint was not loaded correctly.\n\n"
-            f"Missing: {missing_layers}\n"
-            f"Expected: {required_quant_layers}\n\n"
+            f"Expected one of:\n"
+            f"  - Local spec: {local_spec_layers}\n"
+            f"  - TE spec: {te_spec_layers}\n\n"
             f"This is likely due to a bug in the checkpoint loading logic.\n"
             f"{'=' * 80}\n"
         )
@@ -95,9 +107,16 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
         raise RuntimeError(error_msg)
 
     if is_rank_0:
-        console.print(
-            "[green]✓ Quantization validation passed: Found QuantRowParallelLinear and QuantColumnParallelLinear[/green]"
-        )
+        if has_te_spec:
+            console.print(
+                "[green]✓ Quantization validation passed: Found TE spec quantized layers "
+                "(QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear)[/green]"
+            )
+        else:
+            console.print(
+                "[green]✓ Quantization validation passed: Found local spec quantized layers "
+                "(QuantRowParallelLinear, QuantColumnParallelLinear)[/green]"
+            )
 
 
 @torchrun_main
