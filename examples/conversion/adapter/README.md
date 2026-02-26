@@ -33,7 +33,7 @@ Converts a Megatron-Bridge PEFT checkpoint to HuggingFace PEFT format. Runs
 entirely on CPU — no GPU required.
 
 ```bash
-python examples/conversion/adapter/export_adapter.py \
+uv run python examples/conversion/adapter/export_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-peft-checkpoint /path/to/finetune_ckpt \
     --output-hf-path ./my_adapter
@@ -66,12 +66,12 @@ checks:
 
 ```bash
 # Quick check (PEFT-only, no Megatron comparison)
-python examples/conversion/adapter/verify_adapter.py \
+uv run python examples/conversion/adapter/verify_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --hf-adapter-path ./my_adapter
 
 # Full verification (compares against Megatron checkpoint)
-python examples/conversion/adapter/verify_adapter.py \
+uv run python examples/conversion/adapter/verify_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --hf-adapter-path ./my_adapter \
     --megatron-peft-checkpoint /path/to/finetune_ckpt/iter_0000020

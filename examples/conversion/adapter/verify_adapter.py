@@ -25,7 +25,7 @@ Verification criteria (configurable with ``--top-k``):
 
 Usage::
 
-    python examples/conversion/adapter/verify_adapter.py \\
+    uv run python examples/conversion/adapter/verify_adapter.py \\
         --hf-model-id Qwen/Qwen3-0.6B \\
         --hf-adapter-path ./my_adapter \\
         --megatron-peft-checkpoint /path/to/finetune_ckpt/iter_0000020

@@ -462,13 +462,13 @@ Scripts for exporting Megatron-Bridge LoRA/DoRA adapter weights to HuggingFace P
 **Quick start:**
 ```bash
 # Export
-python examples/conversion/adapter/export_adapter.py \
+uv run python examples/conversion/adapter/export_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-peft-checkpoint /path/to/finetune_ckpt \
     --output-hf-path ./my_adapter
 
 # Verify
-python examples/conversion/adapter/verify_adapter.py \
+uv run python examples/conversion/adapter/verify_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --hf-adapter-path ./my_adapter
 ```
