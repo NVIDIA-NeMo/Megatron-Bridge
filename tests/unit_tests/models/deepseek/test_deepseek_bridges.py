@@ -149,6 +149,47 @@ class TestDeepSeekV2Bridge:
         assert "q_lora_rank" in hf_config
         assert hf_config["q_lora_rank"] is None
 
+    def test_hf_config_to_provider_kwargs_nested_dot_notation(self, mock_pretrained_v2):
+        """Test that dot-notation CONFIG_MAPPING reads nested dict values (including None)."""
+        bridge = DeepSeekV2Bridge()
+        # Patch CONFIG_MAPPING with a dot-notation entry pointing into rope_scaling dict
+        original = bridge.CONFIG_MAPPING
+        bridge.CONFIG_MAPPING = list(original) + [("rope_scaling.factor", "yarn_rotary_scaling_factor")]
+        mock_pretrained_v2.config.rope_scaling = {"factor": 40, "type": "yarn"}
+
+        kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v2.config)
+
+        bridge.CONFIG_MAPPING = original
+        assert kwargs.get("yarn_rotary_scaling_factor") == 40
+
+    def test_hf_config_to_provider_kwargs_nested_dot_notation_none_value(self, mock_pretrained_v2):
+        """Test that dot-notation CONFIG_MAPPING preserves None values from nested dicts."""
+        bridge = DeepSeekV2Bridge()
+        original = bridge.CONFIG_MAPPING
+        bridge.CONFIG_MAPPING = list(original) + [("rope_scaling.factor", "yarn_rotary_scaling_factor")]
+        mock_pretrained_v2.config.rope_scaling = {"factor": None, "type": "yarn"}
+
+        kwargs = bridge.hf_config_to_provider_kwargs(mock_pretrained_v2.config)
+
+        bridge.CONFIG_MAPPING = original
+        assert "yarn_rotary_scaling_factor" in kwargs
+        assert kwargs["yarn_rotary_scaling_factor"] is None
+
+    def test_megatron_to_hf_config_yarn_none_value(self, mock_pretrained_v2):
+        """Test that YARN_ROPE_SCALING_MAPPING preserves None values on provider."""
+        bridge = DeepSeekV2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_v2)
+        # Ensure YARN rope_scaling block is emitted
+        provider.yarn_rotary_scaling_factor = 40
+        # Set a YARN key to None — should still appear in hf_config["rope_scaling"]
+        provider.yarn_mscale = None
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert "rope_scaling" in hf_config
+        assert "mscale" in hf_config["rope_scaling"]
+        assert hf_config["rope_scaling"]["mscale"] is None
+
 
 class TestDeepSeekV3Bridge:
     """Test cases for DeepSeekV3Bridge."""

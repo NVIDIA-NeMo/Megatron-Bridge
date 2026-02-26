@@ -27,7 +27,7 @@ from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvi
 @pytest.fixture
 def mock_text_config():
     """Create a mock text config for Qwen2.5-VL."""
-    text_config = Mock()
+    text_config = Mock(spec=[])
     text_config.num_hidden_layers = 32
     text_config.hidden_size = 4096
     text_config.intermediate_size = 11008
@@ -40,12 +40,6 @@ def mock_text_config():
     text_config.rope_theta = 1000000.0
     text_config.tie_word_embeddings = False
     text_config.hidden_act = "silu"
-    text_config.q_lora_rank = None
-    text_config.kv_lora_rank = None
-    text_config.qk_nope_head_dim = None
-    text_config.qk_rope_head_dim = None
-    text_config.v_head_dim = None
-    text_config.num_nextn_predict_layers = None
     text_config.rope_scaling = None
     text_config.bos_token_id = 151643
     text_config.eos_token_id = 151645
@@ -322,7 +316,7 @@ class TestQwen25VLBridgeEdgeCases:
         minimal_config = Mock(spec=[])
 
         # Text config with required fields
-        text_config = Mock()
+        text_config = Mock(spec=[])
         text_config.num_hidden_layers = 24
         text_config.hidden_size = 2048
         text_config.intermediate_size = 5504
@@ -334,12 +328,6 @@ class TestQwen25VLBridgeEdgeCases:
         text_config.max_position_embeddings = 4096
         text_config.rope_theta = 1000000.0
         text_config.hidden_act = "silu"
-        text_config.q_lora_rank = None
-        text_config.kv_lora_rank = None
-        text_config.qk_nope_head_dim = None
-        text_config.qk_rope_head_dim = None
-        text_config.v_head_dim = None
-        text_config.num_nextn_predict_layers = None
         text_config.rope_scaling = None
         text_config.torch_dtype = "bfloat16"
 
