@@ -27,6 +27,7 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import Qwen3VLMoeTextConfig
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
 
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 
 
@@ -102,7 +103,7 @@ class TestQwen3VLTextRotaryEmbedding:
         hf_rope_embedding = Qwen3VLMoeTextRotaryEmbedding(hf_config)
         mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
             kv_channels=hf_config.head_dim,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             cp_group=pg_collection.cp,
         )
 
@@ -149,7 +150,7 @@ class TestQwen3VLTextRotaryEmbedding:
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
             kv_channels=hf_config.head_dim,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             cp_group=pg_collection.cp,
         )
 
@@ -175,7 +176,7 @@ class TestQwen3VLTextRotaryEmbedding:
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
             kv_channels=hf_config.head_dim,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             cp_group=pg_collection.cp,
         )
 
@@ -197,7 +198,7 @@ class TestQwen3VLTextRotaryEmbedding:
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
             kv_channels=hf_config.head_dim,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             cp_group=pg_collection.cp,
         )
 
