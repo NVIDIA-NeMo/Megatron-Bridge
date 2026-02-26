@@ -910,7 +910,6 @@ def save_checkpoint(
     # De-interleave GLU weights/biases if model has interleaved weights in memory
     # Checkpoints are always saved in contiguous format
     from megatron.core.utils import get_model_config
-
     model_interleave_size = None
     try:
         if len(model) > 0:
@@ -1824,7 +1823,7 @@ def _process_state_dict_for_glu_interleaving(
     interleave: bool = True,
 ) -> dict[str, Any]:
     """Process GLU weights and biases in state dict for interleaving or de-interleaving.
-
+    
     Args:
         model_state_dict: The state dict to process
         interleave_size: The interleave size to use
