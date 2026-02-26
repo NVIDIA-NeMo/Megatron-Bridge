@@ -474,9 +474,8 @@ class ExpertMLPDownProjMapping(AutoMapping):
     (standard) HF expert weight layouts are handled transparently.
     """
 
-    def __init__(self, transpose=True, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.transpose = transpose
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
@@ -498,7 +497,7 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
     (standard) HF expert weight layouts are handled transparently.
     """
 
-    def __init__(self, transpose=True, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         GatedMLPMapping._validate_patterns = lambda *args, **kwargs: None
@@ -508,7 +507,6 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
             gate=f"{self.hf_param}.gate",
             up=f"{self.hf_param}.up",
         )
-        self.transpose = transpose
 
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
