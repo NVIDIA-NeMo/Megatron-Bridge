@@ -81,7 +81,7 @@ jobs:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v2f2ded479171fd54e9ee9ccb21b54b8cd88b06a2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@a22a344d0e5819d9cd3338d875e2429b9ae4480e
     needs: [pre-flight]
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
