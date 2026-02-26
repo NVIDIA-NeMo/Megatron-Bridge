@@ -13,14 +13,20 @@
 # limitations under the License.
 
 """
-Megatron Bridge for Qwen3.5 Vision-Language Model.
+Megatron Bridges for Qwen3.5 Vision-Language Models.
 
-Qwen3.5 is a multimodal model that combines:
+Qwen3.5 is a family of multimodal models that combine:
 - A hybrid Gated DeltaNet + Gated Attention language model (like Qwen3-Next)
 - A vision encoder (similar to Qwen3-VL)
-- Mixture of Experts (MoE) with shared experts
+- Dense MLP or Mixture of Experts (MoE) with shared experts
 
-Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+This module provides two bridges:
+
+- ``Qwen35VLBridge``: Dense variant (e.g., Qwen3.5-27B)
+  Reference: https://huggingface.co/Qwen/Qwen3.5-27B
+
+- ``Qwen35VLMoEBridge``: MoE variant (e.g., Qwen3.5-397B-A17B)
+  Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
 """
 
 import logging
@@ -47,21 +53,25 @@ from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import (
     ExpertMLPGateUpProjMapping,
     Qwen3VLMoEBridge,
 )
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+    Qwen35VLModelProvider,
+    Qwen35VLMoEModelProvider,
+)
 
 
 logger = logging.getLogger(__name__)
 
-_QWEN3_5_HF_CLASS_NAME = "Qwen3_5MoeForConditionalGeneration"
+_QWEN3_5_DENSE_HF_CLASS_NAME = "Qwen3_5ForConditionalGeneration"
+_QWEN3_5_MOE_HF_CLASS_NAME = "Qwen3_5MoeForConditionalGeneration"
 
 
 @MegatronModelBridge.register_bridge(
-    source=_QWEN3_5_HF_CLASS_NAME,
+    source=_QWEN3_5_MOE_HF_CLASS_NAME,
     target=Qwen3VLModel,
-    provider=Qwen35VLModelProvider,
+    provider=Qwen35VLMoEModelProvider,
     model_type="qwen3_5_moe",
 )
-class Qwen35VLBridge(Qwen3VLMoEBridge):
+class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
     """
     Megatron Bridge for Qwen3.5 Vision-Language Model.
 
@@ -84,9 +94,9 @@ class Qwen35VLBridge(Qwen3VLMoEBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen35VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen35VLMoEModelProvider:
         """
-        Create a Qwen35VLModelProvider from a HuggingFace pretrained model.
+        Create a Qwen35VLMoEModelProvider from a HuggingFace pretrained model.
 
         Extracts both language model and vision model configurations from the
         HuggingFace config and maps them to Megatron provider parameters.
@@ -95,7 +105,7 @@ class Qwen35VLBridge(Qwen3VLMoEBridge):
             hf_pretrained: HuggingFace pretrained VLM model
 
         Returns:
-            Qwen35VLModelProvider configured with the HF model's parameters
+            Qwen35VLMoEModelProvider configured with the HF model's parameters
         """
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
@@ -106,7 +116,7 @@ class Qwen35VLBridge(Qwen3VLMoEBridge):
         vision_config = hf_config.vision_config
         vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
 
-        provider = Qwen35VLModelProvider(**provider_kwargs)
+        provider = Qwen35VLMoEModelProvider(**provider_kwargs)
 
         # --- Common Qwen3 LLM settings ---
         provider.normalization = "RMSNorm"
@@ -385,5 +395,226 @@ class Qwen35VLBridge(Qwen3VLMoEBridge):
         #
         # Plus QKV, expert MLP, shared expert mappings for MTP layers.
         # The exact prefix structure (language_model.mtp.* vs mtp.*) needs verification.
+
+        return MegatronMappingRegistry(*mapping_list)
+
+
+@MegatronModelBridge.register_bridge(
+    source=_QWEN3_5_DENSE_HF_CLASS_NAME,
+    target=Qwen3VLModel,
+    provider=Qwen35VLModelProvider,
+    model_type="qwen3_5",
+)
+class Qwen35VLBridge(MegatronModelBridge):
+    """
+    Megatron Bridge for Qwen3.5 Dense Vision-Language Model.
+
+    This bridge handles the conversion between HuggingFace Qwen3.5 dense VL model
+    and Megatron-Core Qwen3VLModel formats. Unlike the MoE variant, this model uses
+    a standard dense MLP (gate_proj + up_proj → linear_fc1, down_proj → linear_fc2).
+
+    The weight mappings handle:
+    - Language model hybrid layers (GDN + standard attention)
+    - Dense MLP with gated SiLU activation (fused pre-MLP layernorm)
+    - Vision model weights (no deepstack mergers)
+    - QK layernorm, zero-centered RMSNorm for GDN output norm
+    - mRoPE position embeddings
+
+    Architecture (27B): 16 × (3 × GDN + 1 × Attention) = 64 layers
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-27B")
+        >>> provider = bridge.to_megatron_provider()
+    """
+
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen35VLModelProvider:
+        """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
+        hf_config = hf_pretrained.config
+        text_config = hf_config.text_config
+
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+
+        vision_config = hf_config.vision_config
+        vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
+
+        provider = Qwen35VLModelProvider(**provider_kwargs)
+
+        # --- Common Qwen3 LLM settings ---
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.add_qkv_bias = getattr(text_config, "attention_bias", False)
+        provider.add_bias_linear = False
+        provider.qk_layernorm = True
+        provider.hidden_dropout = 0.0
+
+        # --- Qwen3-Next hybrid architecture settings ---
+        provider.layernorm_zero_centered_gamma = True
+        provider.attention_output_gate = True
+        provider.experimental_attention_variant = "gated_delta_net"
+        provider.linear_attention_freq = getattr(text_config, "full_attention_interval", 4)
+        provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
+
+        # --- GDN (Gated DeltaNet) specific parameters ---
+        provider.linear_conv_kernel_dim = getattr(text_config, "linear_conv_kernel_dim", 4)
+        provider.linear_key_head_dim = getattr(text_config, "linear_key_head_dim", 128)
+        provider.linear_value_head_dim = getattr(text_config, "linear_value_head_dim", 128)
+        provider.linear_num_key_heads = getattr(text_config, "linear_num_key_heads", 16)
+        provider.linear_num_value_heads = getattr(text_config, "linear_num_value_heads", 48)
+
+        # --- VL-specific overrides ---
+        provider.position_embedding_type = "mrope"
+        provider.vision_config = vision_config
+        provider.hf_text_config = text_config
+        provider.head_dim = getattr(text_config, "head_dim", 256)
+        provider.bos_token_id = getattr(text_config, "bos_token_id", 248045)
+        provider.eos_token_id = getattr(text_config, "eos_token_id", 248044)
+        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 248053)
+        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 248054)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 248056)
+        provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
+        provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
+
+        if os.environ.get("QWEN35_DEBUG", "0") == "1":
+            logger.warning("QWEN35_DEBUG=1: overriding to tiny 4-layer model for debugging")
+            provider.num_layers = 4
+
+        return provider
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """
+        Return MegatronMappingRegistry for Qwen3.5 dense VL model.
+
+        Key differences from the MoE variant:
+        - Dense MLP: gate_proj + up_proj fused into linear_fc1, down_proj as linear_fc2
+        - Pre-MLP layernorm fused into mlp.linear_fc1 (not a separate pre_mlp_layernorm)
+        - No MoE router, routed expert MLPs, or shared expert mappings
+        - No deepstack visual mergers (deepstack_visual_indexes is empty)
+        """
+
+        param_mappings = {
+            # =================================================================
+            # Language Model: Embeddings and output
+            # =================================================================
+            "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
+            "language_model.output_layer.weight": "lm_head.weight",
+            "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
+            # =================================================================
+            # Language Model: Dense MLP (pre-MLP layernorm fused into linear_fc1)
+            # =================================================================
+            "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
+            "language_model.decoder.layers.*.mlp.linear_fc2.weight": "model.language_model.layers.*.mlp.down_proj.weight",
+            # =================================================================
+            # Language Model: Standard attention layers (Gated Attention)
+            # =================================================================
+            "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
+            "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
+            "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
+            "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
+            # =================================================================
+            # Language Model: Linear attention (Gated DeltaNet) layers
+            # =================================================================
+            "language_model.decoder.layers.*.self_attention.in_proj.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
+            "language_model.decoder.layers.*.self_attention.out_proj.weight": "model.language_model.layers.*.linear_attn.out_proj.weight",
+            "language_model.decoder.layers.*.self_attention.A_log": "model.language_model.layers.*.linear_attn.A_log",
+            "language_model.decoder.layers.*.self_attention.dt_bias": "model.language_model.layers.*.linear_attn.dt_bias",
+            # =================================================================
+            # Vision Model: Attention
+            # =================================================================
+            "vision_model.decoder.layers.*.self_attention.linear_proj.weight": "model.visual.blocks.*.attn.proj.weight",
+            "vision_model.decoder.layers.*.self_attention.linear_proj.bias": "model.visual.blocks.*.attn.proj.bias",
+            # =================================================================
+            # Vision Model: MLP
+            # =================================================================
+            "vision_model.decoder.layers.*.mlp.linear_fc1.weight": "model.visual.blocks.*.mlp.linear_fc1.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.bias": "model.visual.blocks.*.mlp.linear_fc1.bias",
+            "vision_model.decoder.layers.*.mlp.linear_fc2.weight": "model.visual.blocks.*.mlp.linear_fc2.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc2.bias": "model.visual.blocks.*.mlp.linear_fc2.bias",
+            # =================================================================
+            # Vision Model: Layer Norms
+            # =================================================================
+            "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.visual.blocks.*.norm1.weight",
+            "vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_bias": "model.visual.blocks.*.norm1.bias",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.visual.blocks.*.norm2.weight",
+            "vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_bias": "model.visual.blocks.*.norm2.bias",
+            # =================================================================
+            # Vision Model: Final Merger (no deepstack in dense variant)
+            # =================================================================
+            "vision_model.merger.patch_norm.**": "model.visual.merger.norm.**",
+            "vision_model.merger.linear_fc1.weight": "model.visual.merger.linear_fc1.weight",
+            "vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
+            "vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
+            "vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
+        }
+
+        mapping_list = []
+        for megatron_param, hf_param in param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        AutoMapping.register_module_type("GatedDeltaNet", "column")
+
+        mapping_list.extend(
+            [
+                # =============================================================
+                # Language Model: Standard Attention QKV
+                # =============================================================
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.language_model.layers.*.self_attn.q_proj.weight",
+                    k="model.language_model.layers.*.self_attn.k_proj.weight",
+                    v="model.language_model.layers.*.self_attn.v_proj.weight",
+                ),
+                # =============================================================
+                # Language Model: Dense MLP (gated: gate_proj + up_proj → linear_fc1)
+                # =============================================================
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+                # =============================================================
+                # Language Model: GDN (Gated DeltaNet) specific mappings
+                # =============================================================
+                GDNConv1dMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.conv1d.weight",
+                    hf_param="model.language_model.layers.*.linear_attn.conv1d.weight",
+                ),
+                GDNLinearMappingSeparate(
+                    megatron_param="language_model.decoder.layers.*.self_attention.in_proj.weight",
+                    qkv="model.language_model.layers.*.linear_attn.in_proj_qkv.weight",
+                    z="model.language_model.layers.*.linear_attn.in_proj_z.weight",
+                    b="model.language_model.layers.*.linear_attn.in_proj_b.weight",
+                    a="model.language_model.layers.*.linear_attn.in_proj_a.weight",
+                ),
+                RMSNorm2ZeroCenteredRMSNormMapping(
+                    "language_model.decoder.layers.*.self_attention.out_norm.weight",
+                    "model.language_model.layers.*.linear_attn.norm.weight",
+                ),
+                # =============================================================
+                # Vision Model: QKV (concatenated format)
+                # =============================================================
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    hf_param="model.visual.blocks.*.attn.qkv.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    hf_param="model.visual.blocks.*.attn.qkv.bias",
+                ),
+                # =============================================================
+                # Vision Model: Patch embedding (replicated across TP ranks)
+                # =============================================================
+                ReplicatedMapping(
+                    megatron_param="vision_model.patch_embed.proj.**",
+                    hf_param="model.visual.patch_embed.proj.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="vision_model.pos_embed.weight",
+                    hf_param="model.visual.pos_embed.weight",
+                ),
+            ]
+        )
+
+        # TODO: MTP mappings for dense Qwen3.5 VL (mtp_num_hidden_layers=1 in config)
 
         return MegatronMappingRegistry(*mapping_list)

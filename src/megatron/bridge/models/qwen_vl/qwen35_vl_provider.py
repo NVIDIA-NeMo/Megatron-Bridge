@@ -15,20 +15,18 @@
 """
 Qwen3.5 VL Model Provider configurations for Megatron-Core.
 
-Qwen3.5 is a vision-language model that combines:
+Qwen3.5 is a family of vision-language models that combine:
 - A hybrid Gated DeltaNet (GDN) + Gated Attention language model (like Qwen3-Next)
 - A vision encoder (similar to Qwen3-VL)
-- Mixture of Experts (MoE) with shared experts
+- Dense MLP or Mixture of Experts (MoE) with shared experts
 
-Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+This module provides two model providers:
 
-Architecture (397B-A17B):
-- 60 layers: 15 groups × (3 × GDN-MoE + 1 × Attention-MoE)
-- Hidden dim: 4096, Token Embedding: 248320
-- GDN: 16 QK heads, 64 V heads, head_dim=128
-- Attention: 32 Q heads, 2 KV heads, head_dim=256
-- MoE: 512 experts, 10 routed + 1 shared, expert dim=1024
-- Context length: 262,144 natively, up to 1,010,000 with YaRN
+- ``Qwen35VLModelProvider``: Dense variant (e.g., Qwen3.5-27B)
+  Reference: https://huggingface.co/Qwen/Qwen3.5-27B
+
+- ``Qwen35VLMoEModelProvider``: MoE variant (e.g., Qwen3.5-397B-A17B)
+  Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
 """
 
 from __future__ import annotations
@@ -53,22 +51,176 @@ if _TRANSFORMERS_HAS_QWEN3_5_MOE:
 else:
     Qwen3_5MoeVisionConfig = None  # type: ignore[assignment,misc]
 
+try:
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
+
+    _TRANSFORMERS_HAS_QWEN3_5 = True
+except ImportError:
+    _TRANSFORMERS_HAS_QWEN3_5 = False
+    Qwen3_5VisionConfig = None  # type: ignore[assignment,misc]
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+
+def _check_qwen3_5_available() -> None:
+    """Raise a clear error if transformers doesn't have qwen3_5 (dense) support."""
+    if not _TRANSFORMERS_HAS_QWEN3_5:
+        raise ImportError(
+            f"Qwen3.5 VL (dense) requires transformers with qwen3_5 model support, "
+            f"but found {transformers.__version__}. "
+            "Please upgrade: pip install --upgrade transformers"
+        )
 
 
 def _check_qwen3_5_moe_available() -> None:
     """Raise a clear error if transformers doesn't have qwen3_5_moe support."""
     if not _TRANSFORMERS_HAS_QWEN3_5_MOE:
         raise ImportError(
-            f"Qwen3.5 VL requires transformers >= 5.2.0, but found {transformers.__version__}. "
+            f"Qwen3.5 VL (MoE) requires transformers >= 5.2.0, but found {transformers.__version__}. "
             "Please upgrade: pip install --upgrade transformers"
         )
 
 
 @dataclass
 class Qwen35VLModelProvider(GPTModelProvider):
+    """
+    Model provider for Qwen3.5 VL Dense (Vision-Language) Models.
+
+    Qwen3.5 dense combines a hybrid GDN (Gated DeltaNet) + Gated Attention language
+    model architecture with a vision encoder (similar to Qwen3-VL) and a standard
+    dense MLP (no Mixture of Experts).
+
+    Key Architecture Details (27B):
+    - 64 layers: 16 groups x (3 GDN + 1 Attention)
+    - Hidden dim: 5120, Intermediate dim: 17408
+    - GDN: 16 QK heads, 48 V heads, head_dim=128
+    - Gated Attention: 24 Q heads, 4 KV heads, head_dim=256
+    - Vision: depth=27, hidden=1152, no deepstack
+    - mRoPE with sections [11, 11, 10], rope_theta=10,000,000
+    - partial_rotary_factor=0.25
+    """
+
+    # =========================================================================
+    # Hybrid Architecture (Qwen3-Next style)
+    # =========================================================================
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = (
+        get_transformer_block_with_experimental_attention_variant_spec
+    )
+    layernorm_zero_centered_gamma: bool = True
+    attention_output_gate: bool = True
+    experimental_attention_variant: str = "gated_delta_net"
+    linear_attention_freq: int | list[int] = 4
+
+    # --- Gated DeltaNet (GDN) parameters ---
+    linear_conv_kernel_dim: int = 4
+    linear_key_head_dim: int = 128
+    linear_value_head_dim: int = 128
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 48
+
+    # =========================================================================
+    # Common LLM parameters
+    # =========================================================================
+    normalization: str = "RMSNorm"
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    add_qkv_bias: bool = False
+    qk_layernorm: bool = True
+    kv_channels: int | None = 256
+    num_query_groups: int = 4
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    attention_softmax_in_fp32: bool = True
+    rotary_base: float = 10000000.0
+    rotary_percent: float = 0.25
+    seq_length: int = 262144
+
+    # =========================================================================
+    # VL-specific parameters
+    # =========================================================================
+    vision_config: Any = field(default=None)
+    position_embedding_type: str = "mrope"
+    mrope_section: List[int] = field(default_factory=lambda: [11, 11, 10])
+    apply_rotary_pos_emb_in_fp32: bool = False
+
+    image_token_id: int = 248056
+    video_token_id: int = 248057
+    vision_start_token_id: int = 248053
+    vision_end_token_id: int = 248054
+    bos_token_id: int = 248045
+    eos_token_id: int = 248044
+
+    spatial_merge_size: int = 2
+    temporal_patch_size: int = 2
+    patch_size: int = 16
+    language_max_sequence_length: int = 2048
+    scatter_embedding_sequence_parallel: bool = False
+
+    # =========================================================================
+    # Freeze options for fine-tuning
+    # =========================================================================
+    freeze_language_model: bool = False
+    freeze_vision_model: bool = False
+    freeze_vision_projection: bool = False
+
+    # =========================================================================
+    # Performance
+    # =========================================================================
+    bias_activation_fusion: bool = True
+    use_hf_vision_model: bool = False
+    vision_dp_when_cp: bool = False
+    hetereogenous_dist_checkpoint: bool = True
+
+    mtp_num_layers: Optional[int] = None
+
+    def __post_init__(self):
+        _check_qwen3_5_available()
+        if self.vision_config is None:
+            self.vision_config = Qwen3_5VisionConfig()
+        if self.num_query_groups < self.tensor_model_parallel_size:
+            raise ValueError(
+                f"TP size {self.tensor_model_parallel_size} should be less than or equal to num_query_groups {self.num_query_groups}. Please use a smaller TP size."
+            )
+        super().__post_init__()
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
+        """Provide a Qwen3.5 VL dense model instance with vision and language components."""
+        language_transformer_config = self
+        hf_vision_config = self.vision_config
+
+        block_spec = get_transformer_block_with_experimental_attention_variant_spec(
+            language_transformer_config,
+            vp_stage=vp_stage,
+        )
+        _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
+
+        model = Qwen3VLModel(
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=block_spec,
+            vision_transformer_config=hf_vision_config,
+            pre_process=pre_process,
+            post_process=post_process,
+            pg_collection=self._pg_collection,
+        )
+
+        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
+            model.freeze(
+                freeze_language_model=self.freeze_language_model,
+                freeze_vision_model=self.freeze_vision_model,
+                freeze_vision_projection=self.freeze_vision_projection,
+            )
+
+        return model
+
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        """Provide just the language model component without vision."""
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+@dataclass
+class Qwen35VLMoEModelProvider(GPTModelProvider):
     """
     Model provider for Qwen 3.5 VL (Vision-Language) Models.
 
@@ -194,6 +346,10 @@ class Qwen35VLModelProvider(GPTModelProvider):
         _check_qwen3_5_moe_available()
         if self.vision_config is None:
             self.vision_config = Qwen3_5MoeVisionConfig()
+        if self.num_query_groups < self.tensor_model_parallel_size:
+            raise ValueError(
+                f"TP size {self.tensor_model_parallel_size} should be less than or equal to num_query_groups {self.num_query_groups}. Please use a smaller TP size."
+            )
         super().__post_init__()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:

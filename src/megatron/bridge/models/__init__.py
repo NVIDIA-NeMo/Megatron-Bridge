@@ -183,6 +183,8 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
     Qwen35VLBridge,
     Qwen35VLModelProvider,
+    Qwen35VLMoEBridge,
+    Qwen35VLMoEModelProvider,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLBridge,
@@ -333,6 +335,8 @@ __all__ = [
     "Qwen3VLMoEBridge",
     "Qwen35VLBridge",
     "Qwen35VLModelProvider",
+    "Qwen35VLMoEBridge",
+    "Qwen35VLMoEModelProvider",
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",

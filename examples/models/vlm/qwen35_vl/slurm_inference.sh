@@ -28,7 +28,7 @@
 # ==============================================================================
 
 #SBATCH --job-name=qwen35v-inference
-#SBATCH --nodes=16                   # Number of nodes (128 GPUs = 16 nodes × 8 GPUs)
+#SBATCH --nodes=4                   # Number of nodes (32 GPUs = 4 nodes × 8 GPUs)
 #SBATCH --ntasks-per-node=8          # Tasks per node (1 per GPU)
 #SBATCH --gpus-per-node=8            # GPUs per node
 #SBATCH --time=02:00:00              # Max run time (2 hours)
@@ -64,9 +64,9 @@ MAX_NEW_TOKENS=100
 
 # Parallelism configuration for 128 GPUs (16 nodes × 8 GPUs)
 # Constraint: TP × PP × EP = Total GPUs
-TP=4      # Tensor Parallelism
-PP=8      # Pipeline Parallelism
-EP=16     # Expert Parallelism (MoE)
+TP=2      # Tensor Parallelism
+PP=4      # Pipeline Parallelism
+EP=8     # Expert Parallelism (MoE)
 # Total: 1 × 8 × 16 = 128 GPUs
 
 # For 1024 GPUs (128 nodes), use:
