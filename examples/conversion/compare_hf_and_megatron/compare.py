@@ -792,7 +792,10 @@ def compare_models_one_step(args) -> None:
             megatron_logits = megatron_output[0, -1, :]
             megatron_next_token = torch.argmax(megatron_logits, dim=-1)
 
-            if not torch.distributed.is_initialized() or parallel_state.get_tensor_model_parallel_rank() == 0:
+            if not torch.distributed.is_initialized() or (
+                parallel_state.get_tensor_model_parallel_rank() == 0
+                and parallel_state.get_expert_model_parallel_rank() == 0
+            ):
                 print(f"Megatron output shape: {megatron_output.shape}")
                 print(f"Megatron logits stats - mean: {megatron_logits.mean():.4f}, std: {megatron_logits.std():.4f}")
                 print(
