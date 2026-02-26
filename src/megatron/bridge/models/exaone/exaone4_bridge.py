@@ -112,7 +112,7 @@ class Exaone4Bridge(MegatronModelBridge):
             seq_length=hf_config.max_position_embeddings,
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=getattr(hf_config, 'rope_theta', getattr(hf_config, 'rotary_base', 1000000.0)),
+            rotary_base=getattr(hf_config, "rope_theta", getattr(hf_config, "rotary_base", 1000000.0)),
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", True),
             kv_channels=getattr(hf_config, "head_dim", None),
@@ -127,6 +127,11 @@ class Exaone4Bridge(MegatronModelBridge):
         if hf_rope_scaling is not None and hf_rope_scaling.get("rope_type") == "llama3":
             provider.rope_scaling = True
             provider.rope_scaling_factor = hf_rope_scaling.get("factor", 16.0)
+            provider.rope_scaling_low_freq_factor = hf_rope_scaling.get("low_freq_factor", 1.0)
+            provider.rope_scaling_high_freq_factor = hf_rope_scaling.get("high_freq_factor", 4.0)
+            provider.rope_scaling_original_max_position_embeddings = hf_rope_scaling.get(
+                "original_max_position_embeddings", 8192
+            )
 
         return provider
 
@@ -146,14 +151,14 @@ class Exaone4Bridge(MegatronModelBridge):
         hf_config["model_type"] = "exaone4"
         hf_config["tie_word_embeddings"] = provider.share_embeddings_and_output_weights
 
-        # RoPE scaling
+        # RoPE scaling (read from provider, no hard-coded constants)
         if provider.rope_scaling:
             hf_config["rope_scaling"] = {
                 "rope_type": "llama3",
                 "factor": provider.rope_scaling_factor,
-                "low_freq_factor": 1.0,
-                "high_freq_factor": 4.0,
-                "original_max_position_embeddings": 8192,
+                "low_freq_factor": provider.rope_scaling_low_freq_factor,
+                "high_freq_factor": provider.rope_scaling_high_freq_factor,
+                "original_max_position_embeddings": provider.rope_scaling_original_max_position_embeddings,
             }
 
         return hf_config

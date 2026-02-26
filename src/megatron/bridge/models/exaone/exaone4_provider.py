@@ -32,7 +32,7 @@ established by Gemma2 bridge.
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Callable
 
 import torch
 import torch.nn.functional as F
@@ -49,6 +49,7 @@ from megatron.core.transformer import (
     TransformerLayerSubmodules,
 )
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 
@@ -70,6 +71,12 @@ class TERowParallelLinearLayerNorm(TERowParallelLinear):
     in Post-LN architectures where normalization is applied after the residual add.
 
     This is the same pattern used by Gemma2 bridge for Post-LN support.
+
+    Note:
+        This module assumes ``add_bias_linear=False`` (bias is always None).
+        EXAONE 4.0 satisfies this invariant. If reused for models with
+        ``add_bias_linear=True``, the Post-LN would be applied before bias
+        addition, producing incorrect results.
     """
 
     def __init__(
@@ -91,6 +98,10 @@ class TERowParallelLinearLayerNorm(TERowParallelLinear):
     def forward(self, x):
         """Forward with Post-LN applied to the linear output."""
         output, bias = super().forward(x)
+        assert bias is None, (
+            "TERowParallelLinearLayerNorm assumes add_bias_linear=False. "
+            "Post-LN before bias addition is incorrect when bias is present."
+        )
         return self.post_layernorm(output), bias
 
 
@@ -99,7 +110,7 @@ class TERowParallelLinearLayerNorm(TERowParallelLinear):
 # =============================================================================
 
 
-def exaone4_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+def exaone4_layer_spec(config: "GPTModelProvider") -> ModuleSpec:  # noqa: ARG001
     """EXAONE 4.0 layer specification with pure Post-LayerNorm.
 
     Key differences from standard GPT layer spec:
@@ -110,7 +121,8 @@ def exaone4_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     - QK layernorm is handled by qk_layernorm=True in TransformerConfig
 
     Args:
-        config: GPTModelProvider configuration
+        config: Reserved for future use (e.g., 32B hybrid attention with
+            layer-wise branching between local and global attention).
 
     Returns:
         ModuleSpec for EXAONE 4.0 transformer layer
@@ -123,7 +135,7 @@ def exaone4_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
                 params={"attn_mask_type": AttnMaskType.causal},
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TEColumnParallelLinear,  # No Pre-LN (pure Post-LN arch)
-                    core_attention=None,  # Use default DotProductAttention
+                    core_attention=DotProductAttention,  # Explicit attention class
                     linear_proj=TERowParallelLinearLayerNorm,  # Post-attention RMSNorm
                 ),
             ),
@@ -172,7 +184,7 @@ class Exaone4ModelProvider(GPTModelProvider):
     rotary_percent: float = 1.0
 
     # Custom layer spec for Post-LN architecture
-    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = exaone4_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = exaone4_layer_spec
 
     # Dtype defaults
     autocast_dtype: torch.dtype = torch.bfloat16
@@ -206,6 +218,9 @@ class Exaone4ModelProvider1P2B(Exaone4ModelProvider):
     # RoPE scaling (llama3-style)
     rope_scaling: bool = True
     rope_scaling_factor: float = 16.0
+    rope_scaling_low_freq_factor: float = 1.0
+    rope_scaling_high_freq_factor: float = 4.0
+    rope_scaling_original_max_position_embeddings: int = 8192
 
 
 # TODO: Add Exaone4ModelProvider32B when 32B model details are confirmed

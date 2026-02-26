@@ -25,11 +25,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
-from megatron.bridge.models.exaone import (
-    Exaone4Bridge,
-    Exaone4ModelProvider,
-    Exaone4ModelProvider1P2B,
-)
 from megatron.bridge.models.deepseek import (
     DeepSeekModelProvider,
     DeepSeekProvider,
@@ -41,6 +36,11 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV3Provider,
     MoonlightModelProvider16B,
     MoonlightProvider,
+)
+from megatron.bridge.models.exaone import (
+    Exaone4Bridge,
+    Exaone4ModelProvider,
+    Exaone4ModelProvider1P2B,
 )
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
