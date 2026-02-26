@@ -282,6 +282,22 @@ def train(
         param_sync_func = model_config.param_sync_func
         model_config.param_sync_func = None
         pre_hook_enabled = False
+    should_toggle_forward_pre_hook = False
+
+    prefix = f"iteration {global_state.train_state.step}"
+    evaluate_and_print_results(
+        global_state,
+        prefix,
+        forward_step_func,
+        valid_data_iterator,
+        model,
+        model_config,
+        verbose=False,
+        write_to_tensorboard=True,
+        process_non_loss_data_func=process_non_loss_data_func,
+        non_loss_data_func=non_loss_data_func,
+        callback_manager=callback_manager,
+    )
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -519,8 +535,8 @@ def train(
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect all objects.
                 gc.collect()
-            prefix = f"iteration {global_state.train_state.step}"
             timers("eval-time", log_level=0).start(barrier=True)
+            prefix = f"iteration {global_state.train_state.step}"
             evaluate_and_print_results(
                 global_state,
                 prefix,

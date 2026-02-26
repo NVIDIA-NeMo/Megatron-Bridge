@@ -189,6 +189,12 @@ def evaluate(
             )
             fault_tolerance.on_eval_step_end(state)
 
+            if (
+                state.cfg.model.cuda_graph_impl == "local"
+                and CudaGraphScope.full_iteration in state.cfg.model.cuda_graph_scope
+            ):
+                torch.cuda.synchronize()
+
             if should_fire(callback_manager, step_end_event):
                 callback_manager.fire(
                     step_end_event,
