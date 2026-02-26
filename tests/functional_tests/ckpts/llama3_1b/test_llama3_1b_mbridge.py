@@ -15,6 +15,7 @@
 """Functional smoke tests for LLaMA recipe configurations."""
 
 import pytest
+import subprocess
 
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
@@ -25,7 +26,7 @@ class TestLlama3MBridgeCkpt:
     """Test class for LLaMA recipe functional tests."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_llama_pretrain_recipes(self):
+    def test_llama32_1B_ckpt_mbridge(self):
         """Functional test for LLaMA recipes with appropriate parallelism configurations."""
 
         config = llama32_1b_pretrain_config()
@@ -42,4 +43,18 @@ class TestLlama3MBridgeCkpt:
 
         config.logger.log_interval = 1
 
+        config.checkpoint.save = "/workspace/test_ckpts/llama32_1b_mbridge"
+
         pretrain(config=config, forward_step_func=forward_step)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_llama32_1B_ckpt_mcore(self):
+        """Functional test for LLaMA recipes with appropriate parallelism configurations."""
+
+        script_path = "test_llama3_1b_mcore.sh"
+        process = subprocess.Popen(
+            ["bash", script_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )

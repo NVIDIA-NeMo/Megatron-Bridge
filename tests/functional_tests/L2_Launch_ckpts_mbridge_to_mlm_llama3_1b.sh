@@ -22,3 +22,5 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # they can run basic training without crashes
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/llama3_1b/test_llama3_1b_mbridge.py
 coverage combine -q
+
+bash tests/functional_tests/ckpts/llama3_1b/test_llama3_1b_mcore.sh

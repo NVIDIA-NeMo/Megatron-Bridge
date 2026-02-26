@@ -1,4 +1,7 @@
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 /opt/megatron-lm/pretrain_gpt.py \
+LOAD_DIR=/workspace/test_ckpts/llama32_1b_mbridge
+SAVE_DIR=/workspace/test_ckpts/llama32_1b_mcore
+
+CUDA_VISIBLE_DEVICES=0,1 CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 /opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_gpt.py \
     --init-method-std 0.014 \
     --disable-bias-linear \
     --use-rope-scaling \
@@ -22,16 +25,15 @@ CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 /opt/megatron-lm/pretr
     --max-position-embeddings 8192 \
     --micro-batch-size 1 \
     --global-batch-size 8 \
-    --train-iters 5 \
-    --log-interval 1 \
-    --tokenizer-type SentencePieceTokenizer \
-    --tokenizer-model /opt/data/tokenizers/sentencepiece/tokenizer.model \
+    --train-iters 10 \
+    --mock-data \
+    --tokenizer-type NullTokenizer \
     --vocab-size 131072 \
     --save-interval 5 \
     --eval-interval 5 \
     --eval-iters 4 \
-    --load /path/to/mbridge/ckpt \
-    --save /path/to/save/ckpt \
+    --load ${LOAD_DIR} \
+    --save ${SAVE_DIR} \
     --ckpt-format torch_dist \
     --log-progress \
     --bf16 \
@@ -39,7 +41,9 @@ CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 /opt/megatron-lm/pretr
     --min-lr 4.5e-5 \
     --num-workers 2 \
     --tensorboard-dir /workspace/tb \
-    --log-straggler \
     --log-interval 1 \
     --log-throughput \
     --no-load-optim
+
+echo rm -rf ${LOAD_DIR}
+echo rm -rf ${SAVE_DIR}
