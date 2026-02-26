@@ -329,7 +329,6 @@ def nemotron_3_nano_peft_config(
         expert_tensor_parallel_size=1,
         expert_model_parallel_size=8,
         apply_rope_fusion=False,
-        async_tensor_model_parallel_allreduce=True,
         attention_backend="fused",
         gradient_accumulation_fusion=True,
         init_method_std=0.0173,
