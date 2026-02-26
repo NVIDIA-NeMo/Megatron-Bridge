@@ -138,7 +138,7 @@ def _pretrain(
     pg_collection = setup_output.pg_collection
 
     # TRAINING
-    if not config.train.skip_train:
+    if not config.validation.skip_train:
         if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
@@ -182,7 +182,7 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
             callback_manager=callback_manager,
         )
     if state.train_state.do_test:
@@ -195,7 +195,7 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
             callback_manager=callback_manager,
             is_test=True,
         )

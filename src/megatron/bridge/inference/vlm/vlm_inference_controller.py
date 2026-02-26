@@ -16,8 +16,8 @@ from typing import OrderedDict
 
 import torch
 from megatron.core.inference.inference_request import InferenceRequest
-from megatron.core.inference.text_generation_controllers.simple_text_generation_controller import (
-    SimpleTextGenerationController,
+from megatron.core.inference.text_generation_controllers.text_generation_controller import (
+    TextGenerationController,
 )
 
 
@@ -39,7 +39,7 @@ class TokenizerWrapper:
         return self._tokenizer.encode(prompt, add_special_tokens=False)
 
 
-class VLMTextGenerationController(SimpleTextGenerationController):
+class VLMTextGenerationController(TextGenerationController):
     """Text generation controller for VLM models with image processing support."""
 
     # pylint: disable=C0115,C0116

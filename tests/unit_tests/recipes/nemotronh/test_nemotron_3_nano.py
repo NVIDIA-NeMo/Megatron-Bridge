@@ -16,7 +16,7 @@
 Unit tests for Nemotron 3 Nano recipe configuration builders.
 
 Tests cover:
-- Pretrain configuration with default and custom parameters
+- Pretrain configuration defaults (parameterless API)
 - Finetune configuration with LoRA, DoRA, and full SFT
 - MoE-specific settings (DeepEP, expert parallelism)
 - Parallelism and tokenizer configurations
@@ -32,17 +32,21 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_finetune_config,
     nemotron_3_nano_pretrain_config,
 )
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit
 class TestNemotron3NanoPretrain:
-    """Test cases for Nemotron 3 Nano pretrain recipe."""
+    """Test cases for Nemotron 3 Nano pretrain recipe.
+
+    Note: Pretrain config uses the parameterless API and returns fixed defaults.
+    Customization is done by modifying the returned ConfigContainer after creation.
+    """
 
     def test_pretrain_config_default_parameters(self):
-        """Test pretrain_config with default parameters (mock mode)."""
-        config = nemotron_3_nano_pretrain_config(mock=True)
+        """Test pretrain_config returns correct default configuration."""
+        # Pretrain config uses parameterless API
+        config = nemotron_3_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, Nemotron3NanoProvider)
@@ -77,99 +81,50 @@ class TestNemotron3NanoPretrain:
         assert config.mixed_precision == "bf16_mixed"
 
     def test_pretrain_config_deepep_enabled(self):
-        """Test that DeepEP is enabled by default for MoE."""
-        config = nemotron_3_nano_pretrain_config(mock=True, enable_deepep=True)
+        """Test that DeepEP is enabled by default for MoE pretrain."""
+        # Pretrain config uses parameterless API
+        config = nemotron_3_nano_pretrain_config()
 
-        # DeepEP should modify MoE dispatcher settings
+        # DeepEP should be enabled by default - check MoE dispatcher settings
         assert config.model.moe_token_dispatcher_type == "flex"
         assert config.model.moe_shared_expert_overlap is False
         assert config.model.moe_flex_dispatcher_backend == "deepep"
 
-    def test_pretrain_config_deepep_disabled(self):
-        """Test that DeepEP can be disabled."""
-        config = nemotron_3_nano_pretrain_config(mock=True, enable_deepep=False)
+    def test_pretrain_config_moe_kernel_settings(self):
+        """Test MoE kernel settings for pretrain config."""
+        config = nemotron_3_nano_pretrain_config()
 
-        # Without DeepEP, should use default dispatcher settings from provider
-        assert config.model.moe_token_dispatcher_type == "alltoall"
-        assert config.model.moe_shared_expert_overlap is True
+        # Verify MoE kernel selections
+        assert config.model.attention_backend == "fused"
+        assert config.model.moe_router_fusion is False
+        assert config.model.moe_permute_fusion is True
+        assert config.model.moe_grouped_gemm is True
+        assert config.model.cross_entropy_loss_fusion is True
+        assert config.model.cross_entropy_fusion_impl == "native"
 
-    def test_pretrain_config_custom_parallelism(self):
-        """Test pretrain_config with custom parallelism."""
-        config = nemotron_3_nano_pretrain_config(
-            mock=True,
-            tensor_model_parallel_size=2,
-            pipeline_model_parallel_size=2,
-            context_parallel_size=2,
-            sequence_parallelism=False,
-            expert_tensor_parallelism=2,
-            expert_model_parallelism=4,
-        )
+    def test_pretrain_config_optimizer_settings(self):
+        """Test optimizer settings for pretrain config."""
+        config = nemotron_3_nano_pretrain_config()
 
-        assert config.model.tensor_model_parallel_size == 2
-        assert config.model.pipeline_model_parallel_size == 2
-        assert config.model.context_parallel_size == 2
-        assert config.model.sequence_parallel is False
-        assert config.model.expert_tensor_parallel_size == 2
-        assert config.model.expert_model_parallel_size == 4
+        # Verify optimizer configuration
+        assert config.optimizer.lr == 1.6e-3
+        assert config.optimizer.weight_decay == 0.1
+        assert config.scheduler.min_lr == 1.6e-5
+        assert config.scheduler.warmup_iters == 333
 
-    def test_pretrain_config_custom_training_params(self):
-        """Test pretrain_config with custom training parameters."""
-        config = nemotron_3_nano_pretrain_config(
-            mock=True,
-            train_iters=10000,
-            global_batch_size=256,
-            micro_batch_size=1,
-            seq_length=4096,
-            lr=1e-4,
-            min_lr=1e-5,
-            lr_warmup_iters=500,
-        )
+        # Verify precision settings
+        assert config.optimizer.use_precision_aware_optimizer is False
+        assert config.optimizer.main_grads_dtype is not None
+        assert config.optimizer.main_params_dtype is not None
 
-        assert config.train.train_iters == 10000
-        assert config.train.global_batch_size == 256
-        assert config.train.micro_batch_size == 1
-        assert config.dataset.seq_length == 4096
-        assert config.optimizer.lr == 1e-4
-        assert config.optimizer.min_lr == 1e-5
+    def test_pretrain_config_checkpoint_settings(self):
+        """Test checkpoint settings for pretrain config."""
+        config = nemotron_3_nano_pretrain_config()
 
-    def test_pretrain_config_with_data_paths(self):
-        """Test pretrain_config with data paths provided."""
-        data_paths = ["/path/to/data1", "/path/to/data2", "/path/to/data3"]
-        config = nemotron_3_nano_pretrain_config(data_paths=data_paths)
-
-        assert config.dataset.split == "9999,8,2"
-        assert config.dataset.blend is not None
-
-    def test_pretrain_config_with_custom_directory(self):
-        """Test custom directory configuration."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = nemotron_3_nano_pretrain_config(mock=True, dir=temp_dir, name="test_run")
-
-            expected_run_dir = os.path.join(temp_dir, "test_run")
-            expected_checkpoint_dir = os.path.join(expected_run_dir, "checkpoints")
-            expected_tensorboard_dir = os.path.join(expected_run_dir, "tb_logs")
-
-            assert config.checkpoint.save == expected_checkpoint_dir
-            assert config.logger.tensorboard_dir == expected_tensorboard_dir
-
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed"])
-    def test_precision_recipes(self, precision):
-        """Test precision configuration."""
-        cfg = nemotron_3_nano_pretrain_config(mock=True, precision_config=precision)
-        assert cfg.mixed_precision == precision
-
-    def test_pretrain_config_custom_comm_overlap(self):
-        """Test custom CommOverlapConfig."""
-        custom_overlap = CommOverlapConfig(
-            tp_comm_overlap=False,
-            defer_embedding_wgrad_compute=True,
-            wgrad_deferral_limit=50,
-            data_parallel_size=1,
-        )
-        config = nemotron_3_nano_pretrain_config(mock=True, comm_overlap_config=custom_overlap)
-
-        assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is False
+        # Verify checkpoint configuration
+        assert config.checkpoint.save_interval == 200
+        assert config.checkpoint.ckpt_assume_constant_structure is True
+        assert config.checkpoint.dist_ckpt_strictness == "log_all"
 
 
 @pytest.mark.unit
@@ -319,9 +274,8 @@ class TestNemotron3NanoCommon:
     )
     def test_config_container_structure(self, recipe_fn):
         """Test that all configs return proper ConfigContainer with correct model provider."""
-        # Use mock=True for pretrain, finetune doesn't need it
-        kwargs = {"mock": True} if "pretrain" in recipe_fn.__name__ else {}
-        config = recipe_fn(**kwargs)
+        # Pretrain config uses parameterless API, finetune can be called with defaults
+        config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, Nemotron3NanoProvider)
@@ -336,7 +290,6 @@ class TestNemotron3NanoCommon:
         assert config.checkpoint is not None
         assert config.rng is not None
         assert config.ddp is not None
-        assert config.comm_overlap is not None
         assert config.mixed_precision is not None
 
     @pytest.mark.parametrize(
@@ -348,11 +301,10 @@ class TestNemotron3NanoCommon:
     )
     def test_ddp_configuration(self, recipe_fn):
         """Test distributed data parallel configuration."""
-        kwargs = {"mock": True} if "pretrain" in recipe_fn.__name__ else {}
-        config = recipe_fn(**kwargs)
+        # Pretrain config uses parameterless API, finetune can be called with defaults
+        config = recipe_fn()
 
         assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.grad_reduce_in_fp32 is True
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
         assert config.ddp.use_distributed_optimizer is True
@@ -366,8 +318,8 @@ class TestNemotron3NanoCommon:
     )
     def test_moe_model_configuration(self, recipe_fn):
         """Test MoE-specific model configuration from provider."""
-        kwargs = {"mock": True} if "pretrain" in recipe_fn.__name__ else {}
-        config = recipe_fn(**kwargs)
+        # Pretrain config uses parameterless API, finetune can be called with defaults
+        config = recipe_fn()
 
         # Check MoE settings from Nemotron3NanoProvider
         assert config.model.num_moe_experts == 128

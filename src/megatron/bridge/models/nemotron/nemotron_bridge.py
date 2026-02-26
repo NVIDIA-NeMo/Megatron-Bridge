@@ -22,11 +22,21 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.nemotron.nemotron_provider import NemotronModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=NemotronForCausalLM, target=GPTModel)
+def squared_relu(x):
+    """Squared ReLU activation function."""
+    return torch.pow(torch.nn.functional.relu(x), 2)
+
+
+@MegatronModelBridge.register_bridge(
+    source=NemotronForCausalLM,
+    target=GPTModel,
+    provider=GPTModelProvider,
+    model_type="nemotron",
+)
 class NemotronBridge(MegatronModelBridge):
     """
     Megatron Bridge for Nemotron Causal LM.
@@ -39,30 +49,28 @@ class NemotronBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronModelProvider:
-        hf_config = hf_pretrained.config
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        # Nemotron uses norm_eps instead of rms_norm_eps
+        ("norm_eps", "layernorm_epsilon"),
+    ]
 
-        provider = NemotronModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.norm_eps,
-            num_query_groups=hf_config.num_key_value_heads,
-            seq_length=hf_config.max_position_embeddings,
-            rotary_base=hf_config.rope_theta,
-            rotary_percent=hf_config.partial_rotary_factor,
-            kv_channels=getattr(hf_config, "head_dim", None),
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            vocab_size=hf_config.vocab_size,
-        )
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace Nemotron config to GPTModelProvider."""
+        # Use base class for common config conversion
+        provider = super().provider_bridge(hf_pretrained)
 
+        provider.normalization = "LayerNorm"
+        provider.activation_func = squared_relu
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.hidden_dropout = 0.0
+        provider.attention_dropout = 0.0
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.bias_dropout_add_fusion = False
+        provider.layernorm_zero_centered_gamma = True
+        provider.cross_entropy_loss_fusion = True
+        provider.apply_rope_fusion = True
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:

@@ -18,13 +18,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import GenerationConfig, Qwen2Config, Qwen3ForCausalLM
+from transformers import Qwen2Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
 
 
 class TestMegatronQwen3Bridge:
@@ -48,11 +48,11 @@ class TestMegatronQwen3Bridge:
             "num_hidden_layers": 28,
             "num_key_value_heads": 8,
             "rms_norm_eps": 1e-06,
-            "rope_theta": 1000000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
             "sliding_window": 4096,
             "tie_word_embeddings": True,
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.37.0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 151936,
         }
@@ -75,7 +75,6 @@ class TestMegatronQwen3Bridge:
         """Create a mock PreTrainedCausalLM with Qwen3 model."""
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = qwen3_config
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained
@@ -93,15 +92,15 @@ class TestMegatronQwen3Bridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Check that it returns a Qwen3ModelProvider instance
-        assert isinstance(result, Qwen3ModelProvider)
+        # Check that it returns a GPTModelProvider instance (after refactoring)
+        assert isinstance(result, GPTModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == qwen3_config.num_hidden_layers
         assert result.hidden_size == qwen3_config.hidden_size
         assert result.num_attention_heads == qwen3_config.num_attention_heads
         assert result.seq_length == qwen3_config.max_position_embeddings
-        assert result.rotary_base == qwen3_config.rope_theta
+        assert result.rotary_base == qwen3_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3, qwen3_config):
         """Test vocabulary size mapping."""
@@ -149,7 +148,7 @@ class TestMegatronQwen3Bridge:
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
         # Check position embedding
-        assert result.rotary_base == qwen3_config.rope_theta
+        assert result.rotary_base == qwen3_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_qwen3_specific_features(self, mock_pretrained_qwen3):
         """Test Qwen3-specific features."""
@@ -168,7 +167,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = qwen3_config
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.bfloat16
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -185,7 +183,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = qwen3_config
         mock_pretrained.config.torch_dtype = torch.float16  # Set config dtype to fp16
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
-        mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -202,8 +199,8 @@ class TestMegatronQwen3Bridge:
         # Pass model only
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Just verify that we got a valid Qwen3ModelProvider
-        assert isinstance(result, Qwen3ModelProvider)
+        # Just verify that we got a valid GPTModelProvider
+        assert isinstance(result, GPTModelProvider)
 
     def test_provider_bridge_without_tie_embeddings(self, qwen3_config):
         """Test provider_bridge when tie_word_embeddings is not present."""
@@ -216,7 +213,6 @@ class TestMegatronQwen3Bridge:
         mock_pretrained.config = config
         mock_pretrained.model = Mock(spec=Qwen3ForCausalLM)
         mock_pretrained.model.dtype = torch.float32
-        mock_pretrained.generation_config = None
 
         bridge = Qwen3Bridge()
         result = bridge.provider_bridge(mock_pretrained)
@@ -247,15 +243,6 @@ class TestMegatronQwen3Bridge:
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_qwen3):
-        """Test that generation config is passed through."""
-        bridge = Qwen3Bridge()
-
-        result = bridge.provider_bridge(mock_pretrained_qwen3)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_qwen3.generation_config
-
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Qwen3 models."""
@@ -274,7 +261,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 3072,
                 "vocab_size": 151936,
                 "max_position_embeddings": 40960,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-06,
                 "tie_word_embeddings": True,
             },
@@ -288,7 +275,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 6144,
                 "vocab_size": 151936,
                 "max_position_embeddings": 40960,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-06,
                 "tie_word_embeddings": True,
             },
@@ -302,7 +289,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 12288,
                 "vocab_size": 151936,
                 "max_position_embeddings": 40960,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-06,
                 "tie_word_embeddings": False,
             },
@@ -405,7 +392,7 @@ class TestAutoBridgeIntegration:
                     "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
                 ) as mock_get_bridge:
                     mock_bridge = Mock()
-                    mock_provider = Mock(spec=Qwen3ModelProvider)
+                    mock_provider = Mock(spec=GPTModelProvider)
                     mock_bridge.provider_bridge.return_value = mock_provider
                     mock_get_bridge.return_value = mock_bridge
 

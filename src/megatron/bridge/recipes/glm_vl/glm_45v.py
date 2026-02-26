@@ -39,12 +39,13 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def set_glm_45v_pipeline_model_parallel_layout(
-    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None, is_peft: bool = False
 ) -> None:
     """Set the GLM-4.5V pipeline model parallel layout.
 
@@ -54,6 +55,7 @@ def set_glm_45v_pipeline_model_parallel_layout(
     Args:
         model_cfg: The model provider configuration to modify.
         layout: Optional custom layout. If None, uses predefined layouts based on PP/VP sizes.
+        is_peft: Whether the model is trained with PEFT.
     """
     # GLM-4.5V has no MTP layers
     last_layer = ["loss"]
@@ -61,14 +63,31 @@ def set_glm_45v_pipeline_model_parallel_layout(
     vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
 
     # GLM-4.5 Air has 46 decoder layers
+    # GLM-4.5 Vision Encoder is huge, we need to balance the first stage with the least number of layers
     # Layout maps for common PP/VP combinations
-    layout_map = {
-        (1, 1): None,
-        (2, 1): [["embedding"] + ["decoder"] * 23, ["decoder"] * 23 + last_layer],
-        (4, 1): [["embedding"] + ["decoder"] * 11, ["decoder"] * 12, ["decoder"] * 12, ["decoder"] * 11 + last_layer],
-        (8, 1): [["embedding"] + ["decoder"] * 5] + [["decoder"] * 6] * 6 + [["decoder"] * 5 + last_layer],
-        (16, 1): [["embedding"] + ["decoder"] * 2] + [["decoder"] * 3] * 14 + [["decoder"] * 2 + last_layer],
-    }
+    # We use different layouts for PEFT and full SFT.
+    if is_peft:
+        layout_map = {
+            (4, 1): [
+                ["embedding"] + ["decoder"] * 11,
+                ["decoder"] * 12,
+                ["decoder"] * 12,
+                ["decoder"] * 11 + last_layer,
+            ],
+            (8, 1): [["embedding"] + ["decoder"] * 5] + [["decoder"] * 6] * 6 + [["decoder"] * 5 + last_layer],
+            (16, 1): [["embedding"] + ["decoder"] * 2] + [["decoder"] * 3] * 14 + [["decoder"] * 2 + last_layer],
+        }
+    else:
+        layout_map = {
+            (4, 1): [
+                ["embedding"] + ["decoder"] * 11,
+                ["decoder"] * 12,
+                ["decoder"] * 12,
+                ["decoder"] * 11 + last_layer,
+            ],
+            (8, 1): [["embedding"] + ["decoder"]] + [["decoder"] * 7] * 6 + [["decoder"] * 3 + last_layer],
+            (16, 1): [["embedding"]] + [["decoder"] * 3] * 14 + [["decoder"] * 3 + last_layer],
+        }
 
     if layout is not None:
         model_cfg.pipeline_model_parallel_layout = layout
@@ -133,9 +152,9 @@ class GLM45VCommonKwargs(TypedDict, total=False):
 def glm_45v_finetune_config(**user_kwargs: Unpack[GLM45VCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for GLM-4.5V (based on GLM-4.5 Air 106B).
 
-    Default configuration: 4 nodes, 32 GPUs total
-    - LoRA/DoRA: TP=1, PP=8, EP=4 (32 GPUs, 4 nodes), LR=1e-4
-    - Full SFT: TP=1, PP=8, EP=16 (128 GPUs, 16 nodes), LR=5e-6
+    Default configuration:
+    - LoRA/DoRA: TP=1, PP=8, EP=4 (64 GPUs, 8 nodes), LR=1e-4
+    - Full SFT: TP=1, PP=8, EP=16 (512 GPUs, 64 nodes), LR=5e-6
 
     GLM-4.5V is a Vision-Language model with:
     - 106B total parameters (based on GLM-4.5 Air)
@@ -151,9 +170,10 @@ def glm_45v_finetune_config(**user_kwargs: Unpack[GLM45VCommonKwargs]) -> Config
     recommended_kwargs: GLM45VCommonKwargs = {
         "hf_path": "zai-org/GLM-4.5V",
         "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 8,
         "pipeline_dtype": torch.bfloat16,
-        "expert_model_parallel_size": 16 if is_full_sft else 2,
+        "expert_model_parallel_size": 16 if is_full_sft else 4,
+        "global_batch_size": 64 if is_full_sft else 32,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
@@ -186,7 +206,7 @@ def _glm_45v_common(
     train_iters: int = 300000,
     global_batch_size: int = 32,
     micro_batch_size: int = 1,
-    seq_length: int = 4096,
+    seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
@@ -242,7 +262,7 @@ def _glm_45v_common(
     model_cfg.seq_length = seq_length
 
     # Set pipeline model parallel layout for asymmetric stages
-    set_glm_45v_pipeline_model_parallel_layout(model_cfg, layout)
+    set_glm_45v_pipeline_model_parallel_layout(model_cfg, layout, is_peft=peft is not None)
 
     # Pipeline split for asymmetric stages are specified with the layout above
     model_cfg.account_for_embedding_in_pipeline_split = False
@@ -312,13 +332,15 @@ def _glm_45v_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_config,
         scheduler=scheduler,

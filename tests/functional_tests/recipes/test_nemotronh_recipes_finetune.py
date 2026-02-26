@@ -23,9 +23,20 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
+from torch import nn
 from transformers import AutoConfig, AutoTokenizer, dynamic_module_utils
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+
+def _fix_tied_weights_keys(model: nn.Module):
+    """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
+    for module in model.modules():
+        tied = getattr(module, "_tied_weights_keys", None)
+        if isinstance(tied, list):
+            module._tied_weights_keys = {k: k for k in tied}
+
+
 from megatron.bridge.recipes.nemotronh import (
     nemotron_3_nano_finetune_config,
     nemotron_nano_9b_v2_finetune_config,
@@ -105,6 +116,7 @@ class TestNemotronNanoV2FinetuneRecipes:
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory
+        _fix_tied_weights_keys(model)
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
@@ -252,15 +264,15 @@ class TestNemotronNanoV2FinetuneRecipes:
         # Override to use smaller model for faster testing
         config.model.seq_length = seq_length
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 2
 
         # Calculate proper dataset splits
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
 
@@ -390,6 +402,7 @@ class TestNemotron3NanoFinetuneRecipes:
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory
+        _fix_tied_weights_keys(model)
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
@@ -520,15 +533,15 @@ class TestNemotron3NanoFinetuneRecipes:
         # Override to use smaller model for faster testing
         config.model.seq_length = seq_length
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 2
 
         # Calculate proper dataset splits
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
 
