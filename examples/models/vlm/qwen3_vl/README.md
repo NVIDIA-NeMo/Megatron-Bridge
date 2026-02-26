@@ -103,13 +103,15 @@ Before training, ensure the following environment variables are set:
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [sft.sh](sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
+See the [sft_unpacked.sh](sft_seq_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences..
+See the [sft_packed.sh](sft_seq_packed.sh) script for for full parameter fine-tuning with sequence-packing.
 
 W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
+See the [peft_unpacked.sh](peft_seq_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
+See the [peft_packed.sh](peft_seq_packed.sh) script for LoRA fine-tuning with sequence-packing.
 
 W&B report coming soon.
 
