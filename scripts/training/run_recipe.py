@@ -209,7 +209,7 @@ def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered
+    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
     if has_pretrain ^ has_finetune:
         return "pretrain" if has_pretrain else "finetune"
     raise ValueError(ERR_INFER_MODE_FAILED)
