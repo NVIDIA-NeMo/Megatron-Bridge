@@ -59,6 +59,11 @@ on:
         required: false
         type: boolean
         default: false
+      release-version:
+        description: Release version
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write # To read repository content
@@ -66,7 +71,7 @@ permissions:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@bca02be047c64092f6bc74ef5017f30c033c6682
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.77.0
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -76,7 +81,7 @@ jobs:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.77.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v2f2ded479171fd54e9ee9ccb21b54b8cd88b06a2
     needs: [pre-flight]
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
@@ -100,6 +105,7 @@ jobs:
       gh-release-from-tag: ${{ inputs.gh-release-from-tag }}
       skip-wheel-build: ${{ inputs.skip-wheel-build }}
       skip-version-bump: ${{ inputs.skip-version-bump }}
+      release-version: ${{ inputs.release-version }}
     secrets:
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SVC_PYPI_TOKEN || secrets.SVC_PYPI_TEST_TOKEN }}
