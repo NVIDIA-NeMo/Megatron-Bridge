@@ -115,14 +115,14 @@ def process_vision(
             kwargs["min_pixels"] = min_pixels
         if max_pixels is not None:
             kwargs["max_pixels"] = max_pixels
-        image_inputs = processor(images=images, videos=None, return_tensors="pt", **kwargs)
+        image_inputs = processor(images=images, text="", videos=None, return_tensors="pt", **kwargs)
         image_grid_thw = image_inputs.get("image_grid_thw", None)
     else:
         image_inputs = {}
         image_grid_thw = None
 
     if videos is not None:
-        videos_inputs = processor(images=None, videos=videos, return_tensors="pt")
+        videos_inputs = processor(images=None, text="", videos=videos, return_tensors="pt")
         video_grid_thw = videos_inputs.get("video_grid_thw", None)
     else:
         videos_inputs = {}
@@ -151,6 +151,51 @@ def _resolve_hf_mm_token_ids(hf_tokenizer):
     image_id = _get("<image>", 151655)
     video_id = _get("<video>", 151656)
     return image_id, video_id
+
+
+def _tensor_to_pil(t):
+    """Convert a [C,H,W] float tensor in [0,1] to a PIL Image (uint8 [0,255])."""
+    from PIL import Image
+
+    img_np = (t.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype(np.uint8)
+    return Image.fromarray(img_np)
+
+
+def _images_to_pil(imgs):
+    """Convert WDS tensor images to PIL to match HF flow input format.
+
+    WDS imagehandler decodes JPEG to float tensors in [0,1]. The HF flow passes
+    PIL images (uint8 [0,255]) to the processor. Converting to PIL here ensures
+    the processor applies identical rescaling and normalization in both flows.
+    """
+    if isinstance(imgs, torch.Tensor):
+        if imgs.dim() == 3:
+            return [_tensor_to_pil(imgs)]
+        elif imgs.dim() == 4:
+            return [_tensor_to_pil(img) for img in imgs]
+    elif isinstance(imgs, list):
+        return [_tensor_to_pil(img) if isinstance(img, torch.Tensor) else img for img in imgs]
+    return imgs
+
+
+def _videos_to_pil(videos):
+    """Convert WDS video frame tensors to PIL to match HF flow input format."""
+    if videos is None:
+        return None
+    result = []
+    for video in videos:
+        if isinstance(video, list):
+            result.append([_tensor_to_pil(f) if isinstance(f, torch.Tensor) else f for f in video])
+        elif isinstance(video, torch.Tensor):
+            if video.dim() == 4:
+                result.append([_tensor_to_pil(f) for f in video])
+            elif video.dim() == 3:
+                result.append([_tensor_to_pil(video)])
+            else:
+                result.append([video])
+        else:
+            result.append(video)
+    return result
 
 
 @dataclass
@@ -312,12 +357,17 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         Returns:
             sample with necessary fields
         """
-        # NOTE: flatten all images
-        #     Input of process_vision:
+        # NOTE: Convert WDS tensor images to PIL to match HF flow format.
+        #     WDS imagehandler decodes JPEG to float tensors in [0,1], but the processor
+        #     expects PIL images (uint8 [0,255]) for correct rescaling and normalization.
+        imgs_for_processing = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
+        videos_for_processing = (
+            _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
+        )
         processed_vision = process_vision(
             self.image_processor,
-            sample.imgs,
-            sample.videos,
+            imgs_for_processing,
+            videos_for_processing,
             min_pixels=self.min_pixels,
             max_pixels=self.max_pixels,
         )
@@ -387,7 +437,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
         # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
         chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
-        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, dict) else chat_output[0]
+        input_ids = chat_output["input_ids"][0] if "input_ids" in chat_output else chat_output[0]
         pad_token_id = self.hf_tokenizer.pad_token_id
         target = [pad_token_id for _ in range(len(input_ids))]
         search_start_index = 0

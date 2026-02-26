@@ -16,7 +16,7 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from transformers import AutoTokenizer, Qwen2VLImageProcessor
+from transformers import AutoTokenizer, Qwen3VLProcessor
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
@@ -473,9 +473,9 @@ def _qwen3_vl_common(
         )
     elif _dataset_choice == "energon":
         tokenizer = AutoTokenizer.from_pretrained(_processor_model)
-        # Use from_pretrained to ensure correct normalization (mean/std) and config (min_pixels)
-        # matching Preloaded provider behavior.
-        image_processor = Qwen2VLImageProcessor.from_pretrained(_processor_model)
+        # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
+        # This processor accepts both images and videos kwargs.
+        image_processor = Qwen3VLProcessor.from_pretrained(_processor_model)
 
         dataset_cfg = EnergonProvider(
             seq_length=seq_length,
