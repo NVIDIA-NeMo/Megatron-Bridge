@@ -44,6 +44,11 @@ on:
         description: Branch for version bump
         required: true
         type: string
+      gh-release-from-tag:
+        description: Tag of previous release for changelog builder
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write # To read repository content
@@ -71,6 +76,7 @@ jobs:
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
+      gh-release-from-tag: ${{ inputs.gh-release-from-tag }}
     secrets:
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) && secrets.SVC_PYPI_TOKEN || secrets.SVC_PYPI_TEST_TOKEN }}
