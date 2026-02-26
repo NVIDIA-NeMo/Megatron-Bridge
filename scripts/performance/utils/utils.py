@@ -177,7 +177,15 @@ def get_exp_name_config(
         else base_config.expert_tensor_parallel_size
     )
     mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config.micro_batch_size
-    gbs_size = args.global_batch_size if args.global_batch_size is not None else base_config.global_batch_size
+
+    if args.global_batch_size is not None:
+        gbs_size = args.global_batch_size
+    elif num_gpus != base_config.num_gpus:
+        # Scale GBS with num_gpus so experiment name matches the scaled GBS applied in set_post_overrides
+        gbs_size = int(base_config.gbs_scaling_factor * num_gpus)
+    else:
+        gbs_size = base_config.global_batch_size
+
     exp_config = f"gpus{num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}_vp{vp_size}_ep{ep_size}_etp{etp_size}_mbs{mbs_size}_gbs{gbs_size}"
     return exp_config
 
