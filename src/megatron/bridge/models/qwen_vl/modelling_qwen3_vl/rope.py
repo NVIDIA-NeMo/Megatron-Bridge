@@ -173,6 +173,13 @@ def get_rope_index(
         total_input_ids = input_ids
         if attention_mask is None:
             attention_mask = torch.ones_like(total_input_ids)
+        # Handle multi-dimensional attention masks
+        elif attention_mask.dim() > 2:
+            # Collapse to [batch, seq] while preserving padding information
+            attention_mask = attention_mask.any(dim=-1)
+            if attention_mask.dim() == 3:
+                attention_mask = attention_mask.squeeze(1)
+            attention_mask = attention_mask.to(dtype=total_input_ids.dtype)
         position_ids = torch.ones(
             3,
             input_ids.shape[0],
@@ -250,6 +257,13 @@ def get_rope_index(
         return position_ids, mrope_position_deltas
     else:
         if attention_mask is not None:
+            # Handle multi-dimensional attention mask
+            if attention_mask.dim() > 2:
+                # Collapse to [batch, seq] while preserving padding information
+                attention_mask = attention_mask.any(dim=-1)
+                if attention_mask.dim() == 3:
+                    attention_mask = attention_mask.squeeze(1)
+                attention_mask = attention_mask.to(dtype=torch.long)
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
             position_ids = position_ids.unsqueeze(0).expand(3, -1, -1).to(attention_mask.device)
