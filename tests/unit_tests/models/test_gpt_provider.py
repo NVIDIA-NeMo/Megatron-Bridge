@@ -294,11 +294,10 @@ class TestGPTModelProvider:
         # Verify the result
         assert result is mock_spec
 
-    @patch("megatron.bridge.models.gpt_provider.modelopt_transformer_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
-        """Test default_layer_spec when restore_modelopt_state is True."""
+    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec):
+        """Test default_layer_spec when restore_modelopt_state is True uses TE spec."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
         # Create a provider with restore_modelopt_state=True
@@ -310,23 +309,20 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
         # Call the function
         result = default_layer_spec(provider)
 
-        # Should use quantization spec when restore_modelopt_state is True
-        mock_quant_spec.assert_called_once_with(provider)
+        # Should use TE spec even when restore_modelopt_state is True (all models support TE spec)
         mock_te_full_spec.assert_not_called()
-        mock_te_spec.assert_not_called()
-        assert result == "quantization_spec"
+        mock_te_spec.assert_called_once_with(provider)
+        assert result == "te_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.modelopt_transformer_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec):
         """Test default_layer_spec when use_transformer_engine_full_layer_spec is True."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
@@ -340,7 +336,6 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
@@ -348,15 +343,13 @@ class TestGPTModelProvider:
         result = default_layer_spec(provider)
 
         # Should use TE full spec when use_transformer_engine_full_layer_spec is True
-        mock_quant_spec.assert_not_called()
         mock_te_full_spec.assert_called_once_with(provider)
         mock_te_spec.assert_not_called()
         assert result == "te_full_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.modelopt_transformer_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec):
         """Test default_layer_spec default case (regular TE spec)."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
@@ -370,7 +363,6 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
@@ -378,7 +370,6 @@ class TestGPTModelProvider:
         result = default_layer_spec(provider)
 
         # Should use regular TE spec by default
-        mock_quant_spec.assert_not_called()
         mock_te_full_spec.assert_not_called()
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"

@@ -69,6 +69,9 @@ class NemotronHBridge(MegatronModelBridge):
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
     ]
 
+    # Additional files to copy during HF export (reasoning parser utilities)
+    ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MambaModelProvider:
         """Convert HuggingFace Nemotron-H config to MambaModelProvider."""
         # Use base class for common config conversion
