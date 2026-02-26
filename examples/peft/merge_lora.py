@@ -31,7 +31,8 @@ python merge_lora.py \
     --lora-checkpoint path/to/finetune_ckpt \
     --hf-model-path   path/to/hf_model \
     --output          path/to/merged_ckpt \
-    [--pretrained path/to/base_ckpt]
+    [--pretrained path/to/base_ckpt] \
+    [--tp 1] [--pp 1] [--ep 1]
 """
 
 from __future__ import annotations
@@ -82,6 +83,12 @@ def parse_args() -> argparse.Namespace:
         help="Base (dense) checkpoint. If omitted, resolved from run_config.yaml in the LoRA checkpoint.",
     )
     parser.add_argument("--debug", action="store_true", help="Verbose logging")
+
+    # Parallelism options
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
+
     return parser.parse_args()
 
 
@@ -113,6 +120,7 @@ def merge_lora(
     lora_dir: Path,
     out_dir: Path,
     hf_model_path: str,
+    args: argparse.Namespace,
 ) -> None:
     """
     Merge LoRA adapter weights back into the base model.
@@ -122,6 +130,7 @@ def merge_lora(
         lora_dir (Path): Path to the directory containing the LoRA fine-tuned checkpoint.
         out_dir (Path): Path to the directory where the merged model checkpoint should be saved.
         hf_model_path (str): HuggingFace model name or local path to the model architecture/configuration.
+        args (argparse.Namespace): Command-line arguments containing parallelism settings.
 
     This routine reconstructs the model architecture from HuggingFace config,
     loads the dense base model weights, then loads the LoRA adapter weights
@@ -131,11 +140,12 @@ def merge_lora(
     print_rank_0(f"Loading base model from {base_dir}")
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
 
-    # Single-GPU context; set all parallel dims to 1
     model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = 1
-    model_provider.pipeline_model_parallel_size = 1
-    model_provider.expert_model_parallel_size = 1
+
+    print_rank_0(f"Setting Parallelism: TP={args.tp} | PP={args.pp} | EP={args.ep}")
+    model_provider.tensor_model_parallel_size = args.tp
+    model_provider.pipeline_model_parallel_size = args.pp
+    model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
     model_provider.initialize_model_parallel(seed=0)
@@ -245,6 +255,7 @@ def main() -> None:
         lora_dir=lora_dir,
         out_dir=Path(args.output).expanduser().resolve(),
         hf_model_path=args.hf_model_path,
+        args=args,
     )
 
 
