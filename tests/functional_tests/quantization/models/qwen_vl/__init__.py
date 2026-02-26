@@ -11,16 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from megatron.bridge.recipes.olmoe.olmoe_7b import (
-    olmoe_7b_peft_config,
-    olmoe_7b_pretrain_config,
-    olmoe_7b_sft_config,
-)
-
-
-__all__ = [
-    "olmoe_7b_pretrain_config",
-    "olmoe_7b_sft_config",
-    "olmoe_7b_peft_config",
-]

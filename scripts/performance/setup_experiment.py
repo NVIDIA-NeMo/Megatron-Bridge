@@ -28,12 +28,12 @@ from nemo_run.config import get_nemorun_home
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
@@ -529,6 +529,15 @@ if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
 
+    gpus_per_node = args.gpus_per_node
+    if gpus_per_node is None:
+        if args.gpu in NUM_GPUS_PER_NODE_MAP:
+            gpus_per_node = NUM_GPUS_PER_NODE_MAP[args.gpu]
+        else:
+            raise ValueError(
+                f"Invalid GPU type: {args.gpu}. Please use one of the following: {NUM_GPUS_PER_NODE_MAP.keys()}"
+            )
+
     assert not (args.enable_nsys and args.pytorch_profiler), (
         "Both NSys and PyTorch profiler cannot be enabled at the same time"
     )
@@ -586,7 +595,7 @@ if __name__ == "__main__":
         account=args.account,
         partition=args.partition,
         log_dir=args.log_dir,
-        gpus_per_node=args.gpus_per_node,
+        gpus_per_node=gpus_per_node,
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,
