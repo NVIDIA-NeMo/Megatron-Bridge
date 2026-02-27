@@ -106,6 +106,7 @@ from megatron.bridge.models.llama_nemotron import (
     LlamaNemotronHeterogeneousProvider,
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -318,6 +319,7 @@ __all__ = [
     "NemotronNano12Bv2Provider",
     "Nemotron3NanoProvider",
     "MambaModelProvider",
+    "MimoBridge",
     # Nemotron Models
     "NemotronBridge",
     "NemotronModelProvider",

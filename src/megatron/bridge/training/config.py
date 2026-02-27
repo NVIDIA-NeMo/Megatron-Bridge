@@ -29,6 +29,7 @@ from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
 )
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
@@ -268,12 +269,14 @@ class DatasetBuildContext:
         valid_samples: Number of samples for validation dataset
         test_samples: Number of samples for test dataset
         tokenizer: Optional tokenizer instance for text processing
+        pg_collection: Optional process group collection for distributed training
     """
 
     train_samples: int
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+    pg_collection: Optional[ProcessGroupCollection] = None
 
 
 @dataclass(frozen=True)
@@ -1741,7 +1744,9 @@ class ConfigContainer(Container):
         # Non-Mcore configs - log all values
         non_mcore_configs = [
             ("train", self.train),
+            ("validation", self.validation),
             ("scheduler", self.scheduler),
+            ("dataset", self.dataset),
             ("checkpoint", self.checkpoint),
             ("logger", self.logger),
             ("tokenizer", self.tokenizer),

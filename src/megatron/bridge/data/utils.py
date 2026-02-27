@@ -189,6 +189,7 @@ def get_dataset_provider(
             train_val_test_num_samples: list[int],
             config: DatasetProvider,
             tokenizer: Optional[MegatronTokenizer] = None,
+            pg_collection: Optional[ProcessGroupCollection] = None,
         ) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
             """Adapter function that bridges the protocol interface with the legacy interface."""
             context = DatasetBuildContext(
@@ -196,6 +197,7 @@ def get_dataset_provider(
                 valid_samples=train_val_test_num_samples[1],
                 test_samples=train_val_test_num_samples[2],
                 tokenizer=tokenizer,
+                pg_collection=pg_collection,
             )
             return config.build_datasets(context)
 
