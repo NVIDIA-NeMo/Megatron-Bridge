@@ -1820,10 +1820,10 @@ class GDNLinearMappingSeparate(MegatronParamMapping[Dict[str, torch.Tensor]]):
     and ``in_proj_ba`` in Qwen3-Next's head-grouped layout), this mapping handles
     models that store each projection component separately:
 
-    * ``in_proj_qkv`` – fused Q, K, V projection  (flat ``[Q; K; V]``)
-    * ``in_proj_z``   – Z (gate) projection
-    * ``in_proj_b``   – B (beta) projection
-    * ``in_proj_a``   – A (alpha) projection
+    * ``in_proj_qkv`` - fused Q, K, V projection  (flat ``[Q; K; V]``)
+    * ``in_proj_z``   - Z (gate) projection
+    * ``in_proj_b``   - B (beta) projection
+    * ``in_proj_a``   - A (alpha) projection
 
     Used by **Qwen3.5** whose GDN layers expose four distinct weight matrices.
 
@@ -2564,6 +2564,18 @@ def _fuse_gdn_separate_to_grouped(
     v_dim = v_head_dim * num_v_heads
     v_per_group = num_v_heads // num_qk_heads
 
+    expected_qkv = (qk_dim * 2 + v_dim, hidden_size)
+    expected_z = (v_dim, hidden_size)
+    expected_ba = (num_v_heads, hidden_size)
+    if tuple(qkv.shape) != expected_qkv:
+        raise ValueError(f"qkv shape mismatch: expected {expected_qkv}, got {tuple(qkv.shape)}")
+    if tuple(z.shape) != expected_z:
+        raise ValueError(f"z shape mismatch: expected {expected_z}, got {tuple(z.shape)}")
+    if tuple(b.shape) != expected_ba:
+        raise ValueError(f"b shape mismatch: expected {expected_ba}, got {tuple(b.shape)}")
+    if tuple(a.shape) != expected_ba:
+        raise ValueError(f"a shape mismatch: expected {expected_ba}, got {tuple(a.shape)}")
+
     # --- Split flat QKV into individual components ---
     q_flat, k_flat, v_flat = torch.split(qkv, [qk_dim, qk_dim, v_dim], dim=0)
 
@@ -2599,6 +2611,15 @@ def _split_gdn_grouped_to_separate(
     num_qk_heads = config.linear_num_key_heads
     num_v_heads = config.linear_num_value_heads
     v_per_group = num_v_heads // num_qk_heads
+
+    expected_qkvz_dim0 = num_qk_heads * (qk_head_dim * 2 + v_per_group * v_head_dim * 2)
+    expected_ba_dim0 = num_qk_heads * v_per_group * 2
+    if qkvz.ndim != 2 or qkvz.shape[0] != expected_qkvz_dim0 or qkvz.shape[1] != hidden_size:
+        raise ValueError(
+            f"qkvz shape mismatch: expected ({expected_qkvz_dim0}, {hidden_size}), got {tuple(qkvz.shape)}"
+        )
+    if ba.ndim != 2 or ba.shape[0] != expected_ba_dim0 or ba.shape[1] != hidden_size:
+        raise ValueError(f"ba shape mismatch: expected ({expected_ba_dim0}, {hidden_size}), got {tuple(ba.shape)}")
 
     # --- Split grouped QKVZ ---
     qkvz_g = qkvz.reshape(num_qk_heads, -1, hidden_size)

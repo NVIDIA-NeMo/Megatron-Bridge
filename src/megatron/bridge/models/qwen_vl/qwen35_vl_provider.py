@@ -440,5 +440,7 @@ def _patch_standard_attention_specs(
         attn_spec = layer_spec.submodules.self_attention
         # Standard attention specs use SelfAttention (or a subclass) as the module
         # and have linear_qkv in their submodules. GDN specs use GatedDeltaNet.
-        if attn_spec.module is SelfAttention or issubclass(attn_spec.module, SelfAttention):
+        if attn_spec.module is SelfAttention or (
+            isinstance(attn_spec.module, type) and issubclass(attn_spec.module, SelfAttention)
+        ):
             attn_spec.module = attention_cls

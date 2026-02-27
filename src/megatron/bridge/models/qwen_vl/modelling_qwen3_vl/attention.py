@@ -137,6 +137,8 @@ class Qwen3VLSelfAttention(SelfAttention):
             )
             out = output.transpose(0, 1).contiguous()
             context_layer = out.view(out.size(0), out.size(1), -1)
+            if gate is not None:
+                context_layer = self._apply_output_gate(context_layer, gate)
             output, bias = self.linear_proj(context_layer)
             return output, bias
 
