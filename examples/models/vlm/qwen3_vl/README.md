@@ -117,6 +117,20 @@ W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
+## Finetuning with Energon Dataset
+
+Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
+
+```yaml
+__module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+__class__: ChatMLWebdataset
+field_map:
+  imgs: jpg
+  conversation: json
+```
+
+Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [energon_test.sh](energon_test.sh) and run the script.
+
 ## Evaluation
 
 Coming soon.

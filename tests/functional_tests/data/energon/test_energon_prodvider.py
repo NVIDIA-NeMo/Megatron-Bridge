@@ -70,6 +70,7 @@ class TestEnergonProvider:
             micro_batch_size=params["micro_batch_size"],
             global_batch_size=params["global_batch_size"],
             num_workers=params["num_workers"],
+            pg_collection=context.pg_collection,
         )
 
         # Check dataloader calls
