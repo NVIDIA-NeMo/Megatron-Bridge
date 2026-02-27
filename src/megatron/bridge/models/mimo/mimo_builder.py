@@ -6,6 +6,7 @@ import torch.distributed as dist
 
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 
+
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
@@ -44,8 +45,11 @@ def build_hypercomm_grids(
         # Create all standard process groups
         for dim in ("tp", "cp", "ep", "pp", "dp"):
             _ = grid.create_pg([dim])
-        # Create dp_cp composite group for gradient reduction
+
         _ = grid.create_pg(["dp", "cp"])
+        _ = grid.create_pg(["tp", "pp"])
+        _ = grid.create_pg(["tp", "ep", "pp"])
+        _ = grid.create_pg(["dp", "ep"])
 
         grids[module_name] = grid
 
@@ -54,9 +58,7 @@ def build_hypercomm_grids(
 
 def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[str, List[str]]:
     """Infer a default multi-encoder -> LLM topology."""
-    return {
-        name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"
-    } | {"llm": []}
+    return {name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"} | {"llm": []}
 
 
 def populate_embedding_and_position_groups(
