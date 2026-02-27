@@ -59,7 +59,6 @@ PROMPT="Describe this image."
 MAX_NEW_TOKENS=1000
 
 # Parallelism configuration for 32 GPUs (4 nodes × 8 GPUs)
-# Constraint: TP × PP × EP = Total GPUs
 TP=2      # Tensor Parallelism
 PP=4      # Pipeline Parallelism
 EP=8     # Expert Parallelism (MoE)
