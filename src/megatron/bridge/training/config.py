@@ -240,7 +240,7 @@ class DataloaderConfig:
     """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
     'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
-    num_workers: int = 8
+    num_workers: int = 2
     """Dataloader number of workers."""
 
     data_sharding: bool = True
@@ -249,8 +249,9 @@ class DataloaderConfig:
     pin_memory: bool = True
     """Whether to pin memory during data loading for faster GPU training."""
 
-    persistent_workers: bool = False
-    """Whether to keep data loading workers persistent across epochs."""
+    persistent_workers: bool = True
+    """Whether to keep data loading workers persistent across epochs.
+    Automatically set to False when num_workers is 0."""
 
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""

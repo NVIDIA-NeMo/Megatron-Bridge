@@ -112,7 +112,7 @@ def build_pretraining_data_loader(
         num_workers=num_workers,
         pin_memory=pin_memory,
         collate_fn=collate_fn,
-        persistent_workers=persistent_workers,
+        persistent_workers=persistent_workers if num_workers > 0 else False,
         worker_init_fn=worker_init_fn,
     )
 
