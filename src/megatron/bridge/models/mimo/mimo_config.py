@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
 from __future__ import annotations
 
@@ -68,7 +68,6 @@ class MimoParallelismConfig:
 
     module_parallelisms: dict[str, ModuleParallelismConfig]
     special_token_ids: dict[str, int] = field(default_factory=dict)
-    # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
 
     def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
         return self.module_parallelisms[module_name]
