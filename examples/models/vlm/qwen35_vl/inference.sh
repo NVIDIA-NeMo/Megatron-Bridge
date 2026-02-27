@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Workspace directory for checkpoints and results
-WORKSPACE=/chcui/mbridge_home/models/Qwen #${WORKSPACE:-/workspace}
+WORKSPACE=${WORKSPACE:-/workspace}
 MODEL_NAME=Qwen3.5-35B-A3B  # Qwen3.5-35B-A3B, Qwen3.5-122B-A10B, Qwen3.5-27B
 
 # Inference with Hugging Face checkpoints
