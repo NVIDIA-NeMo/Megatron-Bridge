@@ -524,6 +524,10 @@ class CommOverlapConfig:
 
             # CUDA graph scope-specific validations for delayed wgrad.
             cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", []) or []
+            if isinstance(cuda_graph_scope, str):
+                cuda_graph_scope = cuda_graph_scope.split(",") if cuda_graph_scope else []
+            elif not isinstance(cuda_graph_scope, list):
+                cuda_graph_scope = [cuda_graph_scope]
             attn_scope_enabled = (
                 CudaGraphScope.attn in cuda_graph_scope
                 or CudaGraphScope.attn.value in cuda_graph_scope
