@@ -84,7 +84,8 @@ TRAIN_MODES = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain' or 'finetune' in the recipe name or pass --mode explicitly."
+    "Please include 'pretrain' or 'finetune' (or 'sft'/'peft') in the recipe name, "
+    "or pass --mode explicitly."
 )
 
 
