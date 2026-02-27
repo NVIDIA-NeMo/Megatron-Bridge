@@ -27,6 +27,7 @@ from megatron.energon import Batch, DefaultTaskEncoder
 from megatron.energon.epathlib.epath import EPath
 from megatron.energon.flavors.base_dataset import Sample
 from megatron.energon.flavors.webdataset import DefaultDecoderWebdatasetFactory
+from transformers import BatchEncoding
 from webdataset.autodecode import Decoder, imagehandler
 
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
@@ -437,7 +438,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
         # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
         chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
-        input_ids = chat_output["input_ids"][0] if "input_ids" in chat_output else chat_output[0]
+        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, BatchEncoding) else chat_output[0]
         pad_token_id = self.hf_tokenizer.pad_token_id
         target = [pad_token_id for _ in range(len(input_ids))]
         search_start_index = 0
