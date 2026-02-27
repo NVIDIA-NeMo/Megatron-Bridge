@@ -207,12 +207,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 avg_tokens
                 * n_layers
                 * hs**2
-                * (
-                    12
-                    + 12 * num_query_groups / n_heads
-                    + 18 * ffn_hs / hs
-                    + 6 * vocab_size / (n_layers * hs)
-                )
+                * (12 + 12 * num_query_groups / n_heads + 18 * ffn_hs / hs + 6 * vocab_size / (n_layers * hs))
             )
             model_flops_unfrozen = n_layers * hs**2 * (12 * avg_seqlen2 / hs)
 
