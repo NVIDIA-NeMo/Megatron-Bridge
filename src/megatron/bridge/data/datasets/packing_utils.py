@@ -297,7 +297,7 @@ def calculate_avg_seqlen(dataset_file, gbs, max_seq_len, drop_remainder):
     count = (rows_total // gbs)*gbs if drop_remainder else rows_total
 
     if count != rows_total:
-        print(f'Dropping {rows_total - count}, total was {rows_total}')
+        logger.warning(f'Dropping {rows_total - count}, total was {rows_total}')
 
     for i, elem in enumerate(data):
         if i >= count:
