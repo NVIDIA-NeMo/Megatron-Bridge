@@ -14,11 +14,8 @@
 # limitations under the License.
 
 # ==============================================================================
-# Qwen3.5-VL Multi-Node Distributed Inference
-#
-# Qwen3.5-397B-A17B is a large MoE model (397B parameters, 17B active)
-# Recommended: TP=2, PP=16, EP=64 for full model (1024 GPUs, 128 nodes)
-# For smaller setups: TP=1, PP=8, EP=16 (128 GPUs, 16 nodes)
+# Qwen3.5-VL Multi-Node Distributed Inference for Qwen3.5-397B-A17B 
+# Recommended: TP=2, PP=4, EP=8 for full model (32 GPUs, 4 nodes)
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
@@ -49,29 +46,23 @@ WORKSPACE=${WORKSPACE:-/workspace}
 MODEL_NAME=Qwen3.5-397B-A17B
 
 # Option 1: Use HuggingFace model path (will load and convert on-the-fly)
-MODEL_PATH=${WORKSPACE}/models/Qwen/${MODEL_NAME}
+MODEL_PATH=${WORKSPACE}/${MODEL_NAME}
 # MODEL_PATH=Qwen/${MODEL_NAME}  # Or use HF Hub path
 
 # Option 2: Use pre-converted Megatron checkpoint (faster)
-MEGATRON_CHECKPOINT=${WORKSPACE}/models/${MODEL_NAME}_megatron/iter_0000000
+MEGATRON_CHECKPOINT=${WORKSPACE}/${MODEL_NAME}/iter_0000000
 # Comment out to use HF model directly
-# MEGATRON_CHECKPOINT=""
 
 # Inference configuration
 IMAGE_PATH="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png"
 PROMPT="Describe this image."
-MAX_NEW_TOKENS=100
+MAX_NEW_TOKENS=1000
 
-# Parallelism configuration for 128 GPUs (16 nodes × 8 GPUs)
+# Parallelism configuration for 32 GPUs (4 nodes × 8 GPUs)
 # Constraint: TP × PP × EP = Total GPUs
 TP=2      # Tensor Parallelism
 PP=4      # Pipeline Parallelism
 EP=8     # Expert Parallelism (MoE)
-# Total: 1 × 8 × 16 = 128 GPUs
-
-# For 1024 GPUs (128 nodes), use:
-# TP=2, PP=16, EP=64  (2 × 16 × 64 = 2048 GPUs - too many)
-# TP=2, PP=16, EP=32  (2 × 16 × 32 = 1024 GPUs)
 
 # Container configuration (required for SLURM pyxis)
 CONTAINER_IMAGE=""
@@ -102,7 +93,7 @@ export NCCL_NVLS_ENABLE=0
 # Authentication tokens
 # export HF_TOKEN="hf_your_token_here"
 
-# For transformers >= 5.2.0 (required for Qwen3.5)
+# Make sure to upgrade container image to transformers >= 5.2.0 (required for Qwen3.5)
 # Run once: uv add "transformers>=5.2.0"
 
 # ==============================================================================
@@ -125,35 +116,31 @@ mkdir -p logs
 
 # Calculate total processes
 TOTAL_GPUS=$((SLURM_JOB_NUM_NODES * SLURM_GPUS_PER_NODE))
-REQUIRED_GPUS=$((TP * PP * EP))
+REQUIRED_GPUS=$(( (TP > EP ? TP : EP) * PP ))
 
 # Validate parallelism configuration
 if [ $REQUIRED_GPUS -ne $TOTAL_GPUS ]; then
     echo "ERROR: Parallelism mismatch!"
-    echo "  TP × PP × EP = $TP × $PP × $EP = $REQUIRED_GPUS"
+    echo "  max(TP, EP) × PP = max($TP, $EP) × $PP = $REQUIRED_GPUS"
     echo "  Total allocated GPUs = $TOTAL_GPUS"
     echo "  These must be equal!"
     exit 1
 fi
 
-# Build inference command
-CMD="uv run --no-sync python examples/conversion/hf_to_megatron_generate_vlm.py"
-CMD="$CMD --hf_model_path $MODEL_PATH"
-
-# Add Megatron checkpoint if specified
+MEGATRON_CKPT_ARG=""
 if [ -n "$MEGATRON_CHECKPOINT" ]; then
-    CMD="$CMD --megatron_model_path $MEGATRON_CHECKPOINT"
+    MEGATRON_CKPT_ARG="--megatron_model_path $MEGATRON_CHECKPOINT"
 fi
 
-# Add inference parameters
-CMD="$CMD --image_path \"$IMAGE_PATH\""
-CMD="$CMD --prompt \"$PROMPT\""
-CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
-
-# Add parallelism parameters
-CMD="$CMD --tp $TP"
-CMD="$CMD --pp $PP"
-CMD="$CMD --ep $EP"
+CMD="uv run --no-sync python examples/conversion/hf_to_megatron_generate_vlm.py \
+    --hf_model_path $MODEL_PATH \
+    $MEGATRON_CKPT_ARG \
+    --image_path \"$IMAGE_PATH\" \
+    --prompt \"$PROMPT\" \
+    --max_new_tokens $MAX_NEW_TOKENS \
+    --tp $TP \
+    --pp $PP \
+    --ep $EP"
 
 # Only rank 0 on each node runs uv sync
 SYNC_CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 5; fi"

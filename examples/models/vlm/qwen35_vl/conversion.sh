@@ -32,7 +32,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
     --megatron-path ${WORKSPACE}/${MODEL_NAME} \
     --torch-dtype bfloat16
 
-# Compare HF and Megatron models logits
+# HF and Megatron models logits comparison validation
 uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/compare_hf_and_megatron/compare.py \
     --hf_model_path Qwen/${MODEL_NAME} \
     --megatron_model_path ${WORKSPACE}/${MODEL_NAME} \
