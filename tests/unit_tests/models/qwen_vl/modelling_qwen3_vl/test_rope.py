@@ -15,15 +15,20 @@
 Run with: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_rope.py
 """
 
+import datetime
+import os
+
 import pytest
 import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import Qwen3VLMoeTextConfig
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
-    Qwen3VLMoETextRotaryEmbedding,
-    Qwen3VLTextRotaryEmbedding,
-)
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 
 
 @pytest.fixture(scope="module")
@@ -35,10 +40,72 @@ def hf_config():
 class TestQwen3VLTextRotaryEmbedding:
     """Test suite for Qwen3VL Text Rotary Embedding."""
 
+    @classmethod
+    def setup_class(cls):
+        """Setup distributed process group once for all tests in this class."""
+        if not dist.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = "29500"
+            os.environ["RANK"] = "0"
+            os.environ["LOCAL_RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
+
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                torch.cuda.set_device(0)
+
+            dist.init_process_group(
+                backend="nccl" if device_count > 0 else "gloo",
+                world_size=1,
+                rank=0,
+                timeout=datetime.timedelta(minutes=30),
+            )
+
+    @classmethod
+    def teardown_class(cls):
+        """Teardown distributed process group once after all tests in this class."""
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+    def _setup_parallel_state(self, tp_size=1, ep_size=1, pp_size=1, cp_size=1):
+        """Setup Megatron parallel state with specified parallelism configuration.
+
+        Args:
+            tp_size: Tensor model parallel size
+            ep_size: Expert model parallel size
+            pp_size: Pipeline model parallel size
+            cp_size: Context parallel size
+        """
+        # Clean up any existing parallel state before initializing
+        if parallel_state.model_parallel_is_initialized():
+            parallel_state.destroy_model_parallel()
+
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=tp_size,
+            pipeline_model_parallel_size=pp_size,
+            virtual_pipeline_model_parallel_size=None,
+            context_parallel_size=cp_size,
+            expert_model_parallel_size=ep_size,
+            expert_tensor_parallel_size=1,
+        )
+
+        model_parallel_cuda_manual_seed(123)
+
+    def teardown_method(self):
+        """Teardown Megatron parallel state after each test method."""
+        if parallel_state.model_parallel_is_initialized():
+            parallel_state.destroy_model_parallel()
+
     def test_qwen3_vl_text_rotary_embedding(self, hf_config):
         """Test that MBridge RoPE output matches HuggingFace implementation."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         hf_rope_embedding = Qwen3VLMoeTextRotaryEmbedding(hf_config)
-        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+            cp_group=pg_collection.cp,
+        )
 
         seq_len = 1024
         batch_size = 1
@@ -55,6 +122,11 @@ class TestQwen3VLTextRotaryEmbedding:
         # Get MBridge output: (seq_len, bs, 1, head_dim) raw freqs with concatenation applied
         # The implementation now concatenates freqs: emb = torch.cat((freqs, freqs), dim=-1)
         mbridge_rope_output = mbridge_rope_embedding(position_ids_3d, mrope_section)
+
+        if torch.cuda.is_available():
+            hf_cos = hf_cos.to(torch.cuda.current_device())
+            hf_sin = hf_sin.to(torch.cuda.current_device())
+            mbridge_rope_output = mbridge_rope_output.to(torch.cuda.current_device())
 
         # MBridge returns concatenated freqs with attention_scaling already applied
         # Megatron Core will compute cos/sin internally, but for testing we compute them here
@@ -73,8 +145,14 @@ class TestQwen3VLTextRotaryEmbedding:
         torch.testing.assert_close(hf_sin, mbridge_sin, rtol=1e-4, atol=1e-4)
 
     def test_qwen3_vl_text_rotary_embedding_2d_position_ids(self, hf_config):
-        """Test Qwen3VLTextRotaryEmbedding with 2D position_ids (should auto-expand to 3D)."""
-        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+        """Test Qwen3VLMultimodalRotaryEmbedding with 2D position_ids (should auto-expand to 3D)."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+            cp_group=pg_collection.cp,
+        )
 
         seq_len = 512
         batch_size = 2
@@ -93,8 +171,14 @@ class TestQwen3VLTextRotaryEmbedding:
         assert mbridge_rope_output.shape[2] == 1
 
     def test_qwen3_vl_text_rotary_embedding_default_mrope_section(self, hf_config):
-        """Test Qwen3VLTextRotaryEmbedding with None mrope_section (should use default)."""
-        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+        """Test Qwen3VLMultimodalRotaryEmbedding with None mrope_section (should use default)."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+            cp_group=pg_collection.cp,
+        )
 
         seq_len = 256
         batch_size = 1
@@ -109,8 +193,14 @@ class TestQwen3VLTextRotaryEmbedding:
         assert mbridge_rope_output.shape[1] == batch_size
 
     def test_qwen3_vl_moe_text_rotary_embedding(self, hf_config):
-        """Test Qwen3VLMoETextRotaryEmbedding forward pass."""
-        mbridge_moe_rope = Qwen3VLMoETextRotaryEmbedding(hf_config)
+        """Test Qwen3VLMultimodalRotaryEmbedding forward pass."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        mbridge_rope_embedding = Qwen3VLMultimodalRotaryEmbedding(
+            kv_channels=hf_config.head_dim,
+            rotary_base=rope_theta_from_hf(hf_config),
+            cp_group=pg_collection.cp,
+        )
 
         seq_len = 512
         batch_size = 2
@@ -119,7 +209,7 @@ class TestQwen3VLTextRotaryEmbedding:
         mrope_section = [24, 20, 20]
 
         # Forward pass through MoE RoPE
-        output = mbridge_moe_rope(position_ids_3d, mrope_section)
+        output = mbridge_rope_embedding(position_ids_3d, mrope_section)
 
         # Verify output shape: (seq_len, bs, 1, head_dim)
         assert output.shape[0] == seq_len

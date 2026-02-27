@@ -17,9 +17,49 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from megatron.bridge.peft.utils import ParallelLinearAdapter
+
 
 if TYPE_CHECKING:
     from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+
+
+def _compute_mamba_dim_info(wrapped_module: nn.Module) -> Dict[str, int]:
+    """Compute Mamba dimension information from a wrapped module's config.
+
+    This follows the same logic as mamba_mixer.py to derive local tensor parallel
+    dimensions from the TransformerConfig.
+
+    Args:
+        wrapped_module: The wrapped module (typically a linear projection in a Mamba layer).
+
+    Returns:
+        Dictionary containing d_inner_local_tp, ngroups_local_tp, d_state, and nheads_local_tp.
+    """
+    config = wrapped_module.config
+
+    # Get base dimensions from config
+    d_state = config.mamba_state_dim
+    headdim = config.mamba_head_dim
+    ngroups = config.mamba_num_groups
+
+    # Compute nheads and d_inner
+    if config.mamba_num_heads is not None:
+        nheads = config.mamba_num_heads
+        d_inner = nheads * headdim
+    else:
+        d_inner = wrapped_module.d_inner
+        nheads = d_inner // headdim
+
+    # Get tensor parallel size and compute local dimensions
+    tp_size = wrapped_module.tp_size
+
+    return {
+        "d_inner_local_tp": d_inner // tp_size,
+        "ngroups_local_tp": ngroups // tp_size,
+        "d_state": d_state,
+        "nheads_local_tp": nheads // tp_size,
+    }
 
 
 class AdapterWrapper(nn.Module):
@@ -60,6 +100,15 @@ class AdapterWrapper(nn.Module):
         super(AdapterWrapper, self).__init__()
         self.to_wrap = to_wrap
         self.adapter = adapter
+        self._adapter_enabled = True
+
+    def enable_adapter_layers(self) -> None:
+        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
+        self._adapter_enabled = True
+
+    def disable_adapter_layers(self) -> None:
+        """Disable the adapter layers, making the forward pass return only the base module output."""
+        self._adapter_enabled = False
 
     def base_linear_forward(
         self, x: torch.Tensor, *args: Any, **kwargs: Any
@@ -154,7 +203,15 @@ class AdapterWrapper(nn.Module):
         Returns:
             The combined sharded state dictionary.
         """
+        adapter_sharded_state_dict_kwargs = {}
+        if isinstance(self.adapter, ParallelLinearAdapter) and "in_proj" in self.adapter.base_linear_name:
+            adapter_sharded_state_dict_kwargs["mamba_dim_info"] = _compute_mamba_dim_info(self.to_wrap)
+
         sharded_state_dict = {}
         sharded_state_dict.update(self.to_wrap.sharded_state_dict(prefix, sharded_offsets, metadata))
-        sharded_state_dict.update(self.adapter.sharded_state_dict(f"{prefix}adapter.", sharded_offsets, metadata))
+        sharded_state_dict.update(
+            self.adapter.sharded_state_dict(
+                f"{prefix}adapter.", sharded_offsets, metadata, **adapter_sharded_state_dict_kwargs
+            )
+        )
         return sharded_state_dict

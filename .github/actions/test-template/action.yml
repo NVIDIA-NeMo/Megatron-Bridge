@@ -49,6 +49,12 @@ inputs:
   container-image:
     description: "Container image to use for test"
     required: true
+  test-data-path:
+    description: "Test data path"
+    required: true
+  runner:
+    description: "Runner to use for test"
+    required: true
 
 runs:
   using: "composite"
@@ -58,6 +64,21 @@ runs:
       with:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
+
+    - name: Update MCore submodule (if triggered from MCore)
+      if: ${{ github.event.inputs.mcore_commit != '' }}
+      shell: bash
+      working-directory: ${{ github.workspace }}/Megatron-Bridge
+      run: |
+        echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+        echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
+        cd 3rdparty/Megatron-LM
+        git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
+        git checkout ${{ github.event.inputs.mcore_commit }}
+
+        ACTUAL_COMMIT=$(git rev-parse HEAD)
+        echo "✅ MCore submodule updated to: ${ACTUAL_COMMIT}"
+        git log -1 --oneline
 
     - name: Install Azure CLI
       if: ${{ inputs.has-azure-credentials == 'true' }}
@@ -82,15 +103,21 @@ runs:
       run: |
         az acr login --name nemoci
 
+    - name: Install uuidgen
+      shell: bash -x -e -u -o pipefail {0}
+      if: ${{ contains(inputs.runner, 'aws') }}
+      run: |
+        apt-get update
+        apt-get install -y uuid-runtime
+
     - name: Start container
       shell: bash
       env:
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
-        MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
+        MOUNT_FS: ${{ inputs.is_unit_test == 'false' }}
       run: |
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume /mnt/datadrive/TestData:/home/TestData"
+          VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
         else
           VOLUME_ARGS=""
         fi
@@ -104,8 +131,8 @@ runs:
           --name nemo_container_${{ github.run_id }} \
           --runtime=nvidia --gpus all \
           --shm-size=64g \
-          --env TRANSFORMERS_OFFLINE=0 \
           --cpus=40 \
+          --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
@@ -136,7 +163,40 @@ runs:
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
-          
+
+          # Reinstall MCore if the submodule was updated
+          if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
+            echo "🔄 Reinstalling MCore from updated submodule..."
+            cd /opt/Megatron-Bridge
+
+            # Force uninstall existing megatron-core to ensure fresh install
+            uv pip uninstall megatron-core || true
+
+            # Reinstall from the updated submodule
+            uv sync --all-extras --all-groups
+            echo "✅ MCore reinstalled"
+
+            # Verify the commit matches what we expected
+            cd 3rdparty/Megatron-LM
+            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+            ACTUAL_COMMIT=$(git rev-parse HEAD)
+            echo "🔍 Verifying MCore commit..."
+            echo "   Expected: ${EXPECTED_COMMIT}"
+            echo "   Actual:   ${ACTUAL_COMMIT}"
+
+            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+              echo "   ❌ ERROR: Commit mismatch!"
+              exit 1
+            fi
+
+            echo "   ✅ MCore commit verified"
+            cd /opt/Megatron-Bridge
+
+            # Store commit SHA for verification (since Docker build file was overridden by volume mount)
+            echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
+            echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
+          fi
+
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then

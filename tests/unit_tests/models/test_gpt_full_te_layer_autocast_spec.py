@@ -23,6 +23,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.enums import CudaGraphScope
 
 from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
     AutocastTransformerLayer,
@@ -219,16 +220,16 @@ class TestTETransformerLayerAutocast:
         config.virtual_pipeline_model_parallel_size = None
         return config
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_init(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
+    def test_te_transformer_layer_autocast_init(self, mock_config):
         """Test TETransformerLayerAutocast initialization."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
@@ -237,16 +238,16 @@ class TestTETransformerLayerAutocast:
             assert layer.layer_number == 0
             assert layer.is_first_microbatch is True
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_forward(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
+    def test_te_transformer_layer_autocast_forward(self, mock_config):
         """Test TETransformerLayerAutocast forward pass."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         # Ensure external_cuda_graph is False so we get tuple return
         mock_config.cuda_graph_impl = "none"
@@ -274,16 +275,16 @@ class TestTETransformerLayerAutocast:
             assert context is None
             assert layer.is_first_microbatch is False
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_get_layer_offset(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
+    def test_te_transformer_layer_autocast_get_layer_offset(self, mock_config):
         """Test _get_layer_offset method."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 1  # Second pipeline rank
-        mock_pp_world_size.return_value = 2  # Two pipeline ranks
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 2
+
+        class _PG:
+            def rank(self):
+                return 1
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
@@ -293,16 +294,16 @@ class TestTETransformerLayerAutocast:
             expected_offset = 1 * (12 // 2)  # rank * (num_layers // pp_size)
             assert offset == expected_offset
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_with_cuda_graph(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
+    def test_te_transformer_layer_autocast_with_cuda_graph(self, mock_config):
         """Test TETransformerLayerAutocast with CUDA graph enabled."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "local"
         mock_config.cuda_graph_scope = []  # Empty list means layerwise graph
 
@@ -320,40 +321,47 @@ class TestTETransformerLayerAutocast:
 
                 assert hasattr(layer, "cudagraph_manager")
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_with_full_iteration_cuda_graph(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
-        """Test TETransformerLayerAutocast with full_iteration CUDA graph (cudagraph_manager should NOT be created)."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
+    def test_te_transformer_layer_autocast_with_full_iteration_cuda_graph(self, mock_config):
+        """Test TETransformerLayerAutocast with full_iteration CUDA graph (cudagraph_manager should NOT be created).
+
+        Note: MCore's TransformerConfig.__post_init__ converts string scope values to CudaGraphScope enums.
+        This test uses the enum directly to match the runtime behavior after config finalization.
+        """
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "local"
-        mock_config.cuda_graph_scope = ["full_iteration"]  # Full iteration graph
+        mock_config.cuda_graph_scope = [CudaGraphScope.full_iteration]  # Full iteration graph (enum)
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
                 layer = TETransformerLayerAutocast(mock_config, layer_number=0)
                 layer.training = True
-
                 # cudagraph_manager should NOT be created for full_iteration scope
                 assert not hasattr(layer, "cudagraph_manager")
                 mock_cuda_manager.assert_not_called()
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_external_cuda_graph(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
-        """Test TETransformerLayerAutocast with external CUDA graph (transformer_engine impl)."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
+    def test_te_transformer_layer_autocast_external_cuda_graph(self, mock_config):
+        """Test TETransformerLayerAutocast with external CUDA graph.
+
+        Note: MCore's TransformerConfig.__post_init__ converts string scope values to CudaGraphScope enums.
+        This test uses the enum directly to match the runtime behavior after config finalization.
+        """
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "transformer_engine"
-        mock_config.cuda_graph_scope = ["attn", "mlp"]  # TE supports multi-scope
+        mock_config.cuda_graph_scope = [CudaGraphScope.attn, CudaGraphScope.mlp]  # TE supports multi-scope (enum)
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()
@@ -369,16 +377,16 @@ class TestTETransformerLayerAutocast:
             # Should return tensor directly for external CUDA graph
             assert isinstance(result, torch.Tensor)
 
-    @patch("megatron.core.parallel_state.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.parallel_state.get_pipeline_model_parallel_world_size")
-    def test_te_transformer_layer_autocast_sharded_state_dict(
-        self, mock_pp_world_size, mock_pp_rank, mock_tp_world_size, mock_config
-    ):
+    def test_te_transformer_layer_autocast_sharded_state_dict(self, mock_config):
         """Test sharded_state_dict method."""
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config._pg_collection = type("PGC", (), {"pp": _PG()})()
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch(

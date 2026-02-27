@@ -14,6 +14,7 @@
 
 import logging
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Optional, TypeVar, Union
 
@@ -21,6 +22,7 @@ import torch
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.bridge.peft.recompute import maybe_enable_recompute_inputs_grad
 from megatron.bridge.peft.walk_utils import walk
 
 
@@ -95,17 +97,10 @@ class PEFT(ABC):
         """
         self.freeze_model(model, training=training)
 
-        if isinstance(model, list) and len(model) > 1:
-            for model_chunk in model:
-                walk(model_chunk, self.transform)
-        elif isinstance(model, torch.nn.parallel.DistributedDataParallel):
-            walk(model.module, self.transform)
-        else:
-            if isinstance(model, list):
-                model_to_walk = model[0] if len(model) == 1 else model
-            else:
-                model_to_walk = model
-            walk(model_to_walk, self.transform)
+        self._walk_model(model, self.transform)
+
+        if training:
+            maybe_enable_recompute_inputs_grad(model)
 
         if not training:
             self.freeze_model(model, training=training)
@@ -118,6 +113,48 @@ class PEFT(ABC):
             model.train(mode=training)
 
         return model
+
+    def _walk_model(self, model: ModelType, func) -> None:
+        if isinstance(model, list):
+            for model_chunk in model:
+                walk(model_chunk, func)
+        elif isinstance(model, torch.nn.parallel.DistributedDataParallel):
+            walk(model.module, func)
+        else:
+            walk(model, func)
+
+    def enable_adapter_layers(self, model: ModelType) -> None:
+        """Enable adapter layers for all PEFT-wrapped modules in the model."""
+
+        def enable(module: nn.Module) -> nn.Module:
+            method = getattr(module, "enable_adapter_layers", None)
+            if callable(method):
+                method()
+            return module
+
+        self._walk_model(model, enable)
+
+    def disable_adapter_layers(self, model: ModelType) -> None:
+        """Disable adapter layers for all PEFT-wrapped modules in the model."""
+
+        def disable(module: nn.Module) -> nn.Module:
+            method = getattr(module, "disable_adapter_layers", None)
+            if callable(method):
+                method()
+            return module
+
+        self._walk_model(model, disable)
+
+    @contextmanager
+    def disable_adapter(self, model: ModelType):
+        """
+        Disables the adapter module.
+        """
+        try:
+            self.disable_adapter_layers(model)
+            yield
+        finally:
+            self.enable_adapter_layers(model)
 
     def freeze_model(self, model: ModelType, training: bool = True) -> None:
         """Apply a default freeze method to the model.
@@ -136,13 +173,7 @@ class PEFT(ABC):
                 param.requires_grad = False
             return module
 
-        if isinstance(model, list):
-            for model_chunk in model:
-                walk(model_chunk, freeze_parameters)
-        elif isinstance(model, torch.nn.parallel.DistributedDataParallel):
-            walk(model.module, freeze_parameters)
-        else:
-            walk(model, freeze_parameters)
+        self._walk_model(model, freeze_parameters)
 
         if training:
             if isinstance(model, list):

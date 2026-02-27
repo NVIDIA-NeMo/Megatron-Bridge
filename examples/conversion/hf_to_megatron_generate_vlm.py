@@ -15,16 +15,16 @@
 """
 Example:
   # Vision-Language generation with image from URL:
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
 
   # Vision-Language generation with local image:
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
 
   # Text-only generation (no image):
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
 """
 
 import argparse
@@ -53,7 +53,9 @@ class SingleBatchIterator:
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None):
+    def __init__(
+        self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None, image_sizes=None
+    ):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
@@ -65,6 +67,8 @@ class SingleBatchIterator:
             self.batch["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             self.batch["image_grid_thw"] = image_grid_thw
+        if image_sizes is not None:
+            self.batch["image_sizes"] = image_sizes
 
         self._yielded = False
 
@@ -105,11 +109,19 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["pixel_values"] = batch["pixel_values"]
     if "image_grid_thw" in batch:
         forward_args["image_grid_thw"] = batch["image_grid_thw"]
+    if "image_sizes" in batch:
+        forward_args["image_sizes"] = batch["image_sizes"]
 
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+
+    return output_tensor, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -138,7 +150,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         prompt: Text prompt
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
     """
     if image_path:
         # Create messages with image and text
@@ -166,11 +178,17 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             padding=True,
             return_tensors="pt",
         )
-        return inputs.input_ids, inputs.pixel_values, getattr(inputs, "image_grid_thw", None), messages
+        return (
+            inputs.input_ids,
+            inputs.pixel_values,
+            getattr(inputs, "image_grid_thw", None),
+            getattr(inputs, "image_sizes", None),
+            messages,
+        )
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None
+        return inputs.input_ids, None, None, None, None
 
 
 def main(args) -> None:
@@ -235,6 +253,10 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
+    # TEMP FIX for inference failure when mtp_num_layers is not None
+    for m in model:
+        m.config.mtp_num_layers = None
+
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
@@ -264,7 +286,9 @@ def main(args) -> None:
 
     # Process inputs (text and image if provided)
     prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, messages = process_image_inputs(processor, args.image_path, prompt)
+    input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(
+        processor, args.image_path, prompt
+    )
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -272,6 +296,8 @@ def main(args) -> None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
+    if image_sizes is not None:
+        image_sizes = image_sizes.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -290,7 +316,9 @@ def main(args) -> None:
             # Keep passing vision inputs for all steps to ensure image features are available
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
-            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
+            iterator = SingleBatchIterator(
+                input_ids, position_ids, attention_mask, pixel_values, image_grid_thw, image_sizes
+            )
 
             output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,

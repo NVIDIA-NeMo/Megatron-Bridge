@@ -44,7 +44,6 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.utils.weight_decay_utils import get_no_weight_decay_cond
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -111,6 +110,7 @@ def setup(
         SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
     """
     cfg = state.cfg
+    maybe_log_and_save_config(cfg)
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
@@ -130,12 +130,21 @@ def setup(
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
-    initialize_megatron(
+    # pg_collection is returned from initialize_megatron:
+    # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
+    # - When use_decentralized_pg=False: uses mpu's global parallel state
+    pg_collection = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         restart_store=restart_store,
     )
+
+    # Set CPU affinity for optimal host-device transfers when fine-grained activation offloading is enabled
+    if cfg.model.fine_grained_activation_offloading:
+        from megatron.core.pipeline_parallel.utils import set_ideal_affinity_for_current_gpu
+
+        set_ideal_affinity_for_current_gpu()
 
     timers = state.timers
 
@@ -158,9 +167,6 @@ def setup(
 
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
-
-    # Initialize process group collection once and pass through
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -218,20 +224,20 @@ def setup(
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        pg_collection=pg_collection,
     )
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    no_weight_decay_cond = get_no_weight_decay_cond(
-        cfg.scheduler.no_weight_decay_cond_type,
-        default_skip_embedding_weight_decay=cfg.model.embedding_init_method_std is not None,
-    )
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        no_weight_decay_cond=no_weight_decay_cond,
+        # Only pass pg_collection when use_decentralized_pg is True.
+        # When False, mcore's optimizer will use parallel_state directly which supports Gloo.
+        pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
+        optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -281,12 +287,17 @@ def setup(
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(
+            train_valid_test_datasets_provider, pg_collection=pg_collection
+        )
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        dp_group=pg_collection.dp,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
@@ -299,7 +310,6 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -478,7 +488,14 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
 
 
 def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
-    """Save configuration to disk and log it on rank 0."""
+    """Save configuration to disk and log non-default values on rank 0.
+
+    Instead of printing the full config YAML, this now logs only the values
+    that differ from Megatron Core defaults, making it easier to spot
+    unintended configuration deviations.
+
+    The full config can still be saved to a file via logger.save_config_filepath.
+    """
 
     if get_rank_safe() != 0:
         return
@@ -489,6 +506,4 @@ def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
         except Exception as e:
             print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
 
-    print("------- Task Configuration -------")
-    cfg.print_yaml()
-    print("----------------------------------")
+    cfg.log_non_default_values()

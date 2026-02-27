@@ -25,6 +25,7 @@ import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.state import TrainState
+from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 
@@ -33,6 +34,7 @@ TRACKER_PREFIX = "latest"
 CONFIG_FILE = "run_config.yaml"
 
 logger = logging.getLogger(__name__)
+_RUNTIME_ONLY_TARGETS = frozenset({"megatron.core.timers.Timers"})
 
 
 def file_exists(path: str) -> bool:
@@ -276,6 +278,8 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
                 else:
                     with open(run_config_filename, "r") as f:
                         config_dict = yaml.safe_load(f)
+                config_dict = _sanitize_run_config_object(config_dict)
+                config_dict = apply_run_config_backward_compat(config_dict)
                 config_obj[0] = config_dict
             except Exception as e:
                 error_msg = f"ERROR: Unable to load config file {run_config_filename}: {e}"
@@ -294,12 +298,16 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
             if MultiStorageClientFeature.is_enabled():
                 msc = MultiStorageClientFeature.import_package()
                 with msc.open(run_config_filename, "r") as f:
-                    return yaml.safe_load(f)
+                    config_dict = yaml.safe_load(f)
             else:
                 with open(run_config_filename, "r") as f:
-                    return yaml.safe_load(f)
+                    config_dict = yaml.safe_load(f)
         except Exception as e:
             raise RuntimeError(f"Unable to load config file {run_config_filename}: {e}") from e
+
+        config_dict = _sanitize_run_config_object(config_dict)
+        config_dict = apply_run_config_backward_compat(config_dict)
+        return config_dict
 
 
 @lru_cache()
@@ -351,3 +359,23 @@ def read_train_state(train_state_filename: str) -> TrainState:
         return ts
     except Exception as e:
         raise RuntimeError(f"Unable to load train state file {train_state_filename}: {e}") from e
+
+
+def _sanitize_run_config_object(obj: Any) -> Any:
+    """Remove runtime-only objects from run config dictionaries.
+
+    Timers and other runtime constructs are serialized with `_target_` entries
+    that cannot be recreated without additional context (e.g., constructor
+    arguments provided at runtime). These objects are not required when loading
+    a checkpoint configuration, so we replace them with ``None`` to avoid
+    instantiation errors when the config is processed later.
+    """
+
+    if isinstance(obj, dict):
+        target = obj.get("_target_")
+        if isinstance(target, str) and target in _RUNTIME_ONLY_TARGETS:
+            return None
+        return {key: _sanitize_run_config_object(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_run_config_object(item) for item in obj]
+    return obj

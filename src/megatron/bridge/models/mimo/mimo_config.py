@@ -1,0 +1,118 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+
+from __future__ import annotations
+
+import warnings
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class ModuleParallelismConfig:
+    """Parallelism config for a single module in a MIMO model."""
+
+    tensor_model_parallel_size: int = 1
+    pipeline_model_parallel_size: int = 1
+    context_parallel_size: int = 1
+    expert_tensor_parallel_size: int = 1
+    data_parallel_size: Optional[int] = None
+    rank_offset: int = 0
+
+    @property
+    def total_model_parallel_size(self) -> int:
+        return (
+            self.tensor_model_parallel_size
+            * self.pipeline_model_parallel_size
+            * self.context_parallel_size
+            * self.expert_tensor_parallel_size
+        )
+
+    @property
+    def total_ranks(self) -> int:
+        if self.data_parallel_size is None:
+            raise ValueError("data_parallel_size must be set before accessing total_ranks.")
+        return self.total_model_parallel_size * self.data_parallel_size
+
+    def finalize(self, world_size: Optional[int]) -> None:
+        """Compute data_parallel_size if unset, and validate parallelism constraints."""
+        if self.data_parallel_size is None:
+            if world_size is None or world_size <= 0:
+                raise ValueError("world_size must be provided to compute data_parallel_size.")
+            if world_size % self.total_model_parallel_size != 0:
+                raise ValueError(
+                    f"world_size ({world_size}) is not divisible by total_model_parallel_size "
+                    f"({self.total_model_parallel_size})."
+                )
+            self.data_parallel_size = world_size // self.total_model_parallel_size
+
+        if self.data_parallel_size <= 0:
+            raise ValueError("data_parallel_size must be positive.")
+
+        if self.expert_tensor_parallel_size > 1 and self.pipeline_model_parallel_size > 1:
+            warnings.warn(
+                "Using expert_tensor_parallel_size > 1 with pipeline_model_parallel_size > 1 "
+                "is complex and may be unsupported.",
+                stacklevel=2,
+            )
+
+
+@dataclass
+class MimoParallelismConfig:
+    """Configuration for multi-module (MIMO) heterogeneous parallelism.
+
+    Note: Phase 1 only supports heterogeneous deployment where each module
+    can have different parallelism configurations and rank offsets.
+
+    The LLM module must be named "llm" in module_parallelisms.
+    """
+
+    module_parallelisms: dict[str, ModuleParallelismConfig]
+    special_token_ids: dict[str, int] = field(default_factory=dict)
+    # TODO: Add optional topology when supporting non-encoder-to-LLM flows.
+
+    def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
+        return self.module_parallelisms[module_name]
+
+    @property
+    def module_names(self) -> list[str]:
+        return list(self.module_parallelisms.keys())
+
+    @property
+    def total_world_size(self) -> int:
+        """Compute total world size from module rank ranges."""
+        ranges = [p.rank_offset + p.total_ranks for p in self.module_parallelisms.values()]
+        return max(ranges) if ranges else 0
+
+    def _validate_heterogeneous(self) -> None:
+        """Validate heterogeneous deployment: no overlapping rank ranges."""
+        ranges = []
+        for parallelism in self.module_parallelisms.values():
+            if parallelism.data_parallel_size is None:
+                raise ValueError("data_parallel_size must be set for heterogeneous deployment.")
+            ranges.append((parallelism.rank_offset, parallelism.rank_offset + parallelism.total_ranks))
+
+        ranges.sort()
+        for idx in range(1, len(ranges)):
+            prev_end = ranges[idx - 1][1]
+            cur_start = ranges[idx][0]
+            if cur_start < prev_end:
+                raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
+
+    def finalize(self, world_size: Optional[int]) -> None:
+        """Finalize parallelism config: compute data_parallel_size and validate."""
+        if "llm" not in self.module_parallelisms:
+            raise ValueError(
+                f"LLM module 'llm' must be in module_parallelisms. "
+                f"Found modules: {list(self.module_parallelisms.keys())}"
+            )
+
+        # In heterogeneous mode, data_parallel_size must be pre-set (not computed from world_size)
+        for parallelism in self.module_parallelisms.values():
+            parallelism.finalize(None)
+
+        self._validate_heterogeneous()
+
+        if world_size and world_size > 1:
+            expected = self.total_world_size
+            if expected and world_size != expected:
+                raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")

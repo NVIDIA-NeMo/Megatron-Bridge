@@ -49,7 +49,17 @@ training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
+training/multi-token-prediction.md
 training/distillation.md
+training/pruning.md
+training/callbacks.md
+```
+
+```{toctree}
+:caption: Model Optimization with ModelOpt
+:hidden:
+
+modelopt/quantization.md
 ```
 
 ```{toctree}
@@ -69,4 +79,17 @@ apidocs/index.rst
 releases/software-versions.md
 releases/changelog.md
 releases/known-issues.md
+```
+
+```{toctree}
+:caption: Directory Readme Files
+:hidden:
+
+README.md
+models/README.md
+models/llm/README.md
+models/vlm/README.md
+releases/README.md
+training/README.md
+modelopt/README.md
 ```

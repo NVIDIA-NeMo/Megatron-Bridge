@@ -161,6 +161,7 @@ class TestExportWorkflow:
             quant_cfg,
             "--megatron-save-path",
             str(output_dir),
+            "--disable-hf-datasets-file-lock",
         ]
 
         # Add parallelism arguments only if > 1

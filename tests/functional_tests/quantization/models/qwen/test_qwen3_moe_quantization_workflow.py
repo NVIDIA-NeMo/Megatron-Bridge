@@ -89,11 +89,6 @@ class TestQwen3MoeQuantizationWorkflow:
         model = Qwen3MoeForCausalLM(config)
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
-        # Debug: Check model dtype before saving
-        for name, param in model.named_parameters():
-            print(f"Before save - {name}: {param.dtype}")
-            break  # Just check the first parameter
-
         # Download and save tokenizer from a reference Qwen model
         tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
         tokenizer.save_pretrained(model_dir)
@@ -156,6 +151,7 @@ class TestQwen3MoeQuantizationWorkflow:
             quant_cfg,
             "--megatron-save-path",
             str(output_dir),
+            "--disable-hf-datasets-file-lock",
         ]
 
         # Add parallelism arguments only if > 1

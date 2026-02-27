@@ -1,0 +1,347 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+from typing import List, Optional, Union
+
+import torch
+from typing_extensions import TypedDict, Unpack
+
+from megatron.bridge import AutoBridge
+from megatron.bridge.data.vlm_datasets import (
+    HFDatasetConversationProvider,
+    MockVLMConversationProvider,
+    PreloadedVLMConversationProvider,
+)
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    DatasetProvider,
+    DistributedDataParallelConfig,
+    LoggerConfig,
+    RNGConfig,
+    TokenizerConfig,
+    TrainingConfig,
+    ValidationConfig,
+)
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+class Ministral3FinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by Ministral3 finetuning recipe helper functions."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+    # Dataset configuration
+    train_data_path: Optional[List[str]]
+    valid_data_path: Optional[List[str]]
+    test_data_path: Optional[List[str]]
+    dataset_type: Optional[str]
+    image_folder: Optional[str]
+    tokenizer_model: Optional[str]
+    seq_length: Optional[int]
+    # Model configuration
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    sequence_parallel: bool
+    use_megatron_fsdp: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: Optional[int]
+    micro_batch_size: int
+    eval_interval: int
+    save_interval: int
+    # Optimizer
+    finetune_lr: Optional[float]
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+    # Freeze options
+    freeze_language_model: bool
+    freeze_vision_model: bool
+    freeze_vision_projection: bool
+    # Checkpoint options
+    pretrained_checkpoint: Optional[str]
+    # PEFT options
+    peft: Optional[Union[str, PEFT]]
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
+
+
+def ministral3_3b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Ministral3 3B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA (default): TP=1, PP=1, LR=1e-4
+    - Full SFT (peft=None): TP=1, PP=1, LR=5e-6
+
+    See `_ministral3_finetune_common` for the full list of parameters.
+    """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Ministral3FinetuneKwargs = {
+        "hf_path": "mistralai/Ministral-3-3B-Instruct-2512",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    combined_kwargs: Ministral3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _ministral3_finetune_common(**combined_kwargs)
+
+
+def ministral3_8b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Ministral3 8B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA (default): TP=1, PP=1, LR=1e-4
+    - Full SFT (peft=None): TP=2, PP=1, LR=5e-6
+
+    See `_ministral3_finetune_common` for the full list of parameters.
+    """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Ministral3FinetuneKwargs = {
+        "hf_path": "mistralai/Ministral-3-8B-Instruct-2512",
+        "tensor_model_parallel_size": 2 if is_full_sft else 1,
+        "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    combined_kwargs: Ministral3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _ministral3_finetune_common(**combined_kwargs)
+
+
+def ministral3_14b_finetune_config(**user_kwargs: Unpack[Ministral3FinetuneKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Ministral3 14B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA (default): TP=2, PP=1, LR=1e-4
+    - Full SFT (peft=None): TP=4, PP=1, LR=5e-6
+
+    See `_ministral3_finetune_common` for the full list of parameters.
+    """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Ministral3FinetuneKwargs = {
+        "hf_path": "mistralai/Ministral-3-14B-Instruct-2512",
+        "tensor_model_parallel_size": 4 if is_full_sft else 2,
+        "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    combined_kwargs: Ministral3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _ministral3_finetune_common(**combined_kwargs)
+
+
+def _ministral3_finetune_common(
+    hf_path: str,
+    dir: Optional[str] = None,
+    name: str = "ministral3_finetune",
+    pretrained_checkpoint: Optional[str] = None,
+    # Dataset configuration
+    train_data_path: Optional[List[str]] = None,
+    valid_data_path: Optional[List[str]] = None,
+    test_data_path: Optional[List[str]] = None,
+    dataset_type: Optional[str] = None,
+    image_folder: Optional[str] = None,
+    tokenizer_model: Optional[str] = None,
+    # Model configuration
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
+    use_megatron_fsdp: bool = False,
+    # Training hyperparameters
+    train_iters: int = 1000,
+    global_batch_size: int = 32,
+    micro_batch_size: int = 1,
+    seq_length: int = 4096,
+    eval_interval: int = 30,
+    save_interval: int = 50,
+    # Optimizer
+    finetune_lr: Optional[float] = None,
+    min_lr: float = 0.0,
+    lr_warmup_iters: int = 50,
+    lr_decay_iters: Optional[int] = None,
+    # Precision and comm overlap
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    # Freeze options
+    freeze_language_model: bool = False,
+    freeze_vision_model: bool = False,
+    freeze_vision_projection: bool = False,
+    # PEFT options
+    peft: Optional[Union[str, PEFT]] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
+) -> ConfigContainer:
+    """
+    Create a fine-tuning configuration for Ministral3 family models using a given HuggingFace path.
+
+    The dataset pipeline is conversation-based. To train multimodal tokens, ensure your
+    preprocessed data includes placeholders (e.g., <image>) as needed.
+    """
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Build provider via AutoBridge and set parallel/seq params here
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
+    model_cfg.freeze_language_model = freeze_language_model
+    model_cfg.freeze_vision_model = freeze_vision_model
+    model_cfg.freeze_vision_projection = freeze_vision_projection
+    model_cfg.seq_length = seq_length
+
+    # Optimizer and scheduler - use finetune_lr if provided, otherwise use default
+    effective_lr = finetune_lr if finetune_lr is not None else 1e-4
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
+        max_lr=effective_lr,
+        min_lr=min_lr,
+    )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
+
+    # Determine dataset selection strategy
+    _dataset_choice = dataset_type or "hf"
+    _processor_model = tokenizer_model or hf_path
+
+    if _dataset_choice == "mock":
+        dataset_cfg: DatasetProvider = MockVLMConversationProvider(
+            seq_length=seq_length,
+            hf_processor_path=_processor_model,
+            prompt="Describe this image.",
+            num_workers=1,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+            create_attention_mask=True,
+            pad_to_max_length=True,
+        )
+    elif _dataset_choice == "preloaded":
+        dataset_cfg = PreloadedVLMConversationProvider(
+            seq_length=seq_length,
+            hf_processor_path=_processor_model,
+            train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
+            valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,
+            test_data_path=test_data_path[0] if isinstance(test_data_path, list) else test_data_path,
+            image_folder=image_folder,
+            num_workers=2,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+        )
+    elif _dataset_choice == "hf":
+        dataset_cfg = HFDatasetConversationProvider(
+            seq_length=seq_length,
+            hf_processor_path=_processor_model,
+            maker_name="make_cord_v2_dataset",
+            num_workers=2,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+        )
+    else:
+        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf'].")
+
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=False,
+            overlap_param_gather=False,
+            average_in_collective=True,
+            data_parallel_sharding_strategy="optim_grads_params",
+            use_distributed_optimizer=True,
+            use_megatron_fsdp=use_megatron_fsdp,
+        ),
+        dataset=dataset_cfg,
+        logger=LoggerConfig(
+            log_interval=10,
+            tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
+        ),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        checkpoint=CheckpointConfig(
+            pretrained_checkpoint=pretrained_checkpoint,
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=1234),
+        peft=peft_config,
+        comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
+    )
+
+    return cfg

@@ -14,12 +14,13 @@
 
 import logging
 from dataclasses import dataclass
-from functools import partial
 from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 import torch.nn.functional as F
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -433,8 +434,8 @@ class Qwen3MoEModelProvider235B_A22B(Qwen3MoEModelProvider):
 class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     """Base provider for Qwen 3 Next Models."""
 
-    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = partial(
-        get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = (
+        get_transformer_block_with_experimental_attention_variant_spec
     )
 
     layernorm_zero_centered_gamma: bool = True  # Zero-centered RMSNorm
@@ -453,7 +454,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     moe_router_load_balancing_type: str = "global_aux_loss"  # Qwen3-Next uses global aux loss for load balancing
 
     # Linear Attention specific parameters
-    linear_attention_type: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
+    experimental_attention_variant: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
     linear_attention_freq: int | list[int] = 4  # 1 gated standard attention layer per 4 layers
     linear_conv_kernel_dim: int = 4
     linear_key_head_dim: int = 128
@@ -478,5 +479,4 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     ffn_hidden_size: int = 5120
     moe_ffn_hidden_size: int = 512
     moe_shared_expert_intermediate_size: int = 512
-    mtp_num_layers: Optional[int] = 0
-    mtp_loss_scaling_factor: Optional[float] = None
+    mtp_num_layers: Optional[int] = None

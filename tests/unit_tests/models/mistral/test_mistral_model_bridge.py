@@ -48,11 +48,11 @@ class TestMegatronMistralBridge:
             "num_hidden_layers": 32,
             "num_key_value_heads": 8,
             "rms_norm_eps": 1e-05,
-            "rope_theta": 1000000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
             "sliding_window": None,
             "tie_word_embeddings": False,
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.37.0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 32768,
         }
@@ -101,7 +101,7 @@ class TestMegatronMistralBridge:
         assert result.hidden_size == mistral_config.hidden_size
         assert result.num_attention_heads == mistral_config.num_attention_heads
         assert result.seq_length == mistral_config.max_position_embeddings
-        assert result.rotary_base == mistral_config.rope_theta
+        assert result.rotary_base == mistral_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_mistral, mistral_config):
         """Test vocabulary size mapping."""
@@ -149,7 +149,7 @@ class TestMegatronMistralBridge:
         result = bridge.provider_bridge(mock_pretrained_mistral)
 
         # Check position embedding
-        assert result.rotary_base == mistral_config.rope_theta
+        assert result.rotary_base == mistral_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_mistral_specific_features(self, mock_pretrained_mistral):
         """Test Mistral-specific features."""
@@ -247,15 +247,6 @@ class TestMegatronMistralBridge:
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_mistral):
-        """Test that generation config is passed through."""
-        bridge = MistralBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_mistral)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_mistral.generation_config
-
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Mistral models."""
@@ -274,7 +265,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 3072,
                 "vocab_size": 32768,
                 "max_position_embeddings": 32768,
-                "rope_theta": 1000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
                 "rms_norm_eps": 1e-05,
                 "tie_word_embeddings": False,
             },
@@ -288,7 +279,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 32768,
                 "vocab_size": 32768,
                 "max_position_embeddings": 32768,
-                "rope_theta": 100000000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 100000000.0},
                 "rms_norm_eps": 1e-05,
                 "tie_word_embeddings": False,
             },

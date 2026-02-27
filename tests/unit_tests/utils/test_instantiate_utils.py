@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import functools
 import logging
 from unittest.mock import MagicMock, patch
@@ -80,6 +81,7 @@ class TestKeys:
         assert _Keys.PARTIAL == "_partial_"
         assert _Keys.CALL == "_call_"
         assert _Keys.ARGS == "_args_"
+        assert _Keys.NAME == "_name_"
 
 
 class TestInstantiate:
@@ -191,18 +193,14 @@ class TestInstantiate:
         with pytest.raises(InstantiationException):
             instantiate(config, mode=InstantiationMode.STRICT)
 
-    def test_instantiate_lenient_mode_error(self, caplog):
-        """Test instantiate in lenient mode with error."""
+    def test_instantiate_lenient_mode_error(self):
+        """In lenient mode, nested resolution errors now propagate (no auto-None)."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
             "nested": {"_target_": "non.existent.module.Class"},
         }
-        with caplog.at_level(logging.WARNING):
-            result = instantiate(config, mode=InstantiationMode.LENIENT)
-
-        assert isinstance(result, TestClass)
-        assert result.kwargs["nested"] is None
-        assert "Error instantiating" in caplog.text
+        with pytest.raises(InstantiationException, match="Error locating target"):
+            instantiate(config, mode=InstantiationMode.LENIENT)
 
     def test_instantiate_with_omegaconf_dict(self):
         """Test instantiate with OmegaConf DictConfig."""
@@ -525,3 +523,96 @@ class TestComplexScenarios:
         actual_result = result(arg2="value2")
         expected = {"arg1": "value1", "arg2": "value2", "kwargs": {}}
         assert actual_result == expected
+
+
+class DummyTarget:
+    def __init__(self, a: int, b: int = 0) -> None:
+        self.a = a
+        self.b = b
+
+
+class KwTarget:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = dict(kwargs)
+
+
+def _target_qualname(obj) -> str:
+    return f"{obj.__module__}.{obj.__qualname__}"
+
+
+def test_drops_unexpected_kwargs_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    config = {
+        "_target_": _target_qualname(DummyTarget),
+        "a": 10,
+        "foo": 123,  # unexpected key that should be dropped
+    }
+
+    with caplog.at_level(logging.WARNING):
+        obj = instantiate(config)
+
+    assert isinstance(obj, DummyTarget)
+    assert obj.a == 10
+    # 'foo' is dropped; 'b' remains default
+    assert obj.b == 0
+
+    # Ensure a warning was emitted mentioning the dropped key
+    warnings = [rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert any("Dropping unexpected config keys" in m for m in warnings)
+    assert any("foo" in m for m in warnings)
+
+
+def test_allows_kwargs_when_target_accepts_var_kwargs(caplog: pytest.LogCaptureFixture) -> None:
+    config = {
+        "_target_": _target_qualname(KwTarget),
+        "foo": 1,
+        "bar": 2,
+    }
+
+    with caplog.at_level(logging.WARNING):
+        obj = instantiate(config)
+
+    assert isinstance(obj, KwTarget)
+    assert obj.kwargs == {"foo": 1, "bar": 2}
+
+    # No warning should be emitted for **kwargs targets
+    warnings = [rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert not any("Dropping unexpected config keys" in m for m in warnings)
+
+
+def test_raises_on_unexpected_kwargs_in_strict_mode() -> None:
+    config = {
+        "_target_": _target_qualname(DummyTarget),
+        "a": 10,
+        "foo": 123,
+    }
+
+    with pytest.raises(InstantiationException):
+        instantiate(config, mode=InstantiationMode.STRICT)
+
+
+class TestEnum(enum.Enum):
+    A = 1
+    B = 2
+
+
+class TestInstantiateEnum:
+    """Test instantiation of Enums."""
+
+    def test_instantiate_enum_with_args(self):
+        """Test instantiating an Enum with _args_."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestEnum",
+            "_args_": [1],
+        }
+        result = instantiate(config)
+        assert result == TestEnum.A
+
+    def test_instantiate_enum_with_args_lenient(self):
+        """Test instantiating an Enum with _args_ in lenient mode (default)."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestEnum",
+            "_args_": [2],
+        }
+        # This previously failed because _args_ was dropped in lenient mode
+        result = instantiate(config)
+        assert result == TestEnum.B

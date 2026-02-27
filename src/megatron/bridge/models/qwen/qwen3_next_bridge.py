@@ -21,11 +21,13 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
+    GDNConv1dMapping,
     GDNLinearMapping,
     QKVMapping,
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
@@ -61,21 +63,20 @@ class Qwen3NextBridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             vocab_size=hf_config.vocab_size,
             seq_length=hf_config.max_position_embeddings,
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
             qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
             moe_grouped_gemm=True,
             kv_channels=hf_config.head_dim,
             # New for Qwen3-Next
             layernorm_zero_centered_gamma=True,
             attention_output_gate=True,
-            linear_attention_type="gated_delta_net",
+            experimental_attention_variant="gated_delta_net",
             linear_attention_freq=hf_config.full_attention_interval,
             rotary_percent=hf_config.partial_rotary_factor,
             moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
@@ -85,7 +86,7 @@ class Qwen3NextBridge(MegatronModelBridge):
             linear_value_head_dim=hf_config.linear_value_head_dim,
             linear_num_key_heads=hf_config.linear_num_key_heads,
             linear_num_value_heads=hf_config.linear_num_value_heads,
-            mtp_num_layers=0,  # Set to 1 if need MTP
+            mtp_num_layers=None,  # Set to 1 if need MTP
         )
 
         return provider
@@ -112,7 +113,6 @@ class Qwen3NextBridge(MegatronModelBridge):
             # Linear attention
             "decoder.layers.*.self_attention.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.self_attention.out_proj.weight": "model.layers.*.linear_attn.out_proj.weight",
-            "decoder.layers.*.self_attention.conv1d.weight": "model.layers.*.linear_attn.conv1d.weight",
             "decoder.layers.*.self_attention.A_log": "model.layers.*.linear_attn.A_log",
             "decoder.layers.*.self_attention.dt_bias": "model.layers.*.linear_attn.dt_bias",
             # MTP projection and norms
@@ -134,7 +134,6 @@ class Qwen3NextBridge(MegatronModelBridge):
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-        AutoMapping.register_module_type("Conv1d", "column")
         AutoMapping.register_module_type("SharedExpertMLP", "column")
         AutoMapping.register_module_type("GatedDeltaNet", "column")
 
@@ -157,6 +156,10 @@ class Qwen3NextBridge(MegatronModelBridge):
                 ),
                 # GDNLinear: Combine separate QKVZ_proj and BA_proj into single in_proj for GDN
                 # Note: Qwen3-Next does NOT have bias in the input linear projections
+                GDNConv1dMapping(
+                    megatron_param="decoder.layers.*.self_attention.conv1d.weight",
+                    hf_param="model.layers.*.linear_attn.conv1d.weight",
+                ),
                 GDNLinearMapping(
                     megatron_param="decoder.layers.*.self_attention.in_proj.weight",
                     qkvz="model.layers.*.linear_attn.in_proj_qkvz.weight",

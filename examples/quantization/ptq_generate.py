@@ -42,12 +42,81 @@ from rich.console import Console
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 warnings.filterwarnings("ignore")
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 console = Console()
+
+
+def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
+    """Validate that the model contains quantized layers.
+
+    This is a functional test to ensure quantized checkpoints are loaded correctly.
+    If someone accidentally breaks the quantization loading logic (e.g., in
+    has_modelopt_state or build_and_load_model), this check will catch it.
+
+    We check for quantized layer types that indicate successful quantization:
+    - Local spec: QuantRowParallelLinear, QuantColumnParallelLinear
+    - TE spec: QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear
+
+    Args:
+        model: The unwrapped model to validate
+        is_rank_0: Whether this is rank 0 (for printing)
+
+    Raises:
+        RuntimeError: If the model doesn't contain expected quantized layers
+    """
+    model_str = str(model)
+
+    # Local spec quantized layers
+    local_spec_layers = [
+        "QuantRowParallelLinear",
+        "QuantColumnParallelLinear",
+    ]
+
+    # TE spec quantized layers
+    te_spec_layers = [
+        "QuantTERowParallelLinear",
+        "QuantTELayerNormColumnParallelLinear",
+    ]
+
+    # Check if model has local spec quantized layers
+    has_local_spec = all(layer in model_str for layer in local_spec_layers)
+
+    # Check if model has TE spec quantized layers
+    has_te_spec = all(layer in model_str for layer in te_spec_layers)
+
+    if not has_local_spec and not has_te_spec:
+        error_msg = (
+            f"\n{'=' * 80}\n"
+            f"QUANTIZATION VALIDATION FAILED!\n"
+            f"{'=' * 80}\n"
+            f"Expected quantized layers not found in the loaded model.\n"
+            f"This indicates the quantized checkpoint was not loaded correctly.\n\n"
+            f"Expected one of:\n"
+            f"  - Local spec: {local_spec_layers}\n"
+            f"  - TE spec: {te_spec_layers}\n\n"
+            f"This is likely due to a bug in the checkpoint loading logic.\n"
+            f"{'=' * 80}\n"
+        )
+        if is_rank_0:
+            console.print(f"[red]{error_msg}[/red]")
+        raise RuntimeError(error_msg)
+
+    if is_rank_0:
+        if has_te_spec:
+            console.print(
+                "[green]✓ Quantization validation passed: Found TE spec quantized layers "
+                "(QuantTERowParallelLinear, QuantTELayerNormColumnParallelLinear)[/green]"
+            )
+        else:
+            console.print(
+                "[green]✓ Quantization validation passed: Found local spec quantized layers "
+                "(QuantRowParallelLinear, QuantColumnParallelLinear)[/green]"
+            )
 
 
 @torchrun_main
@@ -60,6 +129,7 @@ def main(
     megatron_load_path: str = "./quantized_megatron_checkpoint",
     prompts: str = "Hello!|Born in California, Soyer trained as a",
     osl: int = 32,
+    trust_remote_code: bool | None = None,
 ) -> None:
     """Load a quantized Megatron-LM checkpoint and perform text generation on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -77,7 +147,13 @@ def main(
         sys.exit(1)
 
     # Initialize bridge from HF model to get tokenizer and model structure
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_model_id,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=trust_remote_code,
+            hf_path=hf_model_id,
+        ),
+    )
 
     # Get model provider and configure for multi-GPU execution
     model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -115,6 +191,9 @@ def main(
     # Get the unwrapped model for generation
     unwrapped_model = unwrap_model(megatron_model)[0]
     unwrapped_model.eval()
+
+    # Validate that the model has quantized layers
+    _validate_quantized_model(unwrapped_model, is_rank_0)
 
     # Test quantized model with custom prompts
     if is_rank_0:
@@ -157,6 +236,7 @@ if __name__ == "__main__":
         default=32,
         help="Output sequence length for generation.",
     )
+    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
     main(
@@ -168,6 +248,7 @@ if __name__ == "__main__":
         args.megatron_load_path,
         args.prompts,
         args.osl,
+        args.trust_remote_code,
     )
 
     if torch.distributed.is_initialized():

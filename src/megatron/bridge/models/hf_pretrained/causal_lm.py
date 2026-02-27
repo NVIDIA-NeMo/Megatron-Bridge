@@ -28,6 +28,7 @@ from transformers import (
     PreTrainedTokenizer,
     ProcessorMixin,
 )
+from transformers.configuration_utils import PretrainedConfig
 from transformers.generation.utils import GenerateOutput
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
@@ -42,6 +43,28 @@ else:
 
 
 CausalLMType = TypeVar("CausalLMType", bound=AutoModelForCausalLM)
+
+
+class _ConfigOnlyPretrainedShim:
+    """Lightweight shim that provides the minimal PreTrainedCausalLM interface for config-only bridges."""
+
+    def __init__(self, config: PretrainedConfig):
+        self.config = config
+        self.model_name_or_path = getattr(config, "name_or_path", None)
+        self.trust_remote_code = getattr(config, "trust_remote_code", False)
+        self.generation_config = self._build_generation_config(config)
+
+    @staticmethod
+    def _build_generation_config(config: PretrainedConfig) -> GenerationConfig:
+        try:
+            config_dict = config.to_dict() if hasattr(config, "to_dict") else {}
+            return GenerationConfig.from_dict(config_dict)
+        except Exception:
+            return GenerationConfig()
+
+    def __repr__(self) -> str:
+        config_name = getattr(self.config, "__class__", type(self.config)).__name__
+        return f"_ConfigOnlyPretrainedShim(config={config_name})"
 
 
 class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):

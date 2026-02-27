@@ -23,11 +23,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel, model_type="qwen3_moe")
 class Qwen3MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3 MoE Causal LM.
@@ -42,33 +40,25 @@ class Qwen3MoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3MoEModelProvider:
-        hf_config = hf_pretrained.config
+    def provider_bridge(self, hf_pretrained):
+        """Convert HuggingFace Qwen3 MoE config to GPTModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
 
-        provider = Qwen3MoEModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            moe_ffn_hidden_size=hf_config.moe_intermediate_size,  # Maps to moe_intermediate_size in HF
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            num_moe_experts=hf_config.num_experts,
-            moe_router_topk=hf_config.num_experts_per_tok,  # Maps to num_experts_per_tok in HF
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-            qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
-            moe_grouped_gemm=True,
-        )
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False  # Qwen3 MoE does NOT have QKV bias
+        provider.hidden_dropout = 0.0
+        provider.qk_layernorm = True  # Qwen3 MoE uses QK layernorm
+        provider.autocast_dtype = torch.bfloat16
+
+        provider.moe_grouped_gemm = True
+        provider.moe_router_load_balancing_type = "aux_loss"
+        provider.moe_aux_loss_coeff = 1e-3
+        provider.moe_router_pre_softmax = False
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_permute_fusion = True
 
         return provider
 
@@ -82,10 +72,7 @@ class Qwen3MoEBridge(MegatronModelBridge):
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-            # Input layernorm - fused with TE (default layer spec)
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            # Input layernorm - separate (quantization layer spec)
-            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",

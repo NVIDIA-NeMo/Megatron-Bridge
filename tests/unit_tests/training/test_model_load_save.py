@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -425,7 +426,7 @@ class TestLoadMegatronModel:
             result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
 
         # Verify modelopt state was detected and set
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path, ignore_kd_state=True)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
         assert mock_model_cfg.restore_modelopt_state is True
 
         # Verify modelopt state was loaded
@@ -503,7 +504,7 @@ class TestLoadMegatronModel:
             result = load_megatron_model(ckpt_path, model_type="gpt", return_state_dict=True, use_cpu_init=True)
 
         # Verify modelopt state was detected but not set (no attribute on TransformerConfig)
-        mock_has_modelopt_state.assert_called_once_with(ckpt_path, ignore_kd_state=True)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
         # TransformerConfig doesn't have restore_modelopt_state, so hasattr returns False
         assert not hasattr(mock_model_cfg, "restore_modelopt_state")
 
@@ -524,7 +525,6 @@ class TestLoadMegatronModel:
         cfg.context_parallel_size = 2
         cfg.expert_model_parallel_size = 2
         cfg.expert_tensor_parallel_size = 2
-        cfg.moe_extended_tp = True
         cfg.sequence_parallel = True
         cfg.virtual_pipeline_model_parallel_size = 2
         cfg.hierarchical_context_parallel_sizes = [2, 2]
@@ -544,7 +544,6 @@ class TestLoadMegatronModel:
         assert cfg.context_parallel_size == 1
         assert cfg.expert_model_parallel_size == 1
         assert cfg.expert_tensor_parallel_size == 1
-        assert cfg.moe_extended_tp is False
         assert cfg.sequence_parallel is False
         assert cfg.virtual_pipeline_model_parallel_size is None
         assert cfg.hierarchical_context_parallel_sizes is None
@@ -560,7 +559,6 @@ class TestLoadMegatronModel:
         cfg.context_parallel_size = 1
         cfg.expert_model_parallel_size = 1
         cfg.expert_tensor_parallel_size = 1
-        cfg.moe_extended_tp = False
         cfg.sequence_parallel = False
         cfg.virtual_pipeline_model_parallel_size = None
         cfg.hierarchical_context_parallel_sizes = None
@@ -584,7 +582,17 @@ class TestLoadMegatronModel:
 
 
 class TestSaveMegatronModel:
-    """Test save_megatron_model function."""
+    """Test save_megatron_model function.
+
+    Note: These tests use low_memory_save=False because the low_memory_save=True path
+    requires parallel state to be initialized (get_rng_state calls mpu.get_pipeline_model_parallel_rank()).
+    Testing the low_memory_save=True path would require either:
+    1. Full distributed initialization, or
+    2. Extensive mocking of checkpointing internals (get_rng_state, generate_state_dict, etc.)
+
+    The low_memory_save=False path tests the core save_checkpoint integration without
+    those dependencies, which is sufficient for unit testing the function's API and behavior.
+    """
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
@@ -619,7 +627,7 @@ class TestSaveMegatronModel:
 
         # Test
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist")
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -681,7 +689,11 @@ class TestSaveMegatronModel:
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
             save_megatron_model(
-                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=False,
             )
 
         # Assertions
@@ -749,7 +761,9 @@ class TestSaveMegatronModel:
 
         # Test without tokenizer path (should be None)
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None)
+            save_megatron_model(
+                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None, low_memory_save=False
+            )
 
         # Assertions
         mock_get_model_config.assert_called_once_with(mock_model)
@@ -940,3 +954,31 @@ class TestLoadTokenizer:
                 AttributeError, match="Attempting to set a non-existent attribute 'tensor_model_parallel_size'"
             ):
                 load_tokenizer(ckpt_path, tensor_model_parallel_size=1)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_hf(self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer):
+        """Test loading HF tokenizers."""
+        # Setup mocks
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "make_vocab_size_divisible_by": 128},
+            "tokenizer": {},
+        }
+        mock_read_cfg.return_value = mock_run_cfg_dict
+
+        mock_tokenizer_cfg = Mock(spec=TokenizerConfig)
+        mock_tokenizer_cfg.tokenizer_type = "HuggingFaceTokenizer"
+        mock_tokenizer_cfg.tokenizer_model = Path()
+        mock_instantiate.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        # test if tokenizer_path is absolute
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            _ = load_tokenizer(ckpt_path)
+
+            tokenizer_path = os.path.join(ckpt_path, "tokenizer")
+            assert mock_tokenizer_cfg.tokenizer_model == Path(tokenizer_path)

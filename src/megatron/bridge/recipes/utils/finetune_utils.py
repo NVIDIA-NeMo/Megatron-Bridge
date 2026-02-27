@@ -22,7 +22,7 @@ from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
 
 
-def default_peft_config(peft_scheme: str | PEFT | None) -> PEFT | None:
+def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None:
     """Create default PEFT configuration matching NeMo2 exactly.
 
     Args:
@@ -38,22 +38,26 @@ def default_peft_config(peft_scheme: str | PEFT | None) -> PEFT | None:
         return peft_scheme  # User provided custom PEFT
 
     if isinstance(peft_scheme, str):
+        if peft_scheme.lower() == "none":
+            return None
         if peft_scheme.lower() == "lora":
-            return LoRA()
+            return LoRA(**kwargs)
         elif peft_scheme.lower() == "dora":
-            return DoRA()
+            return DoRA(**kwargs)
         else:
             raise ValueError(f"Unknown PEFT scheme: {peft_scheme}. Supported: 'lora', 'dora', or None")
 
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def default_squad_config(seq_length: int, packed_sequence: bool = False) -> HFDatasetConfig:
+def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1) -> HFDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
         seq_length: Sequence length for the dataset
         packed_sequence: Whether to enable packed sequences for training efficiency
+        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
+            (set to `2 * context_parallel_size` for THD CP runs).
 
     Returns:
         HFDatasetConfig configured for SQuAD finetuning
@@ -68,7 +72,7 @@ def default_squad_config(seq_length: int, packed_sequence: bool = False) -> HFDa
     if packed_sequence:
         # Packed sequence configuration
         dataset_kwargs = {"pad_to_max_length": True}
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
     else:
         # Standard configuration
         dataset_kwargs = {}

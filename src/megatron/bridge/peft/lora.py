@@ -20,12 +20,14 @@ import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
 from megatron.core import parallel_state
+from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import (
     LinearAdapter,
     LoRALinear,
+    LoRATopKRouter,
     TEFusedLoRALinear,
     TELinearAdapter,
     patch_linear_module,
@@ -102,7 +104,7 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         adapter_types = adapter_types + (TELinearAdapter,)
         if isinstance(module, adapter_types):
             return module
@@ -135,9 +137,7 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(module, is_expert=is_expert)
-            )
+            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
 
             enable_op_fuser = (
                 hasattr(module, "config")
@@ -148,8 +148,8 @@ class LoRA(PEFT, ModuleMatcher):
 
             logging.info(f"Adding lora to: {full_name}")
             adapter = ParallelLinearAdapter(
-                in_features,
-                out_features,
+                attrs.in_features,
+                attrs.out_features,
                 self.dim,
                 base_linear_name=full_name,
                 activation="identity",
@@ -157,16 +157,19 @@ class LoRA(PEFT, ModuleMatcher):
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
                 gather_output=False,
-                input_is_parallel=input_is_parallel,
+                input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(module, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert,
                 a2a_experimental=self.a2a_experimental,
-                disable_sequence_parallel_comm=disable_sp_comm,
-                base_linear_is_parallel=base_linear_is_parallel,
+                disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
+                disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
+            if isinstance(module, TopKRouter):
+                return LoRATopKRouter(module, adapter)
             if enable_op_fuser:
                 return TEFusedLoRALinear(module, adapter)
             else:
@@ -263,13 +266,26 @@ class LoRAMerge(PEFT):
         if not isinstance(module, LoRALinear):
             return module
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_device = module.to_wrap.weight.device
-        merged_weight = self.merge(
-            module.to_wrap.weight,
-            module.adapter.linear_out.weight.to(base_device),
-            module.adapter.linear_in.weight.to(base_device),
-            module.adapter.alpha,
-            module.adapter.dim,
-        )
-        module.to_wrap.weight.data = merged_weight
+
+        if hasattr(module.to_wrap, "weight"):
+            base_device = module.to_wrap.weight.device
+            merged_weight = self.merge(
+                module.to_wrap.weight,
+                module.adapter.linear_out.weight.to(base_device),
+                module.adapter.linear_in.weight.to(base_device),
+                module.adapter.alpha,
+                module.adapter.dim,
+            )
+            module.to_wrap.weight.data = merged_weight
+        else:  # TE Grouped Linear
+            for i in range(module.to_wrap.num_gemms):
+                base_device = getattr(module.to_wrap, f"weight{i}").device
+                merged_weight = self.merge(
+                    getattr(module.to_wrap, f"weight{i}"),
+                    module.adapter.linear_out.weight.to(base_device),
+                    module.adapter.linear_in.weight.to(base_device),
+                    module.adapter.alpha,
+                    module.adapter.dim,
+                )
+                getattr(module.to_wrap, f"weight{i}").data = merged_weight
         return module

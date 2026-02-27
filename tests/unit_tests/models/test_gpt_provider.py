@@ -14,11 +14,7 @@
 
 from unittest.mock import Mock, patch
 
-import pytest
-import torch
-
-from megatron.bridge.models.gpt_provider import GPTDistillationProvider, GPTModelProvider
-from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 class TestGPTModelProvider:
@@ -74,19 +70,19 @@ class TestGPTModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
+        # Provide minimal pg_collection for provider
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+
         # Mock dependencies
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    result = provider.provide()
+                result = provider.provide(pre_process=True, post_process=True)
 
-                    assert result == mock_instance
-                    mock_model.assert_called_once()
+                assert result == mock_instance
+                mock_model.assert_called_once()
 
     def test_provide_method_with_vocab_padding(self):
         """Test provide method calculates padded vocab size when padding is enabled."""
@@ -100,23 +96,22 @@ class TestGPTModelProvider:
             should_pad_vocab=True,  # Enable padding
         )
 
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch(
-                "megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=50176
-            ) as mock_calc_vocab:
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
-                    _ = provider.provide()
+        with patch(
+            "megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=50176
+        ) as mock_calc_vocab:
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    # Verify calculate_padded_vocab_size was called with correct parameters
-                    mock_calc_vocab.assert_called_once_with(50000, 128, 8)
-                    # Verify model was created with padded vocab size
-                    call_kwargs = mock_model.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 50176
+                _ = provider.provide(pre_process=True, post_process=True)
+
+                # Verify calculate_padded_vocab_size was called with correct parameters
+                mock_calc_vocab.assert_called_once_with(50000, 128, 8)
+                # Verify model was created with padded vocab size
+                call_kwargs = mock_model.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 50176
 
     def test_provide_method_no_vocab_padding(self):
         """Test provide method uses original vocab size when padding is disabled."""
@@ -130,21 +125,20 @@ class TestGPTModelProvider:
             should_pad_vocab=False,  # Disable padding
         )
 
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size") as mock_calc_vocab:
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_model.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
-                    _ = provider.provide()
+        with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size") as mock_calc_vocab:
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                mock_instance = Mock()
+                mock_model.return_value = mock_instance
 
-                    # Verify calculate_padded_vocab_size was NOT called
-                    mock_calc_vocab.assert_not_called()
-                    # Verify model was created with original vocab size
-                    call_kwargs = mock_model.call_args.kwargs
-                    assert call_kwargs["vocab_size"] == 50000
+                _ = provider.provide(pre_process=True, post_process=True)
+
+                # Verify calculate_padded_vocab_size was NOT called
+                mock_calc_vocab.assert_not_called()
+                # Verify model was created with original vocab size
+                call_kwargs = mock_model.call_args.kwargs
+                assert call_kwargs["vocab_size"] == 50000
 
     def test_provide_method_pipeline_stages(self):
         """Test provide method respects pipeline stage arguments."""
@@ -157,21 +151,19 @@ class TestGPTModelProvider:
             make_vocab_size_divisible_by=128,
         )
 
-        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
-                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_gpt:
-                    # Test default behavior - uses parallel_state
-                    mock_ps.is_pipeline_first_stage.return_value = False
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_instance = Mock()
-                    mock_gpt.return_value = mock_instance
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
 
-                    provider.provide()
+        with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_gpt:
+                mock_instance = Mock()
+                mock_gpt.return_value = mock_instance
 
-                    # Check the model was called with pipeline stages from parallel_state
-                    call_kwargs = mock_gpt.call_args.kwargs
-                    assert call_kwargs["pre_process"] is False
-                    assert call_kwargs["post_process"] is True
+                provider.provide(pre_process=False, post_process=True)
+
+                # Check the model was called with provided pipeline stages
+                call_kwargs = mock_gpt.call_args.kwargs
+                assert call_kwargs["pre_process"] is False
+                assert call_kwargs["post_process"] is True
 
     def test_fp8_configuration(self):
         """Test GPTModelProvider with FP8 configuration."""
@@ -267,29 +259,11 @@ class TestGPTModelProvider:
 
         assert provider.attention_softmax_in_fp32 is True
 
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
-    def test_provide_with_generation_config(self, mock_parallel_state):
-        """Test provide method with generation configuration."""
-        mock_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_parallel_state.is_pipeline_last_stage.return_value = True
-
-        generation_config = {"max_length": 100, "temperature": 0.7}
-
-        provider = GPTModelProvider(
-            num_layers=2,
-            hidden_size=128,
-            num_attention_heads=4,
-            vocab_size=1000,
-            generation_config=generation_config,
-        )
-
-        assert provider.generation_config == generation_config
-
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
+    @patch("megatron.core.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
-    def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
-        """Test quantization_layer_spec function."""
-        from megatron.bridge.models.gpt_provider import quantization_layer_spec
+    def test_modelopt_transformer_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
+        """Test modelopt_transformer_layer_spec function."""
+        from megatron.bridge.models.gpt_provider import modelopt_transformer_layer_spec
 
         # Mock context parallel world size to return 1 (use_arbitrary_attention_mask will be True)
         mock_parallel_state.get_context_parallel_world_size.return_value = 1
@@ -306,7 +280,7 @@ class TestGPTModelProvider:
         mock_get_gpt_modelopt_spec.return_value = mock_spec
 
         # Call the function
-        result = quantization_layer_spec(provider)
+        result = modelopt_transformer_layer_spec(provider)
 
         # Verify the mock was called with correct parameters
         mock_get_gpt_modelopt_spec.assert_called_once_with(
@@ -320,11 +294,10 @@ class TestGPTModelProvider:
         # Verify the result
         assert result is mock_spec
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
-        """Test default_layer_spec when restore_modelopt_state is True."""
+    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec):
+        """Test default_layer_spec when restore_modelopt_state is True uses TE spec."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
         # Create a provider with restore_modelopt_state=True
@@ -336,23 +309,20 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
         # Call the function
         result = default_layer_spec(provider)
 
-        # Should use quantization spec when restore_modelopt_state is True
-        mock_quant_spec.assert_called_once_with(provider)
+        # Should use TE spec even when restore_modelopt_state is True (all models support TE spec)
         mock_te_full_spec.assert_not_called()
-        mock_te_spec.assert_not_called()
-        assert result == "quantization_spec"
+        mock_te_spec.assert_called_once_with(provider)
+        assert result == "te_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec):
         """Test default_layer_spec when use_transformer_engine_full_layer_spec is True."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
@@ -366,7 +336,6 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
@@ -374,15 +343,13 @@ class TestGPTModelProvider:
         result = default_layer_spec(provider)
 
         # Should use TE full spec when use_transformer_engine_full_layer_spec is True
-        mock_quant_spec.assert_not_called()
         mock_te_full_spec.assert_called_once_with(provider)
         mock_te_spec.assert_not_called()
         assert result == "te_full_spec"
 
-    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
     @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
-    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec):
         """Test default_layer_spec default case (regular TE spec)."""
         from megatron.bridge.models.gpt_provider import default_layer_spec
 
@@ -396,7 +363,6 @@ class TestGPTModelProvider:
         )
 
         # Mock return values
-        mock_quant_spec.return_value = "quantization_spec"
         mock_te_full_spec.return_value = "te_full_spec"
         mock_te_spec.return_value = "te_spec"
 
@@ -404,236 +370,6 @@ class TestGPTModelProvider:
         result = default_layer_spec(provider)
 
         # Should use regular TE spec by default
-        mock_quant_spec.assert_not_called()
         mock_te_full_spec.assert_not_called()
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"
-
-
-class TestGPTDistillationProvider:
-    """Test cases for GPTDistillationProvider class."""
-
-    def test_initialization_with_teacher(self):
-        """Test GPTDistillationProvider can be initialized with a teacher."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
-        )
-
-        assert student.teacher is teacher
-        assert student.num_layers == 12
-        assert student.hidden_size == 2048
-        assert student.num_attention_heads == 16
-
-    def test_initialization_without_teacher_raises_error(self):
-        """Test GPTDistillationProvider raises error when teacher is None."""
-        with pytest.raises(AssertionError, match="Teacher model must be provided"):
-            GPTDistillationProvider(
-                num_layers=12,
-                hidden_size=2048,
-                num_attention_heads=16,
-                vocab_size=1000,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                seq_length=1024,
-                pipeline_dtype=None,
-                teacher=None,
-            )
-
-    def test_post_init_validates_shared_attributes(self):
-        """Test __post_init__ validates that shared attributes match between student and teacher."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=torch.float32,
-        )
-
-        # Test mismatched tensor_model_parallel_size
-        with pytest.raises(ValueError):
-            GPTDistillationProvider(
-                num_layers=12,
-                hidden_size=2048,
-                num_attention_heads=16,
-                vocab_size=1000,
-                tensor_model_parallel_size=2,  # Different from teacher
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                seq_length=1024,
-                pipeline_dtype=None,
-                teacher=teacher,
-            )
-
-    def test_post_init_validates_seq_length(self):
-        """Test __post_init__ validates seq_length."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=2048,
-            pipeline_dtype=torch.float32,
-        )
-
-        with pytest.raises(ValueError):
-            GPTDistillationProvider(
-                num_layers=12,
-                hidden_size=2048,
-                num_attention_heads=16,
-                vocab_size=1000,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                seq_length=1024,  # Different from teacher
-                pipeline_dtype=torch.float32,
-                teacher=teacher,
-            )
-
-    @patch("modelopt.torch.distill.plugins.megatron.parallel_state")
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
-    @patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024)
-    @patch("megatron.bridge.models.gpt_provider.MCoreGPTModel")
-    def test_provide_method_creates_distillation_model(
-        self,
-        mock_mcore_gpt,
-        mock_calc_vocab,
-        mock_parallel_state,
-        mock_mtd_parallel_state,
-    ):
-        """Test provide method creates a ModelOpt DistillationModel."""
-        mock_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_parallel_state.is_pipeline_last_stage.return_value = True
-        mock_mtd_parallel_state.is_pipeline_first_stage.return_value = True
-        mock_mtd_parallel_state.is_pipeline_last_stage.return_value = True
-
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=4096,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
-            kd_config=ModelOptDistillConfig(),
-        )
-
-        # Mock the provide method calls and modelopt functions
-        mock_student_model = Mock()
-        mock_teacher_model = Mock()
-        mock_student_model.config = Mock()
-        mock_teacher_model.config = Mock()
-        # Avoid ProjectionLayer being created here
-        mock_student_model.config.hidden_size = mock_teacher_model.config.hidden_size = 4096
-        mock_kd_model = Mock()
-
-        # Set the side effects for the model provider - student first, then teacher
-        mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]
-
-        with patch("megatron.bridge.models.gpt_provider.mtd.convert", return_value=mock_kd_model):
-            result = student.provide()
-
-        # Verify that both student and teacher models were created
-        assert mock_mcore_gpt.call_count == 2
-        assert result is mock_kd_model
-
-    def test_setattr_mirrors_to_teacher(self):
-        """Test __setattr__ mirrors attributes to teacher when teacher has that attribute."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
-        )
-
-        student.num_layers = 10  # This exists on teacher, so it should be mirrored
-        assert student.num_layers == 10
-        assert teacher.num_layers == 10
-
-    def test_setattr_does_not_mirror_when_teacher_lacks_attribute(self):
-        """Test __setattr__ does not mirror attributes that teacher doesn't have."""
-        teacher = GPTModelProvider(
-            num_layers=24,
-            hidden_size=4096,
-            num_attention_heads=32,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-        )
-        student = GPTDistillationProvider(
-            num_layers=12,
-            hidden_size=2048,
-            num_attention_heads=16,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            seq_length=1024,
-            pipeline_dtype=None,
-            teacher=teacher,
-        )
-
-        student.new_attribute = "test_value"  # Should not be reflected on teacher
-        assert student.new_attribute == "test_value"
-        assert not hasattr(teacher, "new_attribute")

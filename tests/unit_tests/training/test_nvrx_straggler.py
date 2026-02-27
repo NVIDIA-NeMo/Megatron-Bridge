@@ -280,14 +280,16 @@ class TestNVRxStragglerDetectionManager:
     def test_wrap_train_step_function_already_wrapped(self, manager, mock_straggler_module):
         """Test wrapping when already wrapped."""
         manager.initialized = True
-        manager.wrapped_function = Mock()
+        existing_wrapper = Mock()
+        manager.wrapped_function = existing_wrapper
 
         def dummy_func():
             pass
 
         result = manager.wrap_train_step_function(dummy_func)
 
-        assert result is dummy_func
+        # Should return the already-wrapped function, not the new dummy_func
+        assert result is existing_wrapper
         mock_straggler_module.Detector.wrap_callables.assert_not_called()
 
     def test_wrap_train_step_function_success(self, manager, mock_straggler_module):
@@ -295,25 +297,49 @@ class TestNVRxStragglerDetectionManager:
         manager.initialized = True
 
         def dummy_func():
-            pass
+            return "original_result"
 
         result = manager.wrap_train_step_function(dummy_func)
 
-        assert result is dummy_func
-        assert manager.wrapped_function is dummy_func
+        # The result should be a callable wrapper object, not the original function
+        assert result is not dummy_func
+        assert callable(result)
 
-        # Verify CallableId was called with a TrainStepWrapper object, not the original function
+        # The wrapped_function should be the wrapper object
+        assert manager.wrapped_function is result
+
+        # Verify CallableId was called with the wrapper object
         mock_straggler_module.CallableId.assert_called_once()
         call_args = mock_straggler_module.CallableId.call_args[0]
         assert len(call_args) == 2
         wrapper_obj, method_name = call_args
         assert method_name == "train_step"
 
-        # Verify the wrapper object has the train_step method that wraps our dummy_func
+        # Verify the wrapper object has the train_step method
         assert hasattr(wrapper_obj, "train_step")
-        assert wrapper_obj.train_step is dummy_func
 
         mock_straggler_module.Detector.wrap_callables.assert_called_once()
+
+    @pytest.mark.usefixtures("mock_straggler_module")
+    def test_wrap_train_step_function_callable(self, manager) -> None:
+        """Test that the wrapped function is callable and routes through train_step."""
+        manager.initialized = True
+
+        call_count = [0]
+
+        def dummy_func(*_args, **_kwargs):
+            call_count[0] += 1
+            return "result"
+
+        result = manager.wrap_train_step_function(dummy_func)
+
+        # The wrapper should be callable
+        assert callable(result)
+
+        # Calling the wrapper should route through train_step (which is the original func before wrap_callables)
+        # Note: In real usage, wrap_callables modifies train_step in-place, but in tests it's mocked
+        result()
+        assert call_count[0] == 1
 
     def test_check_stragglers_disabled(self, manager, mock_straggler_module):
         """Test check_stragglers when disabled."""
@@ -469,6 +495,7 @@ class TestNVRxStragglerDetectionManager:
     def test_shutdown_success(self, manager, mock_straggler_module):
         """Test successful shutdown."""
         manager.initialized = True
+        manager.wrapped_function = Mock()  # Simulate a wrapped function
 
         manager.shutdown()
 
@@ -584,7 +611,11 @@ class TestIntegration:
                 return "training"
 
             wrapped_func = manager.wrap_train_step_function(train_step)
-            assert wrapped_func is train_step
+            # The wrapped function should NOT be the same as the original - it should be a wrapper
+            assert wrapped_func is not train_step
+            assert callable(wrapped_func)
+            # The wrapper should be stored
+            assert manager.wrapped_function is wrapped_func
 
             # Test straggler detection function
             with patch("torch.distributed.is_initialized", return_value=False):

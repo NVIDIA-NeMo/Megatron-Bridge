@@ -65,9 +65,47 @@ bridge.export_ckpt(
 
 - Checkpoint conversion: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
 
-## Pretrain recipes
+## Recipes
 
-### Example usage (OLMoE-7B)
+See: [bridge.recipes.olmoe](../../apidocs/bridge/bridge.recipes.olmoe.md)
+
+### Available Recipes
+
+- **Pretrain recipes**:
+  - `olmoe_7b_pretrain_config`: Pre-training for OLMoE-7B (7B parameters, 1.3B activated per token)
+
+- **Finetune recipes**:
+  - `olmoe_7b_finetune_config`: Finetuning for OLMoE-7B with PEFT support (LoRA, DoRA)
+
+### Parallelism Configurations
+
+| Model | Mode | TP | PP | EP | Total GPUs | Use Case |
+|-------|------|----|----|----|-----------:|----------|
+| **OLMoE-7B** | Pretrain | 1 | 1 | 8 | 8 | Pre-training (single node) |
+| **OLMoE-7B** | Full SFT | 1 | 1 | 8 | 8 | Full supervised finetuning |
+| **OLMoE-7B** | LoRA/DoRA | 1 | 1 | 1 | 8 | PEFT finetuning (single node) |
+
+**Key Features**:
+- **Expert Parallelism**: EP=8 for efficient MoE training (64 experts)
+- **Selective Recomputation**: Enabled by default for memory optimization
+- **RoPE Fusion**: Optional optimization for MLA (`apply_rope_fusion=True`)
+- **MoE Optimizations**: Grouped GEMM and permute fusion enabled by default
+
+**Performance Optimizations**:
+- **MoE Permute Fusion**: Fused expert permutation operations
+- **Grouped GEMM**: Optimized expert computation
+- **Router Load Balancing**: Auxiliary loss for balanced expert utilization
+- **Manual GC**: Aggressive garbage collection (interval=5)
+- **Precision-Aware Optimizer**: BF16 gradients and optimizer states with FP32 master weights
+
+**Pipeline Layouts** (optional):
+- **PP=1**: No pipelining (default)
+- **PP=2**: 8+8 layer split with embedding/loss
+- **PP=4**: 4+4+4+4 layer split
+- **VP**: PP=2,VP=2 supported
+
+### Pre-training Example
+
 ```python
 from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
@@ -78,19 +116,31 @@ cfg = olmoe_7b_pretrain_config(
     train_iters=500_000,
     global_batch_size=2048,
     seq_length=4096,
+    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 )
 ```
 
-### Key configuration options
-- **Parallelism**: Default TP=1, PP=1, EP=8 for efficient MoE training
-- **Sequence parallel**: Disabled by default (can be enabled with larger TP)
-- **Recomputation**: Selective recomputation for memory optimization
-- **RoPE fusion**: Optional optimization (`apply_rope_fusion=True`)
-- **MoE optimizations**: Grouped GEMM and permute fusion enabled by default
+### Finetuning Examples
 
-## Finetuning recipes
+#### Full Finetuning
 
-### Example usage (LoRA finetuning)
+```python
+from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+
+cfg = olmoe_7b_finetune_config(
+    tokenizer_path="allenai/OLMoE-1B-7B-0125",
+    name="olmoe_full_sft",
+    pretrained_checkpoint="path/to/olmoe/checkpoint",
+    peft=None,  # Full supervised finetuning
+    train_iters=1000,
+    global_batch_size=128,
+    finetune_lr=5e-6,
+    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
+)
+```
+
+#### LoRA Finetuning
+
 ```python
 from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
 
@@ -102,60 +152,9 @@ cfg = olmoe_7b_finetune_config(
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
+    # Uses TP=1, PP=1, EP=1 (8 GPUs) automatically
 )
 ```
-
-### Example usage (Full SFT)
-```python
-cfg = olmoe_7b_finetune_config(
-    tokenizer_path="allenai/OLMoE-1B-7B-0125",
-    name="olmoe_full_sft",
-    pretrained_checkpoint="path/to/olmoe/checkpoint",
-    peft=None,  # Full supervised finetuning
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=5e-6,  # Lower LR for full SFT
-)
-```
-
-### Default configurations
-
-#### LoRA/DoRA (1 node, 8 GPUs)
-- TP=1, PP=1, EP=1, LR=1e-4
-- Optimized for parameter-efficient training
-- Lower memory footprint
-
-#### Full SFT (1 node, 8 GPUs)
-- TP=1, PP=1, EP=8, LR=5e-6
-- Full model training with expert parallelism
-- Higher throughput with distributed experts
-
-## API reference
-
-- OLMoE recipes: [bridge.recipes.olmoe](../../apidocs/bridge/bridge.recipes.olmoe.md)
-- OLMoE model provider: [bridge.models.olmoe.OlMoEModelProvider](../../apidocs/bridge/bridge.models.olmoe.md)
-
-## Performance optimizations
-
-### Memory efficiency
-- **Selective recomputation**: Reduces activation memory by recomputing during backward pass
-- **Manual GC**: Aggressive garbage collection (interval=5) for stable memory usage
-- **Precision-aware optimizer**: BF16 gradients and optimizer states with FP32 master weights
-- **Expert parallelism**: Distributes experts across GPUs (EP=8 recommended)
-
-### Compute efficiency
-- **MoE permute fusion**: Fuses expert permutation operations
-- **Grouped GEMM**: Optimized expert computation with grouped matrix multiplications
-- **Router load balancing**: Auxiliary loss for balanced expert utilization
-- **AllToAll dispatcher**: Efficient token routing across expert parallel ranks
-
-## Pipeline parallelism layouts
-
-OLMoE (7B) supports several PP configurations with pre-defined symmetric layouts:
-- **PP=1**: No pipelining (default)
-- **PP=2**: 8+8 layer split with embedding/loss
-- **PP=4**: 4+4+4+4 layer split
-- **VP (Virtual Pipeline)**: PP=2,VP=2 supported
 
 ## Hugging Face model cards
 

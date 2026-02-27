@@ -152,11 +152,13 @@ class DoRALinear(AdapterWrapper):
             tuple: A tuple containing the DoRA output and bias term.
         """
         linear_output, bias, layernorm_output = self.base_linear_forward(x)
+        if not self._adapter_enabled:
+            return linear_output, bias
         adapter_output = self.adapter(layernorm_output.contiguous())
 
         # mag_norm_scale is  ||W_0 + B_0 A_0|| / ||W_0 + B A||  (scaling in front of BA not shown)
         mag_norm_scale = (self.adapter.get_weight_magnitude() / self._get_weight_norm()).view(1, 1, -1)
-        if self.adapter.dropout is None or not self.training:
+        if not self.training or isinstance(self.adapter.dropout, nn.Identity):
             dropout_correction = 0
         else:
             dropout_correction = (mag_norm_scale - 1) * self.base_linear_forward(

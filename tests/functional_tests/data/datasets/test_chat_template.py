@@ -98,14 +98,12 @@ def chat_tokenizer():
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=tokenizer_path,
+        chat_template=LLAMA_31_CHAT_TEMPLATE_WITH_TOOLS,
     )
 
     # Override with custom template that has generation tags (like NeMo does)
     # This enables proper context/answer splitting via return_assistant_tokens_mask
-    tokenizer = build_tokenizer(
-        tokenizer_config=tokenizer_config,
-        chat_template=LLAMA_31_CHAT_TEMPLATE_WITH_TOOLS,
-    )
+    tokenizer = build_tokenizer(config=tokenizer_config)
 
     return tokenizer
 
@@ -144,13 +142,19 @@ class TestChatTemplateWithRealTokenizer:
                 context_parallel_size=1,
             )
 
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield
@@ -231,8 +235,8 @@ class TestChatTemplateWithRealTokenizer:
         loss_mask = collated["loss_mask"][0]
 
         # Decode to verify tool schema injection and format
-        hf_tokenizer = chat_tokenizer._tokenizer
-        full_string = hf_tokenizer.decode(tokens)
+        hf_tokenizer = chat_tokenizer
+        full_string = hf_tokenizer.detokenize(tokens)
 
         # Verify tool schema was injected
         assert "get_weather" in full_string
@@ -453,8 +457,8 @@ class TestChatTemplateWithRealTokenizer:
         )
 
         item = dataset[0]
-        hf_tokenizer = chat_tokenizer._tokenizer
-        full_string = hf_tokenizer.decode(item["input_ids"])
+        hf_tokenizer = chat_tokenizer
+        full_string = hf_tokenizer.detokenize(item["input_ids"])
 
         # Verify per-message tool was used, not global
         assert "custom_function" in full_string
@@ -499,13 +503,19 @@ class TestChatPreprocessFunctional:
                 context_parallel_size=1,
             )
 
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
         from megatron.bridge.training.initialize import _set_random_seed
+
+        # Create pg_collection from initialized mpu
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
         _set_random_seed(
             seed_=1234,
             data_parallel_random_init=False,
             te_rng_tracker=True,
             inference_rng_tracker=False,
+            pg_collection=pg_collection,
         )
 
         yield
@@ -547,10 +557,10 @@ class TestChatPreprocessFunctional:
         )
 
         # Decode and verify
-        hf_tokenizer = chat_tokenizer._tokenizer
-        decoded_full = hf_tokenizer.decode(result["input_ids"])
-        decoded_context = hf_tokenizer.decode(result["context_ids"])
-        decoded_answer = hf_tokenizer.decode(result["answer_ids"])
+        hf_tokenizer = chat_tokenizer
+        decoded_full = hf_tokenizer.detokenize(result["input_ids"])
+        decoded_context = hf_tokenizer.detokenize(result["context_ids"])
+        decoded_answer = hf_tokenizer.detokenize(result["answer_ids"])
 
         # Verify context + answer = full
         assert decoded_context + decoded_answer == decoded_full
@@ -581,9 +591,9 @@ class TestChatPreprocessFunctional:
         assert "answer_ids" in result
 
         # Decode
-        hf_tokenizer = chat_tokenizer._tokenizer
-        decoded_full = hf_tokenizer.decode(result["input_ids"])
-        decoded_answer = hf_tokenizer.decode(result["answer_ids"])
+        hf_tokenizer = chat_tokenizer
+        decoded_full = hf_tokenizer.detokenize(result["input_ids"])
+        decoded_answer = hf_tokenizer.detokenize(result["answer_ids"])
 
         # Verify content
         assert "you are a robot" in decoded_full
@@ -604,19 +614,19 @@ class TestChatPreprocessFunctional:
         }
 
         result = _chat_preprocess(source, chat_tokenizer)
-        hf_tokenizer = chat_tokenizer._tokenizer
+        hf_tokenizer = chat_tokenizer
 
         # Extract assistant-only tokens using loss mask
         assistant_mask_indices = [i for i, mask in enumerate(result["loss_mask"]) if mask == 1]
         assistant_only_tokens = [result["input_ids"][idx] for idx in assistant_mask_indices]
-        assistant_only_text = hf_tokenizer.decode(assistant_only_tokens)
+        assistant_only_text = hf_tokenizer.detokenize(assistant_only_tokens)
 
         # Verify both assistant responses are in the masked portion
         assert "First answer" in assistant_only_text
         assert "Second answer" in assistant_only_text
 
         # Verify context includes both assistant headers (multi-turn)
-        decoded_context = hf_tokenizer.decode(result["context_ids"])
+        decoded_context = hf_tokenizer.detokenize(result["context_ids"])
         # The last answer should NOT be in context
         assert "Second answer" not in decoded_context or result["answer_ids"].shape[0] > 0
 
@@ -660,9 +670,9 @@ class TestChatPreprocessFunctional:
         }
 
         result = _chat_preprocess(source, chat_tokenizer, tool_schemas=tool_schemas)
-        hf_tokenizer = chat_tokenizer._tokenizer
+        hf_tokenizer = chat_tokenizer
 
-        decoded_full = hf_tokenizer.decode(result["input_ids"])
+        decoded_full = hf_tokenizer.detokenize(result["input_ids"])
 
         # Verify tool schema was injected
         assert "get_weather" in decoded_full
@@ -683,7 +693,7 @@ class TestChatPreprocessFunctional:
 
         if len(assistant_mask_indices) > 0:
             assistant_only_tokens = [result["input_ids"][idx] for idx in assistant_mask_indices]
-            assistant_only_text = hf_tokenizer.decode(assistant_only_tokens)
+            assistant_only_text = hf_tokenizer.detokenize(assistant_only_tokens)
 
             # Verify content appears in masked output
             # Without generation tags, this will be all content

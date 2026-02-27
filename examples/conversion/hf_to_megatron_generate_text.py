@@ -15,10 +15,10 @@
 """
 Example:
   # Load from HuggingFace model:
-  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
+  uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
+  uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
 """
 
 import argparse
@@ -166,6 +166,10 @@ def main(args) -> None:
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+
+    # TEMP FIX for inference failure when mtp_num_layers is not None
+    for m in model:
+        m.config.mtp_num_layers = None
 
     model = [m.cuda() for m in model]
     for m in model:

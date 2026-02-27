@@ -183,6 +183,16 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     if obj is None:
         return obj
 
+    # Explicitly drop process group objects without importing their classes directly.
+    cls = obj if isinstance(obj, type) else type(obj)
+    cls_module = getattr(cls, "__module__", "")
+    cls_name = getattr(cls, "__qualname__", getattr(cls, "__name__", ""))
+    if (cls_module, cls_name) in {
+        ("megatron.core.process_groups_config", "ProcessGroupCollection"),
+        ("torch._C._distributed_c10d", "ProcessGroup"),
+    }:
+        return None
+
     # Check if object is a problematic callable
     if callable(obj):
         # Allow classes/types but remove function objects, methods, partials

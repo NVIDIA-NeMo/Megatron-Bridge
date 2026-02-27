@@ -14,15 +14,17 @@
 
 import logging
 
-from utils.helpers import (
-    get_precision_config,
-    set_workload_base_configs,
+from utils.overrides import set_workload_base_configs
+from utils.precision import get_precision_config
+from utils.utils import get_workload_base_config
+
+from megatron.bridge.recipes.deepseek.deepseek_v3 import (
+    deepseek_v3_pretrain_config as pretrain_config,
 )
-
-from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import (
+    set_deepseek_v3_pipeline_model_parallel_layout,
+)
 from megatron.bridge.training.config import ConfigContainer
-
-from . import workload_base_configs as base_cfgs
 
 
 logger = logging.getLogger(__name__)
@@ -43,25 +45,33 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     cfg.model.moe_router_force_load_balancing = True
 
 
-def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """GB300, baseline config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-
-    cfg = pretrain_config(
-        mock=True,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
     )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -72,33 +82,36 @@ def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
-def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def deepseek_v3_pretrain_config_gb200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
     """GB200, baseline config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-
-    cfg = pretrain_config(
-        mock=True,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
     )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -109,33 +122,33 @@ def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
-    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.optimizer.overlap_param_gather = False
-
     return cfg
 
 
-def deepseek_v3_b200_config(precision: str = "bf16") -> ConfigContainer:
-    """B200, baseline config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG
-        if precision == "fp8_mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-
-    cfg = pretrain_config(
-        mock=True,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout=None,
+def deepseek_v3_pretrain_config_b300(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """B300, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="b300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
     )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    # Recompute layout based on updated PP/VP sizes
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -144,25 +157,65 @@ def deepseek_v3_b200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_h100_config(precision: str = "bf16") -> ConfigContainer:
-    """H100, baseline config."""
-    if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_BF16_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-    else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG
-        if precision == "fp8_sc":
-            base_cfg = base_cfgs.DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG
-        precision_config = get_precision_config(precision)
-
-    cfg = pretrain_config(
-        mock=True,
-        precision_config=precision_config,
-        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
-        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
-        layout="Et|(tt|)*30mL",
+def deepseek_v3_pretrain_config_b200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """B200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="b200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
     )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    # Recompute layout based on updated PP/VP sizes
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    return cfg
+
+
+def deepseek_v3_pretrain_config_h100(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """H100, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="h100",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 

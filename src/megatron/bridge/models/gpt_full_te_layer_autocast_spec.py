@@ -17,9 +17,10 @@ from typing import Any, Callable, Optional, Union
 
 import packaging
 import torch
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
 from megatron.core.transformer.cuda_graphs import CudaGraphManager
+from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules, get_num_layers_to_build
@@ -186,7 +187,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
             "attention_dropout": config.attention_dropout,
             "layer_number": layer_number + self._get_layer_offset(),
             "kv_channels": config.kv_channels,
-            "tp_size": parallel_state.get_tensor_model_parallel_world_size(),
+            "tp_size": config.tensor_model_parallel_size,
             "params_dtype": config.params_dtype,
             "get_rng_state_tracker": tensor_parallel.random.get_cuda_rng_tracker,
             "fuse_wgrad_accumulation": config.gradient_accumulation_fusion,
@@ -228,7 +229,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
         if (
             self.config.cuda_graph_impl == "local"
             and self.training
-            and "full_iteration" not in self.config.cuda_graph_scope
+            and CudaGraphScope.full_iteration not in self.config.cuda_graph_scope
         ):
             assert not config.cpu_offloading and config.recompute_granularity is None, "Cudagraphs not supported"
             self.add_module("cudagraph_manager", CudaGraphManager(config))
@@ -265,15 +266,16 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
         return hidden_states, context
 
     def _get_layer_offset(self):
-        pipeline_rank = parallel_state.get_pipeline_model_parallel_rank()
+        # Derive pipeline/virtual pipeline indices from provided pg_collection/config
+        pp_group = getattr(self.config, "_pg_collection", None).pp if hasattr(self.config, "_pg_collection") else None
+        pipeline_rank = pp_group.rank() if pp_group is not None else 0
 
-        num_layers_per_pipeline_rank = (
-            self.config.num_layers // parallel_state.get_pipeline_model_parallel_world_size()
-        )
+        num_layers_per_pipeline_rank = self.config.num_layers // self.config.pipeline_model_parallel_size
 
-        if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-            vp_rank = parallel_state.get_virtual_pipeline_model_parallel_rank()
-            vp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+        vp_size = getattr(self.config, "virtual_pipeline_model_parallel_size", None)
+        vp_rank = getattr(self.config, "_vp_stage", None)
+        if vp_size is not None:
+            assert vp_rank is not None, "_vp_stage must be set on config when using virtual pipeline parallelism"
 
             total_num_layers = self.config.num_layers
             num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
@@ -282,7 +284,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
 
         else:
             # Each stage gets a contiguous set of layers.
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+            if self.config.pipeline_model_parallel_size > 1:
                 offset = pipeline_rank * num_layers_per_pipeline_rank
             else:
                 offset = 0

@@ -21,6 +21,33 @@ on:
       - "pull-request/[0-9]+"
       - "deploy-release/*"
 
+  # Allow MCore to trigger this workflow remotely for compatibility testing
+  workflow_dispatch:
+    inputs:
+      mcore_ref:
+        description: "MCore commit SHA to test against"
+        required: false
+        type: string
+      mcore_repo:
+        description: "MCore repository URL (for fetching from forks)"
+        required: false
+        type: string
+        default: "https://github.com/NVIDIA/Megatron-LM.git"
+      test_suite:
+        description: "Test suite to run"
+        required: false
+        type: choice
+        options:
+          - "all"
+          - "unit-only"
+          - "functional-only"
+        default: "all"
+      triggered_by:
+        description: "Trigger source (for tracking)"
+        required: false
+        type: string
+        default: "manual"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
   cancel-in-progress: true
@@ -34,7 +61,14 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.73.2
+    with:
+      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+      non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   lint-check:
     name: Lint check
@@ -54,6 +88,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_ref }}"
+          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
+          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+
+      - name: Set environment for MCore testing
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "MCORE_TRIGGERED_TESTING=true" | tee -a "$GITHUB_ENV"
+          echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Check lint
         run: |
@@ -76,7 +127,7 @@ jobs:
 
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: self-hosted-nemo
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     environment: nemo-ci
     if: |
       (
@@ -90,6 +141,43 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_ref }}"
+          echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
+          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
+          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+
+          # Verify the checkout was successful
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+
+          echo "✅ MCore submodule updated successfully"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+
+          git log -1 --pretty=format:"📝 Commit: %H%n👤 Author: %an%n📅 Date: %ad%n💬 Message: %s" --date=short
+          cd ../..
+
+          # Store for Docker build arg
+          echo "MCORE_COMMIT_SHA=${EXPECTED_COMMIT}" | tee -a "$GITHUB_ENV"
+
+      - name: Set environment for MCore testing
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "MCORE_TRIGGERED_TESTING=true" | tee -a "$GITHUB_ENV"
+          echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Setup python
         uses: actions/setup-python@v5
@@ -152,6 +240,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute cache keys
+        id: cache_keys
+        shell: bash
+        run: |
+          PR_NUMBER="${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}"
+          BRANCH_SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-' | tr -cd '[:alnum:]._-')
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            KEY="main"
+          elif [[ -n "$PR_NUMBER" ]]; then
+            KEY="$PR_NUMBER"
+          else
+            KEY="$BRANCH_SANITIZED"
+          fi
+          echo "key=$KEY" >> $GITHUB_OUTPUT
+          echo "cache-to=type=registry,ref=${{ env.container-registry }}/megatron-bridge:${KEY}-buildcache,mode=max" >> $GITHUB_OUTPUT
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -160,15 +264,16 @@ jobs:
           context: .
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
+            MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: |
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number || 0 }}-buildcache,mode=max
+            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
             type=registry,ref=${{ env.container-registry }}/megatron-bridge:main-buildcache,mode=max
             ${{ steps.cache_from.outputs.LAST_PRS }}
-          cache-to: |
-            type=registry,ref=${{ env.container-registry }}/megatron-bridge:${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number || 0 }}-buildcache,mode=max
+          cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
-            ${{ env.container-registry }}/megatron-bridge:${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number || 0 }}
+            ${{ env.container-registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
             ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
@@ -181,8 +286,9 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: self-hosted-nemo
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     name: Launch_Unit_Tests
     environment: nemo-ci
     env:
@@ -191,6 +297,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule for unit tests..."
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+
+          echo "🧪 UNIT TESTS - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+
+          echo "✅ MCore commit verified"
+          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          git log -1 --oneline
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -203,15 +336,17 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   cicd-functional-tests:
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 16
       matrix:
         include:
           - script: L2_Launch_training
-            timeout: 40
+            timeout: 50
           - script: L2_Launch_converter
           - script: L2_Launch_models_deepseek
           - script: L2_Launch_models_gemma
@@ -222,22 +357,28 @@ jobs:
           - script: L2_Launch_models_mistral
           - script: L2_Launch_models_nemotron
           - script: L2_Launch_models_nemotronh
+          - script: L2_Launch_models_nemotronh_quantization
           - script: L2_Launch_models_nemotron_vl
           - script: L2_Launch_models_olmoe
           - script: L2_Launch_models_qwen
           - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_recipes_gemma_vl
+          - script: L2_Launch_recipes_gpt_oss
+          - script: L2_Launch_models_qwen_vl_quantization
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
-          - script: L2_Launch_recipes_mamba
+          - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization
           - script: L2_Launch_quantization_aware_training
-          - script: L2_Launch_quantization_export
-    needs: [cicd-unit-tests]
-    runs-on: self-hosted-nemo
+          # - script: L2_Launch_quantization_export
+          - script: L2_Launch_recipes_llama_cuda_graphs
+          - script: L2_Launch_utils
+    needs: [pre-flight, cicd-unit-tests]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
         success()
@@ -245,6 +386,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
@@ -254,6 +396,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule for functional tests..."
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+
+          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+
+          echo "✅ MCore commit verified"
+          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          git log -1 --oneline
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -266,6 +435,8 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
   Nemo_CICD_Test:
     needs:
@@ -292,7 +463,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-          SKIPPING_IS_ALLOWED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' || needs.pre-flight.outputs.is_ci_workload == 'true' }}
+          SKIPPING_IS_ALLOWED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' || needs.pre-flight.outputs.is_ci_workload == 'true' || inputs.test_suite == 'unit-only' || inputs.test_suite == 'functional-only' }}
         run: |
           FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length') || echo 0
 
@@ -316,7 +487,6 @@ jobs:
       )
       && needs.pre-flight.outputs.is_ci_workload == 'false'
       && !cancelled()
-    environment: nemo-ci
     steps:
       - name: Generate fake coverage report
         uses: actions/github-script@v6

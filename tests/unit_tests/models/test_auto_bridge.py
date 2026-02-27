@@ -541,11 +541,34 @@ class TestAutoBridge:
 
         with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
             bridge = AutoBridge(mock_hf_model)
-            bridge.save_hf_pretrained(mock_megatron_model, "./output_dir")
 
-            # Check artifacts were saved on rank 0
-            mock_hf_model.save_artifacts.assert_called_once_with("./output_dir", original_source_path=None)
-            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True, True)
+            # Mock _model_bridge to have no ADDITIONAL_FILE_PATTERNS
+            with patch.object(
+                type(bridge), "_model_bridge", PropertyMock(return_value=Mock(ADDITIONAL_FILE_PATTERNS=None))
+            ):
+                bridge.save_hf_pretrained(mock_megatron_model, "./output_dir")
+
+                # Check artifacts were saved on rank 0
+                mock_hf_model.save_artifacts.assert_called_once_with(
+                    "./output_dir", original_source_path=None, additional_files=None
+                )
+                mock_save_hf_weights.assert_called_once_with(
+                    mock_megatron_model,
+                    "./output_dir",
+                    True,
+                    True,
+                    merge_adapter_weights=True,
+                    distributed_save=False,
+                    save_every_n_ranks=1,
+                )
+
+    def test_save_hf_pretrained_config_only_raises(self):
+        """Test save_hf_pretrained raises when bridge has config only."""
+        mock_config = Mock(spec=PretrainedConfig)
+        bridge = AutoBridge(mock_config)
+
+        with pytest.raises(ValueError, match="from_hf_pretrained"):
+            bridge.save_hf_pretrained([Mock()], "./output_dir")
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
@@ -562,11 +585,24 @@ class TestAutoBridge:
 
         with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
             bridge = AutoBridge(mock_hf_model)
-            bridge.save_hf_pretrained(mock_megatron_model, "./output_dir")
 
-            # Artifacts should NOT be saved on non-zero rank
-            mock_hf_model.save_artifacts.assert_not_called()
-            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True, True)
+            # Mock _model_bridge to have no ADDITIONAL_FILE_PATTERNS
+            with patch.object(
+                type(bridge), "_model_bridge", PropertyMock(return_value=Mock(ADDITIONAL_FILE_PATTERNS=None))
+            ):
+                bridge.save_hf_pretrained(mock_megatron_model, "./output_dir")
+
+                # Artifacts should NOT be saved on non-zero rank
+                mock_hf_model.save_artifacts.assert_not_called()
+                mock_save_hf_weights.assert_called_once_with(
+                    mock_megatron_model,
+                    "./output_dir",
+                    True,
+                    True,
+                    merge_adapter_weights=True,
+                    distributed_save=False,
+                    save_every_n_ranks=1,
+                )
 
     def test_export_hf_weights(self):
         """Test exporting weights from Megatron to HF format."""
@@ -756,7 +792,11 @@ class TestAutoBridge:
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Meta-Llama-3-8B")
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
-            mock_megatron_model, "./megatron_checkpoint", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+            mock_megatron_model,
+            "./megatron_checkpoint",
+            hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+            hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            low_memory_save=True,
         )
 
     @patch.object(AutoBridge, "save_megatron_model")
@@ -779,7 +819,11 @@ class TestAutoBridge:
         mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
-            mock_megatron_model, "./megatron_checkpoint", hf_tokenizer_path="./local_model"
+            mock_megatron_model,
+            "./megatron_checkpoint",
+            hf_tokenizer_path="./local_model",
+            hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            low_memory_save=True,
         )
 
     def test_export_ckpt_basic(self):
@@ -805,8 +849,22 @@ class TestAutoBridge:
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(
-                    mock_megatron_model, "./hf_export", show_progress=True, source_path=None, strict=False
+                    mock_megatron_model,
+                    "./hf_export",
+                    show_progress=True,
+                    source_path=None,
+                    strict=False,
                 )
+
+    def test_export_ckpt_config_only_raises(self):
+        """Test export_ckpt raises when bridge has config only."""
+        mock_config = Mock(spec=PretrainedConfig)
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_config
+
+        with pytest.raises(ValueError, match="from_hf_pretrained"):
+            bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
 
     def test_export_ckpt_with_kwargs(self):
         """Test export_ckpt with custom kwargs."""
@@ -831,7 +889,11 @@ class TestAutoBridge:
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(
-                    mock_megatron_model, "./hf_export", show_progress=False, source_path=None, strict=False
+                    mock_megatron_model,
+                    "./hf_export",
+                    show_progress=False,
+                    source_path=None,
+                    strict=False,
                 )
 
     def test_save_megatron_model_basic(self):
@@ -847,10 +909,14 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
-            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
+            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path", low_memory_save=True)
 
             mock_save_megatron_model.assert_called_once_with(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path=None
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path=None,
+                low_memory_save=True,
+                hf_tokenizer_kwargs=None,
             )
 
     def test_save_megatron_model_with_tokenizer(self):
@@ -867,11 +933,18 @@ class TestAutoBridge:
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
             )
 
             mock_save_megatron_model.assert_called_once_with(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                low_memory_save=True,
+                hf_tokenizer_kwargs=None,
             )
 
     def test_save_megatron_model_import_error(self):
@@ -1001,3 +1074,69 @@ class TestAutoBridge:
                         # Check other expected arguments
                         assert call_args.args[0] == "checkpoint_path"  # path argument
                         assert "skip_temp_dist_context" in call_args.kwargs
+
+    @patch("torch.distributed.is_available")
+    @patch("torch.distributed.is_initialized")
+    def test_save_hf_pretrained_uses_bridge_additional_file_patterns(self, mock_is_init, mock_is_avail):
+        """Test that save_hf_pretrained uses bridge-level ADDITIONAL_FILE_PATTERNS."""
+        # Setup distributed mocks
+        mock_is_avail.return_value = False
+        mock_is_init.return_value = False
+
+        # Create a mock PreTrainedCausalLM
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.save_artifacts = Mock()
+
+        # Create AutoBridge
+        bridge = AutoBridge(mock_pretrained)
+
+        # Mock the _model_bridge to have ADDITIONAL_FILE_PATTERNS
+        mock_model_bridge = Mock()
+        mock_model_bridge.ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py", "custom_file.txt"]
+
+        # Patch _model_bridge as a property
+        with patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=mock_model_bridge)):
+            # Call save_hf_pretrained
+            mock_model = Mock()
+
+            with patch.object(bridge, "save_hf_weights"):
+                bridge.save_hf_pretrained(mock_model, "/tmp/output")
+
+            # Verify save_artifacts was called with the bridge-level patterns
+            mock_pretrained.save_artifacts.assert_called_once()
+            call_kwargs = mock_pretrained.save_artifacts.call_args.kwargs
+
+            assert call_kwargs["additional_files"] == ["*reasoning_parser.py", "custom_file.txt"]
+
+    @patch("torch.distributed.is_available")
+    @patch("torch.distributed.is_initialized")
+    def test_save_hf_pretrained_without_additional_file_patterns(self, mock_is_init, mock_is_avail):
+        """Test that save_hf_pretrained works when bridge has no ADDITIONAL_FILE_PATTERNS."""
+        # Setup distributed mocks
+        mock_is_avail.return_value = False
+        mock_is_init.return_value = False
+
+        # Create a mock PreTrainedCausalLM
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.save_artifacts = Mock()
+
+        # Create AutoBridge
+        bridge = AutoBridge(mock_pretrained)
+
+        # Mock the _model_bridge without ADDITIONAL_FILE_PATTERNS
+        mock_model_bridge = Mock()
+        mock_model_bridge.ADDITIONAL_FILE_PATTERNS = None
+
+        # Patch _model_bridge as a property
+        with patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=mock_model_bridge)):
+            # Call save_hf_pretrained
+            mock_model = Mock()
+
+            with patch.object(bridge, "save_hf_weights"):
+                bridge.save_hf_pretrained(mock_model, "/tmp/output")
+
+            # Verify save_artifacts was called with None for additional_files
+            mock_pretrained.save_artifacts.assert_called_once()
+            call_kwargs = mock_pretrained.save_artifacts.call_args.kwargs
+
+            assert call_kwargs["additional_files"] is None

@@ -15,7 +15,7 @@
 import pytest
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.param_mapping import DirectMapping, QKVMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, DirectMapping, QKVMapping
 
 
 class TestMegatronMappingRegistry:
@@ -227,6 +227,41 @@ class TestMegatronMappingRegistryEdgeCases:
         # get_mappings_by_pattern should return both
         matches = bridge.get_mappings_by_pattern("decoder.layers.*.weight")
         assert len(matches) == 2
+
+    def test_layernorm_alias_added_for_fused_te_mapping(self):
+        """Test that fused LayerNorm mappings get a separate-layer alias."""
+        mapping = AutoMapping(
+            megatron_param="decoder.layers.*.self_attention.linear_qkv.layer_norm_weight",
+            hf_param="model.layers.*.input_layernorm.weight",
+            permute_dims=(1, 0),
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        original = bridge.megatron_to_hf_lookup("decoder.layers.1.self_attention.linear_qkv.layer_norm_weight")
+        assert original is not None
+        assert original.hf_param == "model.layers.1.input_layernorm.weight"
+
+        alias = bridge.megatron_to_hf_lookup("decoder.layers.1.input_layernorm.weight")
+        assert alias is not None
+        assert alias.megatron_param == "decoder.layers.1.input_layernorm.weight"
+        assert alias.hf_param == "model.layers.1.input_layernorm.weight"
+        assert isinstance(alias, AutoMapping)
+        assert alias.permute_dims == (1, 0)
+
+    def test_layernorm_alias_not_duplicated_when_present(self):
+        """Test that LayerNorm aliases are not duplicated if already present."""
+        mapping1 = DirectMapping(
+            megatron_param="decoder.layers.*.self_attention.linear_qkv.layer_norm_weight",
+            hf_param="model.layers.*.input_layernorm.weight",
+        )
+        mapping2 = DirectMapping(
+            megatron_param="decoder.layers.*.input_layernorm.weight",
+            hf_param="model.layers.*.input_layernorm.weight",
+        )
+        bridge = MegatronMappingRegistry(mapping1, mapping2)
+
+        assert len(bridge) == 2
+        assert len(bridge.get_mappings_by_pattern("decoder.layers.*.input_layernorm.weight")) == 1
 
     def test_complex_qkv_patterns(self):
         """Test complex QKV patterns with multiple levels of nesting."""

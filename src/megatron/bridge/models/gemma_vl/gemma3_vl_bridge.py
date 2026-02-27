@@ -25,15 +25,34 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf,
+    rope_scaling_factor_from_hf,
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
-@MegatronModelBridge.register_bridge(source=Gemma3ForConditionalGeneration, target=Gemma3VLModel)
+@MegatronModelBridge.register_bridge(
+    source=Gemma3ForConditionalGeneration,
+    target=Gemma3VLModel,
+    provider=Gemma3VLModelProvider,
+    model_type="gemma3_vl",
+)
 class Gemma3VLBridge(MegatronModelBridge):
     """
     Megatron Bridge for Gemma3 VL.
+
+    This bridge handles the conversion between HuggingFace Gemma3ForConditionalGeneration
+    and Megatron-Core Gemma3VLModel formats, including weight mappings and
+    configuration translation for vision-language models.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-3-4b-it")
+        >>> provider = bridge.to_megatron_provider()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Gemma3VLModelProvider:
@@ -41,37 +60,38 @@ class Gemma3VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        provider = Gemma3VLModelProvider(
-            # Text configuration
-            init_method_std=text_config.initializer_range,
-            hidden_size=text_config.hidden_size,
-            ffn_hidden_size=text_config.intermediate_size,
-            kv_channels=text_config.head_dim,
-            seq_length=text_config.max_position_embeddings,
-            num_attention_heads=text_config.num_attention_heads,
-            num_layers=text_config.num_hidden_layers,
-            num_query_groups=text_config.num_key_value_heads,
-            window_size=text_config.sliding_window,
-            rotary_base=(text_config.rope_local_base_freq, text_config.rope_theta),
-            layernorm_epsilon=text_config.rms_norm_eps,
-            vocab_size=text_config.vocab_size,
-            softmax_scale=1.0 / math.sqrt(text_config.query_pre_attn_scalar),
-            rope_scaling_factor=text_config.rope_scaling["factor"] if text_config.rope_scaling else 1.0,
-            # Vision configuration
-            vision_config=vision_config,
-            mm_tokens_per_image=hf_config.mm_tokens_per_image,
-            # VL-specific token IDs
-            bos_token_id=getattr(hf_config, "bos_token_id", 0),
-            eos_token_id=getattr(hf_config, "eos_token_id", 1),
-            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 255999),
-            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 256000),
-            image_token_id=getattr(hf_config, "image_token_id", 151655),
-            # Precision configuration
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-        )
+        # Use base class helper for common config conversion
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        provider = Gemma3VLModelProvider(**provider_kwargs)
 
+        # Handle rope_local_base_freq for Gemma3 VL
+        rope_local_base_freq = rope_local_base_freq_from_hf(text_config)
+        rope_theta = rope_theta_from_hf(text_config)
+
+        # Gemma3-specific features not in CONFIG_MAPPING
+        provider.window_size = text_config.sliding_window
+        provider.rotary_base = (rope_local_base_freq, rope_theta)
+        provider.softmax_scale = 1.0 / math.sqrt(text_config.query_pre_attn_scalar)
+        provider.rope_scaling_factor = rope_scaling_factor_from_hf(text_config, default=1.0)
+
+        # Override dtype and vocab settings to match baseline
+        provider.bf16 = True
+        provider.params_dtype = torch.bfloat16
+        provider.autocast_dtype = torch.bfloat16
+        provider.make_vocab_size_divisible_by = 128
+
+        # Vision configuration
+        provider.vision_config = vision_config
+        provider.mm_tokens_per_image = hf_config.mm_tokens_per_image
+
+        # VL-specific token IDs
+        provider.bos_token_id = getattr(hf_config, "bos_token_id", 0)
+        provider.eos_token_id = getattr(hf_config, "eos_token_id", 1)
+        provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 255999)
+        provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 256000)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 262144)
+
+        # Vision projector configuration
         provider.vision_projector_config.input_size = vision_config.hidden_size
         provider.vision_projector_config.hidden_size = text_config.hidden_size
 

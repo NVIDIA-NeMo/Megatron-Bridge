@@ -86,6 +86,7 @@ class TestQATWorkflow:
             quant_cfg,
             "--megatron-save-path",
             str(output_dir),
+            "--disable-hf-datasets-file-lock",
         ]
 
         # Add parallelism arguments only if > 1
@@ -137,6 +138,9 @@ class TestQATWorkflow:
         # Checkpoints are saved at intervals, so the last one is at train_iters if it's a multiple of save_interval
         final_iteration = (train_iters // save_interval) * save_interval
 
+        # Use a smaller seq_length for functional tests (smaller than model default)
+        test_seq_length = 512
+
         # Base command for pre-training from quantized checkpoint
         cmd = [
             python_executable,
@@ -153,12 +157,14 @@ class TestQATWorkflow:
             "--hf-path",
             hf_model_id,
             "model.gradient_accumulation_fusion=False",
+            f"model.seq_length={test_seq_length}",
+            f"+dataset.seq_length={test_seq_length}",  # explicitly set same seq_len for model and dataset
             f"checkpoint.pretrained_checkpoint={quantized_checkpoint_path}",
             f"checkpoint.save={checkpoint_save_dir}",
             f"checkpoint.save_interval={save_interval}",
             f"train.train_iters={train_iters}",
-            "train.eval_interval=5",
-            "train.eval_iters=2",
+            "validation.eval_interval=5",
+            "validation.eval_iters=2",
             "train.global_batch_size=8",
             "scheduler.lr_warmup_iters=2",
             f"scheduler.lr_decay_iters={train_iters}",
