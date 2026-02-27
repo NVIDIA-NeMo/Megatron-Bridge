@@ -473,10 +473,6 @@ class Qwen35VLBridge(MegatronModelBridge):
         provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
         provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
 
-        if os.environ.get("QWEN35_DEBUG", "0") == "1":
-            logger.warning("QWEN35_DEBUG=1: overriding to tiny 4-layer model for debugging")
-            provider.num_layers = 4
-
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:

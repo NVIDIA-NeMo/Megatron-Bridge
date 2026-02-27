@@ -15,30 +15,37 @@
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
-MODEL_NAME=Qwen3.5-397B-A17B # Qwen3.5-35B-A3B, Qwen3.5-122B-A10B, Qwen3.5-397B-A17B, Qwen3.5-27B 
-MODEL_PATH=Qwen/${MODEL_NAME}
+MODEL_NAME=Qwen3.5-35B-A3B # Qwen3.5-35B-A3B, Qwen3.5-122B-A10B, Qwen3.5-397B-A17B, Qwen3.5-27B
+
+if [ "${MODEL_NAME}" = "Qwen3.5-27B" ]; then
+    HF_MODEL_CLASS="Qwen3_5ForConditionalGeneration"
+else
+    HF_MODEL_CLASS="Qwen3_5MoeForConditionalGeneration"
+fi
+
 # Make sure to upgrade to transformers >= 5.2.0
 # uv add transformers>=5.2.0
 
 # Import HF → Megatron
 uv run python examples/conversion/convert_checkpoints.py import \
-    --hf-model ${MODEL_PATH} \
-    --megatron-path ${WORKSPACE}/models/${MODEL_NAME} \
+    --hf-model Qwen/${MODEL_NAME} \
+    --megatron-path ${WORKSPACE}/${MODEL_NAME} \
     --torch-dtype bfloat16
 
+# Compare HF and Megatron models logits
 uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/compare_hf_and_megatron/compare.py \
-    --hf_model_path ${MODEL_PATH} \
-    --megatron_model_path ${WORKSPACE}/models/${MODEL_NAME} \
-    --model_class "Qwen3_5MoeForConditionalGeneration" \
+    --hf_model_path Qwen/${MODEL_NAME} \
+    --megatron_model_path ${WORKSPACE}/${MODEL_NAME} \
+    --model_class "${HF_MODEL_CLASS}" \
     --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
     --prompt "Describe this image." \
     --tp 1 --pp 1 --ep 8
 
 # Export Megatron → HF
 uv run python examples/conversion/convert_checkpoints.py export \
-    --hf-model ${MODEL_PATH} \
-    --megatron-path ${WORKSPACE}/models/${MODEL_NAME}/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/${MODEL_NAME}-hf-export
+    --hf-model Qwen/${MODEL_NAME} \
+    --megatron-path ${WORKSPACE}/${MODEL_NAME}/iter_0000000 \
+    --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export
 
 # Round-trip validation
 uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
