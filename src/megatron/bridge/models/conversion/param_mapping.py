@@ -29,7 +29,11 @@ from megatron.core.utils import (
     get_pg_size,
 )
 
-from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
+from megatron.bridge.models.conversion.utils import (
+    get_module_and_param_from_name,
+    is_modelopt_dynamic_module,
+    remove_non_pickleables,
+)
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
@@ -1150,7 +1154,10 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
 
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
-        module_type = type(module).__name__
+        if is_modelopt_dynamic_module(module):
+            module_type = module.get_original_cls_by_level(level=0).__name__
+        else:
+            module_type = type(module).__name__
 
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)
