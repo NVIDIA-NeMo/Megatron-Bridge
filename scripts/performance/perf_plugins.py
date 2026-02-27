@@ -292,6 +292,9 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "deepseek":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
+            if model_family_name == "kimi":
+                if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
         if model_family_name in ["llama"] and train_task in ["sft"]:
             # TODO: Verify for H100 and 8b
             del_cudnn_ln = False
