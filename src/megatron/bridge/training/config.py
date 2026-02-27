@@ -256,6 +256,11 @@ class DataloaderConfig:
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
 
+    def finalize(self):
+        """Finalize dataloader config field constraints."""
+        if self.num_workers == 0 and self.persistent_workers:
+            self.persistent_workers = False
+
 
 @dataclass(frozen=True)
 class DatasetBuildContext:
@@ -461,6 +466,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
+
+        DataloaderConfig.finalize(self)
 
 
 @dataclass
@@ -1445,7 +1452,7 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
-        if isinstance(self.dataset, GPTDatasetConfig):
+        if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
