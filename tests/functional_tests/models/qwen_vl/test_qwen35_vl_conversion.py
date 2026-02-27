@@ -29,6 +29,7 @@ Run MoE test:
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -55,77 +56,64 @@ except ImportError:
 
 # ---------------------------------------------------------------------------
 # Tiny dense config (Qwen3.5 dense style, ~small param count for fast tests)
+# Mirrors the structure of the real Qwen3.5-27B config:
+#   https://huggingface.co/Qwen/Qwen3.5-27B/blob/main/config.json
 # num_hidden_layers must be a multiple of full_attention_interval (4)
 # ---------------------------------------------------------------------------
 HF_QWEN35_VL_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen3_5ForConditionalGeneration"],
-    "bos_token_id": 248045,
-    "eos_token_id": 248044,
-    "vision_start_token_id": 248053,
-    "vision_end_token_id": 248054,
     "image_token_id": 248056,
-    "video_token_id": 248057,
-    "hidden_act": "silu",
-    "hidden_size": 256,
-    "initializer_range": 0.02,
-    "intermediate_size": 512,
-    "max_position_embeddings": 32768,
     "model_type": "qwen3_5",
-    "num_attention_heads": 4,
-    "num_hidden_layers": 4,
-    "num_key_value_heads": 2,
-    "head_dim": 64,
-    "rms_norm_eps": 1e-06,
-    "rope_theta": 10000000.0,
-    "tie_word_embeddings": False,
     "torch_dtype": "bfloat16",
-    "use_cache": True,
-    "attention_bias": False,
-    "full_attention_interval": 4,
-    "linear_conv_kernel_dim": 4,
-    "linear_key_head_dim": 32,
-    "linear_value_head_dim": 32,
-    "linear_num_key_heads": 4,
-    "linear_num_value_heads": 4,
-    "vision_config": {
-        "depth": 1,
-        "embed_dim": 256,
-        "hidden_size": 256,
-        "hidden_act": "silu",
-        "in_channels": 3,
-        "mlp_ratio": 2.0,
-        "num_heads": 4,
-        "patch_size": 14,
-        "spatial_merge_size": 2,
-        "temporal_patch_size": 2,
-    },
-    "rope_scaling": {"mrope_section": [8, 8, 8]},
     "text_config": {
-        "hidden_size": 256,
-        "intermediate_size": 512,
-        "num_hidden_layers": 4,
-        "num_attention_heads": 4,
-        "num_key_value_heads": 2,
-        "head_dim": 64,
-        "vocab_size": 2048,
-        "max_position_embeddings": 32768,
-        "rope_theta": 10000000.0,
+        "attention_bias": False,
+        "attention_dropout": 0.0,
+        "eos_token_id": 248044,
         "full_attention_interval": 4,
+        "head_dim": 64,
+        "hidden_act": "silu",
+        "hidden_size": 256,
+        "initializer_range": 0.02,
+        "intermediate_size": 512,
         "linear_conv_kernel_dim": 4,
         "linear_key_head_dim": 32,
-        "linear_value_head_dim": 32,
         "linear_num_key_heads": 4,
         "linear_num_value_heads": 4,
-        "rope_scaling": {"rope_type": "default", "mrope_section": [8, 8, 8]},
+        "linear_value_head_dim": 32,
+        "max_position_embeddings": 32768,
+        "model_type": "qwen3_5_text",
+        "num_attention_heads": 4,
+        "num_hidden_layers": 4,
+        "num_key_value_heads": 2,
+        "rms_norm_eps": 1e-06,
+        "torch_dtype": "bfloat16",
+        "use_cache": True,
+        "vocab_size": 2048,
         "rope_parameters": {
             "rope_type": "default",
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000.0,
             "mrope_section": [8, 8, 8],
         },
-        "torch_dtype": "bfloat16",
     },
-    "vocab_size": 2048,
+    "tie_word_embeddings": False,
+    "video_token_id": 248057,
+    "vision_config": {
+        "deepstack_visual_indexes": [],
+        "depth": 1,
+        "hidden_act": "gelu_pytorch_tanh",
+        "hidden_size": 256,
+        "in_channels": 3,
+        "intermediate_size": 512,
+        "num_heads": 4,
+        "num_position_embeddings": 2304,
+        "out_hidden_size": 256,
+        "patch_size": 14,
+        "spatial_merge_size": 2,
+        "temporal_patch_size": 2,
+    },
+    "vision_end_token_id": 248054,
+    "vision_start_token_id": 248053,
 }
 
 
@@ -142,21 +130,13 @@ class TestQwen35VLConversion:
         config = Qwen3_5Config(**HF_QWEN35_VL_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16
 
-        if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_parameters = {
-                "rope_type": "default",
-                "partial_rotary_factor": 0.25,
-                "mrope_section": [8, 8, 8],
-                "rope_theta": 10000000.0,
-            }
-
         model = Qwen3_5ForConditionalGeneration(config)
         model = model.to(dtype=torch.bfloat16)
 
         try:
             from transformers import AutoTokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-27B")
             tokenizer.save_pretrained(model_dir)
         except Exception:
             tokenizer_config = {
@@ -168,9 +148,6 @@ class TestQwen35VLConversion:
                 json.dump(tokenizer_config, f, indent=2)
 
         model.save_pretrained(model_dir, safe_serialization=True)
-        config_path = model_dir / "config.json"
-        with open(config_path, "w") as f:
-            json.dump(HF_QWEN35_VL_TOY_MODEL_CONFIG, f, indent=2)
 
         return str(model_dir)
 
@@ -193,10 +170,11 @@ class TestQwen35VLConversion:
             config_data = json.load(f)
 
         assert config_data["model_type"] == "qwen3_5"
-        assert config_data["hidden_size"] == 256
-        assert config_data["num_hidden_layers"] == 4
-        assert config_data["full_attention_interval"] == 4
+        assert "text_config" in config_data
         assert "vision_config" in config_data
+        text_cfg = config_data["text_config"]
+        assert text_cfg["hidden_size"] == 256
+        assert text_cfg["num_hidden_layers"] == 4
 
         _ = Qwen3_5ForConditionalGeneration.from_pretrained(
             qwen35_vl_toy_model_path,
@@ -254,93 +232,121 @@ class TestQwen35VLConversion:
             saved_config = json.load(f)
 
         assert saved_config["model_type"] == "qwen3_5"
-        assert saved_config["hidden_size"] == 256
+        assert "text_config" in saved_config
         assert "vision_config" in saved_config
 
 
 # ---------------------------------------------------------------------------
 # Tiny MoE config (Qwen3.5 MoE style)
+# Mirrors the structure of the real Qwen3.5-35B-A3B config:
+#   https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/config.json
 # ---------------------------------------------------------------------------
 HF_QWEN35_VL_MOE_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen3_5MoeForConditionalGeneration"],
-    "bos_token_id": 248045,
-    "eos_token_id": 248046,
-    "vision_start_token_id": 248053,
-    "vision_end_token_id": 248054,
     "image_token_id": 248056,
-    "video_token_id": 248057,
-    "hidden_act": "silu",
-    "hidden_size": 256,
-    "initializer_range": 0.02,
-    "intermediate_size": 512,
-    "max_position_embeddings": 32768,
     "model_type": "qwen3_5_moe",
-    "num_attention_heads": 4,
-    "num_hidden_layers": 4,
-    "num_key_value_heads": 2,
-    "head_dim": 64,
-    "rms_norm_eps": 1e-06,
-    "rope_theta": 10000000.0,
-    "tie_word_embeddings": False,
     "torch_dtype": "bfloat16",
-    "use_cache": True,
-    "attention_bias": False,
-    "full_attention_interval": 4,
-    "linear_conv_kernel_dim": 4,
-    "linear_key_head_dim": 32,
-    "linear_value_head_dim": 32,
-    "linear_num_key_heads": 4,
-    "linear_num_value_heads": 4,
-    "num_experts": 4,
-    "num_experts_per_tok": 2,
-    "moe_intermediate_size": 256,
-    "shared_expert_intermediate_size": 512,
-    "decoder_sparse_step": 1,
-    "vision_config": {
-        "depth": 1,
-        "embed_dim": 256,
-        "hidden_size": 256,
-        "hidden_act": "silu",
-        "in_channels": 3,
-        "mlp_ratio": 2.0,
-        "num_heads": 4,
-        "patch_size": 14,
-        "spatial_merge_size": 2,
-        "temporal_patch_size": 2,
-    },
-    "rope_scaling": {"mrope_section": [8, 8, 8]},
     "text_config": {
-        "hidden_size": 256,
-        "intermediate_size": 512,
-        "num_hidden_layers": 4,
-        "num_attention_heads": 4,
-        "num_key_value_heads": 2,
-        "head_dim": 64,
-        "vocab_size": 2048,
-        "max_position_embeddings": 32768,
-        "rope_theta": 10000000.0,
+        "attention_bias": False,
+        "attention_dropout": 0.0,
+        "eos_token_id": 248046,
         "full_attention_interval": 4,
+        "head_dim": 64,
+        "hidden_act": "silu",
+        "hidden_size": 256,
+        "initializer_range": 0.02,
+        "intermediate_size": 512,
         "linear_conv_kernel_dim": 4,
         "linear_key_head_dim": 32,
-        "linear_value_head_dim": 32,
         "linear_num_key_heads": 4,
         "linear_num_value_heads": 4,
+        "linear_value_head_dim": 32,
+        "max_position_embeddings": 32768,
+        "model_type": "qwen3_5_moe_text",
+        "moe_intermediate_size": 256,
+        "num_attention_heads": 4,
         "num_experts": 4,
         "num_experts_per_tok": 2,
-        "moe_intermediate_size": 256,
+        "num_hidden_layers": 4,
+        "num_key_value_heads": 2,
+        "rms_norm_eps": 1e-06,
         "shared_expert_intermediate_size": 512,
-        "decoder_sparse_step": 1,
-        "rope_scaling": {"rope_type": "default", "mrope_section": [8, 8, 8]},
+        "torch_dtype": "bfloat16",
+        "use_cache": True,
+        "vocab_size": 2048,
         "rope_parameters": {
             "rope_type": "default",
             "partial_rotary_factor": 0.25,
             "rope_theta": 10000000.0,
             "mrope_section": [8, 8, 8],
         },
-        "torch_dtype": "bfloat16",
     },
-    "vocab_size": 2048,
+    "tie_word_embeddings": False,
+    "video_token_id": 248057,
+    "vision_config": {
+        "deepstack_visual_indexes": [],
+        "depth": 1,
+        "hidden_act": "gelu_pytorch_tanh",
+        "hidden_size": 256,
+        "in_channels": 3,
+        "intermediate_size": 512,
+        "num_heads": 4,
+        "num_position_embeddings": 2304,
+        "out_hidden_size": 256,
+        "patch_size": 14,
+        "spatial_merge_size": 2,
+        "temporal_patch_size": 2,
+    },
+    "vision_end_token_id": 248054,
+    "vision_start_token_id": 248053,
 }
+
+
+def _fuse_moe_expert_weights(model_dir: Path, num_experts: int) -> None:
+    """Fuse per-expert HF weights into the 3-D format the bridge expects.
+
+    HuggingFace's Qwen3.5-MoE model class stores each expert as a separate
+    ``nn.Linear`` (e.g. ``experts.0.gate_proj.weight``), but the published
+    checkpoints ship with fused tensors (``experts.gate_up_proj`` of shape
+    ``[num_experts, 2*intermediate, hidden]`` and ``experts.down_proj`` of shape
+    ``[num_experts, hidden, intermediate]``).  This helper rewrites the saved
+    safetensors file so the toy model matches the real-checkpoint layout.
+    """
+    from safetensors.torch import load_file, save_file
+
+    weights_path = model_dir / "model.safetensors"
+    state_dict = load_file(str(weights_path))
+
+    expert_re = re.compile(
+        r"^(model\.language_model\.layers\.\d+\.mlp\.experts)"
+        r"\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$"
+    )
+
+    # Collect per-expert tensors grouped by layer prefix
+    layers: dict = {}
+    keys_to_remove: list[str] = []
+    for key in state_dict:
+        m = expert_re.match(key)
+        if m:
+            prefix, idx, proj = m.group(1), int(m.group(2)), m.group(3)
+            layers.setdefault(prefix, {}).setdefault(idx, {})[proj] = state_dict[key]
+            keys_to_remove.append(key)
+
+    if not keys_to_remove:
+        return
+
+    new_state_dict = {k: v for k, v in state_dict.items() if k not in keys_to_remove}
+
+    for prefix, experts in layers.items():
+        gate_up = torch.stack(
+            [torch.cat([experts[i]["gate_proj"], experts[i]["up_proj"]], dim=0) for i in range(num_experts)],
+            dim=0,
+        )
+        down = torch.stack([experts[i]["down_proj"] for i in range(num_experts)], dim=0)
+        new_state_dict[f"{prefix}.gate_up_proj"] = gate_up
+        new_state_dict[f"{prefix}.down_proj"] = down
+
+    save_file(new_state_dict, str(weights_path))
 
 
 @pytest.mark.skipif(not _HAS_QWEN3_5_MOE, reason="transformers does not have Qwen3.5 MoE support")
@@ -356,21 +362,13 @@ class TestQwen35VLMoEConversion:
         config = Qwen3_5MoeConfig(**HF_QWEN35_VL_MOE_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16
 
-        if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_parameters = {
-                "rope_type": "default",
-                "partial_rotary_factor": 0.25,
-                "mrope_section": [8, 8, 8],
-                "rope_theta": 10000000.0,
-            }
-
         model = Qwen3_5MoeForConditionalGeneration(config)
         model = model.to(dtype=torch.bfloat16)
 
         try:
             from transformers import AutoTokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-35B-A3B")
             tokenizer.save_pretrained(model_dir)
         except Exception:
             tokenizer_config = {
@@ -382,9 +380,8 @@ class TestQwen35VLMoEConversion:
                 json.dump(tokenizer_config, f, indent=2)
 
         model.save_pretrained(model_dir, safe_serialization=True)
-        config_path = model_dir / "config.json"
-        with open(config_path, "w") as f:
-            json.dump(HF_QWEN35_VL_MOE_TOY_MODEL_CONFIG, f, indent=2)
+
+        _fuse_moe_expert_weights(model_dir, num_experts=config.text_config.num_experts)
 
         return str(model_dir)
 
@@ -400,8 +397,10 @@ class TestQwen35VLMoEConversion:
             config_data = json.load(f)
 
         assert config_data["model_type"] == "qwen3_5_moe"
-        assert config_data["num_experts"] == 4
-        assert config_data["full_attention_interval"] == 4
+        assert "text_config" in config_data
+        text_cfg = config_data["text_config"]
+        assert text_cfg["num_experts"] == 4
+        assert text_cfg["full_attention_interval"] == 4
 
         _ = Qwen3_5MoeForConditionalGeneration.from_pretrained(
             qwen35_vl_moe_toy_model_path,
@@ -459,4 +458,5 @@ class TestQwen35VLMoEConversion:
             saved_config = json.load(f)
 
         assert saved_config["model_type"] == "qwen3_5_moe"
-        assert saved_config["num_experts"] == 4
+        assert "text_config" in saved_config
+        assert saved_config["text_config"]["num_experts"] == 4
