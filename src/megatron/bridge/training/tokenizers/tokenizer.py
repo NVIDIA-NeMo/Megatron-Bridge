@@ -76,10 +76,14 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
         kwargs["prompt_format"] = config.tokenizer_prompt_format
     elif config.tokenizer_type in ["NullTokenizer", "NullMultimodalTokenizer"]:
         tokenizer_library = "null-text" if config.tokenizer_type == "NullTokenizer" else "null-multimodal"
-        metadata = {"library": tokenizer_library}
         if config.vocab_size:
             kwargs["vocab_size"] = config.vocab_size - 1
-        tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+        try:
+            metadata = {"library": tokenizer_library}
+            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+        except AssertionError:
+            metadata = {"library": "null"}
+            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
 
         return tokenizer
 
