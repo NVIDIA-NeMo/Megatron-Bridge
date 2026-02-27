@@ -162,11 +162,10 @@ class Qwen3VLModel(MegatronModule):
             pg_collection=pg_collection,
         )
         if pre_process:
-            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
-                self.language_model.decoder.layers
-            ), (
+            deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
+            assert len(deepstack_indexes) <= len(self.language_model.decoder.layers), (
                 "the deepstack_visual_embeds should on the first pp-stage of language model",
-                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f"got {len(deepstack_indexes)} deepstack_visual_indexes, "
                 f" {len(self.language_model.decoder.layers)} language model layers",
             )
 

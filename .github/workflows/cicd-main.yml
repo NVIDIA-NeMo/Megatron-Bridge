@@ -363,6 +363,7 @@ jobs:
           - script: L2_Launch_models_qwen
           - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_models_qwen35_vl
           - script: L2_Launch_recipes_gemma_vl
           - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_models_qwen_vl_quantization
