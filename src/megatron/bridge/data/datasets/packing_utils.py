@@ -271,7 +271,17 @@ def fill_packing_strategy(
     return output_data
 
 
-def get_seqlen_list(elem):
+def get_seqlen_list(elem: Dict) -> Tuple[List[int], int]:
+    """Extract per-sequence token counts from a packed dataset element.
+
+    Args:
+        elem: A packed dataset element with 'input_ids' and 'seq_start_id' fields.
+
+    Returns:
+        A tuple of (token_counts, tokens_minus_eos) where token_counts is a list of
+        per-sequence token counts (excluding EOS) and tokens_minus_eos is the total
+        token count excluding EOS tokens.
+    """
     num_seq = len(elem['seq_start_id'])
     tokens_total = len(elem['input_ids'])
     tokens_minus_eos = tokens_total - num_seq
@@ -286,7 +296,25 @@ def get_seqlen_list(elem):
     return token_counts, tokens_minus_eos
 
 
-def calculate_avg_seqlen(dataset_file, gbs, max_seq_len, drop_remainder):
+def calculate_avg_seqlen(dataset_file: str, gbs: int, max_seq_len: int, drop_remainder: bool) -> Tuple[float, float, float, float]:
+    """Calculate average sequence length statistics from a packed dataset.
+
+    Args:
+        dataset_file: Path to the .npy packed dataset file.
+        gbs: Global batch size used to determine how many rows to process.
+        max_seq_len: Maximum sequence length (reserved for future use).
+        drop_remainder: If True, drop rows that don't fill a complete batch.
+
+    Returns:
+        A tuple of (avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row):
+            - avg_seqlen_count: Average number of sequences per row.
+            - avg_seqlen_total: Average total tokens (excluding EOS) per row.
+            - avg_seqlen_sq_individual: Average of squared per-sequence lengths.
+            - avg_seqlen_sq_per_row: Average of summed squared sequence lengths per row.
+
+    Raises:
+        ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
+    """
     data = np.load(dataset_file, allow_pickle=True)
 
     total_len_accum = 0
