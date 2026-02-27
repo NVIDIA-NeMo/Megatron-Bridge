@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
 import json
 import pickle
 import unittest
@@ -27,11 +28,12 @@ from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     QwenVLTaskBatch,
     QwenVLTaskEncoder,
     QwenVLTaskSample,
+    _resolve_hf_mm_token_ids,
     convert_to_qwenvl_content,
-    cook_chatml_sample,
     find_pattern_indices,
     get_ltor_masks_and_position_ids,
     process_vision,
+    videohandler,
 )
 
 
@@ -84,20 +86,64 @@ class TestHelperFunctions(unittest.TestCase):
         self.assertEqual(pos_ids.shape, (1, 3))
         self.assertTrue(torch.all(loss_mask == 1.0))
 
-    def test_cook_chatml_sample(self):
-        sample_dict = {
-            "__key__": "test_key",
-            "__restore_key__": "test_restore_key",
-            "__subflavor__": {},
-            "__subflavors__": {},
-            "json": json.dumps([{"role": "user", "content": "hi"}]),
-            "jpgs": pickle.dumps([np.zeros((10, 10, 3), dtype=np.uint8)]),
-            "videos": pickle.dumps([]),
-        }
-        sample = cook_chatml_sample(sample_dict)
-        self.assertIsInstance(sample, ChatMLSample)
-        self.assertEqual(len(sample.imgs), 1)
-        self.assertIsInstance(sample.imgs[0], Image.Image)
+
+class TestResolveHfMmTokenIds(unittest.TestCase):
+    def test_resolves_from_tokenizer_attributes(self):
+        tokenizer = MagicMock()
+        tokenizer.image_token_id = 100
+        tokenizer.video_token_id = 200
+        image_id, video_id = _resolve_hf_mm_token_ids(tokenizer)
+        self.assertEqual(image_id, 100)
+        self.assertEqual(video_id, 200)
+
+    def test_falls_back_to_convert_tokens_to_ids(self):
+        tokenizer = MagicMock()
+        tokenizer.image_token_id = None
+        tokenizer.video_token_id = None
+        tokenizer.convert_tokens_to_ids.side_effect = lambda x: {"<image>": 300, "<video>": 400}[x]
+        image_id, video_id = _resolve_hf_mm_token_ids(tokenizer)
+        self.assertEqual(image_id, 300)
+        self.assertEqual(video_id, 400)
+
+    def test_returns_defaults_when_all_fail(self):
+        tokenizer = MagicMock()
+        tokenizer.image_token_id = None
+        tokenizer.video_token_id = None
+        tokenizer.convert_tokens_to_ids.side_effect = Exception("not found")
+        image_id, video_id = _resolve_hf_mm_token_ids(tokenizer)
+        self.assertEqual(image_id, 151655)
+        self.assertEqual(video_id, 151656)
+
+
+class TestVideoHandler(unittest.TestCase):
+    def setUp(self):
+        self.handler = videohandler("pilrgb")
+
+    def _make_jpeg_bytes(self, color="red"):
+        img = Image.new("RGB", (4, 4), color=color)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        return buf.getvalue()
+
+    def test_returns_none_for_non_matching_extension(self):
+        result = self.handler("sample.txt", b"data")
+        self.assertIsNone(result)
+
+    def test_decodes_jpgs(self):
+        images_bytes = [self._make_jpeg_bytes() for _ in range(2)]
+        data = pickle.dumps(images_bytes)
+        result = self.handler("sample.jpgs", data)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2)
+
+    def test_decodes_mp4s(self):
+        frames = [self._make_jpeg_bytes("blue") for _ in range(3)]
+        videos = [frames]  # one video with 3 frames
+        data = pickle.dumps(videos)
+        result = self.handler("sample.mp4s", data)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result[0]), 3)
 
 
 class TestQwenVLTaskEncoder(unittest.TestCase):
@@ -190,6 +236,72 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         original_len = 5
         expanded_len = original_len - 1 + 196
         self.assertEqual(len(encoded.text), expanded_len)
+
+    def test_encode_sample_from_value_format(self):
+        """Test encode_sample with 'from'/'value' conversation format."""
+
+        def processor_side_effect(images=None, videos=None, **kwargs):
+            res = {}
+            if images:
+                res["image_grid_thw"] = np.array([[1, 28, 28]])
+                res["pixel_values"] = torch.randn(1, 3, 28, 28)
+            if videos:
+                res["video_grid_thw"] = np.array([[1, 28, 28]])
+                res["pixel_values_videos"] = torch.randn(1, 3, 28, 28)
+            return res
+
+        self.image_processor.side_effect = processor_side_effect
+
+        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151655, 12, 13])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
+
+        sample = ChatMLSample(
+            __key__="key",
+            __restore_key__="restore_key",
+            __subflavor__={},
+            __subflavors__={},
+            imgs=[MagicMock(spec=Image.Image)],
+            videos=[],
+            conversation=json.dumps(
+                [
+                    {"from": "human", "value": "Look <image>"},
+                    {"from": "gpt", "value": "Nice"},
+                ]
+            ),
+        )
+
+        encoded = self.encoder.encode_sample(sample)
+        self.assertIsInstance(encoded, QwenVLTaskSample)
+        self.assertTrue(torch.is_tensor(encoded.text))
+        self.assertTrue(torch.is_tensor(encoded.target))
+        # Same expansion as role/content format: 5 - 1 + 196 = 200
+        self.assertEqual(len(encoded.text), 200)
+
+    def test_encode_sample_text_only(self):
+        """Test encode_sample with no images or videos."""
+        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 12, 13])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Hello" else [999]
+
+        sample = ChatMLSample(
+            __key__="key",
+            __restore_key__="restore_key",
+            __subflavor__={},
+            __subflavors__={},
+            imgs=None,
+            videos=None,
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello"},
+                ]
+            ),
+        )
+
+        encoded = self.encoder.encode_sample(sample)
+        self.assertIsInstance(encoded, QwenVLTaskSample)
+        self.assertEqual(len(encoded.text), 4)  # no expansion
+        self.assertEqual(len(encoded.imgs), 0)
+        self.assertEqual(len(encoded.videos), 0)
 
     def test_batch(self):
         # Create dummy encoded samples

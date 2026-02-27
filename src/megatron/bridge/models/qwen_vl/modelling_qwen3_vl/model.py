@@ -104,6 +104,8 @@ class Qwen3VLModel(MegatronModule):
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
         # process groups
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         self.pg_collection = pg_collection
         self.cp_group = pg_collection.cp
         self.tp_group = pg_collection.tp
@@ -142,6 +144,7 @@ class Qwen3VLModel(MegatronModule):
                 vision_patch_merger_spec,
                 pre_process=True,
                 post_process=True,
+                pg_collection=pg_collection,
             )
 
         self.language_model = Qwen3VLGPTModel(
@@ -249,6 +252,8 @@ class Qwen3VLModel(MegatronModule):
         video_input_mask: torch.Tensor = None,
         cp_img_num: list[int] = None,
         images_padded: list[bool] = None,
+        inference_context: object | None = None,
+        runtime_gather_output: bool | None = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -272,6 +277,7 @@ class Qwen3VLModel(MegatronModule):
             output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
                 [b, s, vocab_size].
         """
+        del inference_context, runtime_gather_output  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
 
         vision_grid_thw = None

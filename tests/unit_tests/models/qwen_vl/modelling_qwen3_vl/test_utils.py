@@ -462,3 +462,65 @@ class TestQwen3VLUtils:
 
         assert torch.equal(position_ids, expected_positions)
         assert torch.equal(deltas, expected_deltas)
+
+    def test_get_rope_index_with_3d_attention_mask(self):
+        """Test get_rope_index with 3D attention mask (batch, seq, seq)."""
+        batch_size, seq_len = 2, 8
+        input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+        # Create a 3D causal attention mask [batch, seq, seq]
+        attention_mask = torch.tril(torch.ones((batch_size, seq_len, seq_len)))
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=151655,
+            video_token_id=151656,
+            vision_start_token_id=151652,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+        )
+
+        assert position_ids.shape == (3, batch_size, seq_len)
+        assert deltas.shape == (batch_size, 1)
+
+    def test_get_rope_index_with_4d_attention_mask(self):
+        """Test get_rope_index with 4D attention mask (batch, 1, seq, seq)."""
+        batch_size, seq_len = 2, 8
+        input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+        # Create a 4D attention mask [batch, 1, seq, seq] - singleton head dimension
+        attention_mask = torch.tril(torch.ones((batch_size, 1, seq_len, seq_len)))
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=151655,
+            video_token_id=151656,
+            vision_start_token_id=151652,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+        )
+
+        assert position_ids.shape == (3, batch_size, seq_len)
+        assert deltas.shape == (batch_size, 1)
+
+    def test_get_rope_index_with_3d_attention_mask_and_image(self):
+        """Test get_rope_index with 3D attention mask and image grid."""
+        batch_size, seq_len = 1, 16
+        input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+        # Insert vision tokens
+        input_ids[0, 4] = 151652  # vision_start_token_id
+        input_ids[0, 5] = 151655  # image_token_id
+        image_grid_thw = torch.tensor([[1, 4, 4]])  # t=1, h=4, w=4
+        # Create a 3D attention mask [batch, seq, seq]
+        attention_mask = torch.tril(torch.ones((batch_size, seq_len, seq_len)))
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=151655,
+            video_token_id=151656,
+            vision_start_token_id=151652,
+            input_ids=input_ids,
+            image_grid_thw=image_grid_thw,
+            attention_mask=attention_mask,
+        )
+
+        assert position_ids.shape == (3, batch_size, seq_len)
+        assert deltas.shape == (batch_size, 1)
