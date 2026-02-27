@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # Run recipe functional tests on 2 GPUs
 # This script tests recipe configurations with their default settings to ensure
 # they can run basic training without crashes
-uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/llama3_1b/test_llama3_1b_mbridge.py
+uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/ckpts/qwen3_4b/test_qwen3_4b_mbridge.py
 coverage combine -q
 
-bash tests/functional_tests/ckpts/llama3_1b/test_llama3_1b_mcore.sh
+bash tests/functional_tests/ckpts/qwen3_4b/test_qwen3_4b_mcore.sh

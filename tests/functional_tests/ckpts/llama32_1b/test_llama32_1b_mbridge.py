@@ -22,7 +22,7 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 
-class TestLlama3MBridgeCkpt:
+class TestLlama32MBridgeCkpt:
     """Test class for LLaMA recipe functional tests."""
 
     @pytest.mark.run_only_on("GPU")
@@ -47,14 +47,3 @@ class TestLlama3MBridgeCkpt:
 
         pretrain(config=config, forward_step_func=forward_step)
 
-    @pytest.mark.run_only_on("GPU")
-    def test_llama32_1B_ckpt_mcore(self):
-        """Functional test for LLaMA recipes with appropriate parallelism configurations."""
-
-        script_path = "test_llama3_1b_mcore.sh"
-        process = subprocess.Popen(
-            ["bash", script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
