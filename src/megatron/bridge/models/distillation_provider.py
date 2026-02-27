@@ -107,8 +107,12 @@ class DistillationProvider(TransformerConfig):
         from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
 
         result = {"_target_": f"{self._super_class.__module__}.{self._super_class.__qualname__}"}
-        for field in fields(self):
-            if field.name.startswith("_") or field.name in ["teacher", "kd_config"]:
+        # Use fields from the actual student provider class, not DistillationProvider.
+        # DistillationProvider's __dataclass_fields__ only includes TransformerConfig fields
+        # (set at class definition time), missing GPTModelProvider-level fields like
+        # vocab_size, share_embeddings_and_output_weights, etc.
+        for field in fields(self._super_class):
+            if field.name.startswith("_"):
                 continue
             result[field.name] = _ConfigContainerBase._convert_value_to_dict(getattr(self, field.name))
         return result
