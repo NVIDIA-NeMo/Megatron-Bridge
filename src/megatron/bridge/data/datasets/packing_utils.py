@@ -25,7 +25,7 @@ PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 logger = logging.getLogger(__name__)
 
 
-def find_first_bin_that_fits(bins: List[List[int]], s: int, bin_size: int) -> int:
+def find_first_bin_that_fits(bin_sums: List[int], s: int, bin_size: int) -> int:
     """
     Finds the first bin in a list of bins that has enough space to fit a sequence of size 's'.
 
@@ -37,9 +37,9 @@ def find_first_bin_that_fits(bins: List[List[int]], s: int, bin_size: int) -> in
     Returns:
       The index of the first bin that can fit the sequence 's', or -1 if no such bin exists.
     """
-    for i, abin in enumerate(bins):
-        if sum(abin) + s <= bin_size:
-            return i
+    for i,cur_sum in enumerate(bin_sums):
+        if cur_sum + s <= bin_size:
+             return i
     return -1
 
 
@@ -56,12 +56,15 @@ def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
         of the sequences assigned to that bin.
     """
     res = []
-    for s in seqlens:
-        first_bin = find_first_bin_that_fits(res, s, pack_size)
+    res_sums = []
+    for s in tqdm(seqlens):
+        first_bin = find_first_bin_that_fits(res_sums, s, pack_size)
         if first_bin == -1:  # open a new bin
             res.append([s])
+            res_sums.append(s)
         else:
             res[first_bin].append(s)
+            res_sums[first_bin] += s
     return res
 
 

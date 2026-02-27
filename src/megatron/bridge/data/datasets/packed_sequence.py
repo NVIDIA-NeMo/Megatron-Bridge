@@ -15,6 +15,10 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from multiprocessing import Pool
+import multiprocessing as mp
+from tqdm import tqdm
+from typing import Literal, List
 
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -26,6 +30,20 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 logger = logging.getLogger(__name__)
 
+_shared_dataset = None
+def _tokenize_get_item(i):
+    return _shared_dataset[i]
+
+def _tokenize_init_worker(dataset):
+    global _shared_dataset
+    _shared_dataset = dataset
+
+def _retrieve_tokenized(dataset, num_workers):
+    if num_workers == 1:
+        return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
+    num_workers = num_workers if num_workers > 0 else mp.cpu_count()
+    with Pool(num_workers, initializer=_tokenize_init_worker, initargs=(dataset,)) as pool:
+        return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
 
 def tokenize_dataset(
     path: Path,
@@ -34,6 +52,7 @@ def tokenize_dataset(
     seed: int,
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
+    num_tokenizer_workers: int = -1,
 ):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
@@ -88,7 +107,7 @@ def tokenize_dataset(
     pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
     max_seq_length = dataset.max_seq_length
-    dataset = np.array([dataset[i] for i in range(len(dataset))])
+    dataset = _retrieve_tokenized(dataset, num_tokenizer_workers)
 
     if pad_seq_to_mult > 1:
 
@@ -120,6 +139,72 @@ def tokenize_dataset(
 
     return dataset
 
+def save_packed_dataset(packed_data: List[dict], output_path: Path, save_format: Literal["npy", "mmap"] = "npy"):
+    logging.info(f'Saving packed_sequence index to {output_path} in {save_format} format...')
+
+    """
+    Saves the packed dataset to the specified output path in the given format.
+
+    Args:
+        packed_data (List[dict]): The packed dataset to be saved.
+        output_path (Path): The path where the packed dataset should be saved.
+        save_format (Literal["npy", "mmap"]): The file format to save the packed dataset.
+            Can be either "npy" or "mmap". Defaults to "npy".
+
+    Returns:
+        None: The function saves the packed dataset to the specified output path.
+    """
+    if save_format == "npy":
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            msc.numpy.save(output_path, packed_data)
+        else:
+            np.save(output_path, packed_data)
+    elif save_format == "mmap":
+        if not output_path.parent.exists():
+            # the msc.numpy.memmap doesn't work properly with mode="w+"
+            raise NotImplementedError("Packed sequence dataset in 'mmap' format is not supported on non-local filesystems. Please use 'npy' format or save to a local directory.")
+
+        """Convert npy to memmap format with .idx metadata and .bin data"""
+        # Compute metadata
+        print('Computing metadata...')
+        input_lens = np.array([len(item["input_ids"]) for item in packed_data], dtype=np.int32)
+        loss_lens = np.array([len(item["loss_mask"]) for item in packed_data], dtype=np.int32)
+        seq_lens = np.array([len(item["seq_start_id"]) for item in packed_data], dtype=np.int32)
+
+        # Compute byte offsets for each sample
+        bytes_per_sample = (input_lens + loss_lens + seq_lens) * 4  # int32 = 4 bytes
+        offsets = np.concatenate([[0], np.cumsum(bytes_per_sample)[:-1]])
+
+        # Save index file
+        idx_file = output_path.with_suffix(output_path.suffix + '.idx.npy')
+        np.save(idx_file, {
+            'offsets': offsets,
+            'input_lens': input_lens,
+            'loss_lens': loss_lens,
+            'seq_lens': seq_lens
+        })
+
+        # Write data file
+        bin_file = output_path.with_suffix(output_path.suffix + '.bin')
+
+        total_ints = int(np.sum(bytes_per_sample) // 4)
+        mmap = np.memmap(bin_file, dtype=np.int32, mode='w+', shape=(total_ints,))
+        pos = 0
+        for item in tqdm(packed_data):
+            inp = np.array(item["input_ids"], dtype=np.int32)
+            loss = np.array(item["loss_mask"], dtype=np.int32)
+            seq = np.array(item["seq_start_id"], dtype=np.int32)
+
+            chunk_len = len(inp) + len(loss) + len(seq)
+            mmap[pos:pos+len(inp)] = inp
+            mmap[pos+len(inp):pos+len(inp)+len(loss)] = loss
+            mmap[pos+len(inp)+len(loss):pos+chunk_len] = seq
+            pos += chunk_len
+        mmap.flush()
+        del mmap
+    else:
+        raise ValueError(f"Unsupported save format: {save_format}")
 
 def prepare_packed_sequence_data(
     input_path: Path,
@@ -132,6 +217,8 @@ def prepare_packed_sequence_data(
     packing_algorithm: str = "first_fit_shuffle",
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
+    num_tokenizer_workers: int = -1,
+    save_format: Literal["npy", "mmap"] = "npy",
 ):
     """
     Prepares a packed sequence dataset from a given input file and saves it to an output file.
@@ -162,6 +249,7 @@ def prepare_packed_sequence_data(
         seed,
         dataset_kwargs,
         pad_seq_to_mult=pad_seq_to_mult,
+        num_tokenizer_workers=num_tokenizer_workers
     )
     sequences, histogram = create_hist(dataset, max_seq_length)
 
@@ -169,11 +257,7 @@ def prepare_packed_sequence_data(
     output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
 
     # save output data
-    if MultiStorageClientFeature.is_enabled():
-        msc = MultiStorageClientFeature.import_package()
-        msc.numpy.save(output_path, output_data)
-    else:
-        np.save(output_path, output_data)
+    save_packed_dataset(output_data, output_path, save_format)
 
     # save packing metadata, packing_metadata is appended to the packing file if it exists
     if output_metadata_path is not None:
@@ -214,10 +298,23 @@ class PackedSequenceSpecs:
     of the original sequence (i.e. the length to truncate long sequences in the input data).
     """
 
+    packed_sequence_format: Literal["npy", "mmap"] = "npy"
+    """
+    The file format for the packed sequence dataset. Can be either "npy" (default) or "mmap".
+    "mmap" produces two files: .mmap.idx.npy and .mmap.bin. The `packed_train_data_path` and `packed_val_data_path` should point
+    to the prefix of the .idx.npy and .bin files (i.e. without the .idx.npy or .bin suffix).
+    """
+
     tokenizer_model_name: str = None
     """
     Keep track of tokenizer model name, since each tokenizer produces a different packed sequence dataset file.
     This field is set by llm.finetune api.
+    """
+
+    num_tokenizer_workers: int = -1
+    """
+    The number of worker processes to use for tokenization when preparing the packed sequence dataset.
+    If -1, the number of workers will be set to the number of CPU cores available
     """
 
     packed_train_data_path: str = None
