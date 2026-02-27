@@ -297,7 +297,7 @@ def calculate_avg_seqlen(dataset_file, gbs, max_seq_len, drop_remainder):
     count = (rows_total // gbs)*gbs if drop_remainder else rows_total
 
     if count != rows_total:
-        logger.warning(f'Dropping {rows_total - count}, total was {rows_total}')
+        logger.info(f'Dropping {rows_total - count}, total was {rows_total}')
 
     for i, elem in enumerate(data):
         if i >= count:
@@ -307,6 +307,11 @@ def calculate_avg_seqlen(dataset_file, gbs, max_seq_len, drop_remainder):
         total_len_accum += total_count
         seqlen_sq_accum += sum(seqlen_sq_list)
         seq_count_accum += len(seqlen_list)
+
+    if count == 0:
+        raise ValueError(f"No rows to process: dataset has {rows_total} rows but gbs={gbs} with drop_remainder={drop_remainder}.")
+    if seq_count_accum == 0:
+        raise ValueError("No sequences found in dataset; cannot compute average sequence length.")
 
     avg_seqlen_count = seq_count_accum/count
     avg_seqlen_total = total_len_accum/count
