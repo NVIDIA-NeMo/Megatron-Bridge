@@ -182,7 +182,6 @@ from megatron.bridge.models.qwen_audio import (
     Qwen2AudioBridge,
     Qwen2AudioModel,
     Qwen2AudioModelProvider,
-    Qwen2AudioModelProvider7B,
 )
 from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
@@ -332,7 +331,6 @@ __all__ = [
     "Qwen2AudioBridge",
     "Qwen2AudioModel",
     "Qwen2AudioModelProvider",
-    "Qwen2AudioModelProvider7B",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",

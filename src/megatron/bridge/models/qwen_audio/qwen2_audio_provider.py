@@ -126,24 +126,3 @@ class Qwen2AudioModelProvider(Qwen2ModelProvider):
             MCoreGPTModel instance (language model only)
         """
         return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-
-
-@dataclass
-class Qwen2AudioModelProvider7B(Qwen2AudioModelProvider):
-    """
-    Config for Qwen2-Audio 7B Model.
-
-    Reference: https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct
-
-    Model specs:
-    - 7B parameter language model (Qwen2-based)
-    - Whisper-like audio encoder (d_model=1280, 32 layers)
-    """
-
-    num_layers: int = 28
-    hidden_size: int = 3584
-    num_attention_heads: int = 28
-    num_query_groups: int = 4
-    ffn_hidden_size: int = 18944
-    vocab_size: int = 152064
-    seq_length: int = 32768

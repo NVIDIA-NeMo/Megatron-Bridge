@@ -33,7 +33,6 @@ from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioMod
 from megatron.bridge.models.qwen_audio.qwen2_audio_bridge import Qwen2AudioBridge
 from megatron.bridge.models.qwen_audio.qwen2_audio_provider import (
     Qwen2AudioModelProvider,
-    Qwen2AudioModelProvider7B,
 )
 
 
@@ -44,5 +43,4 @@ __all__ = [
     "Qwen2AudioModel",
     # Model Providers
     "Qwen2AudioModelProvider",
-    "Qwen2AudioModelProvider7B",
 ]
