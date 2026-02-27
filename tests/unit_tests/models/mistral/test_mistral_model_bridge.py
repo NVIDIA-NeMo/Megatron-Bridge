@@ -22,6 +22,7 @@ from transformers import GenerationConfig, MistralConfig, MistralForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mistral.mistral_bridge import MistralBridge
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
@@ -101,7 +102,7 @@ class TestMegatronMistralBridge:
         assert result.hidden_size == mistral_config.hidden_size
         assert result.num_attention_heads == mistral_config.num_attention_heads
         assert result.seq_length == mistral_config.max_position_embeddings
-        assert result.rotary_base == mistral_config.rope_parameters["rope_theta"]
+        assert result.rotary_base == rope_theta_from_hf(mistral_config)
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_mistral, mistral_config):
         """Test vocabulary size mapping."""
@@ -149,7 +150,7 @@ class TestMegatronMistralBridge:
         result = bridge.provider_bridge(mock_pretrained_mistral)
 
         # Check position embedding
-        assert result.rotary_base == mistral_config.rope_parameters["rope_theta"]
+        assert result.rotary_base == rope_theta_from_hf(mistral_config)
 
     def test_provider_bridge_mistral_specific_features(self, mock_pretrained_mistral):
         """Test Mistral-specific features."""

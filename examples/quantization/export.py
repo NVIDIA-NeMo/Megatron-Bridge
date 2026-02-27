@@ -42,6 +42,7 @@ from rich.console import Console
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 warnings.filterwarnings("ignore")
@@ -61,6 +62,7 @@ def main(
     export_dir: str = "./hf_export",
     export_extra_modules: bool = False,
     dtype: str = "bfloat16",
+    trust_remote_code: bool | None = None,
 ) -> None:
     """Export a quantized Megatron-LM checkpoint to HuggingFace format on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -78,7 +80,13 @@ def main(
         sys.exit(1)
 
     # Initialize bridge from HF model to get tokenizer and model structure
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+    bridge = AutoBridge.from_hf_pretrained(
+        hf_model_id,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=trust_remote_code,
+            hf_path=hf_model_id,
+        ),
+    )
 
     # Get model provider and configure for multi-GPU execution
     model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -152,6 +160,7 @@ def main(
         export_extra_modules=export_extra_modules_flag,
         dtype=torch_dtype,
         export_dir=export_dir,
+        trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model_id),
     )
 
     if is_rank_0:
@@ -195,6 +204,11 @@ if __name__ == "__main__":
         choices=["bfloat16", "float16", "float32"],
         help="Data type for export",
     )
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="if trust_remote_code",
+    )
 
     args = parser.parse_args()
     main(
@@ -207,6 +221,7 @@ if __name__ == "__main__":
         args.export_dir,
         args.export_extra_modules,
         args.dtype,
+        args.trust_remote_code,
     )
 
     if torch.distributed.is_initialized():
