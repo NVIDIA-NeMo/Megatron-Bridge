@@ -21,6 +21,7 @@ from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
+
 _lora_seq_stats_cache: dict = {}
 
 
@@ -206,13 +207,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
                 if matches:
                     packed_data_path = str(matches[0])
-        if (
-            is_lora
-            and is_squad
-            and is_llama3_70b
-            and packed_data_path is not None
-            and Path(packed_data_path).exists()
-        ):
+        if is_lora and is_squad and is_llama3_70b and packed_data_path is not None and Path(packed_data_path).exists():
             gbs = cfg.train.global_batch_size
             seq_len = cfg.model.seq_length
             cache_key = (packed_data_path, gbs, seq_len)
@@ -232,12 +227,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 avg_tokens
                 * n_layers
                 * hs**2
-                * (
-                    12
-                    + 12 * num_query_groups / n_heads
-                    + 18 * ffn_hs / hs
-                    + 6 * vocab_size / (n_layers * hs)
-                )
+                * (12 + 12 * num_query_groups / n_heads + 18 * ffn_hs / hs + 6 * vocab_size / (n_layers * hs))
             )
             model_flops_unfrozen = n_layers * hs**2 * (12 * avg_seqlen2 / hs)
 
