@@ -15,7 +15,7 @@
 import logging
 from typing import Any, Literal, Optional
 
-from megatron.core import parallel_state
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.energon import WorkerConfig, get_savable_loader, get_train_dataset
 
 
@@ -64,6 +64,7 @@ class EnergonMultiModalDataModule:
         decoder_seq_length: Optional[int] = None,
         packing_buffer_size: Optional[int] = None,
         validation_task_encoder: Optional[Any] = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
         **kwargs,
     ) -> None:
         """
@@ -89,6 +90,8 @@ class EnergonMultiModalDataModule:
         packing_buffer_size (int, optional): Size of the packing buffer for batched samples. Defaults to None.
         validation_task_encoder (MultiModalTaskEncoder, optional): Encoder responsible for encoding
         and batching samples for validation. Defaults to None and will be the same as task_encoder.
+        pg_collection (ProcessGroupCollection, optional): Process group collection for distributed training.
+        If provided, used instead of the global parallel_state. Defaults to None.
         **kwargs: Additional keyword arguments. Will be passed to get_train_dataset() of Energon
         """
 
@@ -112,7 +115,48 @@ class EnergonMultiModalDataModule:
         self.packing_buffer_size = packing_buffer_size
         self.validation_task_encoder = validation_task_encoder or self.task_encoder
         self.num_val_workers = num_val_workers or self.num_workers
+        self.pg_collection = pg_collection
         self.kwargs = kwargs
+
+    def _build_worker_config(self, num_workers: int, split: str = "train") -> WorkerConfig:
+        """Build a WorkerConfig using pg_collection, falling back to default_worker_config.
+
+        NOTE: We intentionally use the pure DP rank (pg_collection.dp)
+        rather than the combined DP-CP rank. With Megatron's rank ordering
+        (default "tp-cp-ep-dp-pp"), all CP ranks within the same DP replica
+        already share the same pure DP rank. This ensures that CP ranks
+        processing different sequence portions of the same batch receive
+        identical data from the dataloader.
+        Using dp_cp would be INCORRECT here — it would assign each CP rank
+        a unique rank, causing them to read different data shards.
+        """
+        if self.pg_collection is None or self.pg_collection.dp is None:
+            logger.info(
+                f"Multimodal {split} data loader pg_collection is not available, "
+                f"using default worker config with num_workers {num_workers}"
+            )
+            return WorkerConfig.default_worker_config(num_workers)
+
+        rank = self.pg_collection.dp.rank()
+        world_size = self.pg_collection.dp.size()
+        data_parallel_group = self.pg_collection.dp
+        cp_rank = self.pg_collection.cp.rank() if self.pg_collection.cp is not None else 0
+        cp_size = self.pg_collection.cp.size() if self.pg_collection.cp is not None else 1
+
+        logger.info(
+            f"Multimodal {split} dataloader initializing with "
+            f"dp_rank {rank} dp_world_size {world_size} "
+            f"cp_rank {cp_rank} cp_size {cp_size} "
+            f"data_parallel_group {data_parallel_group}"
+        )
+        return WorkerConfig(
+            rank=rank,
+            world_size=world_size,
+            num_workers=num_workers,
+            data_parallel_group=data_parallel_group,
+            worker_debug_path=None,
+            worker_log_level=0,
+        )
 
     def datasets_provider(self, worker_config, split: Literal["train", "val"] = "val"):
         """
@@ -165,28 +209,7 @@ class EnergonMultiModalDataModule:
         logger.info(f"Multimodal train dataloader initializing with init_global_step {self.init_global_step}")
         if self.train_dataloader_object:
             return self.train_dataloader_object
-        if not parallel_state.is_initialized():
-            logger.info(
-                f"Muiltimodal data loader parallel state is not initialized,"
-                f"using default worker config with no_workers {self.num_workers}"
-            )
-            worker_config = WorkerConfig.default_worker_config(self.num_workers)
-        else:
-            rank = parallel_state.get_data_parallel_rank()
-            world_size = parallel_state.get_data_parallel_world_size()
-            data_parallel_group = parallel_state.get_data_parallel_group()
-            logger.info(
-                f" Multimodal  train dataloader initializing with"
-                f"rank {rank} world_size {world_size} data_parallel_group {data_parallel_group} ****** "
-            )
-            worker_config = WorkerConfig(
-                rank=rank,
-                world_size=world_size,
-                num_workers=self.num_workers,
-                data_parallel_group=data_parallel_group,
-                worker_debug_path=None,
-                worker_log_level=0,
-            )
+        worker_config = self._build_worker_config(self.num_workers, split="train")
         train_dataset = self.datasets_provider(worker_config, split="train")
         energon_dataloader = get_savable_loader(train_dataset, worker_config=worker_config)
         self.train_dataloader_object = energon_dataloader
@@ -204,27 +227,7 @@ class EnergonMultiModalDataModule:
         """
         if self.val_dataloader_object:
             return self.val_dataloader_object
-
-        if not parallel_state.is_initialized():
-            logger.info(
-                f"Muiltimodal val data loader parallel state is not initialized,"
-                f"using default worker config with no_workers {self.num_workers}"
-            )
-            worker_config = WorkerConfig.default_worker_config(self.num_val_workers)
-        else:
-            rank = parallel_state.get_data_parallel_rank()
-            world_size = parallel_state.get_data_parallel_world_size()
-            data_parallel_group = parallel_state.get_data_parallel_group()
-
-            logger.info(f"rank {rank} world_size {world_size} data_parallel_group {data_parallel_group}")
-            worker_config = WorkerConfig(
-                rank=rank,
-                world_size=world_size,
-                num_workers=self.num_workers,
-                data_parallel_group=data_parallel_group,
-                worker_debug_path=None,
-                worker_log_level=0,
-            )
+        worker_config = self._build_worker_config(self.num_val_workers, split="val")
         val_dataset = self.datasets_provider(worker_config, split="val")
         energon_loader = get_savable_loader(val_dataset, worker_config=worker_config)
         self.val_dataloader_object = energon_loader
