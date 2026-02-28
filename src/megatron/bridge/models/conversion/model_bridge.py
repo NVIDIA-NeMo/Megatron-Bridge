@@ -890,6 +890,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
+    @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -992,7 +993,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 )
 
             for hf_name, tensor in converted_weights_dict.items():
-                final_tensor = tensor.cpu() if cpu else tensor
+                final_tensor = tensor.cpu() if cpu else tensor.detach()
 
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     hf_name = hf_name[: -len("weight")] + "base_layer.weight"
