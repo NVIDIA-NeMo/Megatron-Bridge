@@ -601,10 +601,16 @@ class TestParallelLinearAdapter:
         # Output should be unpadded back to original size
         assert output.shape == (7, 10)
 
+    @patch("megatron.bridge.peft.utils.parallel_state")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_sharded_state_dict(self, mock_row_linear, mock_col_linear, mock_config):
+    def test_parallel_linear_adapter_sharded_state_dict(
+        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
+    ):
         """Test sharded state dict functionality."""
+        # Mock parallel state (needed for dense adapter TP replica_id logic)
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
+
         # Mock linear layers with sharded_state_dict methods
         mock_linear_in = Mock()
         mock_linear_out = Mock()
@@ -625,13 +631,17 @@ class TestParallelLinearAdapter:
         mock_linear_in.sharded_state_dict.assert_called_once_with("adapter.linear_in.", (), None)
         mock_linear_out.sharded_state_dict.assert_called_once_with("adapter.linear_out.", (), None)
 
+    @patch("megatron.bridge.peft.utils.parallel_state")
     @patch("megatron.bridge.peft.utils.apply_swiglu_sharded_factory")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sharded_state_dict_fc1_special_case(
-        self, mock_row_linear, mock_col_linear, mock_swiglu_factory, mock_config
+        self, mock_row_linear, mock_col_linear, mock_swiglu_factory, mock_parallel_state, mock_config
     ):
         """Test sharded state dict with special handling for linear_fc1."""
+        # Mock parallel state (needed for dense adapter TP replica_id logic)
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
+
         # Mock linear layers
         mock_linear_in = Mock()
         mock_linear_out = Mock()
@@ -656,3 +666,160 @@ class TestParallelLinearAdapter:
         # Should call swiglu factory for fc1 weights
         mock_swiglu_factory.assert_called()
         assert result["adapter.linear_out.weight"] == "swiglu_processed_tensor"
+
+    @patch("megatron.bridge.peft.utils.parallel_state")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sharded_state_dict_dense_tp_replica_id(
+        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
+    ):
+        """Test that dense adapters with TP > 1 have correctly adjusted replica_id.
+
+        This test verifies the fix for the issue where dense LoRA adapters lose TP shards
+        during checkpoint save. Without the fix, all TP ranks generate ShardedTensors with
+        the same replica_id, causing incorrect deduplication and only one shard being saved.
+
+        See: https://github.com/volcengine/verl/issues/4303 for related context.
+        """
+        # Mock parallel state for TP > 1
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 4
+        mock_parallel_state.get_tensor_model_parallel_rank.return_value = 2  # TP rank 2
+
+        # Create mock ShardedTensor objects with replica_id attribute
+        class MockShardedTensor:
+            def __init__(self, replica_id):
+                self.replica_id = replica_id
+
+        mock_linear_in_tensor = MockShardedTensor(replica_id=(0, 0, 0))
+        mock_linear_out_tensor = MockShardedTensor(replica_id=(0, 0, 0))
+
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {"linear_in.weight": mock_linear_in_tensor}
+        mock_linear_out.sharded_state_dict.return_value = {"linear_out.weight": mock_linear_out_tensor}
+
+        # Default input_is_parallel=False, so both are ColumnParallelLinear
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+
+        adapter = ParallelLinearAdapter(
+            in_features=20,
+            out_features=10,
+            dim=16,
+            base_linear_name="linear_fc2",
+            is_expert=False,  # Dense adapter, not expert
+            model_parallel_config=mock_config,
+        )
+
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        # Verify that replica_id was updated to include TP rank
+        # The fix should set replica_id = (old_rid[0], tp_rank, old_rid[2])
+        assert result["linear_in.weight"].replica_id == (0, 2, 0), (
+            f"linear_in.weight replica_id should be (0, 2, 0), got {result['linear_in.weight'].replica_id}"
+        )
+        assert result["linear_out.weight"].replica_id == (0, 2, 0), (
+            f"linear_out.weight replica_id should be (0, 2, 0), got {result['linear_out.weight'].replica_id}"
+        )
+
+    @patch("megatron.bridge.peft.utils.parallel_state")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sharded_state_dict_dense_tp1_no_change(
+        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
+    ):
+        """Test that dense adapters with TP = 1 do not modify replica_id.
+
+        When TP = 1, there's no need to adjust replica_id since there's only one shard.
+        """
+        # Mock parallel state for TP = 1
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
+        mock_parallel_state.get_tensor_model_parallel_rank.return_value = 0
+
+        # Create mock ShardedTensor objects with replica_id attribute
+        class MockShardedTensor:
+            def __init__(self, replica_id):
+                self.replica_id = replica_id
+
+        mock_linear_in_tensor = MockShardedTensor(replica_id=(0, 0, 0))
+        mock_linear_out_tensor = MockShardedTensor(replica_id=(0, 0, 0))
+
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {"linear_in.weight": mock_linear_in_tensor}
+        mock_linear_out.sharded_state_dict.return_value = {"linear_out.weight": mock_linear_out_tensor}
+
+        # Default input_is_parallel=False, so both are ColumnParallelLinear
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+
+        adapter = ParallelLinearAdapter(
+            in_features=20,
+            out_features=10,
+            dim=16,
+            base_linear_name="linear_fc2",
+            is_expert=False,  # Dense adapter, not expert
+            model_parallel_config=mock_config,
+        )
+
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        # Verify that replica_id was NOT modified (TP = 1, no change needed)
+        assert result["linear_in.weight"].replica_id == (0, 0, 0), (
+            f"linear_in.weight replica_id should remain (0, 0, 0) for TP=1, got {result['linear_in.weight'].replica_id}"
+        )
+        assert result["linear_out.weight"].replica_id == (0, 0, 0), (
+            f"linear_out.weight replica_id should remain (0, 0, 0) for TP=1, got {result['linear_out.weight'].replica_id}"
+        )
+
+    @patch("megatron.bridge.peft.utils.parallel_state")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sharded_state_dict_expert_tp_not_affected_by_dense_fix(
+        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
+    ):
+        """Test that expert adapters still use expert-specific replica_id handling.
+
+        Expert adapters should continue to use EP/EDP-based replica_id calculation,
+        not the TP-based calculation added for dense adapters.
+        """
+        # Mock parallel state for expert mode
+        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 4
+        mock_parallel_state.get_tensor_model_parallel_rank.return_value = 2
+        mock_parallel_state.get_expert_model_parallel_rank.return_value = 1
+        mock_parallel_state.get_expert_data_parallel_rank.return_value = 0
+        mock_parallel_state.get_data_parallel_world_size.return_value = 2  # DP > 1
+
+        # Create mock ShardedTensor objects with replica_id attribute
+        class MockShardedTensor:
+            def __init__(self, replica_id):
+                self.replica_id = replica_id
+
+        mock_linear_in_tensor = MockShardedTensor(replica_id=(0, 0, 0))
+        mock_linear_out_tensor = MockShardedTensor(replica_id=(0, 0, 0))
+
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {"linear_in.weight": mock_linear_in_tensor}
+        mock_linear_out.sharded_state_dict.return_value = {"linear_out.weight": mock_linear_out_tensor}
+
+        # Default input_is_parallel=False, so both are ColumnParallelLinear
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+
+        adapter = ParallelLinearAdapter(
+            in_features=20,
+            out_features=10,
+            dim=16,
+            base_linear_name="linear_fc2",
+            is_expert=True,  # Expert adapter
+            model_parallel_config=mock_config,
+        )
+
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        # For expert adapters with DP > 1: rank = ep_rank = 1
+        # Verify that replica_id uses EP-based calculation, not TP-based
+        assert result["linear_in.weight"].replica_id == (0, 1, 0), (
+            f"Expert linear_in.weight replica_id should be (0, 1, 0), got {result['linear_in.weight'].replica_id}"
+        )
+        assert result["linear_out.weight"].replica_id == (0, 1, 0), (
+            f"Expert linear_out.weight replica_id should be (0, 1, 0), got {result['linear_out.weight'].replica_id}"
+        )
