@@ -16,6 +16,8 @@
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
+from megatron.bridge.data.hf_processors.openmathinstruct2 import process_openmathinstruct2_example
 from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
@@ -93,6 +95,92 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
         do_test=False,
         val_proportion=0.1,
         dataset_kwargs=dataset_kwargs,
+        packed_sequence_specs=packed_sequence_specs,
+        rewrite=False,
+    )
+
+
+def default_openmathinstruct2_config(
+    seq_length: int = 4096,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> HFDatasetConfig:
+    """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
+    # Create packed sequence specs if needed
+    packed_sequence_specs = None
+    if packed_sequence:
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return HFDatasetConfig(
+        dataset_name="nvidia/OpenMathInstruct-2",  # Hugging Face dataset name
+        split="train_1M",  # Default to the 1M subset
+        process_example_fn=process_openmathinstruct2_example,  # Processing function
+        seq_length=seq_length,
+        seed=5678,
+        memmap_workers=1,
+        # Dataloader config parameters
+        dataloader_type="batch",
+        do_validation=True,
+        do_test=False,
+        val_proportion=0.05,  # 950k train, 50k val
+        num_workers=2,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+        packed_sequence_specs=packed_sequence_specs,
+        rewrite=False,  # Rewrite existing processed files
+    )
+
+
+def default_gsm8k_config(
+    seq_length: int = 2048,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> HFDatasetConfig:
+    """Create default GSM8K dataset configuration for finetuning recipes.
+
+    GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse
+    grade school math word problems. See: https://huggingface.co/datasets/openai/gsm8k
+
+    Args:
+        seq_length: Sequence length for the dataset (default 2048, sufficient for GSM8K)
+        packed_sequence: Whether to enable packed sequences for training efficiency
+        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
+            (set to `2 * context_parallel_size` for THD CP runs).
+        apply_tokenizer_chat_template: If True, apply the tokenizer's chat template
+            when processing examples.
+        dataset_subset: Dataset subset to use - 'main' (default) or 'socratic'
+
+    Returns:
+        HFDatasetConfig configured for GSM8K finetuning
+
+    Note:
+        - GSM8K has 7,473 train and 1,319 test examples
+        - Since test split exists, we use it as validation (do_test=True, do_validation=False)
+        - Uses 'batch' dataloader type for variable-length finetuning
+    """
+    # Create packed sequence specs if needed
+    packed_sequence_specs = None
+    if packed_sequence:
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return HFDatasetConfig(
+        dataset_name="openai/gsm8k",  # Hugging Face dataset name
+        dataset_subset="main",  # 'main' or 'socratic'
+        split="train",  # Use train split for training
+        process_example_fn=process_gsm8k_example,  # Processing function
+        seq_length=seq_length,
+        seed=5678,
+        memmap_workers=1,
+        # Dataloader config parameters
+        dataloader_type="batch",
+        do_validation=True,
+        do_test=False,
+        val_proportion=0.1,
+        num_workers=2,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
         packed_sequence_specs=packed_sequence_specs,
         rewrite=False,
     )
