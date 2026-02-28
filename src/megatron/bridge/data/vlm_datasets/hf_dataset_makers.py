@@ -169,11 +169,109 @@ def make_raven_dataset(
     # Filter out any None values from malformed rows.
     return [ex for ex in formatted if ex is not None]
 
+ 
+def make_llava_pretrain_dataset(
+    path_or_dataset: str = "liuhaotian/LLaVA-Pretrain",
+    json_file: str = "blip_laion_cc_sbu_558k.json",
+    split: str = "train",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess the *LLaVA-Pretrain* (558K) dataset.
+
+    The dataset can be loaded in two ways:
+
+    1. **Local JSON** (preferred): if ``path_or_dataset`` points to a local
+       directory that contains ``json_file`` (default
+       ``blip_laion_cc_sbu_558k.json``), the entries are read directly from
+       that file.  Images are expected to be in the same directory::
+
+           /path/to/LLaVA-Pretrain/
+           ├── blip_laion_cc_sbu_558k.json
+           └── 00453/004539375.jpg
+           └── ...
+
+    2. **HuggingFace Hub**: otherwise ``load_dataset(path_or_dataset, ...)``
+       is used.
+
+    Each entry contains:
+    - ``image``: relative path to the image file (e.g. ``"00453/004539375.jpg"``).
+    - ``conversations``: a two-turn list::
+
+          [{"from": "human", "value": "<question>\\n<image>"},
+           {"from": "gpt",   "value": "<answer>"}]
+
+      The ``<image>`` placeholder is stripped from the human prompt and replaced
+      with an actual image content entry.
+
+    Args:
+        path_or_dataset: HF dataset path **or** local directory containing
+            ``json_file`` and the image tree.
+        json_file: Name of the JSON annotation file inside
+            ``path_or_dataset`` when loading from a local directory.
+        split: Split to load when using ``load_dataset``.
+
+    Returns:
+        A list of dicts each containing a ``conversation`` field ready for
+        downstream VLM processors.
+    """
+    dataset_root = Path(path_or_dataset)
+    local_json = dataset_root / json_file
+    if local_json.is_file():
+        with open(local_json, "r") as f:
+            dataset = json.load(f)
+    else:
+        dataset = load_dataset(path_or_dataset, split=split)
+        dataset_root = None
+
+    dataset = dataset[:100]  # FIXME: for testing only, remove this line for full dataset
+
+    def clean_prompt(val: str) -> str:
+        val = val.replace("<image>", "").replace("<video>", "").strip()
+        return val.lstrip("\n").rstrip()
+
+    def format(example):
+        image = example.get("image")
+        convs = example.get("conversations", [])
+        if image in (None, "") or not convs:
+            return None
+
+        conversation: List[Dict[str, Any]] = []
+
+        first_human_handled = False
+        for turn in convs:
+            role = turn.get("from")
+            value = turn.get("value", "")
+            if not value:
+                continue
+            if role == "human":
+                content: List[Dict[str, Any]] = []
+                if not first_human_handled:
+                    if dataset_root is not None:
+                        abs_path = resolve_path(dataset_root / image)
+                        content.append({"type": "image", "image": str(abs_path)})
+                    else:
+                        content.append({"type": "image", "image": image})
+                    first_human_handled = True
+                content.append({"type": "text", "text": clean_prompt(value)})
+                conversation.append({"role": "user", "content": content})
+            elif role == "gpt":
+                conversation.append(
+                    {"role": "assistant", "content": [{"type": "text", "text": value.strip()}]}
+                )
+
+        if not conversation:
+            return None
+
+        return {"conversation": conversation}
+
+    formatted = (format(ex) for ex in dataset)
+    return [ex for ex in formatted if ex is not None]
+
 
 def make_llava_video_178k_dataset(
     video_root_path: str,
     path_or_dataset: str = "lmms-lab/LLaVA-Video-178K",
-    subsets: str | List[str] = "0_30_s_nextqa",
+    subsets: str | List[str] = "0_30_s_nextqa", # 0_30_s_academic_v0_1
     split: str = "open_ended",
 ) -> List[Dict[str, Any]]:
     """Load and preprocess a subset of the *LLaVA-Video-178K* dataset.
