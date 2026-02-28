@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from megatron.bridge.models.kimi import KimiK2Provider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout, kimi_k2_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -56,7 +56,7 @@ class TestKimiK2PretrainConfig:
 
         # Check it returns a ConfigContainer with all required components
         assert isinstance(cfg, ConfigContainer)
-        assert isinstance(cfg.model, KimiK2Provider)
+        assert isinstance(cfg.model, MLAModelProvider)
         assert cfg.train is not None
         assert cfg.optimizer is not None
         assert cfg.scheduler is not None
