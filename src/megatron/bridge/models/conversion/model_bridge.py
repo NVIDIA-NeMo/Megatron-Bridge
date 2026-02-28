@@ -86,6 +86,7 @@ class HFWeightTuple(NamedTuple):
 
     param_name: str
     weight: torch.Tensor
+    megatron_param_name: str
 
 
 @dataclass(frozen=True)
@@ -1001,13 +1002,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 # TODO(yuya): fix this hard coded naming
                 if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
                     # Yield the embedding weight
-                    yield HFWeightTuple(hf_name, final_tensor)
+                    yield HFWeightTuple(hf_name, final_tensor, task.param_name)
 
                     # Also yield as lm_head.weight if it's expected
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
-                            yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
+                            yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach(), task.param_name)
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
                     # This should not happen when embeddings are tied - assert error
                     raise ValueError(
@@ -1015,7 +1016,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     )
                 else:
                     # Regular case - yield the tensor normally
-                    yield HFWeightTuple(hf_name, final_tensor)
+                    yield HFWeightTuple(hf_name, final_tensor, task.param_name)
 
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.
