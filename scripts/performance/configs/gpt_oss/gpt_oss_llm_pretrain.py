@@ -38,7 +38,6 @@ def gpt_oss_120b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
-    # GPT-OSS currently only has BF16 base configs enabled
     base_cfg = get_workload_base_config(
         model_family_name="gpt_oss",
         model_recipe_name="gpt_oss_120b",
