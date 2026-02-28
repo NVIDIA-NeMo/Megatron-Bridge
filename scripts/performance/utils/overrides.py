@@ -397,16 +397,17 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
     if model_recipe_name == "kimi_k2":
         if pp_size is not None or vp_size != -1:
-            try:
-                layout = _get_kimi_k2_pipeline_layout(
-                    recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
-                )
-                recipe.model.pipeline_model_parallel_layout = layout
-            except ValueError:
-                logger.warning(
-                    f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
-                )
-                recipe.model.pipeline_model_parallel_layout = None
+            if not isinstance(recipe.model.pipeline_model_parallel_layout, str):
+                try:
+                    layout = _get_kimi_k2_pipeline_layout(
+                        recipe.model.pipeline_model_parallel_size, recipe.model.virtual_pipeline_model_parallel_size
+                    )
+                    recipe.model.pipeline_model_parallel_layout = layout
+                except ValueError:
+                    logger.warning(
+                        f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for Kimi-K2. Using default layout."
+                    )
+                    recipe.model.pipeline_model_parallel_layout = None
         if pipeline_model_parallel_layout is not None:
             recipe.model.pipeline_model_parallel_layout = pipeline_model_parallel_layout
 

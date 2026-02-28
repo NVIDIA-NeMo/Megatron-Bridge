@@ -27,15 +27,15 @@ BASE_KIMI_K2_CONFIG = WorkloadBaseConfig(
 KIMI_K2_PRETRAIN_CONFIG_GB300 = replace(
     BASE_KIMI_K2_CONFIG,
     num_gpus=256,
-    global_batch_size=2048,
+    global_batch_size=4096,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
-    recompute_modules=["moe_act"],
+    micro_batch_size=2,
+    cuda_graph_scope=[],
+    recompute_modules=["mla_up_proj"],
 )
 KIMI_K2_PRETRAIN_CONFIG_GB300_BF16 = KIMI_K2_PRETRAIN_CONFIG_GB300
 KIMI_K2_PRETRAIN_CONFIG_GB300_FP8_CS = KIMI_K2_PRETRAIN_CONFIG_GB300

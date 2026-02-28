@@ -16,7 +16,10 @@ import torch
 
 from megatron.bridge.models.kimi import KimiK2Provider
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
+from megatron.bridge.recipes.utils.optimizer_utils import (
+    distributed_fused_adam_with_cosine_annealing,
+    distributed_muon_with_cosine_annealing,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -32,6 +35,7 @@ def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int):
         (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+        (2, 8): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
     }
 
     vp_size = 1 if vp_size is None else vp_size
@@ -46,11 +50,13 @@ def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
-def kimi_k2_pretrain_config() -> ConfigContainer:
+def kimi_k2_pretrain_config(optimizer_type: str = "muon") -> ConfigContainer:
     """Return a pre-training config for Kimi-K2 (1T).
 
     Recommended parallelism: TP=2, PP=16, EP=32
-    Uses Muon optimizer by default.
+
+    Args:
+        optimizer_type: 'adam' or 'muon' (default).
     """
     cfg = _pretrain_common()
 
@@ -104,12 +110,22 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc_eval = 5
 
     # Optimizer
-    opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
-        lr_warmup_iters=2000,
-        lr_decay_iters=cfg.train.train_iters,
-        max_lr=3e-4,
-        min_lr=3e-5,
-    )
+    if optimizer_type == "adam":
+        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+            lr_warmup_iters=2000,
+            lr_decay_iters=cfg.train.train_iters,
+            max_lr=3e-4,
+            min_lr=3e-5,
+        )
+    elif optimizer_type == "muon":
+        opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
+            lr_warmup_iters=2000,
+            lr_decay_iters=cfg.train.train_iters,
+            max_lr=3e-4,
+            min_lr=3e-5,
+        )
+    else:
+        raise ValueError(f"Invalid optimizer type: {optimizer_type}")
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
@@ -136,12 +152,14 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # Mixed precision - Kimi-K2 uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
+    # Adam uses grad_reduce_in_fp32=False, Muon uses True.
+    grad_reduce_in_fp32_default = optimizer_type != "adam"
     cfg.mixed_precision = MixedPrecisionConfig(
         bf16=True,
         params_dtype=torch.bfloat16,
         pipeline_dtype=torch.bfloat16,
         autocast_enabled=False,
-        grad_reduce_in_fp32=True,
+        grad_reduce_in_fp32=grad_reduce_in_fp32_default,
     )
     # FP8 settings (commented - enable if using FP8)
     # cfg.mixed_precision.fp8_recipe = "tensorwise"
@@ -169,13 +187,18 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT for Muon optimizer)
+    # DDP config — Adam uses distributed optimizer + overlap; Muon requires both off.
+    if optimizer_type == "adam":
+        cfg.ddp.use_distributed_optimizer = True
+        cfg.ddp.overlap_param_gather = True
+        cfg.ddp.grad_reduce_in_fp32 = False
+    else:
+        cfg.ddp.use_distributed_optimizer = False  # Muon needs this to be False
+        cfg.ddp.overlap_param_gather = False  # Muon needs this to be False
+        cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = False  # Muon needs this to be False
     cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = False  # Muon needs this to be False
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
