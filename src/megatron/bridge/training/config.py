@@ -740,6 +740,13 @@ class TrainingConfig:
     iterations_to_skip: list[int] = field(default_factory=list)
     """List of iterations to skip during training, empty by default."""
 
+    phase_transition_iterations: list[int] | None = None
+    """List of iterations where phase transitions occur for multi-phase pretraining.
+    Training will exit and save checkpoint at these iterations to rebuild dataloaders
+    with updated data mixtures. Requires fixed global batch size across phases.
+    Incompatible with rampup_batch_size. Only applies to pretraining (GPTDatasetConfig),
+    not finetuning or custom DatasetProvider implementations."""
+
     # ---------------- Validation config. ----------------
 
     eval_iters: int | None = None
@@ -765,6 +772,15 @@ class TrainingConfig:
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
+
+        # Validate phase_transition_iterations for multi-phase pretraining
+        if self.phase_transition_iterations is not None:
+            assert self.rampup_batch_size is None, (
+                "phase_transition_iterations is incompatible with rampup_batch_size. "
+                "Multi-phase training requires fixed global batch size across all phases."
+            )
+            # Ensure iterations are sorted for consistent phase boundary calculations
+            self.phase_transition_iterations = sorted(self.phase_transition_iterations)
 
 
 @dataclass(kw_only=True)

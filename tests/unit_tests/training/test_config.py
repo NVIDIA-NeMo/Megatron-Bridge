@@ -2607,6 +2607,56 @@ class TestSampleBasedTraining:
             sched_cfg.finalize()
 
 
+class TestPhaseTransitionIterations:
+    """Tests for phase_transition_iterations configuration in TrainingConfig."""
+
+    def test_phase_transition_iterations_sorted_after_finalize(self):
+        """Test that phase_transition_iterations are sorted after finalize."""
+        train_cfg = create_test_training_config(
+            phase_transition_iterations=[500, 100, 300],  # Unsorted
+        )
+        train_cfg.finalize()
+
+        assert train_cfg.phase_transition_iterations == [100, 300, 500]  # Should be sorted
+
+    def test_phase_transition_iterations_with_rampup_batch_size_fails(self):
+        """Test that phase_transition_iterations with rampup_batch_size fails validation."""
+        train_cfg = create_test_training_config(
+            phase_transition_iterations=[100, 200],
+            rampup_batch_size=[16, 8, 300000],  # Incompatible with phase transitions
+        )
+
+        with pytest.raises(AssertionError, match="phase_transition_iterations is incompatible with rampup_batch_size"):
+            train_cfg.finalize()
+
+    def test_phase_transition_iterations_none_passes(self):
+        """Test that None phase_transition_iterations passes validation."""
+        train_cfg = create_test_training_config(
+            phase_transition_iterations=None,
+        )
+        train_cfg.finalize()  # Should pass without error
+
+        assert train_cfg.phase_transition_iterations is None
+
+    def test_phase_transition_iterations_empty_list_passes(self):
+        """Test that empty list phase_transition_iterations passes validation."""
+        train_cfg = create_test_training_config(
+            phase_transition_iterations=[],
+        )
+        train_cfg.finalize()  # Should pass without error
+
+        assert train_cfg.phase_transition_iterations == []
+
+    def test_phase_transition_iterations_single_value(self):
+        """Test that single phase transition iteration works."""
+        train_cfg = create_test_training_config(
+            phase_transition_iterations=[500],
+        )
+        train_cfg.finalize()
+
+        assert train_cfg.phase_transition_iterations == [500]
+
+
 class TestDatasetSequenceLengthValidation:
     """Tests for dataset sequence length validation with different dataset types."""
 

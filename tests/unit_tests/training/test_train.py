@@ -1136,6 +1136,137 @@ class TestCheckpointAndDecideExit:
         assert save_call_args[0][1] == args["model"]  # model argument
         assert "train_data_iterator" in save_call_args[1]
 
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_phase_transition_exit_at_transition_iteration(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """Test that training exits at phase transition iterations."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            step=100,  # At phase transition
+        )
+        state.cfg.train.phase_transition_iterations = [100, 200, 300]
+
+        args = self._create_mock_args()
+        result = checkpoint_and_decide_exit(state, **args)
+
+        # Verify the function returns True (should exit)
+        assert result is True
+
+        # Verify checkpoint was saved
+        mock_save_checkpoint.assert_called_once()
+
+        # Verify the log message mentions phase transition
+        mock_barrier_log.assert_called_once()
+        log_message = mock_barrier_log.call_args[0][0]
+        assert "phase transition" in log_message
+        assert "100" in log_message
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_phase_transition_no_exit_between_transitions(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """Test that training continues between phase transitions."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            step=50,  # Not at phase transition
+        )
+        state.cfg.train.phase_transition_iterations = [100, 200, 300]
+
+        args = self._create_mock_args()
+        result = checkpoint_and_decide_exit(state, **args)
+
+        # Verify the function returns False (should continue training)
+        assert result is False
+
+        # Verify no checkpoint was saved
+        mock_save_checkpoint.assert_not_called()
+        mock_barrier_log.assert_not_called()
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_phase_transition_none_does_not_trigger_exit(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """Test that None phase_transition_iterations does not trigger exit."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            step=100,
+        )
+        state.cfg.train.phase_transition_iterations = None
+
+        args = self._create_mock_args()
+        result = checkpoint_and_decide_exit(state, **args)
+
+        # Verify the function returns False (should continue training)
+        assert result is False
+
+        # Verify no actions were taken
+        mock_save_checkpoint.assert_not_called()
+        mock_barrier_log.assert_not_called()
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_phase_transition_empty_list_does_not_trigger_exit(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """Test that empty phase_transition_iterations list does not trigger exit."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            step=100,
+        )
+        state.cfg.train.phase_transition_iterations = []
+
+        args = self._create_mock_args()
+        result = checkpoint_and_decide_exit(state, **args)
+
+        # Verify the function returns False (should continue training)
+        assert result is False
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_phase_transition_and_exit_interval_both_trigger(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """Test that phase transition message is used when both phase transition and exit_interval trigger."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            exit_interval=100,  # Would also trigger at step 100
+            step=100,  # At phase transition AND exit_interval
+        )
+        state.cfg.train.phase_transition_iterations = [100, 200]
+
+        args = self._create_mock_args()
+        result = checkpoint_and_decide_exit(state, **args)
+
+        # Verify the function returns True (should exit)
+        assert result is True
+
+        # Verify checkpoint was saved exactly once
+        mock_save_checkpoint.assert_called_once()
+
+        # Verify the log message mentions phase transition (takes precedence in message)
+        mock_barrier_log.assert_called_once()
+        log_message = mock_barrier_log.call_args[0][0]
+        assert "phase transition" in log_message
+
 
 class TestIterationSkipping:
     """Unit tests for iteration skipping functionality."""
