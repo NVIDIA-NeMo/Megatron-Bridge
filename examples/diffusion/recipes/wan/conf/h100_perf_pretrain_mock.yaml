@@ -1,0 +1,37 @@
+model:
+  tensor_model_parallel_size: 2
+  sequence_parallel: true
+  pipeline_model_parallel_size: 1
+  context_parallel_size: 4
+  recompute_granularity: full
+  recompute_method: block
+  recompute_num_layers: 8
+  crossattn_emb_size: 5120
+  hidden_size: 5120
+  ffn_hidden_size: 13824
+  num_attention_heads: 40
+  num_layers: 40
+  qkv_format: thd
+  seq_length: 2048
+
+train:
+  global_batch_size: 128
+  micro_batch_size: 1
+  eval_iters: 0
+  empty_unused_memory_level: 0
+
+scheduler:
+  lr_decay_style: constant
+  lr_warmup_iters: 0
+
+optimizer:
+  lr: 5e-6
+  min_lr: 5e-6
+
+dataset:
+  seq_length: 2048 # This is not used
+  global_batch_size: 128
+  micro_batch_size: 1
+
+logger:
+  log_interval: 1

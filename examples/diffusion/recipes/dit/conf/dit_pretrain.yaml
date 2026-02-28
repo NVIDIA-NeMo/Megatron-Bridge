@@ -1,0 +1,41 @@
+# DiT Pretraining Configuration
+# This file contains all the configuration parameters for DiT pretraining
+# You can override any of these values via command line using Hydra-style syntax
+
+# Model configuration
+model:
+  tensor_model_parallel_size: 1
+  sequence_parallel: false
+  context_parallel_size: 1
+  qkv_format: thd  # Must be 'thd' for sequence packing
+  num_attention_heads: 16
+  vae_cache_folder: null  # Set to your VAE cache folder path
+
+# Dataset configuration
+dataset:
+  path: DATASET_FOLDER  # Set to your dataset folder path
+  task_encoder_seq_length: 15360
+  packing_buffer_size: 100
+  num_workers: 20
+
+# Checkpoint configuration
+checkpoint:
+  save: "dfm_experiment"  # Set to your checkpoint folder path
+  load: "dfm_experiment"  # Set to your checkpoint folder path (same as save for resuming)
+  load_optim: true
+  save_interval: 1000
+
+# Training configuration
+train:
+  eval_interval: 1000
+  train_iters: 10000
+  eval_iters: 32
+  global_batch_size: 8  # Set this to match NUM_GPUS or your desired batch size
+  micro_batch_size: 1  # Must be 1 for sequence packing
+
+# Logger configuration
+logger:
+  log_interval: 10
+  # remove wandb_project and wandb_exp_name to disable wandb logging
+  wandb_project: "DiT"
+  wandb_exp_name: "dfm_experiment"  # Set to your experiment name
