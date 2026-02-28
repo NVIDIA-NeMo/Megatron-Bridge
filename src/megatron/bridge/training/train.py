@@ -25,6 +25,7 @@ import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+from megatron.core.optimizer_cuda_graph import OptimizerCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
     get_current_running_global_batch_size,
@@ -252,6 +253,10 @@ def train(
     if config.model.cuda_graph_impl == "local" and CudaGraphScope.full_iteration in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+        )
+    if config.optimizer.optimizer_cuda_graph:
+        optimizer.step = OptimizerCudaGraphWrapper(
+            optimizer.step, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
 
     start_iteration = global_state.train_state.step
@@ -1408,6 +1413,11 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Explicitly delete optimizer CUDA graph
+    if OptimizerCudaGraphWrapper.cuda_graph is not None:
+        del OptimizerCudaGraphWrapper.cuda_graph
+        OptimizerCudaGraphWrapper.cuda_graph = None
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine)
     if cuda_graph_helper is not None:
