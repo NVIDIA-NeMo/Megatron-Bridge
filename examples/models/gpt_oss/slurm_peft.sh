@@ -32,7 +32,7 @@
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
 #SBATCH --partition=batch
-#SBATCH --account=coreai_dlalgo_llm
+#SBATCH --account=my_account
 #SBATCH --output=logs/gpt_oss_lora_%j.out
 #SBATCH --error=logs/gpt_oss_lora_%j.err
 #SBATCH --exclusive
@@ -61,7 +61,7 @@ LR_WARMUP_ITERS=50
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
-# Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
+# Parallelism configs: "TP,PP,EP,CP,SP" per entry (max(TP*CP, EP)*PP must be divisible by the total number of GPUs)
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
