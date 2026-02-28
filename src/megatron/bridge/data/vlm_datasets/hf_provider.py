@@ -26,7 +26,6 @@ from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversati
 from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_cord_v2_dataset,
     make_cv17_dataset,
-    make_llava_pretrain_dataset,
     make_llava_video_178k_dataset,
     make_medpix_dataset,
     make_raven_dataset,
@@ -78,7 +77,6 @@ class HFDatasetConversationProvider(DatasetProvider):
             "make_medpix_dataset": make_medpix_dataset,
             "make_cv17_dataset": make_cv17_dataset,
             "make_raven_dataset": make_raven_dataset,
-            "make_llava_pretrain_dataset": make_llava_pretrain_dataset,
             "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
         }
         if self.maker_name in registry:
@@ -90,7 +88,6 @@ class HFDatasetConversationProvider(DatasetProvider):
             "medpix": "make_medpix_dataset",
             "cv17": "make_cv17_dataset",
             "raven": "make_raven_dataset",
-            "llava_pretrain": "make_llava_pretrain_dataset",
             "llava_video_178k": "make_llava_video_178k_dataset",
         }
         if self.maker_name in alias_map and alias_map[self.maker_name] in registry:
