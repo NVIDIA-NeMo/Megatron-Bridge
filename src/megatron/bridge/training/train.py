@@ -47,6 +47,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.transformer.enums import CudaGraphScope
+from megatron.core.transformer.moe.moe_utils import clear_aux_losses_tracker
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
@@ -545,6 +546,9 @@ def train(
             timers("interval-time", log_level=0).start(barrier=True)
             if energy_monitor is not None:
                 energy_monitor.resume()
+            # Clear MoE auxiliary loss tracker after evaluation to prevent leakage into training metrics
+            if config.model.num_moe_experts is not None:
+                clear_aux_losses_tracker()
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.

@@ -1506,6 +1506,16 @@ class ConfigContainer(Container):
         if self.model.cuda_graph_impl == "none":
             self.model.cuda_graph_scope = []
 
+        # CUDA graph with transformer_engine: validate NCCL_GRAPH_REGISTER when using expandable_segments
+        if self.model.cuda_graph_impl == "transformer_engine":
+            assert (
+                "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", "")
+                or os.getenv("NCCL_GRAPH_REGISTER", "") == "0"
+            ), (
+                "Setting NCCL_GRAPH_REGISTER=0 to avoid illegal memory access when using "
+                "CUDA Graph with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True."
+            )
+
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
 

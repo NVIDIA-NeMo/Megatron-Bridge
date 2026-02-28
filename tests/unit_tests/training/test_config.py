@@ -1222,6 +1222,39 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_cuda_graph_transformer_engine_expandable_segments_validation(self, monkeypatch):
+        """Test that transformer_engine CUDA graph validates NCCL_GRAPH_REGISTER with expandable_segments."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            # Test: expandable_segments:True without NCCL_GRAPH_REGISTER=0 should fail
+            monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            monkeypatch.delenv("NCCL_GRAPH_REGISTER", raising=False)
+            with pytest.raises(
+                AssertionError,
+                match="Setting NCCL_GRAPH_REGISTER=0 to avoid illegal memory access",
+            ):
+                container.validate()
+
+            # Test: expandable_segments:True with NCCL_GRAPH_REGISTER=0 should pass
+            monkeypatch.setenv("NCCL_GRAPH_REGISTER", "0")
+            container.validate()  # Should pass without error
+
+            # Test: No expandable_segments should pass regardless of NCCL_GRAPH_REGISTER
+            monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "")
+            monkeypatch.delenv("NCCL_GRAPH_REGISTER", raising=False)
+            container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize("model_factory", [create_test_gpt_config, create_test_deepseek_config])
     def test_default_pipeline_dtype(self, model_factory, monkeypatch):
         """
