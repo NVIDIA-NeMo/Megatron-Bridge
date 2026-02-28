@@ -1513,6 +1513,77 @@ class TestLoadModelStateDictHelper:
             _load_model_state_dict(module, {"w": 1}, strict=False)
 
 
+class TestLoadModelWeights:
+    """Test the load_model_weights function."""
+
+    @pytest.fixture
+    def mock_model(self):
+        """Create a mock model for testing."""
+        model = Mock()
+        model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
+        return [model]
+
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    def test_load_model_weights_delegates_to_loader(
+        self,
+        mock_load_weights,
+        mock_model,
+    ):
+        """Test load_model_weights delegates to _load_model_weights_from_checkpoint."""
+        from megatron.bridge.training.checkpointing import load_model_weights
+
+        load_model_weights(mock_model, "/checkpoint/iter_0000005")
+
+        mock_load_weights.assert_called_once_with(
+            "/checkpoint/iter_0000005",
+            mock_model,
+            fully_parallel_load=False,
+            strict=True,
+            return_state_dict=False,
+        )
+
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    def test_load_model_weights_with_fully_parallel_load(
+        self,
+        mock_load_weights,
+        mock_model,
+    ):
+        """Test load_model_weights with fully_parallel_load enabled."""
+        from megatron.bridge.training.checkpointing import load_model_weights
+
+        load_model_weights(mock_model, "/checkpoint/iter_0000005", fully_parallel_load=True)
+
+        mock_load_weights.assert_called_once_with(
+            "/checkpoint/iter_0000005",
+            mock_model,
+            fully_parallel_load=True,
+            strict=True,
+            return_state_dict=False,
+        )
+
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    def test_load_model_weights_return_state_dict(
+        self,
+        mock_load_weights,
+        mock_model,
+    ):
+        """Test load_model_weights with return_state_dict=True."""
+        from megatron.bridge.training.checkpointing import load_model_weights
+
+        mock_load_weights.return_value = {"model": {"weight": torch.randn(10, 10)}}
+
+        result = load_model_weights(mock_model, "/checkpoint/iter_0000005", return_state_dict=True)
+
+        mock_load_weights.assert_called_once_with(
+            "/checkpoint/iter_0000005",
+            mock_model,
+            fully_parallel_load=False,
+            strict=True,
+            return_state_dict=True,
+        )
+        assert result is not None
+
+
 class TestMegatronLMCompatibility:
     """Test Megatron-LM checkpoint compatibility features."""
 

@@ -1306,6 +1306,43 @@ def _load_model_weights_from_checkpoint(
         torch.distributed.barrier()
 
 
+def load_model_weights(
+    model: list[MegatronModule],
+    checkpoint_path: str,
+    *,
+    fully_parallel_load: bool = False,
+    strict: bool = True,
+    return_state_dict: bool = False,
+) -> Optional[StateDict]:
+    """Load only model weights from a ``torch_dist`` checkpoint.
+
+    Simple API for loading pretrained model weights without optimizer state,
+    RNG state, or iteration tracking.
+
+    Args:
+        model: The model(s) to load weights into.
+        checkpoint_path: Path to the checkpoint directory directly containing model weights.
+        fully_parallel_load: Apply full load parallelization across data parallel ranks.
+        strict: Whether to enforce strict state dict loading.
+        return_state_dict: If True, return the state dict instead of loading into model.
+
+    Returns:
+        If return_state_dict is True, returns the model state dict.
+        Otherwise returns None.
+
+    Example:
+        >>> load_model_weights(model, "/checkpoints/iter_0000005")
+        >>> state_dict = load_model_weights(model, "/checkpoints/iter_0000005", return_state_dict=True)
+    """
+    return _load_model_weights_from_checkpoint(
+        checkpoint_path,
+        model,
+        fully_parallel_load=fully_parallel_load,
+        strict=strict,
+        return_state_dict=return_state_dict,
+    )
+
+
 def load_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
