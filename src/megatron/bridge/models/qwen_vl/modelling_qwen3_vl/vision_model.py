@@ -210,6 +210,21 @@ class Qwen3VLVisionModel(VisionModule):
         patch_pos_embeds = torch.cat(patch_pos_embeds_permute)
         return patch_pos_embeds
 
+    def _get_max_vision_seq_length(self) -> int:
+        """Get the maximum sequence length for vision encoder CUDA graphs."""
+        if hasattr(self.config, 'max_vision_cuda_graph_seq_length') and self.config.max_vision_cuda_graph_seq_length:
+            return self.config.max_vision_cuda_graph_seq_length
+        # Default: calculate from num_position_embeddings
+        return self.config.num_position_embeddings // (self.config.spatial_merge_size ** 2)
+
+    def _uses_vision_cuda_graph(self) -> bool:
+        """Check if vision encoder CUDA graphs are enabled."""
+        return (
+            hasattr(self.config, 'cuda_graph_impl')
+            and self.config.cuda_graph_impl == "transformer_engine"
+            and self.training
+        )
+
     def forward(
         self,
         hidden_states: Optional[torch.Tensor],
@@ -241,16 +256,74 @@ class Qwen3VLVisionModel(VisionModule):
 
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
         rotary_pos_emb = rotary_pos_emb.reshape(seq_len, 1, 1, -1).repeat(1, 1, 1, 2)
+
+        # Check if we need to pad for CUDA graphs
+        use_cuda_graph_padding = self._uses_vision_cuda_graph()
+        original_seq_len = seq_len
+
+        if use_cuda_graph_padding:
+            max_seq_len = self._get_max_vision_seq_length()
+            if seq_len > max_seq_len:
+                raise ValueError(
+                    f"Vision input sequence length ({seq_len}) exceeds max_vision_cuda_graph_seq_length ({max_seq_len}). "
+                    f"Increase max_vision_cuda_graph_seq_length in config or disable vision CUDA graphs."
+                )
+
+            if seq_len < max_seq_len:
+                # Pad hidden_states: [seq_len, hidden_size] -> [max_seq_len, hidden_size]
+                pad_len = max_seq_len - seq_len
+                hidden_states = F.pad(hidden_states, (0, 0, 0, pad_len), value=0.0)
+
+                # Pad rotary_pos_emb: [seq_len, 1, 1, head_dim*2] -> [max_seq_len, 1, 1, head_dim*2]
+                rotary_pos_emb = F.pad(rotary_pos_emb, (0, 0, 0, 0, 0, 0, 0, pad_len), value=0.0)
+
+                seq_len = max_seq_len
+
         hidden_states = hidden_states[:, None]
+
+        # When using CUDA graphs, we don't pass packed_seq_params (non-tensor)
+        # Instead, use full attention (which is fine since we pad to fixed size)
+        if use_cuda_graph_padding:
+            packed_seq_params = None
+            # Create causal attention mask for padded input
+            # For vision encoder, we typically use full attention (no causal mask)
+            # but we need to mask out the padding positions
+            if original_seq_len < seq_len:
+                # Create attention mask: [1, 1, seq_len, seq_len]
+                # Mask out attention to/from padding positions
+                attention_mask = torch.ones(
+                    (1, 1, seq_len, seq_len),
+                    dtype=hidden_states.dtype,
+                    device=hidden_states.device
+                )
+                # Mask out padding columns (keys)
+                attention_mask[:, :, :, original_seq_len:] = 0
+                # Mask out padding rows (queries) - these will produce garbage anyway
+                attention_mask[:, :, original_seq_len:, :] = 0
+                # Convert to additive mask (0 -> 0, 1 -> -inf for softmax)
+                attention_mask = (1.0 - attention_mask) * torch.finfo(hidden_states.dtype).min
+            else:
+                attention_mask = None
+        else:
+            packed_seq_params = self.build_packed_seq_params(grid_thw)
+            attention_mask = None
 
         hidden_states, deepstack_feature_lists = self.decoder(
             hidden_states=hidden_states,
-            attention_mask=None,
+            attention_mask=attention_mask,
             inference_params=inference_params,
             rotary_pos_emb=rotary_pos_emb,
-            packed_seq_params=self.build_packed_seq_params(grid_thw),
+            packed_seq_params=packed_seq_params,
             **(extra_block_kwargs or {}),
         )
+
+        # Remove padding if we added it
+        if use_cuda_graph_padding and original_seq_len < seq_len:
+            hidden_states = hidden_states[:original_seq_len]
+            # Unpad deepstack features - they go through a merger that reduces by spatial_merge_size^2
+            # So their length is seq_len // (spatial_merge_size^2)
+            original_merged_seq_len = original_seq_len // (self.spatial_merge_size ** 2)
+            deepstack_feature_lists = [feat[:original_merged_seq_len] for feat in deepstack_feature_lists]
 
         hidden_states = self.merger(hidden_states)
 
