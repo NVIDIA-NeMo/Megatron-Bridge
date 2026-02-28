@@ -23,6 +23,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+
+logging.basicConfig(level=logging.INFO)
+
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
 
@@ -57,7 +60,6 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -404,7 +406,9 @@ def main(
         args=list(sys.argv[1:]),
     )
 
-    logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
+    logger.info(
+        "Will launch the following command with Nemo-Run on compute node: %s", " ".join(nemorun_script.to_command())
+    )
 
     is_finished_experiment = False  # An experiment might consist of multiple training runs, due to restarts.
     is_testing_passed = False  # Whether the testing passed convergence and performance validation.

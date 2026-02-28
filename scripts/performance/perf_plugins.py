@@ -368,7 +368,7 @@ class PerfEnvPlugin(Plugin):
                 cli_overrides = converter(script_args)
 
                 task.args.extend(cli_overrides)
-                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+                logger.debug(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             else:
                 raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
