@@ -241,7 +241,7 @@ class DataloaderConfig:
     """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
     'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
-    num_workers: int = 8
+    num_workers: int = 2
     """Dataloader number of workers."""
 
     data_sharding: bool = True
@@ -250,11 +250,17 @@ class DataloaderConfig:
     pin_memory: bool = True
     """Whether to pin memory during data loading for faster GPU training."""
 
-    persistent_workers: bool = False
-    """Whether to keep data loading workers persistent across epochs."""
+    persistent_workers: bool = True
+    """Whether to keep data loading workers persistent across epochs.
+    Automatically set to False when num_workers is 0."""
 
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
+
+    def finalize(self):
+        """Finalize dataloader config field constraints."""
+        if self.num_workers == 0 and self.persistent_workers:
+            self.persistent_workers = False
 
 
 @dataclass(frozen=True)
@@ -463,6 +469,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
+
+        DataloaderConfig.finalize(self)
 
 
 @dataclass
@@ -1451,7 +1459,7 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
-        if isinstance(self.dataset, GPTDatasetConfig):
+        if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
