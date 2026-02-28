@@ -35,6 +35,7 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
@@ -336,6 +337,7 @@ def evaluate_and_print_results(
         writer = None
 
     wandb_writer = state.wandb_logger
+    mlflow_writer = state.mlflow_logger
 
     if should_fire(callback_manager, start_event):
         callback_manager.fire(
@@ -385,6 +387,15 @@ def evaluate_and_print_results(
             wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
                 wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+
+        if mlflow_writer and is_last_rank():
+            mlflow_writer.log_metrics(
+                _sanitize_mlflow_metrics({f"val/{key}": total_loss_dict[key].item()}), step=state.train_state.step
+            )
+            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                mlflow_writer.log_metrics(
+                    _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.step
+                )
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
         process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)

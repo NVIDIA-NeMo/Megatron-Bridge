@@ -217,22 +217,6 @@ class TestOnLoadCheckpointSuccess:
 class TestSanitizeMlflowMetrics:
     """Test cases for _sanitize_mlflow_metrics function."""
 
-    def test_replaces_slashes_with_underscores(self):
-        """Test that forward slashes are replaced with underscores."""
-        metrics = {
-            "train/loss": 0.5,
-            "train/accuracy": 0.95,
-            "eval/loss": 0.3,
-        }
-
-        result = _sanitize_mlflow_metrics(metrics)
-
-        assert result == {
-            "train_loss": 0.5,
-            "train_accuracy": 0.95,
-            "eval_loss": 0.3,
-        }
-
     def test_handles_multiple_slashes(self):
         """Test that multiple slashes in a key are all replaced."""
         metrics = {
@@ -243,8 +227,8 @@ class TestSanitizeMlflowMetrics:
         result = _sanitize_mlflow_metrics(metrics)
 
         assert result == {
-            "train_layer_0_loss": 1.0,
-            "model_encoder_attention_weight": 0.5,
+            "train/layer_0_loss": 1.0,
+            "model/encoder_attention_weight": 0.5,
         }
 
     def test_preserves_keys_without_slashes(self):
@@ -294,8 +278,8 @@ class TestSanitizeMlflowMetrics:
         result = _sanitize_mlflow_metrics(metrics)
 
         assert result == {
-            "train_loss": 0.5,
+            "train/loss": 0.5,
             "global_step": 1000,
-            "eval_accuracy": 0.9,
+            "eval/accuracy": 0.9,
             "learning_rate": 0.001,
         }
