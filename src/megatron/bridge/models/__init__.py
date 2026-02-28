@@ -13,6 +13,13 @@
 # limitations under the License.
 
 # Import model providers for easy access
+from megatron.bridge.models.bailing import (
+    BailingMoeV2Bridge,
+    BailingMoeV2ModelProvider,
+    Ling1TModelProvider,
+    LingFlash2ModelProvider,
+    LingMini2ModelProvider,
+)
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -208,6 +215,8 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "BailingMoeV2Bridge",
+    "BailingMoeV2ModelProvider",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
@@ -259,6 +268,9 @@ __all__ = [
     "Llama31Nemotron70BProvider",
     "Llama31NemotronUltra253BProvider",
     "Llama33NemotronSuper49BProvider",
+    "Ling1TModelProvider",
+    "LingFlash2ModelProvider",
+    "LingMini2ModelProvider",
     "MistralModelProvider",
     "MistralSmall3ModelProvider24B",
     # Ministral 3 Models
