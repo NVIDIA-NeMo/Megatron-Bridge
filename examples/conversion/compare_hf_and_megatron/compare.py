@@ -757,7 +757,12 @@ def compare_models_one_step(args) -> None:
             .unsqueeze(0)
             .expand_as(input_ids)
         )
-        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        # Megatron-Core convention: True in attention_mask means "mask OUT this token"
+        # (opposite of HuggingFace where True means "attend to this token").
+        # Passing None lets Megatron auto-generate the correct causal mask internally,
+        # which is the standard approach used throughout the codebase
+        # (see: qwenvl_inference_wrapper.py, vlm_step.py, sft.py).
+        attention_mask = None
 
         fwd_bwd_function = get_forward_backward_func()
         iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
