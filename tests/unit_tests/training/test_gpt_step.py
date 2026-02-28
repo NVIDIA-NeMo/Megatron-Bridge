@@ -19,6 +19,7 @@ import modelopt.torch.distill as mtd
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
+from megatron.bridge.training import gpt_step
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     get_packed_seq_params,
@@ -376,3 +377,92 @@ class TestCreateLossFunctionModelopt:
             assert torch.equal(loss_func.args[0], loss_mask)
             assert loss_func.keywords["check_for_nan_in_loss"] == False
             assert loss_func.keywords["check_for_spiky_loss"] == False
+
+
+class TestGetBatchPPPadding:
+    def _mk_cfg(self, seq_length: int, pp: int):
+        cfg = type("Cfg", (), {})()
+        cfg.model = type("M", (), {"seq_length": seq_length, "pipeline_model_parallel_size": pp})()
+        cfg.dataset = type("D", (), {"skip_getting_attention_mask_from_dataset": True})()
+        return cfg
+
+    def _mk_pg(self):
+        return type("PG", (), {"pp": object()})()
+
+    def test_get_batch_pp_pads_to_seq_length(self, monkeypatch):
+        # Force first+last so tensors are returned.
+        monkeypatch.setattr(gpt_step, "is_pp_first_stage", lambda pg: True, raising=True)
+        monkeypatch.setattr(gpt_step, "is_pp_last_stage", lambda pg: True, raising=True)
+        monkeypatch.setattr(gpt_step, "get_batch_on_this_cp_rank", lambda x: x, raising=True)
+
+        bs, in_len, seq_len = 2, 5, 8
+        fake_batch = {
+            "tokens": torch.arange(bs * in_len).view(bs, in_len),
+            "labels": torch.ones(bs, in_len, dtype=torch.long),
+            "loss_mask": torch.ones(bs, in_len, dtype=torch.float),
+            "position_ids": torch.arange(in_len).unsqueeze(0).expand(bs, -1),
+            "attention_mask": torch.ones((bs, 1, in_len, in_len), dtype=torch.bool),
+        }
+        monkeypatch.setattr(gpt_step, "get_batch_from_iterator", lambda *a, **k: fake_batch, raising=True)
+
+        cfg = self._mk_cfg(seq_length=seq_len, pp=2)
+        tokens, labels, loss_mask, attention_mask, position_ids, *_ = gpt_step.get_batch(
+            iter([None]), cfg, use_mtp=False, pg_collection=self._mk_pg()
+        )
+
+        assert tokens.shape == (bs, seq_len)
+        assert labels.shape == (bs, seq_len)
+        assert loss_mask.shape == (bs, seq_len)
+        assert position_ids.shape == (bs, seq_len)
+        assert attention_mask.shape == (bs, 1, seq_len, seq_len)
+
+        # Padding semantics
+        assert torch.all(tokens[:, in_len:] == 0)
+        assert torch.all(labels[:, in_len:] == -100)
+        assert torch.all(loss_mask[:, in_len:] == 0)
+        expected_pos = torch.arange(seq_len).unsqueeze(0).expand(bs, -1)
+        assert torch.equal(position_ids, expected_pos)
+
+    def test_get_batch_pp_truncates_to_seq_length(self, monkeypatch):
+        monkeypatch.setattr(gpt_step, "is_pp_first_stage", lambda pg: True, raising=True)
+        monkeypatch.setattr(gpt_step, "is_pp_last_stage", lambda pg: True, raising=True)
+        monkeypatch.setattr(gpt_step, "get_batch_on_this_cp_rank", lambda x: x, raising=True)
+
+        bs, in_len, seq_len = 2, 10, 8
+        base_tokens = torch.arange(bs * in_len).view(bs, in_len)
+        base_labels = torch.ones(bs, in_len, dtype=torch.long)
+        base_loss_mask = torch.ones(bs, in_len, dtype=torch.float)
+        base_pos = torch.arange(in_len).unsqueeze(0).expand(bs, -1)
+        base_attn = torch.ones((bs, 1, in_len, in_len), dtype=torch.bool)
+
+        fake_batch = {
+            "tokens": base_tokens,
+            "labels": base_labels,
+            "loss_mask": base_loss_mask,
+            "position_ids": base_pos,
+            "attention_mask": base_attn,
+        }
+        monkeypatch.setattr(gpt_step, "get_batch_from_iterator", lambda *a, **k: fake_batch, raising=True)
+
+        cfg = self._mk_cfg(seq_length=seq_len, pp=2)
+        tokens, labels, loss_mask, attention_mask, position_ids, *_ = gpt_step.get_batch(
+            iter([None]), cfg, use_mtp=False, pg_collection=self._mk_pg()
+        )
+
+        assert torch.equal(tokens, base_tokens[:, :seq_len])
+        assert torch.equal(labels, base_labels[:, :seq_len])
+        assert torch.equal(loss_mask, base_loss_mask[:, :seq_len])
+        assert torch.equal(position_ids, base_pos[:, :seq_len])
+        assert attention_mask.shape == (bs, 1, seq_len, seq_len)
+
+    def test_get_batch_middle_pp_stage_returns_none(self, monkeypatch):
+        # Middle stage: should early-return and not touch iterator.
+        monkeypatch.setattr(gpt_step, "is_pp_first_stage", lambda pg: False, raising=True)
+        monkeypatch.setattr(gpt_step, "is_pp_last_stage", lambda pg: False, raising=True)
+        monkeypatch.setattr(
+            gpt_step, "get_batch_from_iterator", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()), raising=True
+        )
+
+        cfg = self._mk_cfg(seq_length=8, pp=2)
+        out = gpt_step.get_batch(iter([None]), cfg, use_mtp=False, pg_collection=self._mk_pg())
+        assert out == (None, None, None, None, None, None, None, None)
