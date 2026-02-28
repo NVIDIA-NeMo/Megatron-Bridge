@@ -20,6 +20,7 @@ from utils.utils import get_workload_base_config
 
 from megatron.bridge.recipes.gpt_oss import gpt_oss_120b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,6 @@ def gpt_oss_120b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
     """GB300, baseline config."""
-    # GPT-OSS currently only has BF16 base configs enabled
     base_cfg = get_workload_base_config(
         model_family_name="gpt_oss",
         model_recipe_name="gpt_oss_120b",
@@ -51,6 +51,8 @@ def gpt_oss_120b_pretrain_config_gb300(
 
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -73,6 +75,8 @@ def gpt_oss_120b_pretrain_config_gb200(
 
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -95,6 +99,8 @@ def gpt_oss_120b_pretrain_config_b300(
 
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -117,6 +123,8 @@ def gpt_oss_120b_pretrain_config_b200(
 
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -139,6 +147,8 @@ def gpt_oss_120b_pretrain_config_h100(
 
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = precision_config
+    if base_cfg.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
