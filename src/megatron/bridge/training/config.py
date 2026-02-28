@@ -1523,8 +1523,10 @@ class ConfigContainer(Container):
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
 
-            if self.ddp.average_in_collective:
-                print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
+            if self.ddp.average_in_collective and not self.ddp.disable_symmetric_registration:
+                print_rank_0(
+                    "average_in_collective is not supported with NCCL symmetric registration, setting to False"
+                )
                 self.ddp.average_in_collective = False
 
             # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
