@@ -22,6 +22,9 @@ import torch
 import torch.nn.functional as F
 from PIL import Image  # noqa: F401  # may be used downstream by processors
 
+from megatron.bridge.data.datasets.utils import (
+    create_multiturn_loss_mask_by_search,
+)
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
@@ -41,74 +44,7 @@ except ImportError:
     HAVE_QWEN_VL_UTILS = False
 
 
-def _gather_assistant_text_segments(example: dict) -> list[str]:
-    """Extract assistant text segments from the structured conversation example.
-
-    The example schema is expected to be {"conversation": [{"role": ..., "content": [...]} ...]} where
-    content is a list of items like {"type": "text"|"image"|..., "text": "..."}.
-    Returns a list of concatenated text strings, one per assistant turn.
-    """
-    texts: list[str] = []
-    for turn in example.get("conversation", []):
-        if turn.get("role") != "assistant":
-            continue
-        parts = turn.get("content", [])
-        buf = []
-        if isinstance(parts, list):
-            for p in parts:
-                if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str):
-                    buf.append(p["text"])
-        elif isinstance(parts, str):
-            buf.append(parts)
-        if buf:
-            texts.append("".join(buf))
-    return texts
-
-
-def create_multiturn_loss_mask_by_search(
-    example: dict, input_ids, processor, skipped_tokens: torch.Tensor
-) -> list[int]:
-    """Tokenizer-agnostic masking via substring search of assistant texts.
-
-    - Tokenize full conversation with processor already done -> input_ids
-    - Extract assistant text strings from the structured example
-    - For each assistant text, tokenize without special tokens and search sequentially
-    - On success, unmask that span; otherwise leave masked
-    """
-    tokenizer = getattr(processor, "tokenizer", processor)
-    ids = input_ids.tolist()
-    mask = [0] * len(ids)
-
-    def try_mark(span_text: str, start_from: int) -> int:
-        """Tokenize a span and mark its occurrence if found. Returns new search start index."""
-        variants = [span_text, span_text + "\n", span_text.strip(), span_text.strip() + "\n"]
-        for text in variants:
-            span_tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
-            if not span_tokens:
-                continue
-            # naive sequential search from start_from
-            for i in range(start_from, len(ids) - len(span_tokens) + 1):
-                if ids[i : i + len(span_tokens)] == span_tokens:
-                    for j in range(i, i + len(span_tokens)):
-                        mask[j] = 1
-                    return i + len(span_tokens)
-        return start_from
-
-    search_start = 0
-    for asst_text in _gather_assistant_text_segments(example):
-        search_start = try_mark(asst_text, search_start)
-
-    if sum(mask) == 0:
-        warnings.warn("*" * 100)
-        warnings.warn(f"All tokens are masked for example:\n{example}.")
-        warnings.warn("*" * 100)
-
-    # Ensure pad/skipped tokens are masked
-    ids_t = torch.tensor(ids)
-    for k, t in enumerate(ids_t):
-        if t in skipped_tokens:
-            mask[k] = 0
-    return mask
+# moved helper functions to datasets.utils
 
 
 def phi4_mm_collate_fn(examples, processor):
