@@ -38,6 +38,7 @@ class GLM45VModelProvider(GLM45AirModelProvider106B):
 
     # Vision configuration
     vision_config: Glm4vVisionConfig = field(default_factory=Glm4vVisionConfig)
+    return_dict: bool = True
 
     # Token IDs
     eos_token_id: int = 151329

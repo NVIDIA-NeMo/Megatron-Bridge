@@ -236,6 +236,23 @@ class GPTOSSBridge(MegatronModelBridge):
                     hf_param="model.layers.*.mlp.experts.gate_up_proj_bias",
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc1.bias*",
                 ),
+                # SequentialMLP (moe_grouped_gemm=False): expert weights stored per local_expert
+                GPTOSSMLPDownProjMapping(
+                    hf_param="model.layers.*.mlp.experts.down_proj",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                ),
+                GPTOSSMLPDownProjMapping(
+                    hf_param="model.layers.*.mlp.experts.down_proj_bias",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.bias",
+                ),
+                GPTOSSMLPGateUpProjMapping(
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                ),
+                GPTOSSMLPGateUpProjMapping(
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj_bias",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.bias",
+                ),
             ]
         )
 

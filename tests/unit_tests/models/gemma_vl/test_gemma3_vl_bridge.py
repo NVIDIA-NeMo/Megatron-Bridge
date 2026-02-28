@@ -28,7 +28,10 @@ from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 @pytest.fixture
 def mock_text_config():
     """Create a mock text config for Gemma3 VL."""
-    config = Mock()
+    # Use spec=[] so hasattr() only returns True for explicitly-set attributes,
+    # matching real HF config behaviour (Gemma3 text config has no MLA fields
+    # like q_lora_rank, so they must not appear in the provider kwargs).
+    config = Mock(spec=[])
     config.num_hidden_layers = 28
     config.hidden_size = 2560
     config.intermediate_size = 15360
@@ -44,14 +47,9 @@ def mock_text_config():
     config.rope_theta = 1000000.0
     config.query_pre_attn_scalar = 256
     config.rope_scaling = None
+    config.rope_parameters = None
     config.hidden_act = "gelu_pytorch_tanh"
-    # Set MLA-specific fields to None (these are auto-mapped in CONFIG_MAPPING)
-    config.q_lora_rank = None
-    config.kv_lora_rank = None
-    config.qk_nope_head_dim = None
-    config.qk_rope_head_dim = None
-    config.v_head_dim = None
-    config.num_nextn_predict_layers = None
+    config.torch_dtype = "bfloat16"
     return config
 
 
@@ -366,7 +364,7 @@ class TestGemma3VLBridgeEdgeCases:
         minimal_config = Mock()
 
         # Create minimal text config
-        text_config = Mock()
+        text_config = Mock(spec=[])
         text_config.num_hidden_layers = 18
         text_config.hidden_size = 2048
         text_config.intermediate_size = 8192
@@ -382,14 +380,9 @@ class TestGemma3VLBridgeEdgeCases:
         text_config.rope_theta = 1000000.0
         text_config.query_pre_attn_scalar = 256
         text_config.rope_scaling = None
+        text_config.rope_parameters = None
         text_config.hidden_act = "gelu_pytorch_tanh"
-        # Set MLA-specific fields to None
-        text_config.q_lora_rank = None
-        text_config.kv_lora_rank = None
-        text_config.qk_nope_head_dim = None
-        text_config.qk_rope_head_dim = None
-        text_config.v_head_dim = None
-        text_config.num_nextn_predict_layers = None
+        text_config.torch_dtype = "bfloat16"
 
         # Create minimal vision config
         vision_config = SiglipVisionConfig()

@@ -272,7 +272,6 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     bias_dropout_fusion: bool = True  # Fuse bias and dropout
     masked_softmax_fusion: bool = False  # Don't fuse masked softmax (Qwen specific)
     deallocate_pipeline_outputs: bool = True
-    async_tensor_model_parallel_allreduce: bool = True
     distribute_saved_activations: bool = False
     cp_comm_type: str = "p2p"
 

@@ -103,19 +103,33 @@ Before training, ensure the following environment variables are set:
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [sft_unpacked.sh](sft_seq_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences..
-See the [sft_packed.sh](sft_seq_packed.sh) script for for full parameter fine-tuning with sequence-packing.
+See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences.
+See the [sft.sh](sft.sh) script for full parameter fine-tuning with sequence-packing.
 
 W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [peft_unpacked.sh](peft_seq_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
-See the [peft_packed.sh](peft_seq_packed.sh) script for LoRA fine-tuning with sequence-packing.
+See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
+See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 
 W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
+
+## Finetuning with Energon Dataset
+
+Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
+
+```yaml
+__module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+__class__: ChatMLWebdataset
+field_map:
+  imgs: jpg
+  conversation: json
+```
+
+Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [sft_energon.sh](sft_energon.sh) and run the script.
 
 ## Evaluation
 
