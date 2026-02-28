@@ -24,6 +24,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 try:
@@ -473,6 +474,100 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     """
 
     num_layers: int = 48
+    hidden_size: int = 2048
+    num_attention_heads: int = 16
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 5120
+    moe_ffn_hidden_size: int = 512
+    moe_shared_expert_intermediate_size: int = 512
+    mtp_num_layers: Optional[int] = None
+
+
+# =============================================================================
+# Qwen 3 Next MambaModel Provider (based on MambaModelProvider)
+# =============================================================================
+
+
+@dataclass
+class Qwen3NextMambaModelProvider(MambaModelProvider):
+    """Base provider for Qwen 3 Next Models using MambaModel with GDN layers."""
+
+    # Architecture
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    add_qkv_bias: bool = False
+    qk_layernorm: bool = True
+    layernorm_zero_centered_gamma: bool = True
+    layernorm_epsilon: float = 1e-6
+    kv_channels: Optional[int] = 256
+    num_query_groups: int = 2
+    seq_length: int = 262144
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    vocab_size: int = 151936
+    share_embeddings_and_output_weights: bool = False
+    init_method_std: int = 0.02
+    autocast_dtype: torch.dtype = torch.bfloat16
+    params_dtype: torch.dtype = torch.bfloat16
+    bf16: bool = True
+
+    # Position embeddings (override MambaModel default of "none")
+    position_embedding_type: str = "rope"
+    rotary_base: float = 10000000.0
+    rotary_percent: float = 0.25
+
+    # Attention
+    attention_output_gate: bool = True
+
+    # MoE specific parameters
+    num_moe_experts: int = 512
+    moe_router_topk: int = 10
+    moe_shared_expert_gate: bool = True
+    moe_router_dtype: str = "fp32"
+    moe_router_load_balancing_type: str = "global_aux_loss"
+    moe_router_pre_softmax: bool = False
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
+    moe_aux_loss_coeff: float = 1e-3
+
+    # GDN linear attention parameters
+    linear_conv_kernel_dim: int = 4
+    linear_key_head_dim: int = 128
+    linear_value_head_dim: int = 128
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 32
+
+    # Checkpointing
+    hetereogenous_dist_checkpoint: bool = True
+
+
+@dataclass
+class Qwen3NextMambaModelProvider80B_A3B(Qwen3NextMambaModelProvider):
+    """
+    Provider for Qwen 3 Next 80B-A3B using MambaModel with GDN layers.
+
+    In MambaModel, each layer type is a separate physical layer, so each original
+    Qwen3-Next transformer layer (attention/GDN + MoE FFN) becomes two physical
+    layers: one G/* layer for attention and one E layer for MoE FFN.
+
+    Original architecture (48 logical layers, linear_attention_freq=4):
+        Every 4th layer uses standard attention, the rest use GDN.
+        Each layer has MoE FFN (512 experts, top-10 routing).
+
+    MambaModel mapping (96 physical layers):
+        GEGEGE*E repeated 12 times = 96 layers
+        - GE = GDN attention + MoE FFN (one logical layer)
+        - *E = Standard attention + MoE FFN (one logical layer)
+
+    MTP: /GE = 1 MTP depth with GDN attention + MoE FFN
+    """
+
+    # GEGEGE*E repeated 12 times = 96 physical layers, /GE = 1 MTP depth
+    hybrid_override_pattern: str = "GEGEGE*E" * 12 + "/GE"
+    num_layers: int = 96
     hidden_size: int = 2048
     num_attention_heads: int = 16
     num_query_groups: int = 2
