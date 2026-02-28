@@ -14,6 +14,9 @@
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+from megatron.core.transformer.enums import CudaGraphScope
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import (
@@ -608,3 +611,105 @@ class TestMegatronCommOverlapConfig:
                 assert False, "Expected AssertionError when EP overlap is not enabled"
             except AssertionError:
                 pass
+
+    def test_delay_wgrad_cuda_graph_attn_requires_grad_accum_fusion(self):
+        """CUDA graph attn scope with delay_wgrad_compute requires gradient_accumulation_fusion."""
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            delay_wgrad_compute=True,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            gradient_accumulation_fusion=False,
+            cuda_graph_scope=[CudaGraphScope.attn],
+        )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with (
+            patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True),
+            patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True),
+            pytest.raises(AssertionError, match="gradient_accumulation_fusion"),
+        ):
+            comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+
+    def test_delay_wgrad_cuda_graph_attn_rejects_attention_bias(self):
+        """CUDA graph attn scope with delay_wgrad_compute rejects attention bias."""
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            delay_wgrad_compute=True,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=True,
+            add_qkv_bias=False,
+            gradient_accumulation_fusion=True,
+            cuda_graph_scope=[CudaGraphScope.attn],
+        )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with (
+            patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True),
+            patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True),
+            pytest.raises(AssertionError, match="attention bias"),
+        ):
+            comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+
+    def test_delay_wgrad_cuda_graph_attn_validation_passes_with_supported_settings(self):
+        """CUDA graph attn scope should pass delay_wgrad validation when all constraints are met."""
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            delay_wgrad_compute=True,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            gradient_accumulation_fusion=True,
+            cuda_graph_scope=[CudaGraphScope.attn],
+        )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with (
+            patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True),
+            patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True),
+        ):
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+            assert result.delay_wgrad_compute is True
