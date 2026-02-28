@@ -338,6 +338,10 @@ class TestDistillationProvider:
             cfg_dict = converted.to_cfg_dict()
 
             assert cfg_dict["_target_"] == "megatron.bridge.models.qwen.qwen_provider.Qwen3MoEModelProvider"
+
+            # Verify GPTModelProvider-level fields are present and match the student config.
+            assert cfg_dict["vocab_size"] == student.vocab_size
+            assert cfg_dict["share_embeddings_and_output_weights"] == student.share_embeddings_and_output_weights
         finally:
             # Restore original bases since it was modified globally for the entire class
             DistillationProvider.__bases__ = original_bases
