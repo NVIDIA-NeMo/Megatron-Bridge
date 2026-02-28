@@ -669,9 +669,13 @@ def save_checkpoint(
                             logger.debug("Failed to plug in the read metadata from the load strategy...")
 
                 if ckpt_cfg.fully_parallel_save:
+                    if ckpt_cfg.fully_parallel_save_process_group == 'dp':
+                        process_group = pg_collection.dp_cp
+                    elif ckpt_cfg.fully_parallel_save_process_group == 'ep_dp':
+                        process_group = pg_collection.expt_dp
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        pg_collection.dp_cp,
+                        process_group,
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # Store save strategy for future checkpoint saves
@@ -2078,7 +2082,16 @@ def _load_global_dist_base_checkpoint(
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        if ckpt_cfg.fully_parallel_load_process_group == 'dp':
+            process_group = pg_collection.dp_cp
+        elif ckpt_cfg.fully_parallel_load_process_group == 'ep_dp':
+            process_group = pg_collection.expt_dp
+        else:
+            raise ValueError(f"Invalid load process group: {ckpt_cfg.fully_parallel_load_process_group}")
+
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy, process_group, exchange_algo=ckpt_cfg.fully_parallel_load_exchange_algo
+        )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     state_dict = dist_checkpointing.load(
