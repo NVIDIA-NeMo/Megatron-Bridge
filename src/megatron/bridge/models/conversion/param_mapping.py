@@ -903,6 +903,13 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if self.tp_rank == 0:
             if hf_weights is None:
                 raise ValueError("hf_weights should not be None on rank 0")
+            if hf_weights.dtype != target_param.dtype:
+                logger.warning(
+                    f"WARNING: Dtype mismatch between HuggingFace weights and Megatron module. "
+                    f"HF dtype: {hf_weights.dtype}. Megatron dtype: {target_param.dtype}. "
+                    f"Casting HF weights to Megatron dtype. THIS MAY RESULT IN A LOSS OF PRECISION. "
+                )
+                hf_weights = hf_weights.to(target_param.dtype)
 
             # bias (1D) is replicated across tp ranks
             # For weight (2D), we split along dim 1
