@@ -1464,12 +1464,18 @@ class ConfigContainer(Container):
         self.train.finalize()
         self.scheduler.finalize()
         self.checkpoint.finalize()
-        if self.profiling is not None:
+        if self.profiling is not None and hasattr(self.profiling, "finalize"):
             self.profiling.finalize()
         if self.nvrx_straggler is not None:
-            self.nvrx_straggler.finalize()
+            if isinstance(self.nvrx_straggler, dict):
+                self.nvrx_straggler = NVRxStragglerDetectionConfig(**self.nvrx_straggler)
+            if hasattr(self.nvrx_straggler, "finalize"):
+                self.nvrx_straggler.finalize()
         if self.tensor_inspect is not None:
-            self.tensor_inspect.finalize()
+            if isinstance(self.tensor_inspect, dict):
+                self.tensor_inspect = TensorInspectConfig(**self.tensor_inspect)
+            if hasattr(self.tensor_inspect, "finalize"):
+                self.tensor_inspect.finalize()
 
         # Sync config. If TE RNG tracker is set in either ways, set them in both places.
         if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
@@ -1902,7 +1908,10 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):
             cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.finalize()
+        if isinstance(cfg.mixed_precision, dict):
+            cfg.mixed_precision = MixedPrecisionConfig(**cfg.mixed_precision)
+        if hasattr(cfg.mixed_precision, "finalize"):
+            cfg.mixed_precision.finalize()
         cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     # Calculate data parallel size (needed for comm overlap methods)
@@ -1910,7 +1919,10 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:
-        cfg.comm_overlap.finalize()
+        if isinstance(cfg.comm_overlap, dict):
+            cfg.comm_overlap = CommOverlapConfig(**cfg.comm_overlap)
+        if hasattr(cfg.comm_overlap, "finalize"):
+            cfg.comm_overlap.finalize()
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     # Validate configuration after all modifications
