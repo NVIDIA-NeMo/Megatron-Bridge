@@ -60,6 +60,7 @@ from typing import Optional
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.training.utils.checkpoint_utils import resolve_checkpoint_path
 
 
 def validate_path(path: str, must_exist: bool = False) -> Path:
@@ -157,15 +158,14 @@ def export_megatron_to_hf(
     checkpoint_path = validate_path(megatron_path, must_exist=True)
     print(f"📂 Found Megatron checkpoint: {checkpoint_path}")
 
+    # Resolve to specific iteration directory if needed
+    resolved_path = Path(resolve_checkpoint_path(str(checkpoint_path)))
+
     # Look for configuration files to determine the model type
-    config_files = list(checkpoint_path.glob("**/run_config.yaml"))
+    config_files = list(resolved_path.glob("run_config.yaml"))
     if not config_files:
-        # Look in iter_ subdirectories
-        iter_dirs = [d for d in checkpoint_path.iterdir() if d.is_dir() and d.name.startswith("iter_")]
-        if iter_dirs:
-            # Use the latest iteration
-            latest_iter = max(iter_dirs, key=lambda d: int(d.name.replace("iter_", "")))
-            config_files = list(latest_iter.glob("run_config.yaml"))
+        # Also check parent directory for run_config.yaml
+        config_files = list(checkpoint_path.glob("**/run_config.yaml"))
 
     if not config_files:
         raise FileNotFoundError(

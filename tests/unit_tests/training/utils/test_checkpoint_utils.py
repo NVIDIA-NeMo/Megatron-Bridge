@@ -26,12 +26,15 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     CONFIG_FILE,
     TRACKER_PREFIX,
     TRAIN_STATE_FILE,
+    _get_latest_iteration_path,
     checkpoint_exists,
     get_checkpoint_run_config_filename,
     get_checkpoint_train_state_filename,
     get_hf_model_id_from_checkpoint,
+    is_iteration_directory,
     read_run_config,
     read_train_state,
+    resolve_checkpoint_path,
 )
 
 
@@ -145,12 +148,26 @@ class TestCheckpointUtils:
         assert result == "newer/model"
 
     def test_get_hf_model_id_from_checkpoint_missing_run_config(self, tmp_path):
-        """Test inferring HF model id returns None when no run_config.yaml is present."""
+        """Test inferring HF model id returns None when run_config.yaml has no hf_model_id."""
         checkpoint_dir = tmp_path / "checkpoints"
-        checkpoint_dir.mkdir()
+        iter_dir = checkpoint_dir / "iter_0000001"
+        iter_dir.mkdir(parents=True)
+
+        # Create run_config.yaml without hf_model_id
+        run_config = {"model": {"some_other_field": "value"}}
+        run_config_path = iter_dir / "run_config.yaml"
+        run_config_path.write_text(yaml.dump(run_config))
 
         result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
         assert result is None
+
+    def test_get_hf_model_id_from_checkpoint_no_iterations(self, tmp_path):
+        """Test inferring HF model id raises when no iteration directories exist."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        with pytest.raises(FileNotFoundError, match="No iteration checkpoints found"):
+            get_hf_model_id_from_checkpoint(str(checkpoint_dir))
 
     def test_get_hf_model_id_from_checkpoint_invalid_path(self, tmp_path):
         """Test inferring HF model id handles invalid paths."""
@@ -766,3 +783,186 @@ class TestCheckpointUtils:
             assert isinstance(result["model"]["learning_rate"], float)
             assert isinstance(result["flags"]["enabled"], bool)
             assert result["flags"]["debug"] is None
+
+
+class TestIsIterationDirectory:
+    """Test suite for is_iteration_directory function."""
+
+    def test_valid_iteration_directory_standard_format(self):
+        """Test that standard 7-digit iteration directory names are recognized."""
+        assert is_iteration_directory("iter_0000000") is True
+        assert is_iteration_directory("iter_0000001") is True
+        assert is_iteration_directory("iter_0001000") is True
+        assert is_iteration_directory("iter_9999999") is True
+
+    def test_valid_iteration_directory_flexible_digit_count(self):
+        """Test that iteration directories with various digit counts are recognized."""
+        # Shorter than standard 7 digits
+        assert is_iteration_directory("iter_1") is True
+        assert is_iteration_directory("iter_12") is True
+        assert is_iteration_directory("iter_123456") is True
+        # Longer than standard 7 digits (for very long training runs)
+        assert is_iteration_directory("iter_12345678") is True
+        assert is_iteration_directory("iter_99999999999") is True
+
+    def test_valid_iteration_directory_with_path(self):
+        """Test that full paths with iteration directories are recognized."""
+        assert is_iteration_directory("/path/to/checkpoint/iter_0000005") is True
+        assert is_iteration_directory("/path/to/checkpoint/iter_0000005/") is True
+        assert is_iteration_directory("relative/path/iter_0001000") is True
+        assert is_iteration_directory("/path/to/checkpoint/iter_123") is True
+
+    def test_invalid_iteration_directory(self):
+        """Test that non-iteration directories are not recognized."""
+        assert is_iteration_directory("checkpoint") is False
+        assert is_iteration_directory("model") is False
+        assert is_iteration_directory("release") is False
+        assert is_iteration_directory("iter") is False
+        assert is_iteration_directory("iteration_0000001") is False
+
+    def test_malformed_iteration_directory(self):
+        """Test that malformed iteration directories are rejected."""
+        # Non-numeric suffix
+        assert is_iteration_directory("iter_abc") is False
+        assert is_iteration_directory("iter_abcdefg") is False
+        assert is_iteration_directory("iter_000000a") is False
+        # Mixed alphanumeric
+        assert is_iteration_directory("iter_123abc") is False
+        assert is_iteration_directory("iter_abc123") is False
+        # Just prefix with no digits
+        assert is_iteration_directory("iter_") is False
+
+    def test_top_level_checkpoint_directory(self):
+        """Test that top-level checkpoint directories are not iteration directories."""
+        assert is_iteration_directory("/path/to/checkpoint") is False
+        assert is_iteration_directory("/path/to/checkpoint/") is False
+
+
+class TestGetLatestIterationPath:
+    """Test suite for _get_latest_iteration_path function."""
+
+    def test_returns_latest_iteration(self):
+        """Test that the latest iteration path is returned."""
+        iter_dirs = [
+            ("iter_0000001", "/checkpoint/iter_0000001"),
+            ("iter_0000005", "/checkpoint/iter_0000005"),
+            ("iter_0000003", "/checkpoint/iter_0000003"),
+        ]
+        result = _get_latest_iteration_path(iter_dirs)
+        assert result == "/checkpoint/iter_0000005"
+
+    def test_single_iteration(self):
+        """Test with a single iteration directory."""
+        iter_dirs = [("iter_0000010", "/checkpoint/iter_0000010")]
+        result = _get_latest_iteration_path(iter_dirs)
+        assert result == "/checkpoint/iter_0000010"
+
+    def test_empty_list_raises(self):
+        """Test that empty list raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot get latest iteration from empty list"):
+            _get_latest_iteration_path([])
+
+    def test_high_iteration_numbers(self):
+        """Test with high iteration numbers."""
+        iter_dirs = [
+            ("iter_0000999", "/checkpoint/iter_0000999"),
+            ("iter_1000000", "/checkpoint/iter_1000000"),
+            ("iter_0100000", "/checkpoint/iter_0100000"),
+        ]
+        result = _get_latest_iteration_path(iter_dirs)
+        assert result == "/checkpoint/iter_1000000"
+
+
+class TestResolveCheckpointPath:
+    """Test suite for resolve_checkpoint_path function."""
+
+    def test_resolve_specific_iteration_path(self, tmp_path):
+        """Test resolving a specific iteration directory path."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        iter_dir = checkpoint_dir / "iter_0000005"
+        iter_dir.mkdir(parents=True)
+
+        result = resolve_checkpoint_path(str(iter_dir))
+        assert result == str(iter_dir)
+
+    def test_resolve_top_level_to_latest_iteration(self, tmp_path):
+        """Test resolving a top-level directory to the latest iteration."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Create multiple iteration directories
+        (checkpoint_dir / "iter_0000001").mkdir()
+        (checkpoint_dir / "iter_0000005").mkdir()
+        (checkpoint_dir / "iter_0000003").mkdir()
+
+        result = resolve_checkpoint_path(str(checkpoint_dir))
+        assert result == str(checkpoint_dir / "iter_0000005")
+
+    def test_resolve_handles_single_iteration(self, tmp_path):
+        """Test resolving when only one iteration exists."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "iter_0000010").mkdir()
+
+        result = resolve_checkpoint_path(str(checkpoint_dir))
+        assert result == str(checkpoint_dir / "iter_0000010")
+
+    def test_resolve_nonexistent_path_raises(self, tmp_path):
+        """Test that resolving a nonexistent path raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            resolve_checkpoint_path(str(tmp_path / "nonexistent"))
+
+    def test_resolve_file_path_raises(self, tmp_path):
+        """Test that resolving a file path raises NotADirectoryError."""
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("not a directory")
+
+        with pytest.raises(NotADirectoryError):
+            resolve_checkpoint_path(str(file_path))
+
+    def test_resolve_empty_directory_raises(self, tmp_path):
+        """Test that resolving an empty directory raises FileNotFoundError."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        with pytest.raises(FileNotFoundError, match="No iteration checkpoints found"):
+            resolve_checkpoint_path(str(checkpoint_dir))
+
+    def test_resolve_directory_without_iter_folders_raises(self, tmp_path):
+        """Test that resolving a directory without iter_* folders raises."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "other_folder").mkdir()
+        (checkpoint_dir / "another_folder").mkdir()
+
+        with pytest.raises(FileNotFoundError, match="No iteration checkpoints found"):
+            resolve_checkpoint_path(str(checkpoint_dir))
+
+    def test_resolve_ignores_malformed_iter_directories(self, tmp_path):
+        """Test that malformed iteration directories (non-numeric) are ignored."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Create valid and invalid iteration directories
+        (checkpoint_dir / "iter_0000005").mkdir()  # Valid: iteration 5
+        (checkpoint_dir / "iter_12").mkdir()  # Valid: iteration 12 (flexible digit count)
+        (checkpoint_dir / "iter_invalid").mkdir()  # Invalid: non-numeric
+        (checkpoint_dir / "iter_abc").mkdir()  # Invalid: non-numeric
+        (checkpoint_dir / "iter_").mkdir()  # Invalid: no digits
+
+        # Should find iter_12 as latest (12 > 5)
+        result = resolve_checkpoint_path(str(checkpoint_dir))
+        assert result == str(checkpoint_dir / "iter_12")
+
+    def test_resolve_with_only_malformed_iter_directories_raises(self, tmp_path):
+        """Test that a directory with only malformed iter directories raises."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Create only invalid iteration directories (non-numeric suffixes)
+        (checkpoint_dir / "iter_invalid").mkdir()
+        (checkpoint_dir / "iter_abc").mkdir()
+        (checkpoint_dir / "iter_").mkdir()
+
+        with pytest.raises(FileNotFoundError, match="No iteration checkpoints found"):
+            resolve_checkpoint_path(str(checkpoint_dir))
