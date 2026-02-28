@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """MIMO Model Provider for heterogeneous multi-module training.
 
 This module provides MimoModelProvider, which integrates with the standard
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 
 import torch
 import torch.distributed as dist
-from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -29,8 +29,12 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.models.mimo.mimo_builder import (
     _default_topology,
     build_hypercomm_grids,
+    is_pp_first_stage,
+    is_pp_last_stage,
+    populate_embedding_and_position_groups,
 )
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
+from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
 from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
@@ -183,6 +187,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     ) -> Dict[str, Optional[ProcessGroupCollection]]:
         """Get ProcessGroupCollections from HyperCommGrids.
 
+        Creates all standard process groups plus embedding groups for PP > 1.
         Returns None for modules this rank doesn't participate in.
         """
         pg_collections: Dict[str, Optional[ProcessGroupCollection]] = {}
@@ -191,13 +196,26 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         for module_name, grid in grids.items():
             # Check if current rank is in this grid's range
             if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
+                pp_group = grid.get_pg(["pp"])
+
+                # Create embedding groups for PP > 1 (collective operation on all PP ranks)
+                pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
+
+                # Only assign embedding groups to ranks that should have them
+                first_stage = is_pp_first_stage(pp_group)
+                last_stage = is_pp_last_stage(pp_group)
+
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
                     dp=grid.get_pg(["dp"]),
-                    pp=grid.get_pg(["pp"]),
+                    pp=pp_group,
                     cp=grid.get_pg(["cp"]),
                     ep=grid.get_pg(["ep"]),
                     dp_cp=grid.get_pg(["dp", "cp"]),
+                    # Position embeddings only on first PP stage
+                    pos_embd=pos_embd_pg if first_stage else None,
+                    # Word embeddings on first and last PP stages (for tied embeddings)
+                    embd=embd_pg if (first_stage or last_stage) else None,
                 )
             else:
                 pg_collections[module_name] = None
@@ -226,7 +244,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
 
         # Inject into encoders
         if spec.submodules and "encoders" in spec.submodules:
-            for encoder_name, encoder_spec in spec.submodules["encoders"].items():
+            for _encoder_name, encoder_spec in spec.submodules["encoders"].items():
                 if encoder_spec.params is None:
                     encoder_spec.params = {}
                 encoder_spec.params["pg_collection"] = pg_collection
@@ -330,15 +348,17 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         - Uses per-module HyperCommGrids instead of global mpu
         - Has different pg_collections per module
         - May have ranks that don't participate in all modules
+        - Requires per-submodule DDP wrapping for correct gradient sync
 
         The method:
         1. Calls finalize() to validate parallelism config
         2. Calls build_infra() to create grids and pg_collections
         3. Calls provide() to build the model
         4. Applies pre-wrap hooks
-        5. Moves to device and applies mixed precision
-        6. Wraps with DDP using LLM's pg_collection
-        7. Applies post-wrap hooks
+        5. Moves to device
+        6. Wraps each submodule with DDP using its own pg_collection
+        7. Applies mixed precision (Float16Module)
+        8. Applies post-wrap hooks
 
         Args:
             ddp_config: Configuration for distributed data parallel.
@@ -394,6 +414,26 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             for m in model_list:
                 m.cuda(torch.cuda.current_device())
 
+        # Set variable_seq_lengths=True for multimodule pipeline support (required by PR 3129)
+        # This must be set before the model is used in the training loop
+        for m in model_list:
+            model_config = get_model_config(m)
+            model_config.variable_seq_lengths = True
+
+        # Wrap submodules with DDP (before Float16Module)
+        # MIMO uses per-submodule DDP for heterogeneous parallelism
+        if wrap_with_ddp and ddp_config is not None and self.mimo_parallelism_config:
+            model_list = [
+                wrap_mimo_model_distributed(
+                    mimo_model=m,
+                    ddp_config=ddp_config,
+                    mimo_parallelism_config=self.mimo_parallelism_config,
+                    grids=infra.module_to_grid_map,
+                    pg_collections=infra.pg_collections,
+                )
+                for m in model_list
+            ]
+
         # Apply mixed precision wrapper
         use_fp16 = fp16 if fp16 is not None else self.fp16
         use_bf16 = bf16 if bf16 is not None else self.bf16
@@ -406,23 +446,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             model_config.fp16 = use_fp16
             model_config.bf16 = use_bf16
             model_list = [Float16Module(model_config, m) for m in model_list]
-
-        # Wrap with DDP
-        if wrap_with_ddp and ddp_config is not None:
-            # Get LLM's pg_collection for DDP (whole model uses LLM's parallelism for DDP)
-            if self.mimo_parallelism_config:
-                pg_collection = infra.pg_collections.get("llm")
-            else:
-                pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-
-            if pg_collection is not None:
-                model_list = self._wrap_with_ddp(
-                    model_list,
-                    ddp_config,
-                    pg_collection,
-                    data_parallel_random_init,
-                    overlap_param_gather_with_optimizer_step,
-                )
 
         # Apply post-wrap hooks
         if final_post_wrap_hook:
@@ -455,39 +478,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 return composed_hook
             return pre_wrap_hook
         return self.pre_wrap_hook
-
-    def _wrap_with_ddp(
-        self,
-        model_list: List[MegatronModule],
-        ddp_config: DistributedDataParallelConfig,
-        pg_collection: ProcessGroupCollection,
-        data_parallel_random_init: bool,
-        overlap_param_gather_with_optimizer_step: bool,
-    ) -> List[MegatronModule]:
-        """Wrap model with DistributedDataParallel."""
-        ddp_stream = torch.cuda.Stream()
-        ddp_stream.wait_stream(torch.cuda.current_stream())
-
-        with torch.cuda.stream(ddp_stream):
-            model_list = [
-                DistributedDataParallel(
-                    config=get_model_config(model_chunk),
-                    ddp_config=ddp_config,
-                    module=model_chunk,
-                    disable_bucketing=(idx > 0) or overlap_param_gather_with_optimizer_step,
-                    pg_collection=pg_collection,
-                )
-                for idx, model_chunk in enumerate(model_list)
-            ]
-
-        torch.cuda.current_stream().wait_stream(ddp_stream)
-
-        # Broadcast params from data parallel src rank
-        if data_parallel_random_init:
-            for m in model_list:
-                m.broadcast_params()
-
-        return model_list
 
     def initialize_model_parallel(
         self,
@@ -538,44 +528,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         Raises:
             ValueError: If any rank doesn't participate in at least one module.
                 This indicates the parallelism configuration doesn't cover all
-                ranks in the world.
+                ranks in the world (validated by MimoParallelismConfig.finalize()).
         """
         if self.mimo_parallelism_config is not None:
             world_size = dist.get_world_size() if dist.is_initialized() else None
             self.mimo_parallelism_config.finalize(world_size)
-
-            # Validate all ranks participate in at least one module
-            self._validate_all_ranks_participate(world_size)
-
-    def _validate_all_ranks_participate(self, world_size: Optional[int]) -> None:
-        """Validate that all ranks participate in at least one module.
-
-        Args:
-            world_size: Total number of ranks. If None, validation is skipped.
-
-        Raises:
-            ValueError: If any rank doesn't participate in a module.
-        """
-        if world_size is None or self.mimo_parallelism_config is None:
-            return
-
-        # Build grids to determine rank coverage
-        grids = build_hypercomm_grids(self.mimo_parallelism_config)
-
-        # Collect all ranks that participate in at least one module
-        participating_ranks = set()
-        for module_name, grid in grids.items():
-            for rank in range(grid.rank_offset, grid.rank_offset + grid.size):
-                participating_ranks.add(rank)
-
-        # Check for non-participating ranks
-        all_ranks = set(range(world_size))
-        non_participating_ranks = all_ranks - participating_ranks
-
-        if non_participating_ranks:
-            raise ValueError(
-                f"Ranks {sorted(non_participating_ranks)} do not participate in any MIMO module. "
-                f"All {world_size} ranks must be assigned to at least one module. "
-                f"Adjust MimoParallelismConfig to cover all ranks, or reduce world_size to "
-                f"{len(participating_ranks)}."
-            )
