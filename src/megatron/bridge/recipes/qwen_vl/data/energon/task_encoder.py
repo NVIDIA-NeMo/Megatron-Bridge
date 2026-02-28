@@ -23,6 +23,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import torch
+
+import torchaudio
 from megatron.energon import Batch, DefaultTaskEncoder
 from megatron.energon.epathlib.epath import EPath
 from megatron.energon.flavors.base_dataset import Sample
@@ -206,6 +208,7 @@ class ChatMLSample(Sample):
     conversation: str  # JSON string of GPT-format conversations
     imgs: Optional[List[torch.Tensor]] = None
     videos: Optional[List[List[torch.Tensor]]] = None
+    audios: Optional[List[torch.Tensor]] = None
 
 
 class videohandler:
@@ -230,6 +233,26 @@ class videohandler:
         return data
 
 
+class audiohandler:
+    """Create an audio handler."""
+
+    def __init__(self):
+        self.extensions = ["wavs", "mp3s"]
+
+    def __call__(self, key, data):
+        """Perform audio decoding."""
+
+        extension = re.sub(r".*[.]", "", key)
+        if extension not in self.extensions:
+            return None
+
+        data_list = pickle.loads(data)
+        audio_list = []
+        for data in data_list:
+            audio_list.append(torchaudio.load(io.BytesIO(data)))
+        return audio_list
+
+
 class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
     """Webdataset factory for multi-turn ChatML samples with multimodal support.
 
@@ -246,6 +269,7 @@ class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
                 [
                     imagehandler(self.image_decode),
                     videohandler(self.image_decode),
+                    audiohandler(),
                 ]
             )
 
