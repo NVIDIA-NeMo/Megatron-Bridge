@@ -14,11 +14,9 @@
 
 
 import torch
+from megatron.core.activations import squared_relu
 
-from megatron.bridge.models.nemotronh import (
-    NemotronNanoModelProvider9Bv2,
-    NemotronNanoModelProvider12Bv2,
-)
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -36,8 +34,40 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses NemotronNanoModelProvider9Bv2
-    cfg.model = NemotronNanoModelProvider9Bv2(
+    # Model config - Nemotron Nano 9B v2
+    cfg.model = MambaModelProvider(
+        # Architecture (Nemotron Nano 9B v2)
+        hybrid_override_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
+        num_layers=56,
+        hidden_size=4480,
+        mamba_num_heads=128,
+        kv_channels=128,
+        mamba_state_dim=128,
+        ffn_hidden_size=15680,
+        num_attention_heads=40,
+        mamba_head_dim=80,
+        seq_length=131072,
+        # NemotronH base
+        mamba_num_groups=8,
+        num_query_groups=8,
+        make_vocab_size_divisible_by=128,
+        activation_func=squared_relu,
+        masked_softmax_fusion=True,
+        apply_query_key_layer_scaling=False,
+        persist_layer_norm=True,
+        attention_softmax_in_fp32=False,
+        first_last_layers_bf16=True,
+        is_hybrid_model=True,
+        moe_aux_loss_coeff=0.0001,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_router_dtype="fp32",
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_shared_expert_overlap=True,
+        # Parallelism
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
@@ -139,8 +169,40 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses NemotronNanoModelProvider12Bv2
-    cfg.model = NemotronNanoModelProvider12Bv2(
+    # Model config - Nemotron Nano 12B v2
+    cfg.model = MambaModelProvider(
+        # Architecture (Nemotron Nano 12B v2)
+        hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+        num_layers=62,
+        hidden_size=5120,
+        mamba_num_heads=128,
+        kv_channels=128,
+        mamba_state_dim=128,
+        ffn_hidden_size=20480,
+        num_attention_heads=40,
+        mamba_head_dim=80,
+        seq_length=131072,
+        # NemotronH base
+        mamba_num_groups=8,
+        num_query_groups=8,
+        make_vocab_size_divisible_by=128,
+        activation_func=squared_relu,
+        masked_softmax_fusion=True,
+        apply_query_key_layer_scaling=False,
+        persist_layer_norm=True,
+        attention_softmax_in_fp32=False,
+        first_last_layers_bf16=True,
+        is_hybrid_model=True,
+        moe_aux_loss_coeff=0.0001,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_router_dtype="fp32",
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_shared_expert_overlap=True,
+        # Parallelism
         tensor_model_parallel_size=4,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
@@ -244,15 +306,46 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    # Model config - uses NemotronNanoModelProvider9Bv2
-    cfg.model = NemotronNanoModelProvider9Bv2(
+    # Model config - Nemotron Nano 9B v2
+    cfg.model = MambaModelProvider(
+        # Architecture (Nemotron Nano 9B v2)
+        hybrid_override_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
+        num_layers=56,
+        hidden_size=4480,
+        mamba_num_heads=128,
+        kv_channels=128,
+        mamba_state_dim=128,
+        ffn_hidden_size=15680,
+        num_attention_heads=40,
+        mamba_head_dim=80,
+        seq_length=2048,
+        # NemotronH base
+        mamba_num_groups=8,
+        num_query_groups=8,
+        make_vocab_size_divisible_by=128,
+        activation_func=squared_relu,
+        masked_softmax_fusion=True,
+        apply_query_key_layer_scaling=False,
+        persist_layer_norm=True,
+        attention_softmax_in_fp32=False,
+        first_last_layers_bf16=True,
+        is_hybrid_model=True,
+        moe_aux_loss_coeff=0.0001,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_router_dtype="fp32",
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_shared_expert_overlap=True,
+        # Parallelism
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
         virtual_pipeline_model_parallel_size=None,
         context_parallel_size=1,
         sequence_parallel=True,
-        seq_length=2048,
     )
 
     # Parallelism settings
@@ -339,15 +432,46 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    # Model config - uses NemotronNanoModelProvider12Bv2
-    cfg.model = NemotronNanoModelProvider12Bv2(
+    # Model config - Nemotron Nano 12B v2
+    cfg.model = MambaModelProvider(
+        # Architecture (Nemotron Nano 12B v2)
+        hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+        num_layers=62,
+        hidden_size=5120,
+        mamba_num_heads=128,
+        kv_channels=128,
+        mamba_state_dim=128,
+        ffn_hidden_size=20480,
+        num_attention_heads=40,
+        mamba_head_dim=80,
+        seq_length=2048,
+        # NemotronH base
+        mamba_num_groups=8,
+        num_query_groups=8,
+        make_vocab_size_divisible_by=128,
+        activation_func=squared_relu,
+        masked_softmax_fusion=True,
+        apply_query_key_layer_scaling=False,
+        persist_layer_norm=True,
+        attention_softmax_in_fp32=False,
+        first_last_layers_bf16=True,
+        is_hybrid_model=True,
+        moe_aux_loss_coeff=0.0001,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_router_dtype="fp32",
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_shared_expert_overlap=True,
+        # Parallelism
         tensor_model_parallel_size=4,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
         virtual_pipeline_model_parallel_size=None,
         context_parallel_size=1,
         sequence_parallel=True,
-        seq_length=2048,
     )
 
     # Parallelism settings
@@ -444,14 +568,45 @@ def nemotron_nano_9b_v2_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
-    cfg.model = NemotronNanoModelProvider9Bv2(
+    cfg.model = MambaModelProvider(
+        # Architecture (Nemotron Nano 9B v2)
+        hybrid_override_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
+        num_layers=56,
+        hidden_size=4480,
+        mamba_num_heads=128,
+        kv_channels=128,
+        mamba_state_dim=128,
+        ffn_hidden_size=15680,
+        num_attention_heads=40,
+        mamba_head_dim=80,
+        seq_length=2048,
+        # NemotronH base
+        mamba_num_groups=8,
+        num_query_groups=8,
+        make_vocab_size_divisible_by=128,
+        activation_func=squared_relu,
+        masked_softmax_fusion=True,
+        apply_query_key_layer_scaling=False,
+        persist_layer_norm=True,
+        attention_softmax_in_fp32=False,
+        first_last_layers_bf16=True,
+        is_hybrid_model=True,
+        moe_aux_loss_coeff=0.0001,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_router_dtype="fp32",
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_shared_expert_overlap=True,
+        # Parallelism
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
         virtual_pipeline_model_parallel_size=None,
         context_parallel_size=1,
         sequence_parallel=False,
-        seq_length=2048,
     )
 
     # Parallelism settings
@@ -560,14 +715,45 @@ def nemotron_nano_12b_v2_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
-    cfg.model = NemotronNanoModelProvider12Bv2(
+    cfg.model = MambaModelProvider(
+        # Architecture (Nemotron Nano 12B v2)
+        hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+        num_layers=62,
+        hidden_size=5120,
+        mamba_num_heads=128,
+        kv_channels=128,
+        mamba_state_dim=128,
+        ffn_hidden_size=20480,
+        num_attention_heads=40,
+        mamba_head_dim=80,
+        seq_length=2048,
+        # NemotronH base
+        mamba_num_groups=8,
+        num_query_groups=8,
+        make_vocab_size_divisible_by=128,
+        activation_func=squared_relu,
+        masked_softmax_fusion=True,
+        apply_query_key_layer_scaling=False,
+        persist_layer_norm=True,
+        attention_softmax_in_fp32=False,
+        first_last_layers_bf16=True,
+        is_hybrid_model=True,
+        moe_aux_loss_coeff=0.0001,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_router_dtype="fp32",
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_permute_fusion=True,
+        moe_shared_expert_overlap=True,
+        # Parallelism
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
         virtual_pipeline_model_parallel_size=None,
         context_parallel_size=1,
         sequence_parallel=False,
-        seq_length=2048,
     )
 
     # Parallelism settings
