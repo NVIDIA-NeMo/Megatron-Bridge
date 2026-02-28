@@ -163,7 +163,8 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     "
 
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
+    CMD="$CMD --mode finetune"
+    CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
     CMD="$CMD --peft_scheme none"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"

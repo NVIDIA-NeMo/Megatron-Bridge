@@ -137,17 +137,30 @@ if [ -n "${DCLM_DATA_DIR:-}" ] && [ -n "${DCLM_CACHE:-}" ]; then
     BLEND_PATHS=""
     for i in $(seq 1 10); do
         pad=$(printf "%02d" $i)
-        BLEND_PATHS="${BLEND_PATHS}\"${DCLM_DATA_DIR}/dclm_${pad}_text_document\","
+        PREFIX="${DCLM_DATA_DIR}/dclm_01_${pad}_text_document"
+        if [ -f "${PREFIX}.bin" ]; then
+            BLEND_PATHS="${BLEND_PATHS}\"${PREFIX}\","
+        fi
     done
     BLEND_PATHS="${BLEND_PATHS%,}"
-    DCLM_DATASET_OVERRIDES="dataset.blend=[[${BLEND_PATHS}],null] dataset.split=9999,8,2 dataset.path_to_cache=${DCLM_CACHE}"
+    
+    if [ -n "$BLEND_PATHS" ]; then
+        DCLM_DATASET_OVERRIDES="dataset.blend=[[${BLEND_PATHS}],null] dataset.split='\"9999,8,2\"' dataset.path_to_cache=${DCLM_CACHE}"
+    else
+        echo "WARNING: No DCLM data found in ${DCLM_DATA_DIR}!"
+    fi
 fi
 
 # Run each parallelism config in sequence
+export CUDA_DEVICE_MAX_CONNECTIONS=1
 CONFIG_INDEX=0
 for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
+    OLD_IFS=$IFS
     IFS=',' read -r TP PP EP CP SP <<< "$CONFIG"
+    IFS=$OLD_IFS
+
     CONFIG_INDEX=$((CONFIG_INDEX + 1))
+    
     echo ""
     echo "======================================"
     echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP"
@@ -170,7 +183,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.pipeline_model_parallel_size=$PP \
         model.expert_model_parallel_size=$EP \
         model.sequence_parallel=$SP \
-        model.context_parallel_size=$CP
+        model.context_parallel_size=$CP \
     "
     if [ -n "$DCLM_DATASET_OVERRIDES" ]; then
         CLI_OVERRIDES="$CLI_OVERRIDES $DCLM_DATASET_OVERRIDES"
@@ -181,14 +194,14 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."
-    echo $CMD
+    echo "$CMD"
     echo "======================================"
 
     $SRUN_CMD bash -c "$CMD"
     RUN_EXIT=$?
     if [ $RUN_EXIT -ne 0 ]; then
         echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP failed with exit code $RUN_EXIT"
-        exit $RUN_EXIT
+        continue
     fi
 done
 

@@ -49,7 +49,7 @@ export WKDIR="${WKDIR:-}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # After pretrain, use e.g. ${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp2_pp4_ep4_spTrue_cp1
-PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b/iter_0000000}
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
 DATASET_NAME=squad
 SEQ_LENGTH=2048
@@ -160,8 +160,9 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     "
 
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
-    CMD="$CMD --peft_scheme lora"
+    CMD="$CMD --mode finetune"
+    CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
+
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
 
