@@ -125,13 +125,15 @@ def shared_tmp_dir():
         yield tmp_dir
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(autouse=True)
 def reset_cuda():
     """Reset CUDA state between tests."""
     yield
 
-    # Clear CUDA cache after test
     if torch.cuda.is_available():
+        import gc
+
+        gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 

@@ -708,6 +708,11 @@ def save_checkpoint(
                     "The 'nvidia_resiliency_ext' module is required for local "
                     "checkpointing but was not found. Please ensure it is installed."
                 )
+            # Embed TrainState so consumed_train_samples and other counters
+            # survive a local-checkpoint resume.  Goes into the ``common``
+            # part of MCoreTensorAwareStateDict (replicated, atomic).
+            state_dict["train_state_metadata"] = train_state.state_dict()
+
             algo = ckpt_cfg.non_persistent_local_ckpt_algo
             cached_metadata = None
             if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
@@ -808,8 +813,8 @@ def save_checkpoint(
     else:
         _post_save_global_barrier()
 
-    # Additional callback for wandb (last rank)
-    if not torch.distributed.is_initialized() or is_last_rank():
+    # Additional callback for wandb/mlflow (last rank, global checkpoints only)
+    if ckpt_type != CheckpointType.LOCAL and (not torch.distributed.is_initialized() or is_last_rank()):
 
         def wandb_finalize_fn() -> None:
             wandb_utils.on_save_checkpoint_success(
@@ -845,7 +850,8 @@ def save_checkpoint(
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
     # keep only last k checkpoints
-    if ckpt_cfg.most_recent_k > -1:
+    # Skip for LOCAL checkpoints — LocalCheckpointManager manages its own cleanup.
+    if ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
         cleanup_old_non_persistent_checkpoint(
             save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
         )
@@ -1429,13 +1435,33 @@ def _load_checkpoint_from_path(
         if state_dict is None:
             return 0, 0
 
-        # Read run_config for TP/PP compatibility checks
-        run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
-        if file_exists(run_config_filename):
-            run_config = read_run_config(run_config_filename)
+        if ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints don't contain run_config.yaml and checkpoint_name
+            # is a CkptID tuple, not a string path.  Use current config — local
+            # checkpoints always resume with the same parallelism.
+            run_config = {
+                "model": {
+                    "tensor_model_parallel_size": cfg.model.tensor_model_parallel_size,
+                    "pipeline_model_parallel_size": cfg.model.pipeline_model_parallel_size,
+                    "encoder_tensor_model_parallel_size": getattr(cfg.model, "encoder_tensor_model_parallel_size", 0),
+                    "encoder_pipeline_model_parallel_size": getattr(
+                        cfg.model, "encoder_pipeline_model_parallel_size", 0
+                    ),
+                },
+                "checkpoint": {
+                    "save_optim": cfg.checkpoint.save_optim,
+                    "save_rng": cfg.checkpoint.save_rng,
+                    "fully_parallel_save": cfg.checkpoint.fully_parallel_save,
+                },
+            }
         else:
-            print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
-            run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
+            # Read run_config for TP/PP compatibility checks
+            run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+            if file_exists(run_config_filename):
+                run_config = read_run_config(run_config_filename)
+            else:
+                print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
+                run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
 
         ckpt_tp_pp = (
             run_config["model"]["tensor_model_parallel_size"],
@@ -1464,7 +1490,13 @@ def _load_checkpoint_from_path(
             if ckpt_tp_pp != run_tp_pp:
                 print_rank_0("{}: RNG state will be ignored".format(mismatch_msg))
 
-        sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
+        if ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints don't store content metadata in common.pt.
+            sharded_sd_metadata = _build_sharded_state_dict_metadata(
+                cfg.optimizer.use_distributed_optimizer, cfg.checkpoint
+            )
+        else:
+            sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
         print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
 
         # Determine if optimizer state will be loaded
@@ -1641,15 +1673,30 @@ def _load_checkpoint_from_path(
 
     # Handle train state
     if not cfg.checkpoint.finetune:
-        train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
-        if file_exists(train_state_filename):
-            state.train_state = read_train_state(train_state_filename)
+        if ckpt_type == CheckpointType.LOCAL:
+            # Local checkpoints embed train_state_metadata in the state dict.
+            if "train_state_metadata" in state_dict:
+                print_rank_0("Restoring TrainState from local checkpoint (train_state_metadata)")
+                state.train_state = TrainState()
+                state.train_state.load_state_dict(state_dict["train_state_metadata"])
+            else:
+                print_rank_0("WARNING: train_state_metadata not found in local checkpoint, counters reset")
+                state.train_state = TrainState(step=state_dict.get("iteration", 0))
         else:
-            print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint state dict")
-            state.train_state = _get_train_state_from_state_dict(state_dict)
+            train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
+            if file_exists(train_state_filename):
+                state.train_state = read_train_state(train_state_filename)
+            else:
+                print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint state dict")
+                state.train_state = _get_train_state_from_state_dict(state_dict)
 
     if cfg.checkpoint.finetune or release:
         state.train_state.step = 0
+
+    # For local checkpoints, checkpoint_name is a CkptID tuple.
+    # Normalize to string for downstream logging / wandb / mlflow.
+    if ckpt_type == CheckpointType.LOCAL and not isinstance(checkpoint_name, (str, bytes, os.PathLike)):
+        checkpoint_name = str(checkpoint_name)
 
     if not cfg.checkpoint.finetune:
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
@@ -1687,7 +1734,12 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                optimizer.load_state_dict(state_dict["optimizer"])
+                # torch.no_grad() is needed for local checkpoints: the
+                # DistributedOptimizer copies loaded tensors into main
+                # params via .copy_(), which fails on leaf Variables that
+                # require grad without this context.
+                with torch.no_grad():
+                    optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:
