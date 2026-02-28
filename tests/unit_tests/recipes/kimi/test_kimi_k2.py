@@ -12,13 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+
 import pytest
 import torch
 
-from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout, kimi_k2_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+class _FakeKimiK2Provider:
+    """Fake provider for testing without HF Hub I/O."""
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.vocab_size = 163840
+        self.apply_rope_fusion = False
+
+    def finalize(self):
+        return None
+
+
+class _FakeAutoBridge:
+    """Fake AutoBridge that returns a _FakeKimiK2Provider without network access."""
+
+    @classmethod
+    def from_hf_pretrained(cls, *args, **kwargs):
+        return cls()
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _FakeKimiK2Provider()
+
+
+@pytest.fixture(autouse=True)
+def _patch_autobridge(monkeypatch):
+    """Monkeypatch AutoBridge in the kimi_k2 recipe module to avoid HF Hub access."""
+    mod = importlib.import_module("megatron.bridge.recipes.kimi.kimi_k2")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
 
 
 class TestKimiK2PipelineLayout:
@@ -56,7 +88,7 @@ class TestKimiK2PretrainConfig:
 
         # Check it returns a ConfigContainer with all required components
         assert isinstance(cfg, ConfigContainer)
-        assert isinstance(cfg.model, MLAModelProvider)
+        assert cfg.model is not None
         assert cfg.train is not None
         assert cfg.optimizer is not None
         assert cfg.scheduler is not None
