@@ -127,7 +127,7 @@ jobs:
 
   cicd-container-build:
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x8
     environment: nemo-ci
     if: |
       (
@@ -288,7 +288,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x8
     name: Launch_Unit_Tests
     environment: nemo-ci
     env:
@@ -337,12 +337,12 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x8
 
   cicd-functional-tests:
     strategy:
       fail-fast: false
-      max-parallel: 16
+      max-parallel: 8
       matrix:
         include:
           - script: L2_Launch_training
@@ -381,7 +381,7 @@ jobs:
           - script: L2_Launch_recipes_llama_cuda_graphs
           - script: L2_Launch_utils
     needs: [pre-flight, cicd-unit-tests]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x8
     if: |
       (
         success()
@@ -439,7 +439,7 @@ jobs:
           PAT: ${{ secrets.PAT }}
           container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x8
 
   Nemo_CICD_Test:
     needs:
