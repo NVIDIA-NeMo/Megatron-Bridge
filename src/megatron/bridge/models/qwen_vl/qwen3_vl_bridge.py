@@ -474,6 +474,9 @@ class ExpertMLPDownProjMapping(AutoMapping):
     (standard) HF expert weight layouts are handled transparently.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 3 else hf_weights

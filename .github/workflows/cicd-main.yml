@@ -354,6 +354,7 @@ jobs:
           - script: L2_Launch_models_glm
           - script: L2_Launch_models_gpt_oss
           - script: L2_Launch_models_llama_nemotron
+          - script: L2_Launch_models_ministral3
           - script: L2_Launch_models_mistral
           - script: L2_Launch_models_nemotron
           - script: L2_Launch_models_nemotronh
@@ -363,12 +364,14 @@ jobs:
           - script: L2_Launch_models_qwen
           - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_models_qwen35_vl
           - script: L2_Launch_recipes_gemma_vl
           - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_models_qwen_vl_quantization
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
+          - script: L2_Launch_recipes_ministral3
           - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
