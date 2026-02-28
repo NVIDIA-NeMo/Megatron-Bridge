@@ -330,12 +330,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    > 2. `TransformerConfig.cpu_offloading_weights=False`
    >    > 3. `TransformerConfig.cpu_offloading_num_layers= <int:≤activation_offload_layers>`
    >
-   > 3. Environment variable settings to avoid resource conflict between CPU memory offloading and network communication
-   >
-   >    > 1. `NCCL_NET_GDR_LEVEL=PHB # NCCL <=2.25`
-   >    > 2. `NCCL_NET_GDR_C2C=1     # NCCL >=2.26`
-   >
-   > 4. Optimization tips
+   > 3. Optimization tips
    >
    >    > 1. Given the ratio between activation volume and computational operations, offloading all layer activations naively can become a performance bottleneck. Optimizing performance requires tuning the number of layers to offload while balancing it with recomputation.
 
@@ -659,8 +654,6 @@ python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `TrainingConfig.manual_gc_interval`
 - `MixedPrecisionConfig.fp8_param`
 - `ProfilingConfig`
-- `NCCL_NET_GDR_C2C`
-- `NCCL_NET_GDR_LEVEL`
 - `NCCL_NVLS_ENABLE`
 - `NVTE_BWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
 - `TransformerConfig.attention_backend`
