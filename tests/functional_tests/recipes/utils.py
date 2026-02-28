@@ -119,7 +119,12 @@ def run_pretrain_recipe_test(
         pretrain(config, forward_step)
 
         # Basic verification that training completed successfully
-        verify_checkpoint_files(config.checkpoint.save, 10)
+        verify_checkpoint_files(
+            config.checkpoint.save,
+            10,
+            ckpt_format=config.checkpoint.ckpt_format,
+            storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+        )
 
     finally:
         clear_directories(tmp_path)
@@ -282,7 +287,12 @@ def run_pretrain_vl_recipe_test(
         pretrain(config, vlm_forward_step)
 
         # Basic verification that training completed successfully
-        verify_checkpoint_files(config.checkpoint.save, config.train.train_iters)
+        verify_checkpoint_files(
+            config.checkpoint.save,
+            config.train.train_iters,
+            ckpt_format=config.checkpoint.ckpt_format,
+            storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+        )
 
     finally:
         clear_directories(tmp_path)

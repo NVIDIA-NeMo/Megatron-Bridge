@@ -163,7 +163,12 @@ class TestPretrainResume:
             torch.distributed.barrier()
 
             # Verify checkpoint files from first run
-            verify_checkpoint_files(checkpoint_dir, checkpoint_iters)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                checkpoint_iters,
+                ckpt_format=cfg_first.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_first.checkpoint.storage_writers_per_rank,
+            )
 
             torch.distributed.barrier()
 
@@ -248,7 +253,12 @@ class TestPretrainResume:
             torch.distributed.barrier()
 
             # Verify checkpoint files from second run
-            verify_checkpoint_files(checkpoint_dir, total_iters)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                total_iters,
+                ckpt_format=cfg_second.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_second.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(shared_base_dir)
