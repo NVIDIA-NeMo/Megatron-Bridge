@@ -14,12 +14,13 @@
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import pytest
 import torch
+import torch.nn.functional as F
 
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -45,9 +46,26 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProviderFSDP145M(Llama3ModelProvider):
+class Llama3ModelProviderFSDP145M(GPTModelProvider):
     """Small Llama3 model configuration for FSDP testing."""
 
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_activation_fusion: bool = True
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-05
+    rotary_percent: float = 1.0
     rotary_base: int = 500_000
     seq_length: int = 8192
     num_layers: int = 2
@@ -55,7 +73,6 @@ class Llama3ModelProviderFSDP145M(Llama3ModelProvider):
     ffn_hidden_size: int = 2688
     num_attention_heads: int = 16
     vocab_size: int | None = None
-    # Disable gradient accumulation fusion for FSDP
     gradient_accumulation_fusion: bool = False
 
 

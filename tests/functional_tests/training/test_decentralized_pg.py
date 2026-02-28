@@ -25,8 +25,9 @@ import os
 
 import pytest
 import torch
+import torch.nn.functional as F
 
-from megatron.bridge.models.llama import Llama32ModelProvider1B
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -100,7 +101,29 @@ class TestDecentralizedPgPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = GPTModelProvider(
+                normalization="RMSNorm",
+                activation_func=F.silu,
+                gated_linear_unit=True,
+                position_embedding_type="rope",
+                add_bias_linear=False,
+                attention_dropout=0.0,
+                hidden_dropout=0.0,
+                bias_activation_fusion=True,
+                masked_softmax_fusion=True,
+                persist_layer_norm=True,
+                bias_dropout_fusion=True,
+                apply_rope_fusion=True,
+                num_query_groups=8,
+                init_method_std=0.02,
+                layernorm_epsilon=1e-05,
+                rotary_percent=1.0,
+                rope_scaling=True,
+                rope_scaling_factor=32.0,
+                rotary_base=500_000,
+                hidden_size=2048,
+                ffn_hidden_size=8192,
+                num_attention_heads=32,
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,
@@ -229,7 +252,30 @@ class TestDecentralizedPgPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = GPTModelProvider(
+                normalization="RMSNorm",
+                activation_func=F.silu,
+                gated_linear_unit=True,
+                position_embedding_type="rope",
+                add_bias_linear=False,
+                attention_dropout=0.0,
+                hidden_dropout=0.0,
+                bias_activation_fusion=True,
+                masked_softmax_fusion=True,
+                persist_layer_norm=True,
+                bias_dropout_fusion=True,
+                apply_rope_fusion=True,
+                num_query_groups=8,
+                init_method_std=0.02,
+                layernorm_epsilon=1e-05,
+                rotary_percent=1.0,
+                rope_scaling=True,
+                rope_scaling_factor=32.0,
+                share_embeddings_and_output_weights=True,
+                rotary_base=500_000,
+                hidden_size=2048,
+                ffn_hidden_size=8192,
+                num_attention_heads=32,
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,
@@ -361,7 +407,29 @@ class TestDecentralizedPgPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = GPTModelProvider(
+                normalization="RMSNorm",
+                activation_func=F.silu,
+                gated_linear_unit=True,
+                position_embedding_type="rope",
+                add_bias_linear=False,
+                attention_dropout=0.0,
+                hidden_dropout=0.0,
+                bias_activation_fusion=True,
+                masked_softmax_fusion=True,
+                persist_layer_norm=True,
+                bias_dropout_fusion=True,
+                apply_rope_fusion=True,
+                num_query_groups=8,
+                init_method_std=0.02,
+                layernorm_epsilon=1e-05,
+                rotary_percent=1.0,
+                rope_scaling=True,
+                rope_scaling_factor=32.0,
+                rotary_base=500_000,
+                hidden_size=2048,
+                ffn_hidden_size=8192,
+                num_attention_heads=32,
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=2,  # Enable PP
                 context_parallel_size=1,
@@ -495,7 +563,29 @@ class TestDecentralizedPgPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = GPTModelProvider(
+                normalization="RMSNorm",
+                activation_func=F.silu,
+                gated_linear_unit=True,
+                position_embedding_type="rope",
+                add_bias_linear=False,
+                attention_dropout=0.0,
+                hidden_dropout=0.0,
+                bias_activation_fusion=True,
+                masked_softmax_fusion=True,
+                persist_layer_norm=True,
+                bias_dropout_fusion=True,
+                apply_rope_fusion=True,
+                num_query_groups=8,
+                init_method_std=0.02,
+                layernorm_epsilon=1e-05,
+                rotary_percent=1.0,
+                rope_scaling=True,
+                rope_scaling_factor=32.0,
+                rotary_base=500_000,
+                hidden_size=2048,
+                ffn_hidden_size=8192,
+                num_attention_heads=32,
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=1,
                 context_parallel_size=2,  # Enable CP
@@ -629,7 +719,29 @@ class TestDecentralizedPgPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = GPTModelProvider(
+                normalization="RMSNorm",
+                activation_func=F.silu,
+                gated_linear_unit=True,
+                position_embedding_type="rope",
+                add_bias_linear=False,
+                attention_dropout=0.0,
+                hidden_dropout=0.0,
+                bias_activation_fusion=True,
+                masked_softmax_fusion=True,
+                persist_layer_norm=True,
+                bias_dropout_fusion=True,
+                apply_rope_fusion=True,
+                num_query_groups=8,
+                init_method_std=0.02,
+                layernorm_epsilon=1e-05,
+                rotary_percent=1.0,
+                rope_scaling=True,
+                rope_scaling_factor=32.0,
+                rotary_base=500_000,
+                hidden_size=2048,
+                ffn_hidden_size=8192,
+                num_attention_heads=32,
                 tensor_model_parallel_size=2,  # Enable TP
                 pipeline_model_parallel_size=2,  # Enable PP
                 context_parallel_size=1,
@@ -763,7 +875,29 @@ class TestDecentralizedPgPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = GPTModelProvider(
+                normalization="RMSNorm",
+                activation_func=F.silu,
+                gated_linear_unit=True,
+                position_embedding_type="rope",
+                add_bias_linear=False,
+                attention_dropout=0.0,
+                hidden_dropout=0.0,
+                bias_activation_fusion=True,
+                masked_softmax_fusion=True,
+                persist_layer_norm=True,
+                bias_dropout_fusion=True,
+                apply_rope_fusion=True,
+                num_query_groups=8,
+                init_method_std=0.02,
+                layernorm_epsilon=1e-05,
+                rotary_percent=1.0,
+                rope_scaling=True,
+                rope_scaling_factor=32.0,
+                rotary_base=500_000,
+                hidden_size=2048,
+                ffn_hidden_size=8192,
+                num_attention_heads=32,
                 tensor_model_parallel_size=2,  # Enable TP
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,

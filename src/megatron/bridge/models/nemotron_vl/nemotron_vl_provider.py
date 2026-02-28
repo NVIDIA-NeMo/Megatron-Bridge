@@ -14,58 +14,73 @@
 
 import copy
 from dataclasses import dataclass
+from typing import Callable
 
-from megatron.core.activations import fast_gelu
+from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 
-from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronNano12Bv2Provider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 @dataclass
-class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
-    """Configuration provider for Nemotron-VL models."""
+class NemotronNano12Bv2VLModelProvider(MambaModelProvider):
+    """Configuration provider for Nemotron-VL models.
 
-    # ------------------------------------------------------------------
-    # Language configuration – inherit sensible defaults from NemotronNano12Bv2Provider
-    # ------------------------------------------------------------------
+    Inlines NemotronH + NemotronNano12Bv2 defaults directly.
+    """
 
-    # For VL models we do *not* scatter embeddings across the sequence
-    # parallel region because we need to splice vision embeddings later.
+    # NemotronH base defaults
+    mamba_num_groups: int = 8
+    mamba_head_dim: int = 80
+    num_query_groups: int = 8
+    make_vocab_size_divisible_by: int = 128
+    activation_func: Callable = squared_relu
+    masked_softmax_fusion: bool = True
+    apply_query_key_layer_scaling: bool = False
+    persist_layer_norm: bool = True
+    first_last_layers_bf16: bool = True
+    is_hybrid_model: bool = True
+
+    # MoE
+    moe_aux_loss_coeff: float = 0.0001
+    moe_router_score_function: str = "sigmoid"
+    moe_router_enable_expert_bias: bool = True
+    moe_router_load_balancing_type: str = "seq_aux_loss"
+    moe_router_dtype: str = "fp32"
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
+    moe_shared_expert_overlap: bool = True
+
+    # NemotronNano12Bv2 specifics
+    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
+    num_layers: int = 62
+    hidden_size: int = 5120
+    mamba_num_heads: int = 128
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 20480
+    num_attention_heads: int = 40
+    seq_length: int = 131072
+
+    # VL overrides
     scatter_embedding_sequence_parallel: bool = False
     attention_softmax_in_fp32: bool = True
 
     vision_model_type: str = "radio"
     language_model_type: str = "nemotron5-hybrid-12b"
 
-    # Freeze knobs useful for transfer-learning scenarios
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
 
-    # ------------------------------------------------------------------
-    # Provider API
-    # ------------------------------------------------------------------
-
     def provide(self, pre_process=None, post_process=None, vp_stage=None):  # noqa: D401
-        """Assemble a full :class:`~megatron.core.models.multimodal.llava_model.LLaVAModel` and wrap it.
+        """Assemble a full :class:`~megatron.core.models.multimodal.llava_model.LLaVAModel`."""
 
-        This is a *very* trimmed-down version of the assembly code used in
-        `pretrain_vlm.py` – it relies only on parameters already stored in the
-        provider so that it works in any script (no Megatron-training CLI
-        required).
-        """
-
-        # ------------------------------------------------------------------
-        # Build configs and layer specs
-        # ------------------------------------------------------------------
-
-        # Language config is basically *self* (GPTModelProvider), but we make a
-        # shallow copy so tweaks do not leak back.
         language_cfg = copy.deepcopy(self)
 
-        # Vision transformer config – start from language_cfg but ensure SP/CP disabled
         vision_cfg = copy.deepcopy(language_cfg)
         vision_cfg.sequence_parallel = False
         vision_cfg.context_parallel_size = 1
@@ -73,7 +88,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
         vision_cfg.recompute_granularity = None
         vision_cfg.recompute_method = None
         vision_cfg.recompute_num_layers = None
-        # Overrides for vision_model_type = "radio"
         vision_cfg.num_layers = 32
         vision_cfg.num_attention_heads = 16
         vision_cfg.add_bias_linear = True
@@ -91,8 +105,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
         vision_cfg.qk_layernorm = False
         vision_cfg.layernorm_epsilon = 1e-6
 
-        # Vision-projection config/spec: a tiny two-layer MLP; for now just reuse
-        # the MLP sub-modules from the language layer spec if available.
         vision_proj_cfg = copy.deepcopy(language_cfg)
         vision_proj_cfg.sequence_parallel = False
         vision_proj_cfg.context_parallel_size = 1
@@ -100,7 +112,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
         vision_proj_cfg.recompute_granularity = None
         vision_proj_cfg.recompute_method = None
         vision_proj_cfg.recompute_num_layers = None
-        # Overrides for language_model_type = "nemotron5-hybrid-12b"
         vision_proj_cfg.ffn_hidden_size = 20480
         vision_proj_cfg.bias_activation_fusion = False
 
@@ -108,9 +119,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
         vision_spec = get_vit_layer_with_transformer_engine_spec()
         vision_proj_spec = copy.deepcopy(language_spec.submodules.mlp_layer.submodules.mlp.submodules)
 
-        # ------------------------------------------------------------------
-        # Instantiate LLaVA
-        # ------------------------------------------------------------------
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,
             language_transformer_layer_spec=language_spec,
@@ -139,7 +147,7 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
             pixel_shuffle=True,
             max_num_tiles=12,
             tokenizer_type="nemotron-h-5p5-reasoning",
-            use_vision_backbone_fp8_arch=True,  # Note: this is true in mlm code
+            use_vision_backbone_fp8_arch=True,
         )
 
         from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
@@ -155,6 +163,5 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
 
         return model
 
-    # Alias that NemotronVLModel relies on to create the LM component
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None):
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

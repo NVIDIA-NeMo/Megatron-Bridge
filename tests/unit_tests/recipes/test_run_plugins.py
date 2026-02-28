@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 
 try:
@@ -48,7 +49,7 @@ def create_test_config(**kwargs):
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.optimizer import OptimizerConfig
 
-    from megatron.bridge.models.llama import Llama3ModelProvider8B
+    from megatron.bridge.models.gpt_provider import GPTModelProvider
     from megatron.bridge.training.config import (
         CheckpointConfig,
         ConfigContainer,
@@ -78,8 +79,31 @@ def create_test_config(**kwargs):
     min_lr = kwargs.pop("min_lr", 1e-5)
 
     # Create model config with apply_rope_fusion=False
-    model_cfg = Llama3ModelProvider8B(
+    model_cfg = GPTModelProvider(
+        normalization="RMSNorm",
+        activation_func=F.silu,
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        add_bias_linear=False,
+        attention_dropout=0.0,
+        hidden_dropout=0.0,
+        share_embeddings_and_output_weights=False,
+        bias_activation_fusion=True,
+        masked_softmax_fusion=True,
+        persist_layer_norm=True,
+        bias_dropout_fusion=True,
         apply_rope_fusion=False,  # Disable to avoid TE/Apex requirement
+        num_query_groups=8,
+        init_method_std=0.01,
+        layernorm_epsilon=1e-05,
+        rotary_percent=1.0,
+        rotary_base=500_000,
+        seq_length=8192,
+        num_layers=32,
+        hidden_size=4096,
+        ffn_hidden_size=14336,
+        num_attention_heads=32,
+        cross_entropy_fusion_impl="te",
         tensor_model_parallel_size=tensor_model_parallel_size,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_dtype,

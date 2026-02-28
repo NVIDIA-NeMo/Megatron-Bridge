@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.bridge.models.kimi import KimiK2Provider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -54,21 +54,22 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses KimiK2Provider instead of AutoBridge
-    cfg.model = KimiK2Provider(
-        tensor_model_parallel_size=2,
-        pipeline_model_parallel_size=16,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=32,
-        sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
-    )
+    # Model config via AutoBridge (dispatches to KimiK2Bridge)
+    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Kimi-K2-Instruct").to_megatron_provider(load_weights=False)
+
+    # Parallelism
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # Pipeline split settings (asymmetric stages)
     cfg.model.account_for_embedding_in_pipeline_split = False
@@ -129,7 +130,7 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
-    # Memory saving (recompute & offloading) - already set in KimiK2Provider
+    # Memory saving (recompute & offloading) - already set in model provider
     # cfg.model.recompute_granularity = "selective"
     # cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
