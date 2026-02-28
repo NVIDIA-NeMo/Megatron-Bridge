@@ -927,6 +927,16 @@ class CheckpointConfig:
     replication_factor: int = 2
     """Number of machines storing the replica of a given rank's data."""
 
+    custom_manager_class: str | None = None
+    """Fully qualified class name for a custom CheckpointManager implementation.
+
+    When set, checkpoint operations will instantiate and delegate to this class instead of the default
+    checkpoint manager. The custom class must implement the `CheckpointManager` protocol
+    defined in `megatron.bridge.training.checkpointing`.
+
+    Example: ``'mypackage.checkpoint.MyCheckpointManager'``
+    """
+
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
         if self.load_main_params_from_ckpt:
