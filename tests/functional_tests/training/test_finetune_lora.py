@@ -87,14 +87,24 @@ class TestLoRAFinetune:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
                 lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
             )
             finetune(lora_cfg, forward_step)
-            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                lora_iters,
+                ckpt_format=lora_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_cfg.checkpoint.storage_writers_per_rank,
+            )
             verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
 
         finally:
@@ -129,7 +139,12 @@ class TestLoRAFinetune:
             # Run pretrain
             pretrain(pretrain_cfg, forward_step)
 
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Second run: LoRA finetuning initial phase (will be "interrupted")
 
@@ -146,7 +161,12 @@ class TestLoRAFinetune:
             # Run initial LoRA finetuning (simulate job getting interrupted)
             finetune(lora_initial_cfg, forward_step)
 
-            verify_checkpoint_files(lora_checkpoint_dir, initial_lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                initial_lora_iters,
+                ckpt_format=lora_initial_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_initial_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Third run: Resume LoRA finetuning from checkpoint (adapter-only states)
             lora_resume_cfg = self._create_lora_config(
@@ -165,7 +185,12 @@ class TestLoRAFinetune:
             # Run resumed LoRA finetuning (should continue from iteration 6 to 12)
             finetune(lora_resume_cfg, forward_step)
 
-            verify_checkpoint_files(lora_checkpoint_dir, total_lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                total_lora_iters,
+                ckpt_format=lora_resume_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_resume_cfg.checkpoint.storage_writers_per_rank,
+            )
             verify_peft_checkpoint_smaller(
                 pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, initial_lora_iters
             )
@@ -198,7 +223,12 @@ class TestLoRAFinetune:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Create LoRA config with packed sequences and run finetuning
             lora_cfg = self._create_lora_config(
@@ -214,7 +244,12 @@ class TestLoRAFinetune:
             lora_cfg.validation.eval_iters = 2
 
             finetune(lora_cfg, forward_step)
-            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+            verify_checkpoint_files(
+                lora_checkpoint_dir,
+                lora_iters,
+                ckpt_format=lora_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=lora_cfg.checkpoint.storage_writers_per_rank,
+            )
             verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
 
         finally:
