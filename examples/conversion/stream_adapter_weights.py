@@ -26,6 +26,13 @@ The example follows three steps:
 3. Stream the adapter weights with `AutoBridge.export_adapter_weights` and save
    them to a safetensors file without touching the base weights.
 
+Verification (enabled by default, disable with --no-verify):
+
+The script verifies that manually merging the exported adapter weights (lora_A, lora_B)
+onto the exported base weights using the LoRA formula (W' = W + α/r * B @ A) produces
+the same result as exporting with `merge_adapter_weights=True`. This ensures the adapter
+streaming and merge-back paths are mathematically consistent.
+
 Run the example:
 
     uv run python examples/conversion/stream_adapter_weights.py \
