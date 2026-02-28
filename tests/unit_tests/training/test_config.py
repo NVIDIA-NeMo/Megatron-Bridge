@@ -19,8 +19,8 @@ import pytest
 import torch
 from megatron.core.transformer.enums import CudaGraphScope
 
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
@@ -76,8 +76,8 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     return GPTModelProvider(**defaults)
 
 
-def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
-    """Creates an instance of DeepSeekModelProvider for testing."""
+def create_test_deepseek_config(**kwargs: Any) -> MLAModelProvider:
+    """Creates an instance of MLAModelProvider for testing."""
     defaults = {
         "num_layers": 1,
         "hidden_size": 128,
@@ -86,7 +86,7 @@ def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return DeepSeekModelProvider(**defaults)
+    return MLAModelProvider(**defaults)
 
 
 def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:

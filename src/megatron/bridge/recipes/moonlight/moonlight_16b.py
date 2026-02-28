@@ -14,9 +14,10 @@
 
 
 import torch
+import torch.nn.functional as F
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.deepseek import MoonlightModelProvider16B
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -195,8 +196,51 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    # Model config - uses MoonlightModelProvider16B
-    cfg.model = MoonlightModelProvider16B(
+    # Model config - uses MLAModelProvider with Moonlight-16B architecture
+    cfg.model = MLAModelProvider(
+        # Architecture
+        num_layers=27,
+        hidden_size=2048,
+        ffn_hidden_size=11264,
+        num_attention_heads=16,
+        kv_channels=16,
+        q_lora_rank=None,
+        kv_lora_rank=512,
+        max_position_embeddings=4096,
+        num_moe_experts=64,
+        moe_ffn_hidden_size=1408,
+        moe_shared_expert_intermediate_size=2816,
+        moe_layer_freq=[0] * 1 + [1] * 26,
+        moe_router_topk=6,
+        moe_router_num_groups=1,
+        moe_router_group_topk=1,
+        moe_router_topk_scaling_factor=2.446,
+        moe_aux_loss_coeff=0.001,
+        make_vocab_size_divisible_by=1280,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        rotary_scaling_factor=1.0,
+        mscale=1.0,
+        mscale_all_dim=1.0,
+        rotary_base=50000,
+        layernorm_epsilon=1e-5,
+        init_method_std=0.02,
+        moe_router_bias_update_rate=1e-3,
+        rotary_percent=1.0,
+        vocab_size=163842,
+        # Common defaults
+        normalization="RMSNorm",
+        activation_func=F.silu,
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        add_bias_linear=False,
+        share_embeddings_and_output_weights=False,
+        qk_layernorm=True,
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        # Parallelism
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,
@@ -267,7 +311,7 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory saving (recompute & offloading)
-    # recompute_granularity already set in MoonlightModelProvider16B
+    # recompute_granularity already set in model provider
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
@@ -367,7 +411,50 @@ def moonlight_16b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, EP=2
-    cfg.model = MoonlightModelProvider16B(
+    cfg.model = MLAModelProvider(
+        # Architecture
+        num_layers=27,
+        hidden_size=2048,
+        ffn_hidden_size=11264,
+        num_attention_heads=16,
+        kv_channels=16,
+        q_lora_rank=None,
+        kv_lora_rank=512,
+        max_position_embeddings=4096,
+        num_moe_experts=64,
+        moe_ffn_hidden_size=1408,
+        moe_shared_expert_intermediate_size=2816,
+        moe_layer_freq=[0] * 1 + [1] * 26,
+        moe_router_topk=6,
+        moe_router_num_groups=1,
+        moe_router_group_topk=1,
+        moe_router_topk_scaling_factor=2.446,
+        moe_aux_loss_coeff=0.001,
+        make_vocab_size_divisible_by=1280,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        rotary_scaling_factor=1.0,
+        mscale=1.0,
+        mscale_all_dim=1.0,
+        rotary_base=50000,
+        layernorm_epsilon=1e-5,
+        init_method_std=0.02,
+        moe_router_bias_update_rate=1e-3,
+        rotary_percent=1.0,
+        vocab_size=163842,
+        # Common defaults
+        normalization="RMSNorm",
+        activation_func=F.silu,
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        add_bias_linear=False,
+        share_embeddings_and_output_weights=False,
+        qk_layernorm=True,
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+        # Parallelism
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,

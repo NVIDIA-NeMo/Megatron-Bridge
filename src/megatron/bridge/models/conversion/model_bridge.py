@@ -203,8 +203,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         .. code-block:: python
 
-            def provider_bridge(self, hf_pretrained) -> LlamaModelProvider:
-                return LlamaModelProvider(
+            def provider_bridge(self, hf_pretrained) -> GPTModelProvider:
+                return GPTModelProvider(
                     num_layers=hf_pretrained.config.num_hidden_layers,
                     hidden_size=hf_pretrained.config.hidden_size,
                     ...

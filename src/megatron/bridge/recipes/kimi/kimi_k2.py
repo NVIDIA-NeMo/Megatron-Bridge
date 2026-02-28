@@ -12,9 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+from functools import partial
 
-from megatron.bridge.models.kimi import KimiK2Provider
+import torch
+import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
+from megatron.bridge.models.mla_provider import MLAModelProvider
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -54,8 +66,77 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    # Model config - uses KimiK2Provider instead of AutoBridge
-    cfg.model = KimiK2Provider(
+    # Model config - uses MLAModelProvider with Kimi-K2 architecture
+    cfg.model = MLAModelProvider(
+        # Architecture
+        transformer_layer_spec=partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE),
+        num_layers=61,
+        hidden_size=7168,
+        ffn_hidden_size=18432,
+        num_moe_experts=384,
+        moe_ffn_hidden_size=2048,
+        moe_shared_expert_intermediate_size=2048,
+        moe_layer_freq=[0] + [1] * 60,
+        normalization="RMSNorm",
+        activation_func=F.silu,
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        add_bias_linear=False,
+        share_embeddings_and_output_weights=False,
+        num_attention_heads=64,
+        kv_channels=64,
+        max_position_embeddings=4096,
+        seq_length=4096,
+        rotary_base=50000.0,
+        make_vocab_size_divisible_by=1280,
+        attention_dropout=0.0,
+        hidden_dropout=0.0,
+        qk_layernorm=True,
+        # MoE
+        moe_router_topk=8,
+        moe_router_num_groups=1,
+        moe_router_group_topk=1,
+        moe_router_topk_scaling_factor=2.827,
+        moe_aux_loss_coeff=1e-3,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_bias_update_rate=1e-3,
+        moe_grouped_gemm=True,
+        moe_router_pre_softmax=True,
+        moe_token_dispatcher_type="alltoall",
+        moe_router_load_balancing_type="seq_aux_loss",
+        moe_shared_expert_overlap=True,
+        moe_router_dtype="fp32",
+        moe_permute_fusion=False,
+        # MLA
+        multi_latent_attention=True,
+        q_lora_rank=1536,
+        kv_lora_rank=512,
+        qk_head_dim=128,
+        qk_pos_emb_head_dim=64,
+        v_head_dim=128,
+        rotary_scaling_factor=32,
+        beta_fast=1.0,
+        beta_slow=1.0,
+        mscale=1.0,
+        mscale_all_dim=1.0,
+        # Miscellaneous
+        init_method_std=0.006,
+        layernorm_epsilon=1e-6,
+        bf16=True,
+        params_dtype=torch.bfloat16,
+        attention_softmax_in_fp32=False,
+        persist_layer_norm=True,
+        vocab_size=163840,
+        # Fusions
+        apply_rope_fusion=False,
+        bias_activation_fusion=True,
+        bias_dropout_fusion=True,
+        masked_softmax_fusion=True,
+        gradient_accumulation_fusion=True,
+        cross_entropy_loss_fusion=True,
+        cross_entropy_fusion_impl="te",
+        # Parallelism
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=16,
         pipeline_dtype=torch.bfloat16,
@@ -129,7 +210,7 @@ def kimi_k2_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
-    # Memory saving (recompute & offloading) - already set in KimiK2Provider
+    # Memory saving (recompute & offloading) - already set in model provider
     # cfg.model.recompute_granularity = "selective"
     # cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False

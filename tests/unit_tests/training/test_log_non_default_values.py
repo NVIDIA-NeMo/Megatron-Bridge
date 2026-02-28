@@ -22,8 +22,8 @@ from megatron.core.distributed.distributed_data_parallel_config import (
 from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -56,12 +56,12 @@ class TestGetMcoreTransformerParent:
         assert parent is MCoreTransformerConfig
 
     def test_deepseek_provider_returns_mla_transformer_config(self):
-        """DeepSeekModelProvider should return MCoreMLATransformerConfig as parent."""
+        """MLAModelProvider should return MCoreMLATransformerConfig as parent."""
         from megatron.core.transformer.transformer_config import (
             MLATransformerConfig as MCoreMLATransformerConfig,
         )
 
-        config = DeepSeekModelProvider(
+        config = MLAModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=4,
@@ -298,7 +298,7 @@ class TestLogNonDefaultValues:
     @patch("megatron.bridge.training.config.print_rank_0")
     def test_handles_deepseek_model_correctly(self, mock_print_rank_0):
         """Should use MLATransformerConfig for DeepSeek models."""
-        deepseek_model = DeepSeekModelProvider(
+        deepseek_model = MLAModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=4,
