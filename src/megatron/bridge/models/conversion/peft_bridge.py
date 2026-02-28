@@ -45,6 +45,7 @@ from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attrib
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
     from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronWeightTuple, WeightConversionTask
+    from megatron.bridge.peft.base import PEFT
 
 
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
@@ -828,23 +829,26 @@ class MegatronPeftBridge:
         linear_in_weight: torch.Tensor,
         linear_out_weight: torch.Tensor,
     ) -> torch.Tensor:
-        """Merge a single adapter's weights with base weight."""
+        """Merge a single adapter's weights with base weight.
 
+        The merge is performed in float32 to avoid precision loss from
+        bfloat16 matmul (adapter weights are often stored in bf16).
+        The result is cast back to the original base weight dtype.
+        """
+
+        orig_dtype = base_weight.dtype
         merger = LoRAMerge()
         base_device = base_weight.device
-        linear_out_on_base = (
-            linear_out_weight if linear_out_weight.device == base_device else linear_out_weight.to(base_device)
-        )
-        linear_in_on_base = (
-            linear_in_weight if linear_in_weight.device == base_device else linear_in_weight.to(base_device)
-        )
-        return merger.merge(
-            base_weight,
+        linear_out_on_base = linear_out_weight.to(device=base_device, dtype=torch.float32)
+        linear_in_on_base = linear_in_weight.to(device=base_device, dtype=torch.float32)
+        merged = merger.merge(
+            base_weight.float(),
             linear_out_on_base,
             linear_in_on_base,
             alpha,
             dim,
         )
+        return merged.to(orig_dtype)
 
     def _merge_canonical_adapter_from_weights(
         self,
@@ -909,3 +913,61 @@ class MegatronPeftBridge:
             converted_weights_dict[hf_name] = merged_weight
 
         return converted_weights_dict
+
+
+_HF_LORA_SUFFIXES = (".lora_A.weight", ".lora_B.weight")
+
+
+def infer_target_modules_from_adapter_weights(adapter_weight_names: Iterable[str]) -> List[str]:
+    """Derive HF ``target_modules`` from the HF-format adapter weight names.
+
+    Given names like ``model.layers.0.self_attn.q_proj.lora_A.weight``, this
+    extracts the unique module identifiers (``q_proj``, ``gate_proj``, ...) that
+    the ``peft`` library expects in ``adapter_config.json``.
+    """
+
+    modules: set[str] = set()
+    for name in adapter_weight_names:
+        for suffix in _HF_LORA_SUFFIXES:
+            if name.endswith(suffix):
+                base = name[: -len(suffix)]
+                module_name = base.rsplit(".", 1)[-1]
+                modules.add(module_name)
+                break
+    return sorted(modules)
+
+
+def build_adapter_config_dict(
+    peft_config: PEFT,
+    target_modules: List[str],
+    base_model_name_or_path: Optional[str] = None,
+) -> Dict[str, object]:
+    """Build an HF PEFT-compatible ``adapter_config.json`` dictionary.
+
+    The returned dict can be serialised directly with ``json.dump`` and is
+    loadable by ``peft.PeftModel.from_pretrained`` without any runtime
+    dependency on the ``peft`` pip package.
+    """
+
+    from megatron.bridge.peft.dora import DoRA
+
+    config: Dict[str, object] = {
+        "peft_type": "LORA",
+        "auto_mapping": None,
+        "base_model_name_or_path": base_model_name_or_path or "",
+        "bias": "none",
+        "fan_in_fan_out": False,
+        "inference_mode": True,
+        "init_lora_weights": True,
+        "lora_alpha": getattr(peft_config, "alpha", 32),
+        "lora_dropout": getattr(peft_config, "dropout", 0.0),
+        "modules_to_save": None,
+        "r": getattr(peft_config, "dim", 32),
+        "rank_pattern": {},
+        "alpha_pattern": {},
+        "target_modules": target_modules,
+        "task_type": "CAUSAL_LM",
+        "use_dora": isinstance(peft_config, DoRA),
+        "use_rslora": False,
+    }
+    return config
