@@ -63,12 +63,12 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
 
 LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V1 = replace(
     BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
+    num_gpus=64,
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
-    context_parallel_size=1,
+    context_parallel_size=2,
     virtual_pipeline_model_parallel_size=4,
-    global_batch_size=64,
+    global_batch_size=32,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
 )

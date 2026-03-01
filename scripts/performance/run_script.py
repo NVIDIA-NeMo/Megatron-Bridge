@@ -64,6 +64,19 @@ def main():
     else:
         forward_step_func = forward_step
 
+    # Perf
+    recipe.checkpoint.load = None
+    recipe.comm_overlap.bucket_size = 134217728
+    recipe.comm_overlap.tp_comm_overlap_cfg = None
+
+    # Memory
+    recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    #recipe.dist.use_tp_pp_dp_mapping = True
+    recipe.model.cpu_offloading_num_layers = 95
+    recipe.dataset.create_attention_mask = False
+
+    recipe.model.cuda_graph_impl= "none"
+
     pretrain(config=recipe, forward_step_func=forward_step_func)
 
     if torch.distributed.is_initialized():
