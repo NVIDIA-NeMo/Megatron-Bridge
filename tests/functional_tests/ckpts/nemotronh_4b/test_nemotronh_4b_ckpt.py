@@ -41,10 +41,14 @@ class TestNemotronhCkpt:
 
         config = nemotronh_4b_pretrain_config()
 
+        config.checkpoint.save = MBRIDGE_CKPT
+        config.checkpoint.load = MCORE_CKPT if os.path.exists(MCORE_CKPT) else None
+        config.checkpoint.load_optim = False
+
         config.model.num_layers = 26
         config.model.hybrid_override_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M*"
 
-        config.train.train_iters = 5
+        config.train.train_iters = 10 if config.checkpoint.load else 5
         config.train.eval_iters = 5
         config.train.save_interval = 5
         config.train.global_batch_size = 4
@@ -54,13 +58,14 @@ class TestNemotronhCkpt:
 
         config.logger.log_interval = 1
 
-        config.checkpoint.save = MBRIDGE_CKPT
-
         pretrain(config=config, forward_step_func=forward_step)
     
     @pytest.mark.run_only_on("GPU")
     def test_nemotronh_4b_ckpt_mcore(self, monkeypatch):
         """Functional test for Nemotron Hybrid MCore checkpoint."""
+
+        load_dir = MBRIDGE_CKPT if os.path.exists(MBRIDGE_CKPT) else None
+        train_iters = 10 if load_dir else 5
 
         # Set environment variables
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
@@ -103,14 +108,14 @@ class TestNemotronhCkpt:
                 "--max-position-embeddings", "8192",
                 "--micro-batch-size", "1",
                 "--global-batch-size", "4",
-                "--train-iters", "10",
                 "--mock-data",
                 "--tokenizer-type", "NullTokenizer",
                 "--vocab-size", "151936",
+                "--train-iters", f"{train_iters}",
                 "--save-interval", "5",
                 "--eval-interval", "5",
                 "--eval-iters", "4",
-                "--load", MBRIDGE_CKPT,
+                "--load", load_dir,
                 "--save", MCORE_CKPT,
                 "--ckpt-format", "torch_dist",
                 "--log-progress",
