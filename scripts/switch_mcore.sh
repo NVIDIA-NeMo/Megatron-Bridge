@@ -25,8 +25,8 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────────────────
 # Pinned commit hashes — update these when bumping Megatron-LM versions
 # ──────────────────────────────────────────────────────────────────────────────
-MAIN_COMMIT="107f6ae34e75b686d27fd1f4706cbc7be4b6f5c4"   # main branch
-DEV_COMMIT="bc9298cb5d4a5505d69f5e2b45f510d1b9a3b8f2"    # dev branch
+MAIN_COMMIT="107f6ae34e75b686d27fd1f4706cbc7be4b6f5c4"   # main branch  # pragma: allowlist secret
+DEV_COMMIT="bc9298cb5d4a5505d69f5e2b45f510d1b9a3b8f2"    # dev branch  # pragma: allowlist secret
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
