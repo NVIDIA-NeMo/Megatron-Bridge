@@ -31,6 +31,14 @@ from rich.table import Table
 console = Console()
 
 # Quantization configuration choices
+_super_disabled_quantizer_cfg = {
+    "*fc1_latent_proj*": {"enable": False},
+    "*fc2_latent_proj*": {"enable": False},
+    "*q_proj*": {"enable": False},
+    "*k_proj*": {"enable": False},
+    "*v_proj*": {"enable": False},
+}
+
 QUANT_CFG_CHOICES = {
     "int8_sq": mtq.INT8_SMOOTHQUANT_CFG,
     "fp8": mtq.FP8_DEFAULT_CFG,
@@ -38,6 +46,55 @@ QUANT_CFG_CHOICES = {
     "int4_awq": mtq.INT4_AWQ_CFG,
     "w4a8_awq": mtq.W4A8_AWQ_BETA_CFG,
     "nvfp4": mtq.NVFP4_DEFAULT_CFG,
+    "super_fp8": {
+        "quant_cfg": {
+            "*weight_quantizer": {"num_bits": (4, 3), "axis": None},
+            "*input_quantizer": {"num_bits": (4, 3), "axis": None},
+            **mtq.config._default_disabled_quantizer_cfg,
+            **_super_disabled_quantizer_cfg,
+        },
+        "algorithm": "max",
+    },
+    "super_nvfp4_aggressive": {
+        "quant_cfg": {
+            "*weight_quantizer": {
+                "num_bits": (2, 1),
+                "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)},
+                "axis": None,
+                "enable": True,
+            },
+            "*input_quantizer": {
+                "num_bits": (2, 1),
+                "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)},
+                "axis": None,
+                "enable": True,
+            },
+            **mtq.config._default_disabled_quantizer_cfg,
+            **_super_disabled_quantizer_cfg,
+        },
+        "algorithm": "max",
+    },
+    "super_nvfp4_conservative": {
+        "quant_cfg": {
+            "*weight_quantizer": {
+                "num_bits": (2, 1),
+                "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)},
+                "axis": None,
+                "enable": True,
+            },
+            "*input_quantizer": {
+                "num_bits": (2, 1),
+                "block_sizes": {-1: 16, "type": "dynamic", "scale_bits": (4, 3)},
+                "axis": None,
+                "enable": True,
+            },
+            **mtq.config._default_disabled_quantizer_cfg,
+            **_super_disabled_quantizer_cfg,
+            "*mixer.in_proj*": {"enable": False},
+            "*mixer.out_proj*": {"enable": False},
+        },
+        "algorithm": "max",
+    },
 }
 
 
