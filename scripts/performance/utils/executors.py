@@ -44,7 +44,7 @@ PERF_ENV_VARS = {
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",
-    "HF_HUB_OFFLINE": "1",
+    "HF_HUB_OFFLINE": "0",
 }
 
 
@@ -64,7 +64,7 @@ def slurm_executor(
     nemo_home: str = DEFAULT_NEMO_HOME,
     wandb_key: str = None,
     network: str = None,
-    custom_bash_cmds: List[str] = None,
+    custom_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
 ) -> run.SlurmExecutor:
@@ -79,14 +79,13 @@ def slurm_executor(
                 #SBATCH --nodelist=node001,node002
                 #SBATCH --constraint=gpu
     """
-    custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
+    custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
     srun_args = custom_srun_args.copy() + [
         "--mpi=pmix",
         "--no-container-mount-home",
-        "--container-writable",
     ]
 
     if log_dir is not None:
@@ -108,9 +107,7 @@ def slurm_executor(
         PERF_ENV_VARS["NEMO_HOME"] = nemo_home
         mounts.extend([f"{nemo_home}:{nemo_home}"])
     if hf_token is not None:
-        PERF_ENV_VARS["HF_TOKEN"] = hf_token
-        PERF_ENV_VARS["TRANSFORMERS_OFFLINE"] = "0"
-        PERF_ENV_VARS["HF_HUB_OFFLINE"] = "0"
+        PERF_ENV_VARS.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
 
     PERF_ENV_VARS.update(custom_env_vars)
     mounts.extend(custom_mounts)
@@ -151,7 +148,7 @@ def slurm_executor(
         time=time_limit,
         mem="0",
         exclusive=True,
-        packager=run.GitArchivePackager(),
+        packager=run.GitArchivePackager(include_submodules=False),
         segment=segment,
         network=network,
         launcher=launcher,

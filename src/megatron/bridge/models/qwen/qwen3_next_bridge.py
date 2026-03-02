@@ -27,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
@@ -62,14 +63,13 @@ class Qwen3NextBridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             vocab_size=hf_config.vocab_size,
             seq_length=hf_config.max_position_embeddings,
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
             qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
             moe_grouped_gemm=True,
             kv_channels=hf_config.head_dim,

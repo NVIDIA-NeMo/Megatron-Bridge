@@ -41,6 +41,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
 )
+from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
@@ -49,7 +50,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import unwrap_model
+from megatron.core.utils import get_pg_size, unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -62,7 +63,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
-from megatron.bridge.training.utils import wandb_utils
+from megatron.bridge.training.utils import mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
     ensure_directory_exists,
@@ -386,12 +387,18 @@ def get_rng_state(
     Optionally gathers states across data parallel ranks.
     Returns format depends on checkpoint format.
 
+    For torch_dist format with Expert Parallelism (EP > 1), RNG states are sharded
+    by (PP, TP, DP) dimensions since different EP ranks may have different RNG states.
+    Without EP, states are sharded by (PP, TP) with DP rank as replica_id.
+
     Args:
         data_parallel_random_init: If True, gathers RNG states across data parallel ranks.
         ckpt_format: The checkpoint format being used.
+        pg_collection: Process group collection for accessing parallel ranks/sizes.
 
     Returns:
-        For torch_dist: A ShardedObject containing the RNG states.
+        For torch_dist: A ShardedObject containing the RNG states, sharded by
+            (PP, TP, DP) when EP > 1, or (PP, TP) with DP as replica_id otherwise.
         For fsdp_dtensor: A dict mapping (pp_rank, tp_rank) to RNG state lists.
     """
     rng_state = {
@@ -414,13 +421,30 @@ def get_rng_state(
         pp_size = pg_collection.pp.size()
         tp_rank = pg_collection.tp.rank()
         tp_size = pg_collection.tp.size()
-        rng_state_list = ShardedObject(
-            "rng_state",
-            rng_state_list,
-            (pp_size, tp_size),
-            (pp_rank, tp_rank),
-            replica_id=pg_collection.dp_cp.rank(),
-        )
+        ep_size = get_pg_size(pg_collection.ep)
+
+        if ep_size > 1:
+            # Shard RNG by PP, TP, DP when using expert parallelism.
+            # With EP, different EP ranks within the same DP group may have different
+            # RNG states for their respective experts, so DP rank must be part of
+            # the sharding dimensions rather than replica_id.
+            dp_rank = pg_collection.dp_cp.rank()
+            dp_size = pg_collection.dp_cp.size()
+            rng_state_list = ShardedObject(
+                "rng_state",
+                rng_state_list,
+                (pp_size, tp_size, dp_size),
+                (pp_rank, tp_rank, dp_rank),
+                replica_id=0,
+            )
+        else:
+            rng_state_list = ShardedObject(
+                "rng_state",
+                rng_state_list,
+                (pp_size, tp_size),
+                (pp_rank, tp_rank),
+                replica_id=pg_collection.dp_cp.rank(),
+            )
     elif ckpt_format == "fsdp_dtensor":
         pp_rank = pg_collection.pp.rank()
         tp_rank = pg_collection.tp.rank()
@@ -624,7 +648,14 @@ def save_checkpoint(
                 validate_sharding_integrity = not ckpt_cfg.ckpt_assume_constant_structure
             else:
                 validate_sharding_integrity = True
-                save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)
+                if ckpt_cfg.ckpt_format == "torch_dist":
+                    save_strategy = TorchDistSaveShardedStrategy(
+                        "torch_dist",
+                        1,
+                        thread_count=ckpt_cfg.storage_writers_per_rank,
+                    )
+                else:
+                    save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)
                 if ckpt_cfg.ckpt_assume_constant_structure and ckpt_cfg.ckpt_format == "torch_dist":
                     save_strategy.use_cached_ckpt_structure = ckpt_cfg.ckpt_assume_constant_structure
                     if checkpointing_context is not None and "load_strategy" in checkpointing_context:
@@ -788,11 +819,21 @@ def save_checkpoint(
                 wandb_writer=state.wandb_logger,
             )
 
+        def mlflow_finalize_fn() -> None:
+            mlflow_utils.on_save_checkpoint_success(
+                checkpoint_name,
+                save_dir,
+                train_state.step,
+                mlflow_logger=state.mlflow_logger,
+            )
+
         if ckpt_cfg.async_save:
             assert async_save_request is not None
             async_save_request.add_finalize_fn(wandb_finalize_fn)
+            async_save_request.add_finalize_fn(mlflow_finalize_fn)
         else:
             wandb_finalize_fn()
+            mlflow_finalize_fn()
 
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
@@ -1679,6 +1720,8 @@ def _load_checkpoint_from_path(
     # Load RNG states
     if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_rng and not ignore_rng_state:
         try:
+            cuda_rng_tracker = tensor_parallel.get_cuda_rng_tracker()
+            graph_safe_rng = tensor_parallel.is_graph_safe_cuda_rng_tracker(cuda_rng_tracker)
             if "rng_state" in state_dict:
                 if ckpt_format == "fsdp_dtensor":
                     # FSDP DTensor format: {(pp_rank, tp_rank): rng_state_list}
@@ -1709,7 +1752,11 @@ def _load_checkpoint_from_path(
                 torch.cuda.set_rng_state(rng_state["cuda_rng_state"])
                 if not rng_state["rng_tracker_states"]:
                     raise KeyError
-                tensor_parallel.get_cuda_rng_tracker().set_states(rng_state["rng_tracker_states"])
+                rng_tracker_states = {
+                    k: tensor_parallel.convert_cuda_rng_state(v, to_graphable=graph_safe_rng)
+                    for k, v in rng_state["rng_tracker_states"].items()
+                }
+                cuda_rng_tracker.set_states(rng_tracker_states)
             else:  # backward compatibility
                 random.setstate(state_dict["random_rng_state"])
                 np.random.set_state(state_dict["np_rng_state"])
@@ -1717,7 +1764,11 @@ def _load_checkpoint_from_path(
                 torch.cuda.set_rng_state(state_dict["cuda_rng_state"])
                 if not state_dict["rng_tracker_states"]:
                     raise KeyError
-                tensor_parallel.get_cuda_rng_tracker().set_states(state_dict["rng_tracker_states"])
+                rng_tracker_states = {
+                    k: tensor_parallel.convert_cuda_rng_state(v, to_graphable=graph_safe_rng)
+                    for k, v in state_dict["rng_tracker_states"].items()
+                }
+                cuda_rng_tracker.set_states(rng_tracker_states)
         except KeyError:
             print_rank_0(
                 "Unable to load rng state from checkpoint {}. "
@@ -1739,6 +1790,7 @@ def _load_checkpoint_from_path(
 
     if not torch.distributed.is_initialized() or is_last_rank():
         wandb_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.wandb_logger)
+        mlflow_utils.on_load_checkpoint_success(checkpoint_name, load_dir, state.mlflow_logger)
 
     torch.cuda.empty_cache()
 

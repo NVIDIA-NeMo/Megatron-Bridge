@@ -184,7 +184,7 @@ bridge.export_ckpt(
 ## Examples
 
 - Checkpoint conversion: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
-- Training scripts: [examples/recipes/train_any_basic.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/train_any_basic.py)
+- Training scripts: [examples/models/train_any_basic.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/train_any_basic.py)
 
 ## Finetuning Recipes
 

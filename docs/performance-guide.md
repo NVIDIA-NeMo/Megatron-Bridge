@@ -443,6 +443,214 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 1. Megatron-Bridge provides an interface to extract the memory snapshot that shows the memory allocation bytes, the allocation lifespan, and the function call stack. Extracting the memory snapshot can be enabled by ProfilingConfig as shown below.
    > 2. `ProfilingConfig(record_memory_history=True, memory_snapshot_path=</path/to/store/the/output/file, profile_ranks=<[0,...]>)`
 
+## DeepEP: Common Issues and Solutions
+
+DeepEP is a communication library optimized for Mixture-of-Experts (MoE) all-to-all operations. When using DeepEP for cross-node Expert Parallelism (EP), there are several common issues related to network transport and GPU-NIC affinity that can significantly impact performance.
+
+> Note: DeepEP is best optimized for NVL8 systems such as the DGX-B200 NVL8 or DGX-H200 NVL8. For GB200 NVL72 rack-scale systems, where 72 GPUs are interconnected within the same NVLINK domain, we recommend using [HybridEP](https://github.com/deepseek-ai/DeepEP/tree/hybrid-ep) instead of DeepEP. HybridEP is maintained by NVIDIA and is specifically optimized for NVL72 rack scale systems. It is also integrated into the Megatron-core [fused all-to-all module](https://docs.nvidia.com/megatron-core/developer-guide/latest/apidocs/core/core.transformer.moe.fused_a2a.html) as an alternative backend under the `flex` token dispatcher.
+>
+> Learn more about GB200 MoE training best practices [here](https://github.com/NVIDIA/Megatron-LM/blob/dev/docs/discussions/deepseek-v3-gb200-optimization/deepseek-v3-gb200-reproduce-guide.md).
+
+### 1. Why is my DeepEP not working
+
+1. What is IBGDA and why is it a problem
+
+   DeepEP achieves optimal cross-node communication performance using InfiniBand GPU Direct Async (IBGDA), which is supported by ConnectX NICs in both InfiniBand and RoCEv2 modes. However, IBGDA is not always enabled by default—it often requires cluster administrators to actively configure the system and enable GPU Direct RDMA support in the InfiniBand (or RoCEv2) fabric. If this configuration step is skipped or unsupported in the cluster environment, IBGDA may be unavailable, which can prevent DeepEP inter-node EP capability from functioning.
+
+1. Network Transport: IBGDA vs. IBRC
+
+   > 1. IBGDA (InfiniBand GPU Direct Async) requires cluster administrators to enable GPU Direct RDMA and configure the InfiniBand subsystem. Many clusters do not have IBGDA enabled by default.
+   > 2. The official DeepEP main branch has removed support for IBRC (InfiniBand Reliable Connection), which previously served as a fallback mechanism. With IBRC, a CPU proxy thread will assist in processing the EP communication, which might have performance degradation compared to IBGDA, but we find such performance degradation doesn't overshadow the benefit of enabling wideEP in production training.
+
+2. Solution: NVSHMEM 3.5 with Automatic Transport Fallback
+
+   > 1. NVSHMEM 3.5 introduces improved auto-fallback support for cross-node communication under various network configurations. It can automatically select the best available transport (IBGDA, IBRC, or other supported mechanisms) based on cluster capabilities.
+   > 2. To benefit from NVSHMEM’s auto-fallback in DeepEP:
+   >    - Download the [official NVSHMEM 3.5.19-1 release](https://github.com/NVIDIA/nvshmem/releases/tag/v3.5.19-1). You can also choose to compile it from source in your container environment; we provide such examples later in this guide.
+   >    - Switch to the [DeepEP branch with native NVSHMEM API integration](https://github.com/seth-howell/DeepEP/tree/nvshmem_native_apis). This branch enables automatic use of NVSHMEM’s fallback mechanisms without requiring any manual code modifications.
+
+### 2. GPU-NIC Affinity and Bandwidth Contention
+
+A common cause of poor DeepEP performance is incorrect GPU-to-NIC (Network Interface Card) affinity, where multiple GPUs compete for bandwidth on a single NIC. As noted in [DeepEP PR #466](https://github.com/deepseek-ai/DeepEP/pull/466), cross-node EP performance may degrade if multiple GPUs use the same NIC, due to certain GPU-NIC affinity in some clusters. This PR provides a solution by supporting the environment variable `DEEP_EP_DEVICE_TO_HCA_MAPPING` to specify GPU-to-NIC mappings so that each GPU is automatically bound to the optimal NIC for maximum DeepEP throughput.
+
+With this PR's solution, we need the following environment variables to map GPUs to NICs correctly. First, you need to find out the names of the NICs by running `ibstat`. In our example, we found the following for one RoCEv2 DGX-B200 cluster:
+```
+> ibstat | grep ^CA
+CA 'rocep145s0'
+CA 'rocep146s0'
+CA 'rocep152s0'
+CA 'rocep153s0'
+CA 'rocep198s0'
+CA 'rocep199s0'
+CA 'rocep205s0'
+CA 'rocep206s0'
+```
+
+Use the following environment variables to map GPUs to NICs. Note that `0:rocep145s0:1` is formatted as `<CUDA_device_id>:<NIC_name>:<port>` so that each GPU will only be mapped to one dedicated NIC.
+```bash
+export NVSHMEM_ENABLE_NIC_PE_MAPPING=1
+export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0:1,3:rocep153s0:1,4:rocep198s0:1,5:rocep199s0:1,6:rocep205s0:1,7:rocep206s0:1"
+```
+
+### 3. Build DeepEP
+
+In this section, we provide a reference Dockerfile that shows how to build NVSHMEM 3.5 and the customized DeepEP into your container environment.
+
+Note that the following example is provided for DGX-B200 NVL8 systems, but similar ideas apply to Hopper generation as well—just change the Dockerfile accordingly. For example, you just need to change the compile target for SM90.
+
+Key points:
+
+- NVSHMEM source: https://github.com/NVIDIA/nvshmem/tree/v3.5.19-1
+- DeepEP branch that we cherry-picked with all the fixes above: https://github.com/zhongbozhu/DeepEP/tree/nvshmem_deepep_gcp
+- Example training container template for DGX-B200: https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/dockers/B200.Dockerfile 
+
+**Dockerfile**
+```bash
+FROM nvcr.io/nvidia/pytorch:25.11-py3 as base
+
+# Other dependencie you may want
+...
+
+# Dependency of IBGDA
+RUN ln -s /usr/lib/x86_64-linux-gnu/libmlx5.so.1 /usr/lib/x86_64-linux-gnu/libmlx5.so
+
+# Clone DeepEP customized version 
+WORKDIR /home/dpsk_a2a
+RUN git clone https://github.com/zhongbozhu/DeepEP.git ./deepep
+RUN cd ./deepep && git checkout nvshmem_deepep_gcp && cd /home/dpsk_a2a
+
+# Clone NVSHMEM 3.5 https://github.com/NVIDIA/nvshmem
+RUN git clone --branch v3.5.19-1 https://github.com/NVIDIA/nvshmem.git ./deepep-nvshmem
+RUN cd ./deepep-nvshmem && git checkout v3.5.19-1 && cd /home/dpsk_a2a
+
+# Build nvshmem from source
+# You can also download the pre-built binary, and skip the following 
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        clang \
+        llvm-dev \
+        libclang-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /home/dpsk_a2a/deepep-nvshmem
+RUN mkdir -p build && mkdir -p install && \
+    cmake -S . -B build \
+    -DCMAKE_INSTALL_PREFIX=/home/dpsk_a2a/deepep-nvshmem/install \
+    -DCUDA_HOME=/usr/local/cuda \
+    -DMPI_HOME=/opt/hpcx/ompi \
+    -DMPI_C_COMPILER=/opt/hpcx/ompi/bin/mpicc \
+    -DMPI_CXX_COMPILER=/opt/hpcx/ompi/bin/mpicxx \
+    -DNVSHMEM_MPI_SUPPORT=OFF \
+    -DNVSHMEM_IBRC_SUPPORT=ON \
+    -DNVSHMEM_IBGDA_SUPPORT=ON \
+    -DNVSHMEM_IBDEVX_SUPPORT=OFF \
+    -DNVSHMEM_UCX_SUPPORT=OFF \
+    -DNVSHMEM_SHMEM_SUPPORT=OFF \
+    -DNVSHMEM_PMIX_SUPPORT=OFF \
+    -DNVSHMEM_USE_NCCL=OFF \
+    -DNVSHMEM_USE_GDRCOPY=ON \
+    -DGDRCOPY_HOME=/usr \
+    -DNVSHMEM_USE_MLX5DV=ON \
+    -DNVSHMEM_BUILD_TESTS=ON \
+    -DNVSHMEM_BUILD_EXAMPLES=ON \
+    -DNVSHMEM_BUILD_PYTHON_LIB=OFF \
+    -DNVSHMEM_BUILD_BITCODE_LIBRARY=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES="100" && \
+    cmake --build build -j && \
+    cmake --install build
+
+ENV NVSHMEM_DIR=/home/dpsk_a2a/deepep-nvshmem/install
+ENV LD_LIBRARY_PATH=${NVSHMEM_DIR}/lib:$LD_LIBRARY_PATH
+ENV PATH=${NVSHMEM_DIR}/bin:$PATH
+
+## Build deepep
+WORKDIR /home/dpsk_a2a/deepep
+ENV TORCH_CUDA_ARCH_LIST="10.0"
+ENV PIP_NO_BUILD_ISOLATION=1
+ENV CPATH=${CUDA_HOME}/include/cccl:$CPATH
+RUN pip install --no-build-isolation .
+
+```
+
+DeepEP provides `test_internode.py` to test and benchmark cross-node EP communication. In our experiment, when using 4 nodes of DGX-B200 (i.e., EP32), the achieved throughput for cross-EP is about 50 GB/s with IBRC. We provide an example SLURM script below for running such a test with DeepEP.
+
+In another experiment on the same cluster, with IBGDA enabled by the cluster admin, we observed approximately 10% higher inter-node performance—roughly 55 GB/s. To enable IBGDA, you need to set the environment variable `export NVSHMEM_IB_ENABLE_IBGDA=true`; there is no need to change the software version or container, because with the software provided above, both modes will work.
+
+```bash
+srun --account=<your_account> -N 4 -p batch --time 30 \
+     --ntasks-per-node=1 --gpus-per-node=8 \
+     --no-container-mount-home --container-mounts "/lustre:/lustre" \
+     --container-image <your_container_path> \
+     --mpi=none --export=ALL \
+     bash -lc '
+set -eo pipefail 
+
+# Env Var for GPU-NIC mapping
+export NVSHMEM_ENABLE_NIC_PE_MAPPING=1
+export DEEP_EP_DEVICE_TO_HCA_MAPPING="0:rocep145s0:1,1:rocep146s0:1,2:rocep152s0:1,3:rocep153s0:1,4:rocep198s0:1,5:rocep199s0:1,6:rocep205s0:1,7:rocep206s0:1"
+
+
+# 1) Expand SLURM_JOB_NODELIST and grab the first hostname
+headnode=$(python - <<PY
+import os, re
+nl = os.environ.get("SLURM_JOB_NODELIST", "") or os.environ.get("SLURM_NODELIST", "")
+if not nl:
+    print(""); raise SystemExit(0)
+m = re.match(r"^([^-\\[]+)-(\\[(.+)\\]|(\\d+))$", nl)
+if not m:
+    # no bracket/range, just print it as-is
+    print(nl); raise SystemExit(0)
+prefix = m.group(1)
+br_or_num = m.group(3) or m.group(4)
+candidates = []
+for part in br_or_num.split(","):
+    part = part.strip()
+    if "-" in part:
+        a,b = part.split("-",1)
+        # preserve zero padding
+        width = max(len(a), len(b))
+        start, end = int(a), int(b)
+        candidates.append(f"{prefix}-{start:0{width}d}")
+    else:
+        candidates.append(f"{prefix}-{part}")
+print(sorted(candidates)[0])
+PY
+)
+
+if [[ -z "$headnode" ]]; then
+  echo "Could not determine master host from SLURM_JOB_NODELIST"; exit 1
+fi
+
+# 2) Resolve to an IP that both nodes can reach (fallback to the hostname)
+if command -v getent >/dev/null 2>&1; then
+  master_ip=$(getent ahostsv4 "$headnode" | awk "{print \$1; exit}")
+else
+  master_ip=""
+fi
+MASTER_ADDR="${master_ip:-$headnode}"
+
+# 3) Export rendezvous env that matches test_internode.py expectations
+export MASTER_ADDR
+export MASTER_PORT=${MASTER_PORT:-29500}
+export WORLD_SIZE=${SLURM_NNODES:-2}   # number of nodes
+export RANK=${SLURM_NODEID:-0}         # 0..N-1 per node
+
+export OMP_NUM_THREADS=1
+python -u /home/dpsk_a2a/deepep/tests/test_internode.py
+'
+
+```
+
+
+
+
+
+
+
+
+
+
 ## Index - List of Tuning Knobs
 
 - `CommOverlapConfig.tp_comm_overlap`

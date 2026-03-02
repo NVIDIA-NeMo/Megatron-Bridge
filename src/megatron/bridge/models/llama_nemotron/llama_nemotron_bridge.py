@@ -22,6 +22,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
@@ -96,7 +97,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
             layernorm_epsilon=hf_config.rms_norm_eps,
             num_query_groups=num_query_groups,
             seq_length=hf_config.max_position_embeddings,
-            rotary_base=hf_config.rope_theta,
+            rotary_base=rope_theta_from_hf(hf_config),
             kv_channels=getattr(hf_config, "head_dim", None),
             gated_linear_unit=True,  # Llama uses SwiGLU
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
@@ -104,14 +105,13 @@ class LlamaNemotronBridge(MegatronModelBridge):
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
             vocab_size=hf_config.vocab_size,
         )
 
         # Handle rope scaling for Llama 3.1/3.3
         if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling:
             if hf_config.rope_scaling.get("rope_type") == "llama3":
-                provider_kwargs["scale_factor"] = hf_config.rope_scaling.get("factor", 8.0)
+                provider_kwargs["rope_scaling_factor"] = rope_scaling_factor_from_hf(hf_config, default=8.0)
 
         provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
         provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)

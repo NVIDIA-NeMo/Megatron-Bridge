@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
 
+from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
+
 
 try:
     from typing import Unpack
@@ -34,10 +36,7 @@ from typing import Callable
 import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
-    DistributedDataParallel,
     DistributedDataParallelConfig,
-    FullyShardedDataParallel,
-    TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel.utils import (
@@ -467,7 +466,6 @@ class ModelParallelKwargs(TypedDict, total=False):
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
-    moe_extended_tp: bool
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
@@ -583,13 +581,20 @@ def get_model(
             model_module.cuda(torch.cuda.current_device())
 
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
-
-        # Maintain expert bias in float32 wrapped in Float16Module
+        # Save expert bias in float32 to avoid precision loss during conversion
+        keep_in_fp32 = []
         for model_module in model:
             for submodule in model_module.modules():
                 if hasattr(submodule, "_maintain_float32_expert_bias"):
-                    submodule._maintain_float32_expert_bias()
+                    expert_bias = getattr(submodule, "expert_bias", None)
+                    if expert_bias is not None:
+                        keep_in_fp32.append((submodule, expert_bias.data.clone()))
+
+        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
+
+        # Restore expert bias to float32
+        for submodule, fp32_data in keep_in_fp32:
+            submodule.expert_bias.data = fp32_data
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
@@ -668,84 +673,3 @@ def _create_model(
             tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
 
     return model
-
-
-def _ddp_wrap(
-    model: list[MegatronModule],
-    data_parallel_random_init: bool,
-    ddp_config: DistributedDataParallelConfig,
-    overlap_param_gather_with_optimizer_step: bool,
-    use_megatron_fsdp: bool = False,
-    use_torch_fsdp2: bool = False,
-    *,
-    pg_collection: ProcessGroupCollection,
-) -> list[MegatronModule]:
-    """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
-
-    Args:
-        model: List of model modules to wrap
-        use_torch_fsdp2: Whether to use PyTorch FSDP v2 instead of DDP
-        data_parallel_random_init: Whether to broadcast parameters from rank 0
-        ddp_config: Configuration for distributed data parallel
-        overlap_param_gather_with_optimizer_step: Whether to disable bucketing
-            for overlapping parameter gathering with optimizer step
-
-    Returns:
-        list[MegatronModule]: List of DDP/FSDP wrapped model modules
-    """
-    if use_megatron_fsdp:
-        DP = FullyShardedDataParallel
-        if use_torch_fsdp2:
-            raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
-    elif use_torch_fsdp2:
-        DP = TorchFullyShardedDataParallel
-    else:
-        DP = DistributedDataParallel
-
-    # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
-    #  this side-stream may be nested if being called from within the get_model function, but it
-    #  is here in case someone wants to use this directly outside of get_model.
-    ddp_stream = torch.cuda.Stream()
-    ddp_stream.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(ddp_stream):
-        model = [
-            DP(
-                config=get_model_config(model_chunk),
-                ddp_config=ddp_config,
-                module=model_chunk,
-                # Turn off bucketing for model_chunk 2 onwards, since communication for these
-                # model chunks is overlapped with compute anyway.
-                disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
-                pg_collection=pg_collection,
-            )
-            for (model_chunk_idx, model_chunk) in enumerate(model)
-        ]
-    # Critical: ensure side-stream work completes before touching params on default stream
-    torch.cuda.current_stream().wait_stream(ddp_stream)
-
-    # Broadcast params from data parallel src rank to other data parallel ranks.
-    if data_parallel_random_init:
-        for model_module in model:
-            model_module.broadcast_params()
-
-    return model
-
-
-def _print_num_params(model: list[MegatronModule], pg_collection: ProcessGroupCollection) -> None:
-    """Print the number of parameters in the model on rank 0.
-
-    Only prints on data parallel rank 0 to avoid duplicate output.
-    Shows parameter count per (tensor parallel, pipeline parallel) rank.
-
-    Args:
-        model: List of model modules to count parameters from
-    """
-    if (pg_collection.dp.rank() == 0) and (pg_collection.cp.rank() == 0):
-        print(
-            " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
-                pg_collection.tp.rank(),
-                pg_collection.pp.rank(),
-                sum([sum([p.nelement() for p in model_module.parameters()]) for model_module in model]),
-            ),
-            flush=True,
-        )

@@ -56,10 +56,10 @@ class TestMegatronGemma2Bridge:
             "pad_token_id": 0,
             "query_pre_attn_scalar": 256,
             "rms_norm_eps": 1e-06,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "sliding_window": 4096,
             "torch_dtype": "float32",
-            "transformers_version": "4.42.4",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 256000,
         }
@@ -90,11 +90,11 @@ class TestMegatronGemma2Bridge:
             "pad_token_id": 0,
             "query_pre_attn_scalar": 256,
             "rms_norm_eps": 1e-06,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "sliding_window": 4096,
             "sliding_window_size": 4096,
             "torch_dtype": "float32",
-            "transformers_version": "4.42.0.dev0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 256000,
         }
@@ -125,11 +125,11 @@ class TestMegatronGemma2Bridge:
             "pad_token_id": 0,
             "query_pre_attn_scalar": 144,
             "rms_norm_eps": 1e-06,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "sliding_window": 4096,
             "sliding_window_size": 4096,
             "torch_dtype": "float32",
-            "transformers_version": "4.42.0.dev0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 256000,
             "_attn_implementation": "eager",
@@ -225,7 +225,7 @@ class TestMegatronGemma2Bridge:
         assert result.hidden_size == gemma2_2b_config.hidden_size
         assert result.num_attention_heads == gemma2_2b_config.num_attention_heads
         assert result.seq_length == gemma2_2b_config.max_position_embeddings
-        assert result.rotary_base == gemma2_2b_config.rope_theta
+        assert result.rotary_base == gemma2_2b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_basic_9b(self, mock_pretrained_gemma2_9b, gemma2_9b_config):
         """Test basic provider_bridge functionality for Gemma2 9B."""
@@ -242,7 +242,7 @@ class TestMegatronGemma2Bridge:
         assert result.hidden_size == gemma2_9b_config.hidden_size
         assert result.num_attention_heads == gemma2_9b_config.num_attention_heads
         assert result.seq_length == gemma2_9b_config.max_position_embeddings
-        assert result.rotary_base == gemma2_9b_config.rope_theta
+        assert result.rotary_base == gemma2_9b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_basic_27b(self, mock_pretrained_gemma2_27b, gemma2_27b_config):
         """Test basic provider_bridge functionality for Gemma2 27B."""
@@ -259,7 +259,7 @@ class TestMegatronGemma2Bridge:
         assert result.hidden_size == gemma2_27b_config.hidden_size
         assert result.num_attention_heads == gemma2_27b_config.num_attention_heads
         assert result.seq_length == gemma2_27b_config.max_position_embeddings
-        assert result.rotary_base == gemma2_27b_config.rope_theta
+        assert result.rotary_base == gemma2_27b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_gemma2_2b, gemma2_2b_config):
         """Test vocabulary size mapping."""
@@ -308,7 +308,7 @@ class TestMegatronGemma2Bridge:
         result = bridge.provider_bridge(mock_pretrained_gemma2_2b)
 
         # Check position embedding
-        assert result.rotary_base == gemma2_2b_config.rope_theta
+        assert result.rotary_base == gemma2_2b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_gemma2_specific_features(self, mock_pretrained_gemma2_2b, gemma2_2b_config):
         """Test Gemma2-specific features."""
@@ -441,15 +441,6 @@ class TestMegatronGemma2Bridge:
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_gemma2_2b):
-        """Test that generation config is passed through."""
-        bridge = Gemma2Bridge()
-
-        result = bridge.provider_bridge(mock_pretrained_gemma2_2b)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_gemma2_2b.generation_config
-
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Gemma2 models."""
@@ -468,7 +459,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 9216,
                 "vocab_size": 256000,
                 "max_position_embeddings": 8192,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-06,
                 "head_dim": 256,
                 "attention_bias": False,
@@ -488,7 +479,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 14336,
                 "vocab_size": 256000,
                 "max_position_embeddings": 8192,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-06,
                 "head_dim": 256,
                 "attention_bias": False,
@@ -508,7 +499,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 36864,
                 "vocab_size": 256000,
                 "max_position_embeddings": 8192,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-06,
                 "head_dim": 128,
                 "attention_bias": False,

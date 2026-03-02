@@ -7,7 +7,7 @@ Megatron Bridge is Python-first: configure models, data, and training via typed 
 Run your example training entrypoint and override config keys directly:
 
 ```bash
-python examples/recipes/llama/pretrain_llama3_8b.py \
+python examples/models/llama/pretrain_llama3_8b.py \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \
   model.num_layers=32 model.hidden_size=4096 model.num_attention_heads=32 \

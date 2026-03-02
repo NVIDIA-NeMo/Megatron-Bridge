@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Gemma2ForCausalLM
 
@@ -32,55 +32,37 @@ AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
 AutoMapping.register_module_type("Gemma2OutputLayer", "column")
 
 
-@MegatronModelBridge.register_bridge(source=Gemma2ForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(
+    source=Gemma2ForCausalLM,
+    target=GPTModel,
+    provider=Gemma2ModelProvider,
+    model_type="gemma2",
+)
 class Gemma2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Gemma2 Causal LM.
-    This bridge handles the conversion between HuggingFace Gemma2ForCausalLM
-    and Megatron-Core GPTModel formats, including weight mappings and
-    configuration translation. Gemma2 includes specific features like
-    attention logit softcapping, sliding window attention, and additional
-    layer normalization compared to the original Gemma model.
-    As a user you would not use this bridge directly, but through `AutoBridge`.
-    Example:
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-2-2b")
-        >>> provider = bridge.to_megatron_provider()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma2ModelProvider:
-        """Convert HuggingFace config to Gemma2ModelProvider.
-        Args:
-            hf_pretrained: HuggingFace pretrained model wrapper
-        Returns:
-            Gemma2ModelProvider: Configured provider for Megatron model
-        """
+        """Convert HuggingFace config to Gemma2ModelProvider."""
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider = Gemma2ModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            num_query_groups=hf_config.num_key_value_heads,
-            kv_channels=hf_config.head_dim,
-            rotary_base=hf_config.rope_theta,
-            query_pre_attn_scalar=hf_config.query_pre_attn_scalar,
-            attn_logit_softcapping=hf_config.attn_logit_softcapping,
-            final_logit_softcapping=hf_config.final_logit_softcapping,
-            window_size=(hf_config.sliding_window, 0),
-            gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            vocab_size=hf_config.vocab_size,
-            share_embeddings_and_output_weights=True,
-            seq_length=hf_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
-        )
+        provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
+        provider.attn_logit_softcapping = hf_config.attn_logit_softcapping
+        provider.final_logit_softcapping = hf_config.final_logit_softcapping
+        provider.window_size = (hf_config.sliding_window, 0)
+
+        provider.normalization = "RMSNorm"
+        provider.activation_func = fast_gelu
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.attention_dropout = 0.0
+        provider.hidden_dropout = 0.0
+        provider.share_embeddings_and_output_weights = True
+        provider.layernorm_zero_centered_gamma = True
+        provider.gradient_accumulation_fusion = False
 
         return provider
 

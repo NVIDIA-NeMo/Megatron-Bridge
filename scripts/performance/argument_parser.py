@@ -26,6 +26,14 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo")
 VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
 VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
 
+NUM_GPUS_PER_NODE_MAP = {
+    "h100": 8,
+    "b200": 8,
+    "b300": 8,
+    "gb200": 4,
+    "gb300": 4,
+}
+
 
 def list_of_strings(arg):
     """Split a comma-separated string into a list of substrings."""
@@ -145,7 +153,7 @@ def parse_cli_args():
     parser.add_argument(
         "--domain",
         type=lower_str,
-        choices=["llm", "vlm"],
+        choices=["llm", "vlm", "qwen3vl"],
         help="Domain to use for experiment.",
         default="llm",
     )
@@ -383,8 +391,8 @@ def parse_cli_args():
         "-gn",
         "--gpus_per_node",
         type=int,
-        help="Number of gpus per node. Defaults to 8",
-        default=8,
+        help="Number of gpus per node. Defaults to None. If not provided, will be inferred from the GPU type.",
+        default=None,
     )
     slurm_args.add_argument(
         "-i",
@@ -418,6 +426,14 @@ def parse_cli_args():
         type=list_of_strings,
         help="Comma separated string of srun arguments",
         default=[],
+    )
+    slurm_args.add_argument(
+        "-cb",
+        "--custom_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute before the main command",
+        default=None,
     )
     slurm_args.add_argument(
         "--gres",
@@ -492,7 +508,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200", "gb300", "b300"],
+        choices=NUM_GPUS_PER_NODE_MAP.keys(),
         help="Target gpu type.",
         required=True,
     )
@@ -558,6 +574,22 @@ def parse_cli_args():
         type=list_of_ints,
         metavar="N[,N...]",
         help="List of ranks to target for profiling (defaults to just first rank)",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_trace",
+        type=list_of_strings,
+        metavar="TRACE[,TRACE...]",
+        help="Comma-separated list of events to trace during nsys profiling (e.g., 'cuda,nvtx'). Defaults to nemo_run defaults.",
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "--nsys_extra_args",
+        type=list_of_strings,
+        metavar="ARG[,ARG...]",
+        help="Comma-separated list of additional nsys arguments. Will be combined with default args.",
         required=False,
         default=None,
     )
@@ -728,6 +760,9 @@ def parse_cli_args():
         type=float,
         default=0.20,
         help="Percentage of loss points to skip from beginning for convergence analysis",
+    )
+    testing_args.add_argument(
+        "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
     )
 
     return parser

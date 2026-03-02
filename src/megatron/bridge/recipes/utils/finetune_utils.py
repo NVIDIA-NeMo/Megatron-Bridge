@@ -50,7 +50,7 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def default_squad_config(seq_length: int, packed_sequence: bool = False, pad_seq_to_mult: int = 1) -> HFDatasetConfig:
+def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1) -> HFDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:

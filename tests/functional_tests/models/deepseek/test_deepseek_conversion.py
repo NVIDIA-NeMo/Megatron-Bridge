@@ -13,19 +13,17 @@
 # limitations under the License.
 
 import json
-import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoTokenizer
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers import AutoTokenizer, DeepseekV3Config, DeepseekV3ForCausalLM
 
 
-DEEPSEEK_V3_OVERRIDES = {
+HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {
+    "architectures": ["DeepseekV3ForCausalLM"],
+    "model_type": "deepseek_v3",
     "first_k_dense_replace": 1,
     "hidden_act": "silu",
     "hidden_size": 2048,
@@ -45,6 +43,7 @@ DEEPSEEK_V3_OVERRIDES = {
     "q_lora_rank": 512,
     "topk_group": 4,
     "vocab_size": 129280,
+    "torch_dtype": "bfloat16",
 }
 
 
@@ -56,34 +55,13 @@ class TestDeepSeekConversion:
         temp_dir = tmp_path_factory.mktemp("deepseek_toy_model")
         model_dir = temp_dir / "deepseek_toy"
 
-        # Create a minimal config and model using Auto classes to avoid direct imports
-        config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-V3", trust_remote_code=True)
+        # Create DeepSeek V3 config from the toy model config
+        config = DeepseekV3Config(**HF_DEEPSEEK_V3_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16
 
-        for key, value in DEEPSEEK_V3_OVERRIDES.items():
-            setattr(config, key, value)
-        del config.quantization_config
-
-        # Fallback to a generic small model; for conversion flows we only need keys/config
-        # Some environments may not have DeepSeek classes; we just ensure a valid HF directory
-        model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
-            class_reference=model_class_ref,
-            pretrained_model_name_or_path="deepseek-ai/DeepSeek-V3",
-            cache_dir=None,
-            force_download=False,
-            resume_download=True,
-            proxies=None,
-            use_auth_token=None,
-            revision=None,
-            local_files_only=False,
-            repo_id="deepseek-ai/DeepSeek-V3",
-        )
-        model = model_class(config)
-        model = model.bfloat16() if hasattr(model, "bfloat16") else model
-
-        for k, v in model.named_parameters():
-            if "e_score_correction_bias" in k:
-                v.data = v.data.to(torch.float32)
+        # Create model with random weights and convert to bfloat16
+        model = DeepseekV3ForCausalLM(config)
+        model = model.bfloat16()
 
         # Save a tokenizer (use a lightweight compatible tokenizer)
         try:
@@ -94,11 +72,8 @@ class TestDeepSeekConversion:
 
         # Save model and config
         model.save_pretrained(model_dir, safe_serialization=True)
-        model.save_pretrained(model_dir, safe_serialization=True)
-        modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
-        shutil.copy(modeling_filepath, model_dir)
 
-        # Ensure config.json exists with expected keys
+        # Also save config.json explicitly to ensure compatibility
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(model.config.to_dict(), f, indent=2)
