@@ -58,6 +58,20 @@ Run Script Examples:
         --megatron_model_path "/path/to/megatron/checkpoint" \
         --prompt "Hello world"
 
+    # Kimi K2.5 VL comparison (text-only, single GPU):
+    uv run python examples/conversion/compare_hf_and_megatron/compare.py \
+        --hf_model_path /path/to/Kimi-K2.5 \
+        --prompt "Hello, how are you?" \
+        --trust_remote_code
+
+    # Kimi K2.5 VL comparison (with image, multi-GPU with expert parallelism):
+    torchrun --nproc_per_node=8 examples/conversion/compare_hf_and_megatron/compare.py \
+        --hf_model_path /path/to/Kimi-K2.5 \
+        --prompt "Describe this image." \
+        --image_path /path/to/test_image.jpg \
+        --trust_remote_code \
+        --tp 1 --ep 8
+
     # Enable debug hooks to inspect forward pass intermediate results:
     uv run python examples/conversion/compare_hf_and_megatron/compare.py \
         --hf_model_path "Qwen/Qwen3-1.7B" \
@@ -183,12 +197,13 @@ def load_model_class(model_class_name: str):
             raise ImportError(f"Could not import model class '{model_class_name}' from transformers")
 
 
-def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
+def get_model_class(model_class_name: str = None, is_vl_model: bool = False, trust_remote_code: bool = False):
     """Get the appropriate model class for loading.
 
     Args:
         model_class_name: Optional specific model class name
         is_vl_model: Whether this is a vision-language model
+        trust_remote_code: Whether trust_remote_code is enabled (e.g., for Kimi K2.5)
 
     Returns:
         Model class to use for loading
@@ -198,7 +213,7 @@ def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
         return load_model_class(model_class_name)
     else:
         # Default behavior
-        if is_vl_model:
+        if is_vl_model and not trust_remote_code:
             print_rank_0(
                 "Warning: VL model detected but no model class specified. Using AutoModelForCausalLM which may not work."
             )
@@ -243,6 +258,7 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool | None = N
             "qwen2_vl",
             "qwen_vl",
             "minicpm",
+            "kimi_k25",
         ]
 
         return any(indicator in model_type or indicator in arch_str for indicator in vl_indicators)
@@ -250,7 +266,7 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool | None = N
     except Exception as e:
         print_rank_0(f"Warning: Could not determine model type from config: {e}")
         # Fallback: check if qwen_vl_utils is available and model name contains vl indicators
-        return any(indicator in model_path.lower() for indicator in ["vl", "vision"])
+        return any(indicator in model_path.lower() for indicator in ["vl", "vision", "kimi"])
 
 
 class SingleBatchIterator:
@@ -363,6 +379,40 @@ def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0)
     return input_ids
 
 
+def _is_kimi_processor(processor) -> bool:
+    """Check if the processor is a Kimi K2.5 processor."""
+    return processor is not None and type(processor).__name__ == "KimiK25Processor"
+
+
+def _generate_synthetic_vision_inputs(tokenizer, prompt: str, tp_size: int = 1):
+    """Create random pixel_values and grid_thws for VL testing without a processor.
+
+    Generates a synthetic 4x4-patch "image" (patch_size=14 → 56x56 pixels) and
+    builds input_ids that contain the text prompt followed by a single image
+    placeholder token, which the model's merge function will expand.
+
+    Returns the same tuple as process_inputs: (input_ids, pixel_values, grid_thws, messages).
+    """
+    PATCH_SIZE = 14
+    GRID_H, GRID_W, GRID_T = 4, 4, 1
+    MEDIA_PLACEHOLDER_TOKEN_ID = 163605
+
+    total_patches = GRID_T * GRID_H * GRID_W
+    pixel_values = torch.randn(total_patches, 3, PATCH_SIZE, PATCH_SIZE, dtype=torch.bfloat16)
+    grid_thws = torch.tensor([[GRID_T, GRID_H, GRID_W]], dtype=torch.long)
+
+    text_ids = tokenizer.encode(prompt, add_special_tokens=True)
+    ids = text_ids + [MEDIA_PLACEHOLDER_TOKEN_ID]
+    input_ids = torch.tensor([ids], dtype=torch.long)
+    input_ids = pad_input_ids_to_tp_multiple(input_ids, tp_size, tokenizer.pad_token_id or 0)
+
+    print_rank_0(
+        f"Synthetic vision inputs: pixel_values={pixel_values.shape}, "
+        f"grid_thws={grid_thws.tolist()}, input_ids={input_ids.shape}"
+    )
+    return input_ids, pixel_values, grid_thws, None
+
+
 def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str, is_vl_model: bool, tp_size: int = 1):
     """Process inputs for both vision-language and regular LLM models.
 
@@ -376,39 +426,54 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
 
     Returns:
         Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Note: For Kimi K2.5 models, image_grid_thw contains the ``grid_thws`` output
+        from the Kimi processor.
     """
     if is_vl_model and image_path:
-        if not QWEN_VL_UTILS_AVAILABLE:
-            raise ImportError("qwen_vl_utils is required for vision-language models but not installed")
+        if _is_kimi_processor(processor):
+            # Kimi K2.5: use processor(messages=messages) directly
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image_url": image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            inputs = processor(messages=messages)
+            input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
+            grid_thws = getattr(inputs, "grid_thws", None)
+            return input_ids, inputs.pixel_values, grid_thws, messages
+        elif QWEN_VL_UTILS_AVAILABLE and processor is not None:
+            # Qwen VL and other models: use process_vision_info + processor
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
 
-        # Create messages with image and text
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image_path},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+            image_inputs, video_inputs = process_vision_info(messages)
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
 
-        # Process vision info
-        image_inputs, video_inputs = process_vision_info(messages)
-
-        # Apply chat template
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
-        # Process inputs
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
-
-        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+            input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
+            return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        else:
+            # Processor unavailable -- generate synthetic vision inputs so we
+            # can still exercise the vision forward path with random data.
+            print_rank_0("Processor unavailable; generating synthetic vision inputs for testing.")
+            return _generate_synthetic_vision_inputs(tokenizer, prompt, tp_size)
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -419,6 +484,60 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
         return input_ids, None, None, None
+
+
+def _has_fp8_quantization(config) -> bool:
+    """Check if a config (or its text_config) specifies FP8 quantization."""
+    for cfg in (config, getattr(config, "text_config", None)):
+        if cfg is None:
+            continue
+        qc = getattr(cfg, "quantization_config", None)
+        if qc is None:
+            continue
+        method = qc.get("quant_method", "") if isinstance(qc, dict) else getattr(qc, "quant_method", "")
+        if method == "fp8" or (isinstance(qc, dict) and qc.get("fmt") == "e4m3"):
+            return True
+    return False
+
+
+def _load_hf_model_fp8(model_path, config, model_class, trust):
+    """Load an FP8-quantized HF model by dequantizing weights to bf16."""
+    import copy
+    import glob
+
+    from safetensors.torch import load_file
+
+    from megatron.bridge.models.deepseek.common import maybe_dequantize_fp8_weight
+
+    print_rank_0("Detected FP8 quantization; loading with manual dequantization...")
+
+    stripped = copy.deepcopy(config)
+    for cfg in (stripped, getattr(stripped, "text_config", None)):
+        if cfg is not None and hasattr(cfg, "quantization_config"):
+            delattr(cfg, "quantization_config")
+
+    model = model_class.from_config(stripped, torch_dtype=torch.bfloat16, trust_remote_code=trust)
+
+    st_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
+    raw_state: dict[str, torch.Tensor] = {}
+    for f in st_files:
+        raw_state.update(load_file(f, device="cpu"))
+
+    dequantized: dict[str, torch.Tensor] = {}
+    for key, tensor in raw_state.items():
+        if key.endswith("_scale_inv"):
+            continue
+        dequantized[key] = maybe_dequantize_fp8_weight(key, tensor, raw_state)
+
+    missing, unexpected = model.load_state_dict(dequantized, strict=False)
+    if unexpected:
+        print_rank_0(f"  Unexpected keys (ignored): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
+    if missing:
+        print_rank_0(f"  Missing keys: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+
+    model = model.to(device="cuda", dtype=torch.bfloat16).eval()
+    print_rank_0(f"Loaded FP8 model (dequantized to bf16) with {model_class.__name__}")
+    return model
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -435,18 +554,21 @@ def _load_hf_model(args, is_vl_model: bool):
         return None
 
     print_rank_0("Loading HuggingFace model...")
-    model_class = get_model_class(args.model_class, is_vl_model)
-    hf_model = model_class.from_pretrained(
-        args.hf_model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=args.hf_model_path,
-        ),
-    )
-    hf_model = hf_model.eval()
-    print_rank_0(f"Loaded with {model_class.__name__}")
+    trust = is_safe_repo(trust_remote_code=args.trust_remote_code, hf_path=args.hf_model_path)
+    model_class = get_model_class(args.model_class, is_vl_model, trust_remote_code=bool(args.trust_remote_code))
+
+    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=trust)
+    if _has_fp8_quantization(config):
+        hf_model = _load_hf_model_fp8(args.hf_model_path, config, model_class, trust)
+    else:
+        hf_model = model_class.from_pretrained(
+            args.hf_model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+            trust_remote_code=trust,
+        )
+        hf_model = hf_model.eval()
+        print_rank_0(f"Loaded with {model_class.__name__}")
 
     # Register debug hooks if enabled
     if args.enable_debug_hooks:
@@ -455,6 +577,25 @@ def _load_hf_model(args, is_vl_model: bool):
         print_rank_0("HuggingFace debug hooks registered.")
 
     return hf_model
+
+
+def _ensure_custom_code_files(source_dir: str, target_dir: str) -> None:
+    """Copy custom modeling .py files from source to target if missing.
+
+    This is needed for round-trip loading of VL models with trust_remote_code,
+    since the exported checkpoint may not always contain the custom code files.
+    """
+    import glob
+    import shutil
+
+    source_dir = os.path.abspath(source_dir)
+    target_dir = os.path.abspath(target_dir)
+    if not os.path.isdir(source_dir):
+        return
+    for py_file in glob.glob(os.path.join(source_dir, "*.py")):
+        target_file = os.path.join(target_dir, os.path.basename(py_file))
+        if not os.path.exists(target_file):
+            shutil.copy2(py_file, target_file)
 
 
 def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model, bridge):
@@ -476,7 +617,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if _is_rank_0():
             original_param = bridge.hf_pretrained.state[name]
-            if torch.allclose(param, original_param.to(param.device), atol=1e-1):
+            if torch.allclose(param.float(), original_param.to(param.device).float(), atol=1e-1):
                 matches += 1
             else:
                 mismatches += 1
@@ -488,8 +629,13 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
 
     # Load exported HF model only on rank 0
     if _is_rank_0():
+        # For trust_remote_code models (e.g. Kimi VL), ensure the exported
+        # directory contains the custom .py files needed by AutoModel dispatch.
+        if args.trust_remote_code:
+            _ensure_custom_code_files(args.hf_model_path, save_path)
+
         print_rank_0("Loading exported HF model for comparison...")
-        model_class = get_model_class(args.model_class, is_vl_model)
+        model_class = get_model_class(args.model_class, is_vl_model, trust_remote_code=True)
         hf_model = model_class.from_pretrained(
             save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
         ).eval()
@@ -501,7 +647,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
+def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, grid_key_name="image_grid_thw"):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -510,6 +656,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
+        grid_key_name: Name of the grid dimension kwarg for the HF model forward.
+            "image_grid_thw" for Qwen VL, "grid_thws" for Kimi K2.5.
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -527,7 +675,7 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         if pixel_values is not None:
             hf_inputs["pixel_values"] = pixel_values
         if image_grid_thw is not None:
-            hf_inputs["image_grid_thw"] = image_grid_thw
+            hf_inputs[grid_key_name] = image_grid_thw
 
         hf_output = hf_model(**hf_inputs)
 
@@ -572,7 +720,13 @@ def _load_megatron_model(args):
 
     if args.megatron_model_path:
         # Load from Megatron checkpoint
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=args.trust_remote_code,
+                hf_path=args.hf_model_path,
+            ),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -652,8 +806,8 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
                 ),
             )
         except Exception as e:
-            print_rank_0(f"Warning: Could not load processor for VL model: {e}")
-            print_rank_0("Falling back to tokenizer-only mode")
+            print_rank_0(f"Warning: Could not load processor ({e})")
+            print_rank_0("Will use synthetic vision inputs if --image_path is provided")
 
     return tokenizer, processor
 
@@ -702,16 +856,31 @@ def compare_models_one_step(args) -> None:
     # Move to GPU
     input_ids = input_ids.cuda()
     if pixel_values is not None:
-        pixel_values = pixel_values.cuda()
+        if isinstance(pixel_values, (list, tuple)):
+            pixel_values = [pv.cuda() for pv in pixel_values]
+        else:
+            pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
-        image_grid_thw = image_grid_thw.cuda()
+        if isinstance(image_grid_thw, (list, tuple)):
+            image_grid_thw = [g.cuda() for g in image_grid_thw]
+        else:
+            image_grid_thw = image_grid_thw.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
-    print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
+    if pixel_values is not None:
+        pv_shape = [pv.shape for pv in pixel_values] if isinstance(pixel_values, (list, tuple)) else pixel_values.shape
+        print_rank_0(f"Pixel values shape: {pv_shape}")
+    else:
+        print_rank_0("Pixel values: None")
+
+    # Determine grid key name for the HF model forward pass
+    # Kimi K2.5 uses "grid_thws", Qwen VL uses "image_grid_thw"
+    is_kimi = _is_kimi_processor(processor) or "kimi" in args.hf_model_path.lower()
+    grid_key_name = "grid_thws" if is_kimi else "image_grid_thw"
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
+        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, grid_key_name=grid_key_name
     )
 
     del hf_model

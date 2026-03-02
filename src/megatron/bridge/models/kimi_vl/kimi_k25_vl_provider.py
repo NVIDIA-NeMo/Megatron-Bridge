@@ -12,99 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
+from dataclasses import dataclass
+from typing import Any, Optional
 
-import torch
-from transformers import Gemma3ForConditionalGeneration
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
-from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import (
-    AutoMapping,
-    GatedMLPMapping,
-    QKVMapping,
-    ReplicatedMapping,
-)
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
-from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
-from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
+from megatron.bridge.models.kimi.kimi_provider import KimiK2Provider
 
-@MegatronModelBridge.register_bridge(source="KimiK25ForConditionalGeneration", target=KimiK25VLModel)
-class KimiK25VLBridge(MegatronModelBridge):
+
+@dataclass
+class KimiK25VLModelProvider(KimiK2Provider):
     """
-    Megatron Bridge for Kimi K2.5 VL.
+    Model provider for Kimi K2.5 VL (Vision-Language) Models.
+
+    Inherits language model configuration from KimiK2Provider since the
+    Kimi K2.5 language backbone shares the same architecture as Kimi K2
+    (MoE with MLA, 384 experts, 61 layers, etc.).
+
+    Minor config differences (rotary_scaling_factor, layernorm_epsilon,
+    init_method_std) between K2 and K2.5 are handled at runtime by
+    ``get_common_configs()`` in the bridge, which reads actual values
+    from the HuggingFace config.
+
+    The vision component (MoonViT3d + PatchMergerMLP) is dynamically loaded
+    from the HuggingFace model repository at runtime via ``trust_remote_code``.
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> KimiK25VLModelProvider:
-        hf_config = hf_pretrained.config
-        text_config = hf_config.text_config
-        vision_config = hf_config.vision_config
+    # VL models shouldn't scatter embeddings across sequence parallel regions because
+    # the vision embeddings are going to be inserted into the language embeddings.
+    scatter_embedding_sequence_parallel: bool = False
 
-        # get_common_configs expects TextConfig
-        hf_pretrained.config = text_config
-        configs = get_common_configs(hf_pretrained)
+    # Vision configuration — raw HF KimiK25VisionConfig object, used to construct
+    # VisionTowerConfig and ProjectorConfig for the vision tower and mm_projector.
+    vision_config: Any = None
 
-        configs["make_vocab_size_divisible_by"] = 1280
-        configs["moe_router_score_function"] = "sigmoid"
-        configs["moe_router_enable_expert_bias"] = True
-        # aux_loss_alpha is not set in all DSv3 HF configs
-        if hasattr(hf_config, "aux_loss_alpha"):
-            configs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
-        
-        provider = KimiK25VLModelProvider(
-            # Text configuration
-            **configs,
-            # Vision configuration
-            _vision_config=vision_config,
-            # VL-specific token IDs
-            bos_token_id=getattr(text_config, "bos_token_id", 0),
-            eos_token_id=getattr(text_config, "eos_token_id", 1),
-            image_token_id=getattr(text_config, "media_placeholder_token_id", 151655),
-            # Precision configuration
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            # misc
-            hf_model_path=hf_pretrained._model_name_or_path,
+    # Path to HuggingFace model directory (required for dynamic module loading
+    # of MoonViT3d, PatchMergerMLP, and other custom model classes).
+    hf_model_path: Optional[str] = None
+
+    # Token IDs (from Kimi K2.5 config.json)
+    bos_token_id: int = 163584
+    eos_token_id: int = 163585
+    image_token_id: int = 163605  # media_placeholder_token_id in HF config
+    # Fields needed by HF's _merge_input_ids_with_image_features (bound via MethodType)
+    media_placeholder_token_id: int = 163605
+    pad_token_id: int = 163839
+    ignore_index: int = -100
+
+    # Freeze options for fine-tuning scenarios
+    freeze_language_model: bool = False
+    freeze_vision_model: bool = False
+    freeze_vision_projection: bool = False
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        """
+        Provide a KimiK25VL model instance with vision and language components.
+
+        Returns:
+            KimiK25VLModel: Configured Kimi K2.5 VL model with vision tower,
+            multimodal projector, and Kimi K2 language model.
+        """
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+        model = KimiK25VLModel(
+            self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
 
-        return provider
+        # Apply freeze options if any are enabled
+        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
+            model.freeze(
+                freeze_language_model=self.freeze_language_model,
+                freeze_vision_model=self.freeze_vision_model,
+                freeze_vision_projection=self.freeze_vision_projection,
+            )
 
-    def mapping_registry(self) -> MegatronMappingRegistry:
-        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
-        # First create simple 1:1 parameter mappings using a dictionary for readability
-        mapping_list = get_common_mapping_list()
-        param_mappings = {
-            # expert bias
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-        }
+        return model
 
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        """
+        Provide just the language model component (Kimi K2 MoE) without vision.
 
-        for mapping in mapping_list:
-            # in HF Kimi K2.5 VL models, language component is prefixed with "language_model.model" instead of "model"
-            if isinstance(mapping, AutoMapping):
-                mapping.hf_param = "language_model." + mapping.hf_param
-                mapping.megatron_param = "language_model." + mapping.megatron_param
-            elif isinstance(mapping, GatedMLPMapping):
-                mapping.megatron_param = mapping.megatron_param.replace("decoder", "language_model.decoder")
-                mapping.hf_param["gate"] = mapping.hf_param["gate"].replace("model", "language_model.model")
-                mapping.hf_param["up"] = mapping.hf_param["up"].replace("model", "language_model.model")
+        This is called by KimiK25VLModel to construct only the language backbone,
+        while the vision tower and projector are constructed separately.
 
+        Args:
+            pre_process: Whether this is the first stage in pipeline parallelism.
+            post_process: Whether this is the last stage in pipeline parallelism.
+            vp_stage: Virtual pipeline stage number.
 
-        # Add Vision and MM Projector mappings
-        mapping_list.extend(
-            [
-                ReplicatedMapping(
-                    megatron_param="vision_tower.**",
-                    hf_param="vision_tower.**",
-                ),
-                ReplicatedMapping(
-                    megatron_param="mm_projector.**",
-                    hf_param="mm_projector.**",
-                ),
-            ]
-        )
-        return MegatronMappingRegistry(*mapping_list)
+        Returns:
+            MCoreGPTModel instance (language model only).
+        """
+        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

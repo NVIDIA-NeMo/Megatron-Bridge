@@ -13,24 +13,15 @@
 # limitations under the License.
 
 import types
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from megatron.core.tensor_parallel.layers import ColumnParallelLinear
-from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
-from megatron.bridge.utils.import_utils import safe_import_from
-
-
-TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
 
 
 class KimiK25VLModel(MegatronModule):
@@ -48,7 +39,7 @@ class KimiK25VLModel(MegatronModule):
         vp_stage (Optional[int]): Pipeline stage for model parallelism.
         vision_tower (nn.Module): Vision encoder (MoonViT3d vision backbone).
         mm_projector (nn.Module): PatchMergerMLP that projects vision features to language model space.
-        language_model (nn.Module): The underlying DeepSeek V3 language model.
+        language_model (nn.Module): The underlying Kimi K2 language model.
         get_image_features (callable): Method to extract and project image features.
 
     Forward Inputs:
@@ -150,8 +141,9 @@ class KimiK25VLModel(MegatronModule):
             position_ids: Position ids for the language model.
             inputs_embeds: Precomputed input embeddings.
             pixel_values: Image tensor for the vision tower.
-            grid_thws: Tensor of shape (num_images, 3) containing [temporal, height, width]
-                for each image's grid dimensions in the LLM.
+            image_grid_thw: Tensor of shape ``(num_images, 3)`` containing ``[temporal, height, width]``
+                for each image's grid dimensions in the LLM. This corresponds to ``grid_thws`` in
+                the HF Kimi K2.5 processor output.
             labels: Target labels for supervised training.
             runtime_gather_output: If True, gather outputs across pipeline stages.
             loss_mask: Mask for loss computation.
@@ -160,12 +152,12 @@ class KimiK25VLModel(MegatronModule):
             if inputs_embeds is None:
                 inputs_embeds = self.language_model.embedding(
                     input_ids=input_ids, position_ids=None
-                )  # [decoder_seq_len, b, h_language]
+                )  # (T, B, D) — Megatron convention
 
-                inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
-
-            breakpoint()
             if pixel_values is not None:
+                # Transpose to (B, T, D) for HF's merge function which uses batch-first convention
+                inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (T, B, D) -> (B, T, D)
+
                 image_features = self._extract_image_features(pixel_values, image_grid_thw)
                 image_features = self.mm_projector(image_features)
                 inputs_embeds = inputs_embeds.to(image_features[0].dtype)
@@ -178,9 +170,8 @@ class KimiK25VLModel(MegatronModule):
                         labels,
                     ))
 
-            inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
-
-        attention_mask = self._compute_attention_mask(input_ids)
+                # Transpose back to (T, B, D) for Megatron language model
+                inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
         outputs = self.language_model.forward(
             input_ids=None,
@@ -224,26 +215,4 @@ class KimiK25VLModel(MegatronModule):
             for param in module.parameters():
                 param.requires_grad = False
 
-    def _compute_attention_mask(
-        self,
-        input_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if not self.pre_process:
-            return None
-        batch_size, seq_len = input_ids.shape
-        causal_mask = torch.tril(torch.ones((batch_size, 1, seq_len, seq_len))).to(input_ids.device)
-
-        image_mask = input_ids == self.config.image_token_id
-        padded_mask = F.pad(image_mask, (1, 0), value=0)
-        boundary = padded_mask[:, 1:] > padded_mask[:, :-1]
-        numbered_boundary = torch.cumsum(boundary, dim=-1)
-        q_block_indices = image_mask * numbered_boundary
-        kv_block_indices = q_block_indices
-        bidirectional_mask = torch.logical_and(
-            kv_block_indices[:, None, :] == q_block_indices.unsqueeze(-1),
-            q_block_indices.unsqueeze(-1) > 0,
-        )
-        # See te.DotProductAttention for the requirement of custom mask
-        attention_mask = ~torch.logical_or(causal_mask, bidirectional_mask.unsqueeze(1))
-        return attention_mask
 
