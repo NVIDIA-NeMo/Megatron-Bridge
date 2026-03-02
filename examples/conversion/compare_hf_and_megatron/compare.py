@@ -486,6 +486,60 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         return input_ids, None, None, None
 
 
+def _has_fp8_quantization(config) -> bool:
+    """Check if a config (or its text_config) specifies FP8 quantization."""
+    for cfg in (config, getattr(config, "text_config", None)):
+        if cfg is None:
+            continue
+        qc = getattr(cfg, "quantization_config", None)
+        if qc is None:
+            continue
+        method = qc.get("quant_method", "") if isinstance(qc, dict) else getattr(qc, "quant_method", "")
+        if method == "fp8" or (isinstance(qc, dict) and qc.get("fmt") == "e4m3"):
+            return True
+    return False
+
+
+def _load_hf_model_fp8(model_path, config, model_class, trust):
+    """Load an FP8-quantized HF model by dequantizing weights to bf16."""
+    import copy
+    import glob
+
+    from safetensors.torch import load_file
+
+    from megatron.bridge.models.deepseek.common import maybe_dequantize_fp8_weight
+
+    print_rank_0("Detected FP8 quantization; loading with manual dequantization...")
+
+    stripped = copy.deepcopy(config)
+    for cfg in (stripped, getattr(stripped, "text_config", None)):
+        if cfg is not None and hasattr(cfg, "quantization_config"):
+            delattr(cfg, "quantization_config")
+
+    model = model_class.from_config(stripped, torch_dtype=torch.bfloat16, trust_remote_code=trust)
+
+    st_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
+    raw_state: dict[str, torch.Tensor] = {}
+    for f in st_files:
+        raw_state.update(load_file(f, device="cpu"))
+
+    dequantized: dict[str, torch.Tensor] = {}
+    for key, tensor in raw_state.items():
+        if key.endswith("_scale_inv"):
+            continue
+        dequantized[key] = maybe_dequantize_fp8_weight(key, tensor, raw_state)
+
+    missing, unexpected = model.load_state_dict(dequantized, strict=False)
+    if unexpected:
+        print_rank_0(f"  Unexpected keys (ignored): {unexpected[:5]}{'...' if len(unexpected) > 5 else ''}")
+    if missing:
+        print_rank_0(f"  Missing keys: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+
+    model = model.to(device="cuda", dtype=torch.bfloat16).eval()
+    print_rank_0(f"Loaded FP8 model (dequantized to bf16) with {model_class.__name__}")
+    return model
+
+
 def _load_hf_model(args, is_vl_model: bool):
     """Load HuggingFace model on rank 0.
 
@@ -500,18 +554,21 @@ def _load_hf_model(args, is_vl_model: bool):
         return None
 
     print_rank_0("Loading HuggingFace model...")
+    trust = is_safe_repo(trust_remote_code=args.trust_remote_code, hf_path=args.hf_model_path)
     model_class = get_model_class(args.model_class, is_vl_model, trust_remote_code=bool(args.trust_remote_code))
-    hf_model = model_class.from_pretrained(
-        args.hf_model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=args.trust_remote_code,
-            hf_path=args.hf_model_path,
-        ),
-    )
-    hf_model = hf_model.eval()
-    print_rank_0(f"Loaded with {model_class.__name__}")
+
+    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=trust)
+    if _has_fp8_quantization(config):
+        hf_model = _load_hf_model_fp8(args.hf_model_path, config, model_class, trust)
+    else:
+        hf_model = model_class.from_pretrained(
+            args.hf_model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda",
+            trust_remote_code=trust,
+        )
+        hf_model = hf_model.eval()
+        print_rank_0(f"Loaded with {model_class.__name__}")
 
     # Register debug hooks if enabled
     if args.enable_debug_hooks:
