@@ -171,6 +171,26 @@ def _adjust_config(
 _FP8_E4M3_MAX = 448.0
 
 
+def _rebuild_safetensors_index(output_dir: Path, st_files: list[Path]) -> None:
+    """Regenerate model.safetensors.index.json from the current safetensors files."""
+    index_path = output_dir / "model.safetensors.index.json"
+    if not index_path.exists():
+        return
+
+    weight_map: dict[str, str] = {}
+    metadata: dict[str, str] = {}
+    for st_path in st_files:
+        tensors = load_file(str(st_path), device="cpu")
+        for key in tensors:
+            weight_map[key] = st_path.name
+        total_bytes = sum(t.nelement() * t.element_size() for t in tensors.values())
+        metadata[st_path.name] = str(total_bytes)
+
+    index = {"metadata": {"total_size": sum(int(v) for v in metadata.values())}, "weight_map": weight_map}
+    index_path.write_text(json.dumps(index, indent=2) + "\n")
+    print(f"  rebuilt {index_path.name} with {len(weight_map)} keys")
+
+
 def _quantize_checkpoint_fp8(output_dir: Path, block_size: int = 128) -> None:
     """Convert saved bf16 safetensors in *output_dir* to FP8 block-wise format.
 
@@ -202,6 +222,10 @@ def _quantize_checkpoint_fp8(output_dir: Path, block_size: int = 128) -> None:
 
         save_file(new_tensors, str(st_path))
         print(f"  {st_path.name}: quantized {quantized_count} tensors to FP8")
+
+    # Rebuild the safetensors index so that _scale_inv keys are discoverable
+    # by lazy-loading state dict implementations (e.g. Megatron-Bridge).
+    _rebuild_safetensors_index(output_dir, st_files)
 
     config_path = output_dir / "config.json"
     if config_path.exists():
