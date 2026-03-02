@@ -852,6 +852,10 @@ class CheckpointConfig:
     use_checkpoint_args: bool = False
     """Override any command line arguments with arguments from the checkpoint"""
 
+    storage_writers_per_rank: int = 1
+    """Number of storage writers per rank for torch_dist checkpoint format.
+    Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
+
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
 
