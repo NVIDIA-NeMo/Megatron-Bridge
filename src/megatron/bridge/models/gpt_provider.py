@@ -115,9 +115,7 @@ def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.restore_modelopt_state:
-        return modelopt_transformer_layer_spec(config)
-    elif config.use_transformer_engine_full_layer_spec:
+    if config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
         return transformer_engine_layer_spec(config)
@@ -188,7 +186,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
-    # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
     restore_modelopt_state: bool = False
 
     # Whether to use AttnMaskType.arbitrary in the ModelOpt spec.

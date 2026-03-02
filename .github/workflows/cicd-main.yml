@@ -412,6 +412,7 @@ jobs:
           - L2_Launch_models_glm
           - L2_Launch_models_gpt_oss
           - L2_Launch_models_llama_nemotron
+          - L2_Launch_models_ministral3
           - L2_Launch_models_mistral
           - L2_Launch_models_nemotron
           - L2_Launch_models_nemotronh
@@ -419,13 +420,16 @@ jobs:
           - L2_Launch_models_nemotron_vl
           - L2_Launch_models_olmoe
           - L2_Launch_models_qwen
-          # - L2_Launch_models_qwen_quantization
+          - L2_Launch_models_qwen_quantization
           - L2_Launch_models_qwen_vl
+          - L2_Launch_models_qwen35_vl
+          - L2_Launch_models_qwen_vl_quantization
           - L2_Launch_recipes_gemma_vl
           - L2_Launch_recipes_gpt_oss
           - L2_Launch_recipes_llama_1b
           - L2_Launch_recipes_llama_3b
           - L2_Launch_recipes_llama_distill
+          - L2_Launch_recipes_ministral3
           - L2_Launch_recipes_nemotronh
           - L2_Launch_recipes_qwen
           - L2_Launch_data
