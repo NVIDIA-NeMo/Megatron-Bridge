@@ -17,6 +17,11 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
 
+export UB_SKIPMC=""
+if [[ "${GHA_RUNNER:-}" == *"azure"* ]]; then
+  export UB_SKIPMC="1"
+fi
+
 # Run Nemotron H and Nemotron Nano v2 recipe functional tests on 2 GPUs
 # This script tests recipe configurations with their default settings to ensure
 # they can run basic training without crashes

@@ -19,14 +19,16 @@ import pickle
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
+from megatron.energon.epathlib.epath import EPath
 from megatron.energon.flavors.base_dataset import Sample
-from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
-from PIL import Image
+from megatron.energon.flavors.webdataset import DefaultDecoderWebdatasetFactory
+from transformers import BatchEncoding
+from webdataset.autodecode import Decoder, imagehandler
 
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
@@ -114,14 +116,14 @@ def process_vision(
             kwargs["min_pixels"] = min_pixels
         if max_pixels is not None:
             kwargs["max_pixels"] = max_pixels
-        image_inputs = processor(images=images, videos=None, return_tensors="pt", **kwargs)
+        image_inputs = processor(images=images, text="", videos=None, return_tensors="pt", **kwargs)
         image_grid_thw = image_inputs.get("image_grid_thw", None)
     else:
         image_inputs = {}
         image_grid_thw = None
 
     if videos is not None:
-        videos_inputs = processor(images=None, videos=videos, return_tensors="pt")
+        videos_inputs = processor(images=None, text="", videos=videos, return_tensors="pt")
         video_grid_thw = videos_inputs.get("video_grid_thw", None)
     else:
         videos_inputs = {}
@@ -152,15 +154,100 @@ def _resolve_hf_mm_token_ids(hf_tokenizer):
     return image_id, video_id
 
 
+def _tensor_to_pil(t):
+    """Convert a [C,H,W] float tensor in [0,1] to a PIL Image (uint8 [0,255])."""
+    from PIL import Image
+
+    img_np = (t.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype(np.uint8)
+    return Image.fromarray(img_np)
+
+
+def _images_to_pil(imgs):
+    """Convert WDS tensor images to PIL to match HF flow input format.
+
+    WDS imagehandler decodes JPEG to float tensors in [0,1]. The HF flow passes
+    PIL images (uint8 [0,255]) to the processor. Converting to PIL here ensures
+    the processor applies identical rescaling and normalization in both flows.
+    """
+    if isinstance(imgs, torch.Tensor):
+        if imgs.dim() == 3:
+            return [_tensor_to_pil(imgs)]
+        elif imgs.dim() == 4:
+            return [_tensor_to_pil(img) for img in imgs]
+    elif isinstance(imgs, list):
+        return [_tensor_to_pil(img) if isinstance(img, torch.Tensor) else img for img in imgs]
+    return imgs
+
+
+def _videos_to_pil(videos):
+    """Convert WDS video frame tensors to PIL to match HF flow input format."""
+    if videos is None:
+        return None
+    result = []
+    for video in videos:
+        if isinstance(video, list):
+            result.append([_tensor_to_pil(f) if isinstance(f, torch.Tensor) else f for f in video])
+        elif isinstance(video, torch.Tensor):
+            if video.dim() == 4:
+                result.append([_tensor_to_pil(f) for f in video])
+            elif video.dim() == 3:
+                result.append([_tensor_to_pil(video)])
+            else:
+                result.append([video])
+        else:
+            result.append(video)
+    return result
+
+
 @dataclass
 class ChatMLSample(Sample):
-    """Intermediate Sample Format"""
+    """multi-turn complex samples with images and videos"""
 
-    # __key__: str
-    # __subflavors__: Dict
-    imgs: List[Image.Image]
-    videos: List[torch.Tensor | list[Image.Image]]
     conversation: str  # JSON string of GPT-format conversations
+    imgs: Optional[List[torch.Tensor]] = None
+    videos: Optional[List[List[torch.Tensor]]] = None
+
+
+class videohandler:
+    """Create a video handler."""
+
+    def __init__(self, imagespec):
+        self.extensions = ["jpgs", "mp4s", "videos"]
+        self.extensions_mapping = {"jpgs": "jpg", "mp4s": "jpg", "videos": "jpg"}
+        self.image_handler = imagehandler(imagespec)
+
+    def __call__(self, key, data):
+        """Perform nested image decoding."""
+        extension = re.sub(r".*[.]", "", key)
+        if extension.lower() not in self.extensions:
+            return None
+        data = pickle.loads(data)
+        key = self.extensions_mapping[extension]
+        if extension.lower() == "jpgs":
+            data = [self.image_handler(key, d) for d in data]
+        else:
+            data = [[self.image_handler(key, d) for d in video] for video in data]
+        return data
+
+
+class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
+    """Webdataset factory for multi-turn ChatML samples with multimodal support.
+
+    Extends DefaultDecoderWebdatasetFactory to decode webdataset shards into
+    ChatMLSample instances, using custom handlers for image and video fields.
+    """
+
+    __sample_type__ = ChatMLSample
+
+    def __init__(self, path: EPath, *, auto_decode: bool = True, **kwargs):
+        super().__init__(path, auto_decode=auto_decode, **kwargs)
+        if auto_decode:
+            self._decoder = Decoder(
+                [
+                    imagehandler(self.image_decode),
+                    videohandler(self.image_decode),
+                ]
+            )
 
 
 @dataclass
@@ -231,50 +318,8 @@ def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", v
     return contents
 
 
-def cook_chatml_sample(sample: dict) -> ChatMLSample:
-    """
-    Convert crude sampel to ChatMLSample.
-
-    Args:
-        sample: Crude sample in pickle serialized format
-
-    Returns:
-        sample in ChatMLSample format
-    """
-    imgs = sample.get("jpgs", None)
-    if imgs:
-        imgs = pickle.loads(imgs)
-        if isinstance(imgs, list) and len(imgs) > 0:
-            imgs = [Image.fromarray(d) for d in imgs]
-        else:
-            imgs = None
-    videos = sample.get("videos", None)
-    if videos:
-        videos = pickle.loads(videos)
-        if isinstance(videos, list) and len(videos) > 0:
-            videos = [[d for d in video] for video in videos]
-        else:
-            videos = None
-    if "<image>" in sample["json"] and imgs is None:
-        logging.warning("<image> in conversation text but no image data")
-    if "<video>" in sample["json"] and videos is None:
-        logging.warning("<video> in conversation text but no video data")
-
-    chat_sample = ChatMLSample(
-        **basic_sample_keys(sample),
-        imgs=imgs,
-        videos=videos,
-        conversation=sample["json"],
-    )
-    return chat_sample
-
-
 class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenVLTaskBatch, dict]):
     """A simple task encoder for captioning."""
-
-    cookers = [
-        Cooker(cook_chatml_sample),
-    ]
 
     def __init__(
         self,
@@ -313,12 +358,17 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         Returns:
             sample with necessary fields
         """
-        # NOTE: flatten all images
-        #     Input of process_vision:
+        # NOTE: Convert WDS tensor images to PIL to match HF flow format.
+        #     WDS imagehandler decodes JPEG to float tensors in [0,1], but the processor
+        #     expects PIL images (uint8 [0,255]) for correct rescaling and normalization.
+        imgs_for_processing = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
+        videos_for_processing = (
+            _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
+        )
         processed_vision = process_vision(
             self.image_processor,
-            sample.imgs,
-            sample.videos,
+            imgs_for_processing,
+            videos_for_processing,
             min_pixels=self.min_pixels,
             max_pixels=self.max_pixels,
         )
@@ -331,6 +381,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             json.loads(sample.conversation) if isinstance(sample.conversation, (str, bytes)) else sample.conversation
         )
 
+        conversation = conversation if not isinstance(conversation, dict) else conversation.get("conversations", [])
         _from_system_ = "from" in conversation[0]
         role_key = "from" if "from" in conversation[0] else "role"
         content_key = "value" if "from" in conversation[0] else "content"
@@ -387,7 +438,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
         # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
         chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
-        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, dict) else chat_output[0]
+        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, BatchEncoding) else chat_output[0]
         pad_token_id = self.hf_tokenizer.pad_token_id
         target = [pad_token_id for _ in range(len(input_ids))]
         search_start_index = 0

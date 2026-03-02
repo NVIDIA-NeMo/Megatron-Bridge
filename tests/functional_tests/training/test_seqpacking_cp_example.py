@@ -99,6 +99,11 @@ class TestPeftSftExample:
 
         try:
             finetune(cfg, forward_step)
-            verify_checkpoint_files(checkpoint_dir, cfg.train.train_iters)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                cfg.train.train_iters,
+                ckpt_format=cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
+            )
         finally:
             clear_directories(shared_dir)

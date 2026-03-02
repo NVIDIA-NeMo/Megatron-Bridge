@@ -29,6 +29,7 @@ from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
 )
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
@@ -274,12 +275,14 @@ class DatasetBuildContext:
         valid_samples: Number of samples for validation dataset
         test_samples: Number of samples for test dataset
         tokenizer: Optional tokenizer instance for text processing
+        pg_collection: Optional process group collection for distributed training
     """
 
     train_samples: int
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+    pg_collection: Optional[ProcessGroupCollection] = None
 
 
 @dataclass(frozen=True)
@@ -856,6 +859,10 @@ class CheckpointConfig:
 
     use_checkpoint_args: bool = False
     """Override any command line arguments with arguments from the checkpoint"""
+
+    storage_writers_per_rank: int = 1
+    """Number of storage writers per rank for torch_dist checkpoint format.
+    Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
 
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
