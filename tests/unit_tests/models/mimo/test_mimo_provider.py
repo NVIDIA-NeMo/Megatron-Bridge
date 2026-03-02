@@ -115,10 +115,10 @@ class TestMimoModelProvider:
 
         infra = provider.build_infra()
 
-        # Should return empty infrastructure
+        # Should return infrastructure with auto-derived topology
         assert isinstance(infra, MimoModelInfra)
         assert infra.module_to_grid_map == {}
-        assert infra.topology == {}
+        assert infra.topology == {"llm": []}
         assert infra.pg_collections == {}
         assert infra.participating_modules == []
 
@@ -380,14 +380,17 @@ class TestMimoModelProvider:
         # Should return model directly
         assert model == mock_model_instance
 
-    def test_initialize_model_parallel_is_noop(self):
-        """Test that initialize_model_parallel() is a no-op for MIMO."""
+    def test_initialize_model_parallel_raises(self):
+        """Test that initialize_model_parallel() raises NotImplementedError for MIMO."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         provider = MimoModelProvider(language_model_spec=language_spec)
 
-        # Should not raise, should be a no-op
-        provider.initialize_model_parallel(seed=42)
-        provider.initialize_model_parallel()
+        import pytest
+
+        with pytest.raises(NotImplementedError, match="MIMO does not use global model parallelism"):
+            provider.initialize_model_parallel(seed=42)
+        with pytest.raises(NotImplementedError, match="MIMO does not use global model parallelism"):
+            provider.initialize_model_parallel()
 
     @patch("megatron.core.transformer.module.Float16Module")
     @patch("megatron.bridge.models.mimo.mimo_provider.get_model_config")

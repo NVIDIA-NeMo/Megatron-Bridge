@@ -99,8 +99,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         >>> infra = provider.build_infra()
     """
 
-    # Model specs (user provides, like llava_vlm.py example)
-    language_model_spec: ModuleSpec
+    # Model specs (user provides, like llava_vlm.py example).
+    # Optional so subclasses (e.g. LlavaMimoProvider) can build it in __post_init__.
+    language_model_spec: Optional[ModuleSpec] = None
     modality_submodules_spec: Dict[str, ModuleSpec] = field(default_factory=dict)
     special_token_ids: Dict[str, int] = field(default_factory=dict)
 
@@ -267,9 +268,15 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             consistent with other providers. This method returns a CPU model.
 
         Raises:
-            ValueError: If this rank doesn't participate in any module
-                (indicates invalid parallelism configuration).
+            ValueError: If language_model_spec is not set, or if this rank
+                doesn't participate in any module.
         """
+        if self.language_model_spec is None:
+            raise ValueError(
+                "language_model_spec must be set before calling provide(). "
+                "Set it directly or use a subclass that populates it in __post_init__."
+            )
+
         # Build infrastructure
         infra = self.build_infra()
 
@@ -293,8 +300,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             language_model_spec=language_spec,
             modality_submodules_spec=modality_specs,
             special_token_ids=self.special_token_ids,
-            module_to_grid_map=infra.module_to_grid_map if self.mimo_parallelism_config else None,
-            language_module_key="llm" if self.mimo_parallelism_config else None,
         )
 
         mimo_model = MimoModel(mimo_model_config)
