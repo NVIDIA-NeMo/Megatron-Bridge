@@ -79,12 +79,10 @@ def build_mimo_data_loaders(
 
     # Use cached grids from build_model()
     grids = cfg.model._grids
+    
     dp_rank, dp_size, needs_data, loader_module = get_mimo_dp_info(
         cfg.model.mimo_parallelism_config, grids
     )
-
-    print_rank_0(f"  MIMO DP info: dp_rank={dp_rank}, dp_size={dp_size}, "
-                 f"needs_data={needs_data}, loader_module={loader_module}")
 
     if not needs_data:
         return None, None, None
@@ -125,8 +123,8 @@ def build_mimo_data_loaders(
             drop_last=mimo_provider.drop_last,
         )
 
-    return (
-        _make_loader(train_ds, shuffle=True),
-        _make_loader(valid_ds, shuffle=False),
-        _make_loader(test_ds, shuffle=False),
-    )
+    train_loader = _make_loader(train_ds, shuffle=True)
+    valid_loader = _make_loader(valid_ds, shuffle=False)
+    test_loader = _make_loader(test_ds, shuffle=False)
+    
+    return train_loader, valid_loader, test_loader

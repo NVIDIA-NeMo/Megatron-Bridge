@@ -73,6 +73,7 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
     train_split: str = "train"
     valid_split: str = "validation"
     test_split: str = "test"
+    trust_remote_code: Optional[bool] = None
     
     # Cached processors and tokenizer (loaded once)
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)

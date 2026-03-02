@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple
 
 import torch
 from megatron.core.models.mimo import MimoModel
-from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 
+from megatron.bridge.training.mimo_parallel_utils import unwrap_mimo_model
 from megatron.bridge.training.state import GlobalState
 
 if TYPE_CHECKING:
@@ -79,15 +79,18 @@ def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:
         return None
     
     # Move tensors to GPU if not already there
+    def _move_to_cuda(obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.cuda(non_blocking=True) if not obj.is_cuda else obj
+        if isinstance(obj, dict):
+            return {k: _move_to_cuda(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            converted = [_move_to_cuda(v) for v in obj]
+            return type(obj)(converted)
+        return obj
+
     if batch is not None:
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor) and not value.is_cuda:
-                batch[key] = value.cuda(non_blocking=True)
-            elif isinstance(value, dict):
-                # Handle nested dicts (e.g., modality_inputs)
-                for k, v in value.items():
-                    if isinstance(v, torch.Tensor) and not v.is_cuda:
-                        value[k] = v.cuda(non_blocking=True)
+        batch = _move_to_cuda(batch)
     
     return batch
 
@@ -122,10 +125,36 @@ def forward_step(
     Returns:
         Tuple of (output_tensor, loss_function or None).
     """
+    # Get the model's role to determine if we're at first pipeline stage
+    mimo_model = unwrap_mimo_model(model)
+    
+    # Determine if this rank needs data (first PP stage for its module)
+    needs_data = True
+    if mimo_model.role is not None:
+        # For LLM ranks, only first PP stage needs input_ids
+        # For encoder ranks (vision), check if first stage of any modality module
+        if mimo_model.role.has_language_module:
+            module_name = mimo_model.role.language_module_name
+            needs_data = mimo_model.role.is_first_stage(module_name)
+        elif mimo_model.role.has_modality_modules:
+            # Encoder module - check if first stage for any modality module
+            modality_modules = mimo_model.role.modality_module_names
+            needs_data = any(
+                mimo_model.role.is_first_stage(mod) for mod in modality_modules
+            )
+    
     # Get batch from iterator
     data_batch = get_batch(data_iterator)
+    
     if data_batch is None:
-        data_batch = {'input_ids': None}
+        if needs_data:
+            # First stage should have data - this is unexpected
+            logger.warning(
+                "get_batch returned None at first pipeline stage. "
+                "Check MIMO parallelism config and data loading."
+            )
+        # For non-first stages, empty dict is expected - hidden states come from pipeline
+        data_batch = {}
     
     # Extract loss_mask before forward pass
     loss_mask = data_batch.get('loss_mask')
@@ -143,8 +172,16 @@ def forward_step(
     else:
         output_tensor = output
     
-    # Check if we're at the last pipeline stage
-    if is_pp_last_stage():
+    # Check if we're at the last pipeline stage for the language module
+    # mimo_model was already unwrapped at the start of this function
+    if mimo_model.role is None:
+        is_last_stage = True
+    elif mimo_model.role.has_language_module:
+        is_last_stage = mimo_model.role.is_last_stage(mimo_model.role.language_module_name)
+    else:
+        is_last_stage = False
+
+    if is_last_stage:
         # GUARDRAIL: Verify scalar loss at last stage
         if isinstance(output_tensor, dict):
             raise ValueError(

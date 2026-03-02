@@ -86,21 +86,23 @@ class TestGetBatch:
 class TestForwardStep:
     """Test cases for forward_step()."""
     
-    @patch('megatron.bridge.training.mimo_step.is_pp_last_stage')
-    def test_forward_step_last_stage(self, mock_is_last):
+    @patch('megatron.bridge.training.mimo_step.unwrap_mimo_model')
+    def test_forward_step_last_stage(self, mock_unwrap):
         """Test forward step at last pipeline stage returns loss func."""
         from megatron.bridge.training.mimo_step import forward_step
-        
-        mock_is_last.return_value = True
         
         # Create mock state
         mock_state = MagicMock()
         
-        # Create mock model
+        # Create mock model with role=None (indicates last stage)
         mock_model = MagicMock()
-        mock_output = torch.tensor([1.0, 2.0])  # Scalar-like output
+        mock_model.role = None  # role=None means is_last_stage=True
+        mock_output = torch.tensor([1.0, 2.0])
         mock_loss_mask = torch.ones(2)
         mock_model.return_value = (mock_output, mock_loss_mask)
+        
+        # unwrap_mimo_model returns the mock model itself
+        mock_unwrap.return_value = mock_model
         
         # Create mock iterator
         batch = {'input_ids': torch.tensor([1, 2])}
@@ -112,16 +114,24 @@ class TestForwardStep:
         assert loss_fn is not None
         assert callable(loss_fn)
     
-    @patch('megatron.bridge.training.mimo_step.is_pp_last_stage')
-    def test_forward_step_intermediate_stage(self, mock_is_last):
+    @patch('megatron.bridge.training.mimo_step.unwrap_mimo_model')
+    def test_forward_step_intermediate_stage(self, mock_unwrap):
         """Test forward step at intermediate stage returns None for loss func."""
         from megatron.bridge.training.mimo_step import forward_step
         
-        mock_is_last.return_value = False
-        
         mock_state = MagicMock()
         mock_model = MagicMock()
+        # Configure role to indicate intermediate stage (not last stage)
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.language_module_name = 'llm'
+        mock_role.is_last_stage.return_value = False
+        mock_role.is_first_stage.return_value = True
+        mock_model.role = mock_role
         mock_model.return_value = (torch.tensor([1.0]), None)
+        
+        mock_unwrap.return_value = mock_model
         
         batch = {'input_ids': torch.tensor([1, 2])}
         data_iter = iter([batch])
@@ -131,17 +141,18 @@ class TestForwardStep:
         # Intermediate stage should return None for loss_fn
         assert loss_fn is None
     
-    @patch('megatron.bridge.training.mimo_step.is_pp_last_stage')
-    def test_forward_step_rejects_dict_at_last_stage(self, mock_is_last):
+    @patch('megatron.bridge.training.mimo_step.unwrap_mimo_model')
+    def test_forward_step_rejects_dict_at_last_stage(self, mock_unwrap):
         """Test forward step raises error if dict returned at last stage."""
         from megatron.bridge.training.mimo_step import forward_step
         
-        mock_is_last.return_value = True
-        
         mock_state = MagicMock()
         mock_model = MagicMock()
+        mock_model.role = None  # role=None means is_last_stage=True
         # Return dict (incorrect for last stage)
         mock_model.return_value = ({'encoder': torch.tensor([1.0])}, None)
+        
+        mock_unwrap.return_value = mock_model
         
         batch = {'input_ids': torch.tensor([1, 2])}
         data_iter = iter([batch])
@@ -149,8 +160,7 @@ class TestForwardStep:
         with pytest.raises(ValueError, match="Last pipeline stage must return scalar loss"):
             forward_step(mock_state, data_iter, mock_model)
     
-    @patch('megatron.bridge.training.mimo_step.is_pp_last_stage')
-    def test_forward_step_uses_global_state_signature(self, mock_is_last):
+    def test_forward_step_uses_global_state_signature(self):
         """Test forward step uses 3-arg signature with GlobalState."""
         from megatron.bridge.training.mimo_step import forward_step
         import inspect

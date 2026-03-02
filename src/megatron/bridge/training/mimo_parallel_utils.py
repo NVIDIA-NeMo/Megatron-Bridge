@@ -5,6 +5,7 @@ This module provides utilities for building process group structures and handlin
 gradients across modules with different parallelism configurations.
 
 Key functions:
+- unwrap_mimo_model(): Unwrap Float16Module/DDP to get underlying MimoModel
 - build_pg_collection_for_schedule(): Build pg_collection compatible with schedule
 - multimodule_no_sync(): Context manager for gradient sync during microbatch accumulation
 - finalize_model_grads_multimodule(): Finalize gradients for each module
@@ -32,6 +33,30 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def unwrap_mimo_model(model) -> MimoModel:
+    """Unwrap Float16Module/DDP wrappers to get the underlying MimoModel.
+    
+    When using mixed precision (bf16/fp16), models are wrapped in Float16Module.
+    This function unwraps the model to access MimoModel-specific attributes
+    like `role`, `mimo_config`, `language_model`, `modality_submodules`, etc.
+    
+    Args:
+        model: A MimoModel or a wrapped version (Float16Module, DDP).
+        
+    Returns:
+        The underlying MimoModel instance.
+        
+    Raises:
+        RuntimeError: If the model cannot be unwrapped to a MimoModel.
+    """
+    unwrapped = model
+    while not isinstance(unwrapped, MimoModel) and hasattr(unwrapped, 'module'):
+        unwrapped = unwrapped.module
+    if not isinstance(unwrapped, MimoModel):
+        raise RuntimeError(f"Failed to unwrap model to MimoModel, got {type(unwrapped)}")
+    return unwrapped
 
 
 def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
@@ -62,15 +87,18 @@ def get_module_to_grid_tuple(
     """
     module_to_grid_tuple = []
     
+    # Unwrap Float16Module/DDP if present (used in mixed precision training)
+    unwrapped_model = unwrap_mimo_model(mimo_model)
+    
     for module_name, grid in infra.module_to_grid_map.items():
         if not is_current_rank_in_grid(grid):
             continue
             
-        # Get the actual module from the model
+        # Get the actual module from the unwrapped model
         if module_name == "llm":
-            module = mimo_model.language_model
-        elif hasattr(mimo_model, 'modality_submodules') and module_name in mimo_model.modality_submodules:
-            module = mimo_model.modality_submodules[module_name]
+            module = unwrapped_model.language_model
+        elif hasattr(unwrapped_model, 'modality_submodules') and module_name in unwrapped_model.modality_submodules:
+            module = unwrapped_model.modality_submodules[module_name]
         else:
             logger.warning(f"Module {module_name} not found in MimoModel, skipping")
             continue
@@ -96,15 +124,16 @@ def build_pg_collection_for_schedule(infra: MimoModelInfra):
         MultiModuleProcessGroupCollection or list of ProcessGroupCollections.
     """
     try:
-        # Try the dataclass approach (requires PR 3129)
         from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
+        module_pgs = {k: v for k, v in infra.pg_collections.items() if v is not None}
+        if not module_pgs:
+            raise ValueError("module_pgs dict cannot be empty")
+        language_model_module_name = "llm" if "llm" in module_pgs else None
         return MultiModuleProcessGroupCollection(
-            module_pgs={k: v for k, v in infra.pg_collections.items() if v is not None},
-            language_model_module_name="llm"
+            module_pgs=module_pgs,
+            language_model_module_name=language_model_module_name,
         )
     except (ImportError, ValueError, TypeError) as e:
-        # Fallback: list-based approach (reference implementation pattern)
-        # This is already supported by the schedule (lines 2117-2123)
         logger.warning(f"MultiModuleProcessGroupCollection failed ({e}), using list-based fallback")
         return [pg for pg in infra.pg_collections.values() if pg is not None]
 
@@ -144,6 +173,7 @@ def finalize_model_grads_multimodule(
     model,
     num_tokens=None,
     pg_collection=None,
+    force_all_reduce=None,
     *,
     infra: MimoModelInfra,
     module_to_grid_tuple: List[Tuple],
@@ -151,7 +181,7 @@ def finalize_model_grads_multimodule(
     """Finalize gradients for each module using infra.pg_collections.
     
     IMPORTANT: Signature matches schedule's call pattern:
-        config.finalize_model_grads_func([model], num_tokens, pg_collection)
+        config.finalize_model_grads_func([model], num_tokens, pg_collection, force_all_reduce=flag)
     
     The `infra` and `module_to_grid_tuple` parameters are pre-bound via partial().
     We ignore the schedule-provided `pg_collection` and use per-module PGs.
@@ -160,6 +190,7 @@ def finalize_model_grads_multimodule(
         model: Model list (passed by schedule, ignored - we use module_to_grid_tuple).
         num_tokens: Token count for gradient scaling.
         pg_collection: Schedule-provided PG (ignored - we use per-module PGs).
+        force_all_reduce: Schedule-provided flag (ignored - per-module PGs control sync).
         infra: MimoModelInfra with per-module pg_collections (keyword-only, bound via partial).
         module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
     """
