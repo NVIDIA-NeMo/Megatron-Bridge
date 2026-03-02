@@ -1,0 +1,92 @@
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Extends the standard "/ok to test SHA" mechanism with MCore variant support:
+#   /ok to test SHA          → main (handled by existing CI infra, not this workflow)
+#   /ok to test main SHA     → main (explicit)
+#   /ok to test dev SHA      → dev  (pinned dev commit from scripts/switch_mcore.sh)
+#   /ok to test both SHA     → both (main + dev in parallel)
+#
+# This workflow triggers the CICD NeMo workflow via workflow_dispatch with the
+# mcore_variant input. The SHA after the variant keyword is optional.
+
+name: MCore Variant Test Trigger
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  trigger:
+    name: Trigger variant test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    if: |
+      github.event.issue.pull_request != null
+      && contains(fromJSON('["MEMBER","COLLABORATOR","OWNER"]'), github.event.comment.author_association)
+      && (
+        startsWith(github.event.comment.body, '/ok to test dev')
+        || startsWith(github.event.comment.body, '/ok to test both')
+        || startsWith(github.event.comment.body, '/ok to test main')
+      )
+    steps:
+      - name: Parse variant from comment
+        id: parse
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          # Match "/ok to test <variant>" where variant must be a complete word
+          # (space or end-of-string after keyword). This avoids matching SHAs
+          # that happen to start with "dev" (valid hex).
+          if [[ "$COMMENT" =~ ^/ok\ to\ test\ (dev|both|main)(\ |$) ]]; then
+            echo "variant=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Comment did not match variant pattern, skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve PR ref
+        if: steps.parse.outputs.skip != 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=${{ github.event.issue.number }}
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+          # Prefer the pull-request/N branch (created by CI infra on prior runs)
+          if gh api "repos/${{ github.repository }}/git/ref/heads/pull-request/${PR_NUMBER}" &>/dev/null; then
+            echo "ref=pull-request/${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            HEAD_REF=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" --jq '.head.ref')
+            echo "ref=${HEAD_REF}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger CI workflow
+        if: steps.parse.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          VARIANT="${{ steps.parse.outputs.variant }}"
+          REF="${{ steps.pr.outputs.ref }}"
+
+          echo "🚀 Triggering CICD NeMo workflow"
+          echo "   ref:           ${REF}"
+          echo "   mcore_variant: ${VARIANT}"
+
+          gh workflow run cicd-main.yml \
+            --ref "${REF}" \
+            -f mcore_variant="${VARIANT}" \
+            -f triggered_by="ok-to-test-variant"
