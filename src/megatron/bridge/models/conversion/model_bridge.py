@@ -51,6 +51,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
 from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask, MegatronPeftBridge
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_theta_from_hf,
+)
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -239,6 +242,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
 
+    # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
+    # Set this in bridge subclasses to include model-specific files beyond standard artifacts
+    ADDITIONAL_FILE_PATTERNS = None
+
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped
     CONFIG_MAPPING = [
@@ -351,18 +358,29 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Map config fields using CONFIG_MAPPING
         # Supports dot notation for nested dict access (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in self.CONFIG_MAPPING:
+            has_value = False
+            value = None
             if "." in hf_name:
                 # Nested dict access: "parent.child" -> getattr(config, parent).get(child)
                 parts = hf_name.split(".", 1)
                 parent = getattr(hf_config, parts[0], None)
                 if parent is not None and isinstance(parent, dict):
-                    value = parent.get(parts[1])
-                else:
-                    value = None
+                    if parts[1] in parent:
+                        value = parent[parts[1]]
+                        has_value = True
             else:
                 value = getattr(hf_config, hf_name, None)
-            if value is not None:
+                has_value = hasattr(hf_config, hf_name)
+            if has_value:
                 provider_kwargs[megatron_name] = value
+
+        # Extract rotary_base via compat function (handles both legacy rope_theta
+        # attribute and transformers 5.0+ rope_parameters dict)
+        if "rotary_base" not in provider_kwargs:
+            try:
+                provider_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
+            except ValueError:
+                pass
 
         # Handle rope scaling: extract params from rope_scaling dict
         # HF configs use either "type" or "rope_type" key for the scaling type
@@ -490,8 +508,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Map config fields using CONFIG_MAPPING (reverse direction)
         # Supports dot notation for nested dict building (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in cls.CONFIG_MAPPING:
+            has_value = hasattr(provider, megatron_name)
             value = getattr(provider, megatron_name, None)
-            if value is not None:
+            if has_value:
                 if "." in hf_name:
                     # Nested dict: "parent.child" -> hf_config["parent"]["child"] = value
                     parts = hf_name.split(".", 1)
@@ -509,8 +528,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             hf_config["rope_scaling"]["rope_type"] = "yarn"
 
             for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
+                has_value = hasattr(provider, megatron_key)
                 value = getattr(provider, megatron_key, None)
-                if value is not None:
+                if has_value:
                     hf_config["rope_scaling"][hf_key] = value
 
             yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)
@@ -945,7 +965,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
@@ -1107,11 +1127,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         return model.config
 
     def _share_embeddings_and_output_weights(
-        self, model_config: TransformerConfig, model: Optional[MegatronModule]
+        self,
+        model_config: TransformerConfig,
     ) -> bool:
-        """Fallback-aware accessor for shared embedding setting."""
-        fallback = getattr(model, "share_embeddings_and_output_weights", False) if model else False
-        return getattr(model_config, "share_embeddings_and_output_weights", fallback)
+        """Shared embedding setting."""
+        return getattr(model_config, "share_embeddings_and_output_weights")
 
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
@@ -1147,7 +1167,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        share_embeddings = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
@@ -1190,7 +1210,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config, unwrapped_model)
+        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
