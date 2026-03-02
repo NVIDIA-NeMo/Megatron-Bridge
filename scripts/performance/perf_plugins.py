@@ -292,6 +292,12 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "deepseek":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
+        if model_family_name in ["llama"] and train_task in ["sft"]:
+            # TODO: Verify for H100 and 8b
+            del_cudnn_ln = False
+            if gpu in ["h100"] and model_recipe_name in ["llama3_70b"] and compute_dtype == "fp8_cs":
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+                executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
@@ -447,6 +453,9 @@ class PerfEnvPlugin(Plugin):
             2097152
             if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain"
             else None
+        )
+        nccl_pp_comm_chunksize = (
+            2097152 if self.model_family_name in ["llama"] and self.train_task in ["sft"] else None
         )
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
