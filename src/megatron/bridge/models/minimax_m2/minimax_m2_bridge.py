@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
+from typing import Dict, Optional
+
 import torch
+import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -20,8 +24,69 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
+    MegatronParamMapping,
     QKVMapping,
 )
+from megatron.bridge.models.minimax_m2.minimax_m2_provider import minimax_m2_layer_spec
+
+
+_FP8_BLOCK_SIZE = 128
+
+
+def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> torch.Tensor:
+    """Block-wise FP8 dequantization: out = fp8_val * scale_inv per 128x128 block."""
+    M, N = weight.shape
+    B = _FP8_BLOCK_SIZE
+    w = weight.float()
+    out = torch.empty_like(w)
+    sM, sN = scale_inv.shape
+    for bi in range(sM):
+        for bj in range(sN):
+            r0, r1 = bi * B, min((bi + 1) * B, M)
+            c0, c1 = bj * B, min((bj + 1) * B, N)
+            out[r0:r1, c0:c1] = w[r0:r1, c0:c1] * scale_inv[bi, bj]
+    return out.to(torch.bfloat16)
+
+
+class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):
+    """TP-sharded mapping for full-dimension QK norm weights.
+
+    HF weight shape: ``[num_heads * head_dim]``
+    Megatron weight shape per rank: ``[num_heads_per_partition * head_dim]``
+
+    Uses broadcast-then-slice instead of ``scatter_to_tp_ranks`` because the
+    ``_FullDimRMSNorm`` module may reside on CPU / meta device where NCCL
+    scatter is not available.
+    """
+
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        target_param = megatron_module.weight
+        shard_size = target_param.shape[0]
+
+        if self.tp_size == 1:
+            return hf_weights.to(device=target_param.device, dtype=target_param.dtype)
+
+        device = torch.device("cuda", torch.cuda.current_device())
+        hf_weights = hf_weights.to(device=device, dtype=target_param.dtype)
+
+        if self.tp_rank > 0:
+            hf_weights = torch.empty_like(hf_weights)
+
+        full_weight = self.broadcast_tensor_to_tp_ranks(hf_weights, src_rank=0)
+        start = self.tp_rank * shard_size
+        return full_weight[start : start + shard_size]
+
+    def megatron_to_hf(
+        self, megatron_weights: Optional[torch.Tensor], megatron_module: Optional[nn.Module]
+    ) -> Dict[str, torch.Tensor]:
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
+        if megatron_weights is None:
+            return {}
+        megatron_weights = self.maybe_dequantize(megatron_weights)
+        if self.tp_size == 1:
+            return {str(self.hf_param): megatron_weights}
+        gathered = self.gather_from_tp_ranks(megatron_weights)
+        return {str(self.hf_param): torch.cat(gathered, dim=0)}
 
 
 @MegatronModelBridge.register_bridge(
@@ -37,11 +102,16 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     scoring and expert bias correction). HF weights use per-expert format
     with block_sparse_moe prefix (w1/w2/w3).
 
+    QK normalization:
+        MiniMax-M2 applies full-dimension RMSNorm to Q/K (weight shape =
+        num_heads * head_dim) before splitting into heads. Megatron's built-in
+        QK norm is per-head (weight shape = head_dim). This bridge uses a custom
+        layer spec (``minimax_m2_layer_spec``) with ``FullDimQNorm``/``FullDimKNorm``
+        that normalizes over the full partition dimension. With TP > 1 the
+        sum-of-squares is all-reduced across TP ranks so the RMS denominator
+        matches the single-GPU case.
+
     Known limitations:
-        - QK layernorm: MiniMax-M2 uses full-dimension QK norm (q_norm weight
-          shape = num_heads * head_dim), whereas Megatron uses per-head QK norm
-          (weight shape = head_dim). These are computationally different and
-          cannot be losslessly converted. QK norm is disabled in this bridge.
         - MTP (Multi-Token Prediction) modules are not mapped.
 
     Example:
@@ -70,15 +140,11 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         if rotary_dim is not None and head_dim is not None:
             provider.rotary_percent = rotary_dim / head_dim
 
-        # TODO: MiniMax-M2 uses full-dimension QK norm (q_norm weight shape = num_heads * head_dim)
-        # while Megatron uses per-head QK norm (weight shape = head_dim). These are
-        # mathematically different (different normalization denominators), so the weights
-        # cannot be losslessly converted. Disabled here, which means q_norm.weight and
-        # k_norm.weight are dropped during conversion. This is acceptable for fine-tuning
-        # but will cause forward-pass divergence from HF for inference.
-        # Fix: add full-dimension QK norm support to Megatron-Core, or write a custom
-        # layer spec for this model.
+        # Full-dimension QK norm via custom layer spec (see minimax_m2_provider.py).
+        # qk_layernorm stays False to avoid the default per-head TENorm; our custom
+        # spec injects FullDimQNorm/FullDimKNorm directly into SelfAttention.
         provider.qk_layernorm = False
+        provider.transformer_layer_spec = minimax_m2_layer_spec
 
         # MoE settings — sigmoid routing with expert bias (same pattern as DeepSeek V3)
         provider.moe_grouped_gemm = True
@@ -91,6 +157,27 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         provider.moe_router_enable_expert_bias = True
 
         return provider
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Load HF weights with FP8 block-wise dequantization when needed.
+
+        MiniMax-M2 stores linear weights as float8_e4m3fn with per-block scale
+        factors in ``<key>_scale_inv`` tensors (128x128 blocks).
+        """
+        if isinstance(hf_param, dict):
+            return {k: self._load_and_dequant(v, hf_state_dict) for k, v in hf_param.items()}
+        return self._load_and_dequant(hf_param, hf_state_dict)
+
+    def _load_and_dequant(self, key: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        w = hf_state_dict[key]
+        if w.dtype not in (torch.float8_e4m3fn, torch.float8_e5m2):
+            return w
+        sinv_key = key + "_scale_inv"
+        if w.ndim == 2 and sinv_key in hf_state_dict:
+            return _dequant_fp8_blockwise(w, hf_state_dict[sinv_key])
+        return w.float().to(torch.bfloat16)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
@@ -111,6 +198,21 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         mapping_list = []
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        # QK norm — FullDimQNorm/FullDimKNorm weight is [num_heads_per_partition * head_dim],
+        # which is a TP shard of the HF [num_heads * head_dim] weight.
+        mapping_list.append(
+            _FullDimQKNormMapping(
+                megatron_param="decoder.layers.*.self_attention.q_layernorm.weight",
+                hf_param="model.layers.*.self_attn.q_norm.weight",
+            )
+        )
+        mapping_list.append(
+            _FullDimQKNormMapping(
+                megatron_param="decoder.layers.*.self_attention.k_layernorm.weight",
+                hf_param="model.layers.*.self_attn.k_norm.weight",
+            )
+        )
 
         # QKV
         mapping_list.append(

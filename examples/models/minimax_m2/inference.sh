@@ -14,7 +14,10 @@
 # limitations under the License.
 
 # MiniMax-M2 (MoE: 256 experts, top-8, ~230GB fp8)
-# Requires multi-node for full model. Adjust TP/EP for available resources.
+#
+# Single-node (8 GPUs): use this script with TP*EP*PP <= 8.
+# Multi-node  (TP*EP*PP > 8): use slurm_inference.sh instead.
+
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path MiniMaxAI/MiniMax-M2 \
