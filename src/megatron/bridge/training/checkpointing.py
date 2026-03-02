@@ -41,6 +41,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
 )
+from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
@@ -647,7 +648,14 @@ def save_checkpoint(
                 validate_sharding_integrity = not ckpt_cfg.ckpt_assume_constant_structure
             else:
                 validate_sharding_integrity = True
-                save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)
+                if ckpt_cfg.ckpt_format == "torch_dist":
+                    save_strategy = TorchDistSaveShardedStrategy(
+                        "torch_dist",
+                        1,
+                        thread_count=ckpt_cfg.storage_writers_per_rank,
+                    )
+                else:
+                    save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)
                 if ckpt_cfg.ckpt_assume_constant_structure and ckpt_cfg.ckpt_format == "torch_dist":
                     save_strategy.use_cached_ckpt_structure = ckpt_cfg.ckpt_assume_constant_structure
                     if checkpointing_context is not None and "load_strategy" in checkpointing_context:

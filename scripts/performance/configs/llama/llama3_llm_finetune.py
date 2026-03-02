@@ -274,12 +274,12 @@ def llama3_70b_lora_config_b300(precision: str = "bf16", config_variant: str = "
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="lora",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_peft_config(peft_scheme="lora")
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
@@ -307,12 +307,12 @@ def llama3_70b_lora_config_b200(precision: str = "bf16", config_variant: str = "
     )
     precision_config = get_precision_config(precision)
 
-    cfg = llama3_70b_finetune_config(
-        peft="lora",
-        precision_config=precision_config,
-        packed_sequence=True,
-        seq_length=4096,
-    )
+    cfg = llama3_70b_peft_config(peft_scheme="lora")
+    cfg.mixed_precision = precision_config
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
