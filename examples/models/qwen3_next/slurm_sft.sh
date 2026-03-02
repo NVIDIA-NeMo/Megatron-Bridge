@@ -55,16 +55,16 @@ MODEL_NAME=qwen3_next_80b_a3b
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
-GLOBAL_BATCH_SIZE=8
+GLOBAL_BATCH_SIZE=64
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=32
-EVAL_INTERVAL=50
+EVAL_INTERVAL=30
 LR_WARMUP_ITERS=50
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
-PARALLELISM_CONFIGS=("1,2,8,1,True" "2,1,8,1,True")
+PARALLELISM_CONFIGS=("1,2,8,1,False")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -146,6 +146,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         validation.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
+        logger.tensorboard_dir=${WORKSPACE}/tb_logs/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \

@@ -61,7 +61,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
-PARALLELISM_CONFIGS=("1,4,8,1,True" "2,2,8,1,True" "1,4,8,2,True")
+PARALLELISM_CONFIGS=("1,4,8,1,False")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -140,6 +140,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         train.eval_iters=$EVAL_ITERS \
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
+        logger.tensorboard_dir=${WORKSPACE}/tb_logs/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
