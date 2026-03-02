@@ -329,7 +329,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             ]
         ] = None,
         post_wrap_hook: Optional[Callable[[List[MegatronModule]], List[MegatronModule]]] = None,
-        mixed_precision_wrapper: Optional[Callable] = None,
     ) -> List[MegatronModule]:
         """Build MIMO model with heterogeneous parallelism and DDP wrapping.
 
@@ -346,7 +345,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         4. Applies pre-wrap hooks
         5. Moves to device
         6. Wraps each submodule with DDP using its own pg_collection
-        7. Applies mixed precision (Float16Module)
+        7. Casts to fp16/bf16 (direct casting, not Float16Module)
         8. Applies post-wrap hooks
 
         Args:
@@ -363,7 +362,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: Callable(s) to modify model before wrapping.
             post_wrap_hook: Callable to modify model after wrapping.
-            mixed_precision_wrapper: Wrapper for mixed precision (e.g., Float16Module).
 
         Returns:
             List containing the wrapped MimoModel.
@@ -372,9 +370,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             ValueError: If this rank doesn't participate in any module
                 (indicates invalid parallelism configuration).
         """
-        # Import here to avoid circular imports
-        from megatron.core.transformer.module import Float16Module
-
         if wrap_with_ddp and ddp_config is None:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
@@ -438,18 +433,16 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 for m in model_list
             ]
 
-        # Apply mixed precision wrapper
+        # Cast parameters directly instead of wrapping with Float16Module.
+        # Float16Module requires a single pg_collection for PP stage checks,
+        # but MimoModel has multiple modules with different PP groups (and
+        # modules can be colocated). Direct casting avoids this issue.
         use_fp16 = fp16 if fp16 is not None else self.fp16
         use_bf16 = bf16 if bf16 is not None else self.bf16
-        if (use_fp16 or use_bf16) and mixed_precision_wrapper is not None:
-            model_config = get_model_config(model_list[0])
-            model_list = [mixed_precision_wrapper(model_config, m) for m in model_list]
-        elif (use_fp16 or use_bf16) and mixed_precision_wrapper is None:
-            # Use default Float16Module
-            model_config = get_model_config(model_list[0])
-            model_config.fp16 = use_fp16
-            model_config.bf16 = use_bf16
-            model_list = [Float16Module(model_config, m) for m in model_list]
+        if use_fp16:
+            model_list = [m.half() for m in model_list]
+        elif use_bf16:
+            model_list = [m.bfloat16() for m in model_list]
 
         # Apply post-wrap hooks
         if final_post_wrap_hook:

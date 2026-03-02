@@ -46,8 +46,10 @@ def build_hypercomm_grids(
         # Create all standard process groups
         for dim in ("tp", "cp", "ep", "pp", "dp"):
             _ = grid.create_pg([dim])
-        # Create dp_cp composite group for gradient reduction
         _ = grid.create_pg(["dp", "cp"])
+        _ = grid.create_pg(["tp", "pp"])
+        _ = grid.create_pg(["tp", "ep", "pp"])
+        _ = grid.create_pg(["dp", "ep"])
 
         grids[module_name] = grid
 
