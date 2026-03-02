@@ -79,23 +79,23 @@ def gemma3_vl_4b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=5e-6,
-        min_lr=5e-6 * 0.1,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.00005,
+        min_lr=0.000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -185,23 +185,23 @@ def gemma3_vl_12b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=5e-6,
-        min_lr=5e-6 * 0.1,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.00005,
+        min_lr=0.000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -291,23 +291,23 @@ def gemma3_vl_27b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=5e-6,
-        min_lr=5e-6 * 0.1,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.00005,
+        min_lr=0.000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -406,23 +406,23 @@ def gemma3_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=1e-4,
-        min_lr=3e-5,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.0002,
+        min_lr=0.00002,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -521,23 +521,23 @@ def gemma3_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=1e-4,
-        min_lr=3e-5,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.0002,
+        min_lr=0.00002,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -636,23 +636,23 @@ def gemma3_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=1e-4,
-        min_lr=3e-5,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.0002,
+        min_lr=0.00002,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg

@@ -161,7 +161,7 @@ def glm_45v_sft_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 64
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -169,13 +169,13 @@ def glm_45v_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
         max_lr=5e-6,
         min_lr=5e-6 * 0.1,
     )
@@ -313,7 +313,7 @@ def glm_45v_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
@@ -321,13 +321,13 @@ def glm_45v_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.manual_gc_eval = 100
 
     # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_interval = 5
+    cfg.validation.eval_iters = 10
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
         max_lr=1e-4,
         min_lr=1e-5,
     )

@@ -78,23 +78,23 @@ def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 10000
+    cfg.train.train_iters = 2000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
     cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_iters = 0
 
     # Optimizer - finetune defaults
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
+        lr_warmup_iters=5,
         lr_decay_iters=None,
-        max_lr=1e-5,
-        min_lr=1e-6,
+        max_lr=2e-5,
+        min_lr=2e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -210,23 +210,23 @@ def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.model.offload_modules = None
 
     # Training config
-    cfg.train.train_iters = 10000
+    cfg.train.train_iters = 2000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
     # Validation config
     cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_iters = 0
 
     # Optimizer - PEFT LR settings
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
+        lr_warmup_iters=5,
         lr_decay_iters=None,
-        max_lr=5e-5,
-        min_lr=5e-6,
+        max_lr=2e-5,
+        min_lr=2e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg

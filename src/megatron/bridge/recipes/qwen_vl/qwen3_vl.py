@@ -101,7 +101,7 @@ def qwen3_vl_8b_sft_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
@@ -114,10 +114,10 @@ def qwen3_vl_8b_sft_config() -> ConfigContainer:
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=5e-6,
-        min_lr=3e-5,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.00005,
+        min_lr=0.000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -237,7 +237,7 @@ def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Training config
-    cfg.train.train_iters = 300000
+    cfg.train.train_iters = 50
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
@@ -246,14 +246,14 @@ def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
 
     # Validation config
     cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_iters = 10
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=500,
-        lr_decay_iters=300000,
-        max_lr=5e-6,
-        min_lr=3e-5,
+        lr_warmup_iters=10,
+        lr_decay_iters=50,
+        max_lr=0.00005,
+        min_lr=0.000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
