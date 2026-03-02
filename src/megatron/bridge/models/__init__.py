@@ -25,6 +25,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.deepseek import (
+    DeepSeekV2Bridge,
+    DeepSeekV3Bridge,
+)
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
     CodeGemmaModelProvider7B,
@@ -151,6 +155,9 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    # DeepSeek Models
+    "DeepSeekV2Bridge",
+    "DeepSeekV3Bridge",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
