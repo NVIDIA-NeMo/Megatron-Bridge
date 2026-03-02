@@ -1,8 +1,9 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional
-import warnings
 
 
 @dataclass
@@ -57,16 +58,15 @@ class ModuleParallelismConfig:
 @dataclass
 class MimoParallelismConfig:
     """Configuration for multi-module (MIMO) heterogeneous parallelism.
-    
+
     Note: Phase 1 only supports heterogeneous deployment where each module
     can have different parallelism configurations and rank offsets.
-    
+
     The LLM module must be named "llm" in module_parallelisms.
     """
 
     module_parallelisms: dict[str, ModuleParallelismConfig]
     special_token_ids: dict[str, int] = field(default_factory=dict)
-
 
     def get_parallelism(self, module_name: str) -> ModuleParallelismConfig:
         return self.module_parallelisms[module_name]
@@ -96,8 +96,13 @@ class MimoParallelismConfig:
             if cur_start < prev_end:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
 
-    def finalize(self, world_size: Optional[int]) -> None:
-        """Finalize parallelism config: compute data_parallel_size and validate."""
+    def finalize(self, world_size: int) -> None:
+        """Finalize parallelism config: compute data_parallel_size and validate.
+
+        Args:
+            world_size: Total number of ranks in the distributed world.
+                MIMO requires a distributed environment, so this must always be provided.
+        """
         if "llm" not in self.module_parallelisms:
             raise ValueError(
                 f"LLM module 'llm' must be in module_parallelisms. "
@@ -110,7 +115,6 @@ class MimoParallelismConfig:
 
         self._validate_heterogeneous()
 
-        if world_size and world_size > 1:
-            expected = self.total_world_size
-            if expected and world_size != expected:
-                raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")
+        expected = self.total_world_size
+        if expected and world_size != expected:
+            raise ValueError(f"MIMO world size mismatch: expected {expected}, got {world_size}.")

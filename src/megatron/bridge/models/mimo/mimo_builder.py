@@ -1,10 +1,12 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import torch.distributed as dist
 
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
+
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
@@ -50,13 +52,6 @@ def build_hypercomm_grids(
         grids[module_name] = grid
 
     return grids
-
-
-def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[str, List[str]]:
-    """Infer a default multi-encoder -> LLM topology."""
-    return {
-        name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"
-    } | {"llm": []}
 
 
 def populate_embedding_and_position_groups(
