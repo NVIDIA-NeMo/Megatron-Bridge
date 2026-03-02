@@ -39,6 +39,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     SchedulerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -64,8 +65,10 @@ def create_simple_test_config():
             micro_batch_size=1,
             global_batch_size=32,
             train_iters=1000,
-            eval_iters=10,
+        ),
+        validation=ValidationConfig(
             eval_interval=100,
+            eval_iters=10,
         ),
         model=GPTModelProvider(
             num_layers=1,
@@ -195,7 +198,7 @@ class TestDataLoaders:
         mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
-        cfg.train.eval_iters = 0
+        cfg.validation.eval_iters = 0
         cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
@@ -226,9 +229,9 @@ class TestSampleBasedDataLoaders:
         train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
 
         expected_train_samples = cfg.train.train_iters * cfg.train.global_batch_size
-        expected_eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
+        expected_eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
         expected_valid_samples = expected_eval_iters * cfg.train.global_batch_size
-        expected_test_samples = cfg.train.eval_iters * cfg.train.global_batch_size
+        expected_test_samples = cfg.validation.eval_iters * cfg.train.global_batch_size
 
         assert train_samples == expected_train_samples
         assert valid_samples == expected_valid_samples
@@ -246,9 +249,9 @@ class TestSampleBasedDataLoaders:
         train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
 
         expected_train_samples = cfg.train.train_samples  # Direct sample count
-        expected_eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
+        expected_eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
         expected_valid_samples = expected_eval_iters * cfg.train.global_batch_size
-        expected_test_samples = cfg.train.eval_iters * cfg.train.global_batch_size
+        expected_test_samples = cfg.validation.eval_iters * cfg.train.global_batch_size
 
         assert train_samples == expected_train_samples
         assert valid_samples == expected_valid_samples

@@ -1,7 +1,7 @@
 name: Dependabot
 on:
-  # schedule:
-  #   - cron: "0 8 * * *"
+  schedule:
+    - cron: "0 8 * * *"
   workflow_dispatch: # Allow manual triggering
 
 permissions:
@@ -11,7 +11,6 @@ permissions:
 jobs:
   get-release-branch-names:
     runs-on: ubuntu-latest
-    environment: nemo-ci
     outputs:
       megatron-bridge: ${{ steps.get-branch.outputs.megatron_bridge_release_branch }}
       mcore: ${{ steps.get-branch.outputs.mcore_latest_branch }}
@@ -62,8 +61,8 @@ jobs:
     steps:
       - name: Notify
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_WEBHOOK_ADMIN: <!subteam^${{ secrets.SLACK_WEBHOOK_ADMIN }}>
+          SLACK_WEBHOOK: ${{ secrets.SLACK_CI_CHANNEL_WEBHOOK }}
+          SLACK_WEBHOOK_ADMIN: <!subteam^${{ secrets.SLACK_TEAM_GROUP_ID }}>
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |

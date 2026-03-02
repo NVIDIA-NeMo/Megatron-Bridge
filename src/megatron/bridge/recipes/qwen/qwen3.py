@@ -31,6 +31,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -722,7 +723,7 @@ def _qwen3_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
     peft: str | PEFT | None = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int | None = None,  # Auto-select based on packed_sequence if None
@@ -799,10 +800,12 @@ def _qwen3_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

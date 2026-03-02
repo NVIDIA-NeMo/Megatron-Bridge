@@ -30,6 +30,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
@@ -115,11 +116,13 @@ class TestSupervisedFinetuning:
             model=Llama3ModelProvider145M(seq_length=seq_length),
             train=TrainingConfig(
                 train_iters=train_iters,
-                eval_interval=5,
-                eval_iters=0,
                 global_batch_size=8,
                 micro_batch_size=1,
                 exit_signal_handler=True,
+            ),
+            validation=ValidationConfig(
+                eval_interval=5,
+                eval_iters=0,
             ),
             optimizer=OptimizerConfig(
                 optimizer="adam",

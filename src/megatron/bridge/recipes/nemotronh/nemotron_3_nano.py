@@ -32,6 +32,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -159,7 +160,6 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
 
     cfg.model.init_method_std = 0.0173
     cfg.model.apply_rope_fusion = False
-    cfg.model.async_tensor_model_parallel_allreduce = True
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.use_fused_weighted_squared_relu = True
 
@@ -252,7 +252,7 @@ def _nemotron_3_nano_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
     peft: Optional[Union[str, PEFT]] = "lora",
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int = 128,
@@ -330,12 +330,12 @@ def _nemotron_3_nano_finetune_common(
         expert_tensor_parallel_size=expert_tensor_parallelism,
         expert_model_parallel_size=expert_model_parallelism,
         apply_rope_fusion=False,
-        async_tensor_model_parallel_allreduce=True,
         attention_backend="fused",
         gradient_accumulation_fusion=True,
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
         seq_length=seq_length,
+        calculate_per_token_loss=True,
     )
 
     if enable_deepep:
@@ -379,10 +379,12 @@ def _nemotron_3_nano_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
@@ -412,11 +414,5 @@ def _nemotron_3_nano_finetune_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_bootstrap_backend="nccl",
-            tp_comm_overlap=True,
-        )
 
     return cfg

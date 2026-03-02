@@ -36,6 +36,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
@@ -171,7 +172,7 @@ def llama32_1b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -263,7 +264,7 @@ def llama32_3b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -349,7 +350,7 @@ def llama3_8b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -430,7 +431,7 @@ def llama3_8b_16k_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -511,7 +512,7 @@ def llama3_8b_64k_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -592,7 +593,7 @@ def llama3_8b_128k_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -694,7 +695,7 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -782,7 +783,7 @@ def llama3_70b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -872,7 +873,7 @@ def llama3_70b_16k_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -961,7 +962,7 @@ def llama3_70b_64k_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -1055,7 +1056,7 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -1136,7 +1137,7 @@ def llama31_70b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -1231,7 +1232,7 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
     cfg.train.train_iters = 1168251
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1  # 405B uses micro_batch_size=1
-    cfg.train.eval_interval = 2000
+    cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
@@ -1613,7 +1614,7 @@ def _llama3_finetune_common(
     name: str = "default",
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int | None = None,
@@ -1690,13 +1691,15 @@ def _llama3_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

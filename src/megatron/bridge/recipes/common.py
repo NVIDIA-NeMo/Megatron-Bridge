@@ -26,6 +26,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 
 
@@ -58,13 +59,15 @@ def _pretrain_common() -> ConfigContainer:
         # Training config
         train=TrainingConfig(
             train_iters=300000,
-            eval_interval=500,
-            eval_iters=32,
             global_batch_size=32,
             micro_batch_size=2,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=500,
+            eval_iters=32,
         ),
         # Optimizer and scheduler
         optimizer=opt_cfg,

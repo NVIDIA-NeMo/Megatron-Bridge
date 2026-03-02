@@ -19,6 +19,7 @@ from argument_parser import parse_cli_args
 from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
 from utils.utils import get_perf_optimized_recipe
 
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -61,6 +62,8 @@ def main():
     # Select forward step function based on the model family name.
     if args.domain == "vlm":
         forward_step_func = vlm_forward_step
+    elif args.domain == "qwen3vl":
+        forward_step_func = qwen3_vl_forward_step
     else:
         forward_step_func = forward_step
 

@@ -30,6 +30,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -170,11 +171,13 @@ class TestCallbacksEndToEnd:
             model=model_cfg,
             train=TrainingConfig(
                 train_iters=train_iters,
-                eval_interval=eval_interval,
-                eval_iters=eval_iters,
                 global_batch_size=8,
                 micro_batch_size=1,
                 exit_signal_handler=True,
+            ),
+            validation=ValidationConfig(
+                eval_interval=eval_interval,
+                eval_iters=eval_iters,
             ),
             optimizer=OptimizerConfig(
                 optimizer="adam",

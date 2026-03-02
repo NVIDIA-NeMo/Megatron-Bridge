@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -148,11 +149,10 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg.model.mtp_loss_scaling_factor = 0.1  # Loss scaling factor for MTP
 
     # MoE Token Dispatcher settings
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"  # Options: alltoall, allgather, flex
-    cfg.model.moe_flex_dispatcher_backend = (
-        "deepep"  # Options: None, deepep, hybridep (default from TransformerConfig)
-    )
-    cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend (default from TransformerConfig)
+    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
+    cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
 
     # Training config
     cfg.train.manual_gc = True
@@ -205,6 +205,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
     # cfg.comm_overlap.delay_wgrad_compute = False  # Delay wgrad compute for overlap
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False  # MoE-specific: Overlap EP communication
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 
     # Checkpoint config
@@ -221,6 +222,8 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -254,6 +257,7 @@ def qwen3_next_80b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3NextFinetuneKw
         "finetune_lr": 5e-6,
         "min_lr": 5e-6,
         "enable_recompute": True,
+        "packed_sequence": False,  # Sequence packing is not supported for Qwen3-Next
     }
     combined_kwargs: Qwen3NextFinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     config = _qwen3_next_finetune_common(**combined_kwargs)
@@ -281,7 +285,7 @@ def _qwen3_next_finetune_common(
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
     peft: str | PEFT | None = None,
-    packed_sequence: bool = False,
+    packed_sequence: bool = True,
     # Training params
     train_iters: int = 1000,
     global_batch_size: int | None = None,  # Auto-select based on packed_sequence if None
@@ -394,13 +398,15 @@ def _qwen3_next_finetune_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,

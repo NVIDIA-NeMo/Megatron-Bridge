@@ -67,27 +67,45 @@ class MockVLMConversationProvider(DatasetProvider):
     # HF AutoProcessor instance will be set during build
     _processor: Optional[Any] = None
 
-    def _make_base_examples(self) -> List[Dict[str, Any]]:
-        # Single minimal conversation example; dataset will repeat to target length
+    # Enable batch-level online sequence packing
+    pack_sequences_in_batch: bool = False
+
+    def _make_single_example(
+        self, rng: numpy.random.Generator, prompt_text: str, response_text: str
+    ) -> Dict[str, Any]:
+        """Create a single mock conversation example with the given prompt and response text."""
         num_images = max(0, int(getattr(self, "num_images", 1)))
         w, h = self.image_size
-        rng = numpy.random.default_rng(seed=self.random_seed)
         images = None
         if num_images > 0:
-            # Embed in-memory PIL images directly in the conversation so that
-            # qwen_vl_utils.process_vision_info can discover them.
             images = [
                 Image.fromarray(rng.integers(low=0, high=256, size=(h, w, 3), dtype=numpy.uint8), mode="RGB")
                 for _ in range(num_images)
             ]
 
         content = [{"type": "image", "image": img} for img in images] if images is not None else []
-        content.append({"type": "text", "text": self.prompt})
+        content.append({"type": "text", "text": prompt_text})
         messages = [
             {"role": "user", "content": content},
-            {"role": "assistant", "content": [{"type": "text", "text": "dummy assistant response"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": response_text}]},
         ]
-        return [{"conversation": messages}]
+        return {"conversation": messages}
+
+    def _make_base_examples(self) -> List[Dict[str, Any]]:
+        rng = numpy.random.default_rng(seed=self.random_seed)
+
+        if not self.pack_sequences_in_batch:
+            # Single minimal conversation example; dataset will repeat to target length
+            return [self._make_single_example(rng, self.prompt, "dummy assistant response")]
+
+        # When packing is enabled, produce several examples with varied response lengths
+        # so that the packing logic concatenates sequences of different sizes.
+        varied_responses = [
+            "Short answer.",
+            "A somewhat longer response that contains more tokens to create length variation in the batch.",
+            "Medium length reply with a bit of detail.",
+        ]
+        return [self._make_single_example(rng, self.prompt, resp) for resp in varied_responses]
 
     def build_datasets(self, context: DatasetBuildContext):
         from transformers import AutoProcessor

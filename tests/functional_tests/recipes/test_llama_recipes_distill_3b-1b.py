@@ -108,8 +108,8 @@ def run_distill_recipe_test(
         config.model.kd_config = ModelOptDistillConfig()
 
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         config.scheduler.lr_warmup_iters = 2
         test_seq_length = 512
         config.model.seq_length = test_seq_length
@@ -125,7 +125,7 @@ def run_distill_recipe_test(
             config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100  # Minimal test samples
 
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed

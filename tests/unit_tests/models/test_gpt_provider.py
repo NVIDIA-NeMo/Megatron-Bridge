@@ -259,21 +259,6 @@ class TestGPTModelProvider:
 
         assert provider.attention_softmax_in_fp32 is True
 
-    def test_provide_with_generation_config(self):
-        """Test provide method with generation configuration."""
-
-        generation_config = {"max_length": 100, "temperature": 0.7}
-
-        provider = GPTModelProvider(
-            num_layers=2,
-            hidden_size=128,
-            num_attention_heads=4,
-            vocab_size=1000,
-            generation_config=generation_config,
-        )
-
-        assert provider.generation_config == generation_config
-
     @patch("megatron.core.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
     def test_modelopt_transformer_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):

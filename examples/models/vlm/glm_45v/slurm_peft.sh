@@ -90,6 +90,8 @@ export NCCL_NVLS_ENABLE=0
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
 # export WANDB_API_KEY="your_wandb_key_here"
+# or disable wandb logging
+# export WANDB_MODE=disabled
 
 # ==============================================================================
 # Job Execution
@@ -110,7 +112,7 @@ echo "======================================"
 mkdir -p logs
 
 # Build CLI overrides
-CLI_OVERRIDES="
+CLI_OVERRIDES="\
     checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
     model.seq_length=$SEQ_LENGTH \
     train.train_iters=$TRAIN_ITERS \
@@ -128,13 +130,12 @@ CLI_OVERRIDES="
     dataset.seq_length=$SEQ_LENGTH \
     model.tensor_model_parallel_size=$TP \
     model.pipeline_model_parallel_size=$PP \
-    model.expert_model_parallel_size=$EP
-"
+    model.expert_model_parallel_size=$EP"
 
 # Build command
-# Only local rank 0 on each node runs uv sync, then all ranks run with --no-sync
-CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
-CMD="$CMD uv run --no-sync python scripts/training/run_recipe.py"
+# If mounting a workspace that requires re-syncing dependencies, uncomment the uv sync line:
+# CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
+CMD="uv run --no-sync python scripts/training/run_recipe.py"
 CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
 CMD="$CMD --step_func vlm_step"
 CMD="$CMD --peft_scheme lora"
