@@ -194,7 +194,21 @@ dataset = create_sft_dataset(
     {"role": "user", "content": "What's the weather in Paris?"},
     {"role": "assistant", "content": "Let me check that for you.", "tool_calls": [{"name": "get_weather", "arguments": {"location": "Paris"}}]}
   ],
-  "tools": [...]
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get current weather",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string"}
+          }
+        }
+      }
+    }
+  ]
 }
 ```
 
