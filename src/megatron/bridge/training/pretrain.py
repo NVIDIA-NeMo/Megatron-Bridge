@@ -155,7 +155,12 @@ def _pretrain(
 
         barrier_and_log("after training is done")
         ckpt_config = config.checkpoint
-        if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
+        if (
+            ckpt_config.save
+            and state.train_state.step != 0
+            and ckpt_config.save_interval != 0
+            and state.train_state.step % ckpt_config.save_interval != 0
+        ):
             save_checkpoint(
                 state,
                 model,
