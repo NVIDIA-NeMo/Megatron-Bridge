@@ -929,6 +929,13 @@ class CheckpointConfig:
 
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
+        if self.pretrained_checkpoint is not None:
+            from megatron.bridge.training.utils.checkpoint_utils import file_exists
+
+            assert file_exists(self.pretrained_checkpoint), (
+                f"Pretrained checkpoint {self.pretrained_checkpoint} does not exist"
+            )
+
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
 
