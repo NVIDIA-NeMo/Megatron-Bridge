@@ -17,18 +17,19 @@
 
 import dataclasses
 import functools
-import importlib
 import inspect
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple, TypeVar
+from typing import Any, Dict, List, Tuple, TypeVar
 
 import torch
-import torch.nn.functional as F
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
 from omegaconf import DictConfig, OmegaConf
+
+# Re-export so existing callers (e.g. transformer_config.py) keep working.
+from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable  # noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -38,61 +39,8 @@ DataclassInstance = TypeVar("DataclassInstance")
 # Sentinel object to distinguish between "exclude this field" and "field is legitimately None"
 _EXCLUDE_FIELD = object()
 
-# ---------------------------------------------------------------------------
-# Activation function <-> string mapping
-# ---------------------------------------------------------------------------
-# Bi-directional mapping between callable activation functions and their string
-# names.  This enables CLI overrides like ``model.activation_func=silu`` while
-# keeping the internal representation as a real callable.
-ACTIVATION_FUNC_MAP: dict[str, Callable] = {
-    "gelu": F.gelu,
-    "relu": F.relu,
-    "silu": F.silu,
-    "sigmoid": F.sigmoid,
-    "tanh": torch.tanh,
-    "torch.nn.functional.gelu": F.gelu,
-    "torch.nn.functional.relu": F.relu,
-    "torch.nn.functional.silu": F.silu,
-    "torch.nn.functional.sigmoid": F.sigmoid,
-}
-
-# Reverse map: callable id -> canonical short name (used during serialization)
-_ACTIVATION_FUNC_TO_STR: dict[int, str] = {id(fn): name for name, fn in ACTIVATION_FUNC_MAP.items() if "." not in name}
-
 # Fields whose callables should be serialized as strings (not excluded)
 _SERIALIZABLE_CALLABLE_FIELDS: frozenset[str] = frozenset({"activation_func"})
-
-
-def callable_to_str(fn: Callable) -> str | None:
-    """Convert a known activation callable to its short string name.
-
-    Returns None if the callable is not in the registry.
-    """
-    return _ACTIVATION_FUNC_TO_STR.get(id(fn))
-
-
-def str_to_callable(name: str) -> Callable:
-    """Resolve an activation function name to its callable.
-
-    Accepts short names (``"silu"``), fully qualified names
-    (``"torch.nn.functional.silu"``), or dotted import paths.
-
-    Raises:
-        ValueError: If the name cannot be resolved.
-    """
-    if name in ACTIVATION_FUNC_MAP:
-        return ACTIVATION_FUNC_MAP[name]
-    # Fallback: try to import the dotted path
-    parts = name.rsplit(".", 1)
-    if len(parts) == 2:
-        try:
-            module = importlib.import_module(parts[0])
-            return getattr(module, parts[1])
-        except (ImportError, AttributeError):
-            pass
-    raise ValueError(
-        f"Unknown activation function: '{name}'. Known names: {sorted(n for n in ACTIVATION_FUNC_MAP if '.' not in n)}"
-    )
 
 
 def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:

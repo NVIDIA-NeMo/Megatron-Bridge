@@ -56,7 +56,7 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
     resolved to the corresponding callable before MCore post-init runs.
     """
     if isinstance(config.activation_func, str):
-        from megatron.bridge.training.utils.omegaconf_utils import str_to_callable
+        from megatron.bridge.utils.activation_map import str_to_callable
 
         config.activation_func = str_to_callable(config.activation_func)
 
