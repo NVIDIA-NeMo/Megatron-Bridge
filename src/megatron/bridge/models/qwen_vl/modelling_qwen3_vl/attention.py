@@ -102,7 +102,13 @@ class Qwen3VLSelfAttention(SelfAttention):
         # Get the query, key and value tensors based on the type of attention -
         # self or cross attn.
         nvtx_range_push(suffix="qkv")
-        query, key, value = self.get_query_key_value_tensors(hidden_states, key_value_states)
+        gate = None
+        if self.config.attention_output_gate:
+            query, key, value, gate = self.get_query_key_value_tensors(
+                hidden_states, key_value_states, output_gate=True
+            )
+        else:
+            query, key, value = self.get_query_key_value_tensors(hidden_states, key_value_states)
         nvtx_range_pop(suffix="qkv")
 
         # ===================================================
@@ -131,6 +137,8 @@ class Qwen3VLSelfAttention(SelfAttention):
             )
             out = output.transpose(0, 1).contiguous()
             context_layer = out.view(out.size(0), out.size(1), -1)
+            if gate is not None:
+                context_layer = self._apply_output_gate(context_layer, gate)
             output, bias = self.linear_proj(context_layer)
             return output, bias
 
@@ -259,6 +267,10 @@ class Qwen3VLSelfAttention(SelfAttention):
             # note that batch is a dummy dimension in the packed case
             core_attn_out = core_attn_out.reshape(core_attn_out.size(0), 1, -1)
         nvtx_range_pop(suffix="core_attention")
+
+        # Output gate (for Gated Attention in hybrid architectures like Qwen3.5)
+        if gate is not None:
+            core_attn_out = self._apply_output_gate(core_attn_out, gate)
 
         # =================
         # Output. [sq, b, h]

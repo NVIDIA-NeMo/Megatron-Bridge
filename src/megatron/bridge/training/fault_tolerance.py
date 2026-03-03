@@ -39,8 +39,8 @@ Updated values are based on observed intervals.
 ft_launcher \
     --rdzv_backend=c10d --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
     --nnodes=${NUM_NODES} --nproc-per-node=${NUM_GPUS_PER_NODE} \
-    --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
-    --ft-param-rank_out_of_section_timeout=300 \
+    --ft-rank_section_timeouts=setup:600,step:180,checkpointing:420 \
+    --ft-rank_out_of_section_timeout=300 \
     train_script_with_ft.py
 ```
 """

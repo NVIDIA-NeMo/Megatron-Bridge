@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import random
 import time
 import unittest.mock as mock
 from dataclasses import dataclass
@@ -1539,6 +1540,64 @@ class TestTrainingLog:
         assert "Warning: elapsed_wct is -5.0" in warning_message
         assert "skipping throughput calculation" in warning_message
         assert f"iteration {iteration}" in warning_message
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    def test_report_throughput_resume_from_ckpt(self, mock_print_rank_0):
+        global_batch_size = 128
+        micro_batch_size = 2
+        iteration = 100
+        seq_length = 8192
+        window_size = 10
+
+        # first run
+        history_wct = [i + random.uniform(2, 2.5) for i in range(window_size)]
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+        throughput_report_initial = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        assert "throughput/tokens_per_sec" in list(throughput_report_initial.keys())
+        assert "throughput/samples_per_sec" in list(throughput_report_initial.keys())
+
+        # second run with no metrics for the first iterations (<= window_size)
+        history_wct = [i + random.uniform(2, 3) for i in range(2)]
+        iteration = 102
+        throughput_report_resume = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        assert throughput_report_resume == {}
+
+        # second run with metrics
+        history_wct = [i + random.uniform(2, 2.5) for i in range(window_size)]
+        iteration = 110
+        throughput_report_resume = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        assert "throughput/tokens_per_sec" in list(throughput_report_resume.keys())
+        assert "throughput/samples_per_sec" in list(throughput_report_resume.keys())
+
+        resume_tokens = throughput_report_resume["throughput/tokens_per_sec"]
+        initial_tokens = throughput_report_initial["throughput/tokens_per_sec"]
+
+        # check that there is no spike
+        if resume_tokens > initial_tokens:
+            assert (1 - initial_tokens / resume_tokens) <= 0.1
+        else:
+            assert (1 - resume_tokens / initial_tokens) <= 0.1
 
     def test_l2_norm_grad(self):
         """Test l2 norm grad metrics."""

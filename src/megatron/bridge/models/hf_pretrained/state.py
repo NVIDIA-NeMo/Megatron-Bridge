@@ -14,6 +14,7 @@
 
 import fnmatch
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -33,6 +34,9 @@ from typing import (
 )
 
 import torch
+
+
+logger = logging.getLogger(__name__)
 
 
 class StateDict(Mapping[str, torch.Tensor]):
@@ -545,10 +549,11 @@ class SafeTensorsStateSource(StateSource):
                     ignore_patterns=["*.bin", "*.pt", "*.pth"],
                 )
             )
-        except (ImportError, HfHubHTTPError, ValueError):
-            # If huggingface_hub is not installed, or if it's not a
-            # valid model ID, we return the original path and let the
-            # subsequent logic handle the file not found error.
+        except (ImportError, HfHubHTTPError, ValueError) as e:
+            logger.warning(
+                f"Failed to download '{model_name_or_path}' from HuggingFace Hub: {e}. "
+                f"Falling back to treating it as a local path."
+            )
             return local_path
 
     def get_all_keys(self) -> List[str]:

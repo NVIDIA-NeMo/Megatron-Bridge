@@ -283,6 +283,8 @@ def forward_step(
             original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
         )
         forward_args["attention_mask"] = attention_mask
+        if forward_args["loss_mask"] is not None:
+            forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
         # qwen3vl need the original input_ids and position_ids
         # use split attention mask for calculate loss
         forward_args["packed_seq_params"] = packed_seq_params
