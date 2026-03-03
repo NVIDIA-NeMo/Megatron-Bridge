@@ -115,12 +115,17 @@ override-dependencies = [
     "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@5671fd3675906cda1ade26c24a65d3dedd88eb89",
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt~=0.41.0",
+    "nvidia-modelopt>=0.42.0a0",
     "urllib3>=2.6.3",    # To address CVE-2026-21441
 ]
 
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
+nvidia-modelopt = { index = "nvidia" }
 
 [project.optional-dependencies]
 recipes = [
