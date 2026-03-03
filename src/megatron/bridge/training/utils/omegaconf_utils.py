@@ -17,13 +17,15 @@
 
 import dataclasses
 import functools
+import importlib
 import inspect
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Tuple, TypeVar
 
 import torch
+import torch.nn.functional as F
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
 from omegaconf import DictConfig, OmegaConf
@@ -35,6 +37,62 @@ DataclassInstance = TypeVar("DataclassInstance")
 
 # Sentinel object to distinguish between "exclude this field" and "field is legitimately None"
 _EXCLUDE_FIELD = object()
+
+# ---------------------------------------------------------------------------
+# Activation function <-> string mapping
+# ---------------------------------------------------------------------------
+# Bi-directional mapping between callable activation functions and their string
+# names.  This enables CLI overrides like ``model.activation_func=silu`` while
+# keeping the internal representation as a real callable.
+ACTIVATION_FUNC_MAP: dict[str, Callable] = {
+    "gelu": F.gelu,
+    "relu": F.relu,
+    "silu": F.silu,
+    "sigmoid": F.sigmoid,
+    "tanh": torch.tanh,
+    "torch.nn.functional.gelu": F.gelu,
+    "torch.nn.functional.relu": F.relu,
+    "torch.nn.functional.silu": F.silu,
+    "torch.nn.functional.sigmoid": F.sigmoid,
+}
+
+# Reverse map: callable id -> canonical short name (used during serialization)
+_ACTIVATION_FUNC_TO_STR: dict[int, str] = {id(fn): name for name, fn in ACTIVATION_FUNC_MAP.items() if "." not in name}
+
+# Fields whose callables should be serialized as strings (not excluded)
+_SERIALIZABLE_CALLABLE_FIELDS: frozenset[str] = frozenset({"activation_func"})
+
+
+def callable_to_str(fn: Callable) -> str | None:
+    """Convert a known activation callable to its short string name.
+
+    Returns None if the callable is not in the registry.
+    """
+    return _ACTIVATION_FUNC_TO_STR.get(id(fn))
+
+
+def str_to_callable(name: str) -> Callable:
+    """Resolve an activation function name to its callable.
+
+    Accepts short names (``"silu"``), fully qualified names
+    (``"torch.nn.functional.silu"``), or dotted import paths.
+
+    Raises:
+        ValueError: If the name cannot be resolved.
+    """
+    if name in ACTIVATION_FUNC_MAP:
+        return ACTIVATION_FUNC_MAP[name]
+    # Fallback: try to import the dotted path
+    parts = name.rsplit(".", 1)
+    if len(parts) == 2:
+        try:
+            module = importlib.import_module(parts[0])
+            return getattr(module, parts[1])
+        except (ImportError, AttributeError):
+            pass
+    raise ValueError(
+        f"Unknown activation function: '{name}'. Known names: {sorted(n for n in ACTIVATION_FUNC_MAP if '.' not in n)}"
+    )
 
 
 def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
@@ -260,8 +318,15 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
         logger.debug(f"Converting torch.dtype at {current_path}: {val_to_convert}")
         return str(val_to_convert)
 
-    # Handle callables - exclude them completely
+    # Handle callables — serialize known activation functions as strings,
+    # exclude everything else.
     if _is_omegaconf_problematic(val_to_convert):
+        field_name = current_path.rsplit(".", 1)[-1] if "." in current_path else current_path
+        if field_name in _SERIALIZABLE_CALLABLE_FIELDS:
+            str_name = callable_to_str(val_to_convert)
+            if str_name is not None:
+                logger.debug(f"Serializing callable at {current_path} as string: {str_name}")
+                return str_name
         logger.debug(f"Excluding callable at {current_path}: {type(val_to_convert)} - {val_to_convert}")
         return _EXCLUDE_FIELD
 
@@ -356,8 +421,12 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
             field_value = getattr(obj, field_name)
 
             if _is_omegaconf_problematic(field_value):
-                excluded_fields[field_path] = field_value
-                logger.debug(f"Tracking excluded callable: {field_path}")
+                # Skip fields that are serialized as strings (not excluded)
+                if field_name in _SERIALIZABLE_CALLABLE_FIELDS and callable_to_str(field_value) is not None:
+                    logger.debug(f"Skipping serializable callable (not excluded): {field_path}")
+                else:
+                    excluded_fields[field_path] = field_value
+                    logger.debug(f"Tracking excluded callable: {field_path}")
             elif dataclasses.is_dataclass(field_value):
                 nested_excluded = _track_excluded_fields(field_value, field_path)
                 excluded_fields.update(nested_excluded)
