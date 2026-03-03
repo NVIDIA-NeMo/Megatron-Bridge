@@ -23,6 +23,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
+    _DIRECT_ITERATION_DIR_SENTINEL,
     CheckpointType,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
@@ -195,13 +196,22 @@ class TestCheckpointUtilities:
     @patch("os.path.exists")
     def test_checkpoint_exists_normal(self, mock_exists):
         """Test checkpoint existence checking for normal checkpoints."""
-        # Test when NeMo-LM checkpoint exists
-        mock_exists.return_value = True
+        # A parent checkpoint directory does NOT contain iteration-dir markers
+        # (run_config.yaml, train_state.pt, etc.) — only tracker files.
+        _iter_markers = {"run_config.yaml", "train_state.pt", "metadata.json", ".metadata"}
+
+        def parent_dir_exists(path):
+            if os.path.basename(path) in _iter_markers:
+                return False
+            return True
+
+        mock_exists.side_effect = parent_dir_exists
         result = checkpoint_exists("/checkpoints")
         assert result is True
         mock_exists.assert_called_with("/checkpoints/latest_train_state.pt")
 
         # Test when no checkpoint exists
+        mock_exists.side_effect = None
         mock_exists.return_value = False
         with patch("os.path.isfile", return_value=False):
             result = checkpoint_exists("/checkpoints")
@@ -1136,6 +1146,94 @@ class TestLoadBaseCheckpoint:
             _load_base_checkpoint("/fake/dir", base_config, pg_collection=mock_pg_collection)
 
         assert "Unknown checkpoint format" in str(exc_info.value)
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_load_base_checkpoint_direct_iteration_dir_torch_dist(
+        self,
+        mock_resolve,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """Direct iteration directory with torch_dist format delegates to _load_global_dist_base_checkpoint."""
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "torch_dist"
+        mock_load_global.return_value = ({"model": "data"}, "/ckpt/iter_0001000", False, CheckpointType.GLOBAL)
+
+        result = _load_base_checkpoint("/ckpt/iter_0001000", base_config, rank0=True, pg_collection=mock_pg_collection)
+
+        state_dict, _, _, ckpt_type = result
+        assert state_dict == {"model": "data"}
+        assert ckpt_type == CheckpointType.GLOBAL
+
+        mock_load_global.assert_called_once()
+        call_kwargs = mock_load_global.call_args
+        assert (
+            call_kwargs[1].get("checkpoint_path_override") == "/ckpt/iter_0001000"
+            or call_kwargs[0][6] == "/ckpt/iter_0001000"
+        )
+
+    @patch("megatron.bridge.training.checkpointing._load_fsdp_dtensor_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_load_base_checkpoint_direct_iteration_dir_fsdp_dtensor(
+        self,
+        mock_resolve,
+        mock_get_format,
+        mock_load_fsdp,
+        base_config,
+        mock_pg_collection,
+    ):
+        """Direct iteration directory with fsdp_dtensor format delegates to _load_fsdp_dtensor_base_checkpoint."""
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "fsdp_dtensor"
+        mock_load_fsdp.return_value = ({}, "/ckpt/iter_0001000", False, CheckpointType.FSDP_DTENSOR)
+
+        result = _load_base_checkpoint("/ckpt/iter_0001000", base_config, rank0=True, pg_collection=mock_pg_collection)
+
+        _, _, _, ckpt_type = result
+        assert ckpt_type == CheckpointType.FSDP_DTENSOR
+
+        mock_load_fsdp.assert_called_once()
+
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_load_base_checkpoint_direct_iteration_dir_unsupported_format(
+        self,
+        mock_resolve,
+        mock_get_format,
+        base_config,
+        mock_pg_collection,
+    ):
+        """Direct iteration directory with unsupported format raises NotImplementedError."""
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "zarr"
+
+        with pytest.raises(NotImplementedError, match="not supported"):
+            _load_base_checkpoint("/ckpt/iter_0001000", base_config, pg_collection=mock_pg_collection)
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_load_base_checkpoint_direct_iteration_dir_skips_non_persistent(
+        self,
+        mock_resolve,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """Direct iteration directory path skips non-persistent checkpoint lookup entirely."""
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "torch_dist"
+        mock_load_global.return_value = ({"model": "data"}, "/ckpt/iter_0001000", False, CheckpointType.GLOBAL)
+
+        with patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration") as mock_get_np_iter:
+            _load_base_checkpoint("/ckpt/iter_0001000", base_config, pg_collection=mock_pg_collection)
+            mock_get_np_iter.assert_not_called()
 
 
 class TestLoadModelWeightsFromCheckpoint:
@@ -2205,6 +2303,37 @@ class TestCheckpointIterationResolution:
         assert iteration == 9999
         assert release is False
 
+    @patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory")
+    def test_direct_iteration_directory_returns_sentinel(self, mock_is_iter_dir):
+        """When load_dir is already an iteration directory, should return the sentinel value."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        mock_is_iter_dir.return_value = True
+
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir="/checkpoints/iter_0001000",
+            ckpt_step_override=None,
+        )
+
+        assert iteration == _DIRECT_ITERATION_DIR_SENTINEL
+        assert release is False
+        mock_is_iter_dir.assert_called_once_with("/checkpoints/iter_0001000")
+
+    @patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory")
+    def test_direct_iteration_directory_ignores_ckpt_step(self, mock_is_iter_dir):
+        """Iteration directory detection takes priority over ckpt_step_override."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        mock_is_iter_dir.return_value = True
+
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir="/checkpoints/iter_0001000",
+            ckpt_step_override=5000,
+        )
+
+        assert iteration == _DIRECT_ITERATION_DIR_SENTINEL
+        assert release is False
+
 
 class TestFSDPDTensorFunctionality:
     """Test new FSDP DTensor checkpointing functionality."""
@@ -2478,3 +2607,155 @@ class TestFSDPDTensorFunctionality:
             # Should use sharded_state_dict for torch_dist
             mock_model.sharded_state_dict.assert_called_once()
             assert "model" in result
+
+
+class TestCheckpointPathOverride:
+    """Test checkpoint_path_override parameter in loading functions."""
+
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_uses_override_rank0(self, mock_dist_ckpt, mock_strategy):
+        """rank0 path should use checkpoint_path_override instead of find_checkpoint_rank_0."""
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        mock_dist_ckpt.load_common_state_dict.return_value = {"test": "data"}
+        mock_pg = Mock()
+
+        state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
+            load_dir="/should/not/be/used",
+            ckpt_cfg=CheckpointConfig(),
+            rank0=True,
+            sharded_state_dict=None,
+            iteration=None,
+            release=False,
+            checkpoint_path_override="/direct/iter_0001000",
+            pg_collection=mock_pg,
+        )
+
+        assert checkpoint_name == "/direct/iter_0001000"
+        assert ckpt_type == CheckpointType.GLOBAL
+        mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/direct/iter_0001000")
+
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy):
+        """Non-rank0 path should use checkpoint_path_override instead of get_checkpoint_name."""
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        mock_strategy.return_value = Mock()
+        mock_dist_ckpt.load.return_value = {"model": "sharded_data"}
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+
+        sharded_sd = {"weight": "placeholder"}
+        state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
+            load_dir="/should/not/be/used",
+            ckpt_cfg=CheckpointConfig(),
+            rank0=False,
+            sharded_state_dict=sharded_sd,
+            iteration=None,
+            release=False,
+            checkpoint_path_override="/direct/iter_0001000",
+            pg_collection=mock_pg,
+        )
+
+        assert checkpoint_name == "/direct/iter_0001000"
+        mock_dist_ckpt.load.assert_called_once()
+        load_call_args = mock_dist_ckpt.load.call_args
+        assert load_call_args[0][1] == "/direct/iter_0001000"
+
+    @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
+    def test_load_fsdp_dtensor_uses_override_rank0(self):
+        """rank0 path should use checkpoint_path_override instead of get_checkpoint_name."""
+        from megatron.bridge.training.checkpointing import _load_fsdp_dtensor_base_checkpoint
+
+        state_dict, checkpoint_name, release, ckpt_type = _load_fsdp_dtensor_base_checkpoint(
+            load_dir="/should/not/be/used",
+            ckpt_cfg=CheckpointConfig(),
+            rank0=True,
+            sharded_state_dict=None,
+            iteration=None,
+            release=False,
+            checkpoint_path_override="/direct/iter_0001000",
+        )
+
+        assert checkpoint_name == "/direct/iter_0001000"
+        assert state_dict == {}
+        assert ckpt_type == CheckpointType.FSDP_DTENSOR
+
+
+class TestLoadCheckpointFromPathDirectIterDir:
+    """Test _load_checkpoint_from_path with a direct iteration directory (fsdp_dtensor path).
+
+    The fsdp_dtensor branch in _load_checkpoint_from_path has its own
+    is_checkpoint_iteration_directory check to resolve the checkpoint path
+    before constructing the sharded state dict.  We verify that when the
+    load_dir is an iteration directory the FileSystemReader receives the
+    directory directly (no tracker-file indirection).
+    """
+
+    @patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory")
+    @patch("megatron.bridge.training.checkpointing.get_pg_collection")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("torch.distributed.checkpoint.FileSystemReader")
+    def test_fsdp_dtensor_skips_tracker_resolution(self, mock_reader, mock_unwrap, mock_get_pg, mock_is_iter_dir):
+        """When load_dir is an iteration directory, FileSystemReader should receive it directly."""
+        from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
+
+        mock_is_iter_dir.return_value = True
+
+        mock_metadata = Mock()
+        mock_metadata.state_dict_metadata = {}
+        mock_reader_instance = Mock()
+        mock_reader_instance.read_metadata.return_value = mock_metadata
+        mock_reader.return_value = mock_reader_instance
+
+        mock_model = Mock()
+        mock_unwrap.return_value = [mock_model]
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+        mock_get_pg.return_value = mock_pg
+
+        mock_cfg = Mock()
+        mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
+        mock_cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+        mock_cfg.checkpoint.finetune = True
+        mock_cfg.checkpoint.load_rng = False
+        mock_cfg.checkpoint.load_optim = False
+        mock_cfg.checkpoint.ckpt_step = None
+        mock_cfg.checkpoint.load = None
+        mock_cfg.checkpoint.pretrained_checkpoint = None
+        mock_cfg.optimizer = Mock()
+        mock_cfg.optimizer.use_distributed_optimizer = False
+        mock_cfg.peft = None
+        mock_cfg.rng = Mock()
+
+        mock_state = Mock(spec=GlobalState)
+        mock_state.cfg = mock_cfg
+
+        with (
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
+            patch("megatron.bridge.training.checkpointing._build_sharded_state_dict_metadata", return_value={}),
+            patch("megatron.bridge.training.checkpointing._load_base_checkpoint") as mock_load_base,
+            patch("megatron.bridge.training.checkpointing.set_checkpoint_version"),
+        ):
+            mock_load_base.return_value = (
+                {"model": {}, "checkpoint_version": 3.0},
+                "/ckpt/iter_0001000",
+                False,
+                CheckpointType.FSDP_DTENSOR,
+            )
+
+            _load_checkpoint_from_path(
+                load_dir="/ckpt/iter_0001000",
+                state=mock_state,
+                model=[mock_model],
+                optimizer=None,
+                opt_param_scheduler=None,
+                skip_load_to_model_and_opt=True,
+            )
+
+            # The fsdp_dtensor prep block should have called FileSystemReader
+            # with the direct path (not a tracker-resolved path).
+            mock_reader.assert_called_once_with("/ckpt/iter_0001000")
+            mock_is_iter_dir.assert_called_once_with("/ckpt/iter_0001000")
