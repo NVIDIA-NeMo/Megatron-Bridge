@@ -398,21 +398,9 @@ def megatron_generate_from_checkpoint(
         etp: Expert tensor parallelism size override. (default: 1)
     """
     from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config, load_tokenizer
+    from megatron.bridge.training.utils.checkpoint_utils import resolve_checkpoint_path
 
-    checkpoint_path = Path(megatron_path)
-    # Check for iter_* folders
-    iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
-    if iter_folders:
-        # Find the folder with the largest iteration number
-        def get_iter_number(folder_name):
-            try:
-                return int(folder_name.replace("iter_", ""))
-            except ValueError:
-                return -1  # Invalid format, put at the end
-
-        latest_iter = max(iter_folders, key=lambda f: get_iter_number(f.name))
-        checkpoint_path = checkpoint_path / latest_iter.name
-    # else: checkpoint_path remains as the input path (no iter folders found), and we assume it is a dist ckpt
+    checkpoint_path = resolve_checkpoint_path(megatron_path)
 
     print_rank_0(f"Loading Megatron model from checkpoint at {checkpoint_path}")
 
