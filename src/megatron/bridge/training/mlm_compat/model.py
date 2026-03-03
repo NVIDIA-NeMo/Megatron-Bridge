@@ -167,6 +167,7 @@ def _mamba_provider(
         hybrid_attention_ratio=args.hybrid_attention_ratio,
         hybrid_mlp_ratio=args.hybrid_mlp_ratio,
         hybrid_override_pattern=args.hybrid_override_pattern,
+        hybrid_layer_pattern=args.hybrid_layer_pattern,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
         parallel_output=True,

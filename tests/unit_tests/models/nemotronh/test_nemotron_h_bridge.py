@@ -158,7 +158,7 @@ class TestNemotronHBridge:
         assert result.mamba_head_dim == mock_nemotronh_config.mamba_head_dim
         assert result.mamba_num_heads == mock_nemotronh_config.mamba_num_heads
         assert result.mamba_num_groups == mock_nemotronh_config.n_groups
-        assert result.hybrid_override_pattern == mock_nemotronh_config.hybrid_override_pattern
+        assert result.hybrid_layer_pattern == mock_nemotronh_config.hybrid_override_pattern
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_nemotronh, mock_nemotronh_config):
         """Test MLP configuration mapping."""

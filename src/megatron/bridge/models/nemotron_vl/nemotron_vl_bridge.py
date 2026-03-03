@@ -38,6 +38,12 @@ from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano
 class NemotronVLBridge(MegatronModelBridge):
     """Conversion utilities between HF Nemotron-VL and Megatron-Core format."""
 
+    # Extend CONFIG_MAPPING with Nemotron-VL specific fields
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        # Mamba-specific fields
+        ("hybrid_override_pattern", "hybrid_layer_pattern"),
+    ]
+
     # ------------------------------------------------------------------
     # Provider translation
     # ------------------------------------------------------------------

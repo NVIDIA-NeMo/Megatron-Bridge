@@ -61,7 +61,7 @@ class NemotronHBridge(MegatronModelBridge):
         ("mamba_num_heads", "mamba_num_heads"),
         ("n_groups", "mamba_num_groups"),
         ("ssm_state_size", "mamba_state_dim"),
-        ("hybrid_override_pattern", "hybrid_override_pattern"),
+        ("hybrid_override_pattern", "hybrid_layer_pattern"),
         ("residual_in_fp32", "fp32_residual_connection"),
         ("use_bias", "add_bias_linear"),
         ("layer_norm_epsilon", "layernorm_epsilon"),

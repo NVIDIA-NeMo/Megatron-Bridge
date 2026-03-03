@@ -124,7 +124,7 @@ class TestNemotronHModel4BProvider:
         assert provider.kv_channels == 128
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 12288
-        assert provider.hybrid_override_pattern == "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
+        assert provider.hybrid_layer_pattern == "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
         assert provider.use_mamba_mem_eff_path is False
 
     def test_nemotron_h_4b_override_configuration(self):
@@ -159,7 +159,7 @@ class TestNemotronHModel8BProvider:
         assert provider.num_attention_heads == 32
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 21504
-        assert provider.hybrid_override_pattern == "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
+        assert provider.hybrid_layer_pattern == "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
 
     def test_nemotron_h_8b_override_configuration(self):
         """Test Nemotron-H 8B model with overridden configuration."""
@@ -192,7 +192,7 @@ class TestNemotronHModel47BProvider:
         assert provider.ffn_hidden_size == 30720
         assert (
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
-            in provider.hybrid_override_pattern
+            in provider.hybrid_layer_pattern
         )
 
     def test_nemotron_h_47b_override_configuration(self):
@@ -226,7 +226,7 @@ class TestNemotronHModel56BProvider:
         assert provider.ffn_hidden_size == 32768
         assert (
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
-            in provider.hybrid_override_pattern
+            in provider.hybrid_layer_pattern
         )
 
     def test_nemotron_h_56b_override_configuration(self):
@@ -308,7 +308,7 @@ class TestNemotronNano9Bv2Provider:
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 15680
         assert provider.mamba_head_dim == 80
-        assert provider.hybrid_override_pattern == "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
+        assert provider.hybrid_layer_pattern == "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
 
     def test_nemotron_nano_9b_v2_override_configuration(self):
         """Test Nemotron Nano v2 9B model with overridden configuration."""
@@ -347,7 +347,7 @@ class TestNemotronNano12Bv2Provider:
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 20480
         assert provider.mamba_head_dim == 80
-        assert provider.hybrid_override_pattern == "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
+        assert provider.hybrid_layer_pattern == "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
 
     def test_nemotron_nano_12b_v2_override_configuration(self):
         """Test Nemotron Nano v2 12B model with overridden configuration."""
@@ -387,7 +387,7 @@ class TestNemotron3NanoProvider:
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 1856
         assert provider.mamba_head_dim == 64
-        assert provider.hybrid_override_pattern == "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+        assert provider.hybrid_layer_pattern == "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
 
     def test_nemotron_3_nano_moe_configuration(self):
         """Test Nemotron 3 Nano model MoE-specific configuration."""
@@ -456,7 +456,7 @@ class TestHybridPatterns:
         ]
 
         for provider in providers:
-            pattern = provider.hybrid_override_pattern
+            pattern = provider.hybrid_layer_pattern
             assert "M" in pattern  # Mamba layers
             assert "*" in pattern  # Attention layers
             assert len(pattern) > 0

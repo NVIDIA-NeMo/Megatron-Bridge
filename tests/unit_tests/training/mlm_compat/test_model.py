@@ -372,7 +372,7 @@ class TestMambaModelProvider:
         # Hybrid model parameters
         args.hybrid_attention_ratio = 0.3
         args.hybrid_mlp_ratio = 0.3
-        args.hybrid_override_pattern = None
+        args.hybrid_layer_pattern = None
 
         return args
 
@@ -419,7 +419,7 @@ class TestMambaModelProvider:
             pre_process=True,
             hybrid_attention_ratio=0.3,
             hybrid_mlp_ratio=0.3,
-            hybrid_override_pattern=None,
+            hybrid_layer_pattern=None,
             post_process=True,
             fp16_lm_cross_entropy=False,
             parallel_output=True,

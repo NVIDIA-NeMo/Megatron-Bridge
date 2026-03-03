@@ -97,6 +97,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
     hybrid_override_pattern: Optional[str] = None
+    hybrid_layer_pattern: Optional[str] = None
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
     position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
@@ -168,6 +169,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             max_sequence_length=self.seq_length,
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             hybrid_mlp_ratio=self.hybrid_mlp_ratio,
+            hybrid_layer_pattern=self.hybrid_layer_pattern,
             hybrid_override_pattern=self.hybrid_override_pattern,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
