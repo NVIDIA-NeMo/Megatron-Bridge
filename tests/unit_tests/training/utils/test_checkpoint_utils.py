@@ -768,8 +768,6 @@ class TestCheckpointUtils:
             assert isinstance(result["flags"]["enabled"], bool)
             assert result["flags"]["debug"] is None
 
-    # ===== is_checkpoint_iteration_directory TESTS =====
-
     def test_is_iteration_dir_with_run_config(self, tmp_path):
         """Test detection via run_config.yaml (Bridge checkpoint)."""
         iter_dir = tmp_path / "iter_0001000"
