@@ -596,8 +596,8 @@ def train(
         if (
             ckpt_config.save
             and global_state.train_state.step != 0
-            and ckpt_config.save_interval
-            and global_state.train_state.step % ckpt_config.save_interval != 0
+            and ckpt_config.save_interval != 0
+            and (ckpt_config.save_interval is None or global_state.train_state.step % ckpt_config.save_interval != 0)
         ):
             save_checkpoint_and_time(
                 global_state,
