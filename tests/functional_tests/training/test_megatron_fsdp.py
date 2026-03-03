@@ -311,7 +311,12 @@ class TestMegatronFSDP:
 
             # Verify FSDP DTensor checkpoint files
             torch.distributed.barrier()
-            verify_checkpoint_files(checkpoint_dir, total_iters, ckpt_format=cfg.checkpoint.ckpt_format)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                total_iters,
+                ckpt_format=cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(tmp_path)
@@ -355,7 +360,12 @@ class TestMegatronFSDP:
             torch.distributed.barrier()
 
             # Verify FSDP DTensor checkpoint files from first run
-            verify_checkpoint_files(checkpoint_dir, checkpoint_iters, ckpt_format=cfg_first.checkpoint.ckpt_format)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                checkpoint_iters,
+                ckpt_format=cfg_first.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_first.checkpoint.storage_writers_per_rank,
+            )
 
             torch.distributed.barrier()
 
@@ -376,7 +386,12 @@ class TestMegatronFSDP:
             torch.distributed.barrier()
 
             # Verify FSDP DTensor checkpoint files from second run (should be at total_iters)
-            verify_checkpoint_files(checkpoint_dir, total_iters, ckpt_format=cfg_second.checkpoint.ckpt_format)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                total_iters,
+                ckpt_format=cfg_second.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_second.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(shared_base_dir)

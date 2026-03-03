@@ -466,7 +466,6 @@ class ModelParallelKwargs(TypedDict, total=False):
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
-    moe_extended_tp: bool
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
