@@ -25,7 +25,6 @@ jobs:
   download:
     name: Download Model
     runs-on: self-hosted-nemo
-    environment: nemo-ci
     env:
       HF_HUB_OFFLINE: 0
       HF_HOME: /mnt/datadrive/TestData/HF_HOME
@@ -47,7 +46,7 @@ jobs:
         env:
           HF_ACCESS_TOKEN: ${{ secrets.HF_ACCESS_TOKEN }}
         run: |
-            hf auth login --token ${HF_ACCESS_TOKEN}
+          hf auth login --token ${HF_ACCESS_TOKEN}
 
       - name: Download model
         env:

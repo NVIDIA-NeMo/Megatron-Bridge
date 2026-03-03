@@ -31,7 +31,7 @@ class TestOptimizerUtils:
 
         optim_cfg, _ = distributed_fused_adam_with_cosine_annealing(
             adam_beta2=0.98,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             weight_decay=0.01,
             max_lr=3e-4,
             min_lr=3e-5,
@@ -61,7 +61,7 @@ class TestOptimizerUtils:
         optim_cfg, _ = distributed_fused_adam_with_cosine_annealing_samples(
             precision="bf16-mixed",
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             weight_decay=0.1,
             max_lr=1e-4,
             min_lr=1e-5,

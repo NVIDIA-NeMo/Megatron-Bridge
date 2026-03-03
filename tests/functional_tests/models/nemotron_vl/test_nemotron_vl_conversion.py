@@ -20,8 +20,17 @@ import sys
 from pathlib import Path
 
 import pytest
+from torch import nn
 from transformers import AutoConfig, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+
+def _fix_tied_weights_keys(model: nn.Module):
+    """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
+    for module in model.modules():
+        tied = getattr(module, "_tied_weights_keys", None)
+        if isinstance(tied, list):
+            module._tied_weights_keys = {k: k for k in tied}
 
 
 NEMOTRON_VL_HF_ID = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
@@ -118,6 +127,7 @@ class TestNemotronVLConversion:
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory
+        _fix_tied_weights_keys(model)
         model.save_pretrained(model_dir, safe_serialization=True)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
@@ -145,8 +155,7 @@ class TestNemotronVLConversion:
         assert config_file.exists(), f"config.json not found at {config_file}"
 
         # Check for model weights (safetensors preferred)
-        weights_file = model_path / "model-00001-of-00006.safetensors"
-        assert weights_file.exists(), f"Model weights file not found in {model_path}"
+        assert list(model_path.glob("model*.safetensors")), f"Model weights file not found in {model_path}"
 
         # Check for tokenizer files
         tokenizer_config_file = model_path / "tokenizer_config.json"
@@ -236,8 +245,7 @@ class TestNemotronVLConversion:
         assert config_file.exists(), f"config.json not found in converted model at {config_file}"
 
         # Check for model weights file (could be either safetensors or pytorch_model.bin)
-        weights_file_safetensors = converted_model_dir / "model-00001-of-00006.safetensors"
-        assert weights_file_safetensors.exists(), (
+        assert list(converted_model_dir.glob("model*.safetensors")), (
             f"Model weights file not found in converted model at {converted_model_dir}"
         )
 

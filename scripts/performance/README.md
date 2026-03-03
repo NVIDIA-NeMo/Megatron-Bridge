@@ -34,13 +34,42 @@ There are configuration files- `workload_base_configs.py` for supported models i
 
   Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
 
-## Step 3. Run instructions
+### Step 3. Run instructions
+
+#### <ins>Examples</ins>
 
 The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_family_name <model name> --model_recipe_name <model_recipe_name> -ng <num gpus>`
 
-#### Mandatory arguments
+You can also create a bash file to define the experiment arguments and launch it. For e.g. The bash file will look as follows-
+
+```
+CONTAINER="nvcr.io/nvidia/nemo:25.11.01"
+MBRIDGE_PATH="</path/to/mbridge>"
+
+JOB_NAME="dsv3_gb300"
+RESULTS_DIR="${MBRIDGE_PATH}/results/${JOB_NAME}"
+
+python scripts/performance/setup_experiment.py 
+  --account <slurm_account> \
+  -i ${CONTAINER} \
+  --partition <slurm_partition> \
+  -m deepseek \
+  -mr deepseek_v3 \
+  --log_dir ${RESULTS_DIR} \
+  --num_gpus 256 \
+  --gpus_per_node 4 \
+  -t "00:15:00" \
+  -g gb300 \ 
+  -c fp8_mx \
+  -hf <HF_TOKEN>
+```
+
+
+  Generate your personal HuggingFace Access Token from <https://huggingface.co/settings/tokens/new?>
+
+#### <ins>Mandatory arguments</ins>
 - `-m/--model_family_name`
 - `-mr/--model_recipe_name`
 - `-ng/--num_gpus`
@@ -48,15 +77,15 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-a/--account` (Mandatory for Slurm based clusters)
 - `-p/--partition` (Mandatory for Slurm based clusters)
 
-### Configuration Options
+#### <ins>Configuration Options</ins>
 
-#### Container Image
+##### Container Image
 
 - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY.
   For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of NGC containers refer <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags>.
   Defaults to `nvcr.io/nvidia/nemo:dev`.
 
-#### General arguments
+##### General arguments
 
 - `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
 - `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
@@ -67,7 +96,7 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-ng/--num_gpus`: Number of GPUs.
 - `-d/--dryrun`: Print the generated `sbatch` script without launching.
 
-#### Training arguments
+##### Training arguments
 
 - `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
@@ -75,22 +104,21 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-mb/--micro_batch_size`: Override micro-batch size.
 - `-sl/--seq_length`: Sequence length.
 
-#### Optimizer arguments
+##### Optimizer arguments
 
 - `--lr`: Learning rate.
 - `--min_lr`: Minimum learning rate.
 - `--warmup_iters`: Warmup iterations. Default `10`.
 
-#### Checkpointing arguments
+##### Checkpointing arguments
 
 - `--pretrained_checkpoint`: Path to pretrained checkpoint.
 - `--save_dir`: Directory to save checkpoints.
 - `--load_dir`: Directory to load checkpoints.
 - `--save_interval`: Number of iterations between checkpoint saves.
 - `--most_recent_k`: Number of latest checkpoints to keep.
-- `--save_config_filepath`: Path to save the task configuration file.
 
-#### Data arguments
+##### Data arguments
 
 - `--data`: Dataset type to use (`mock`, `rp2`, `squad`, `squad_packed`). Default `mock`.
 - `--dataset_paths`: Dataset paths (for rp2 dataset). Accepts multiple paths.
@@ -100,7 +128,7 @@ The following line shows an example of how you can launch a pre-training benchma
 - `--packed_sequence`: Enable packed sequences.
 - `--head_only`: Use only head data (for rp2 dataset).
 
-#### Tokenizer arguments
+##### Tokenizer arguments
 
 - `--tokenizer_type`: Tokenizer type (`NullTokenizer`, `HuggingFaceTokenizer`, `SentencePieceTokenizer`).
 - `--tokenizer_model`: Path to tokenizer model (automatically provided by launcher).
@@ -109,7 +137,7 @@ The following line shows an example of how you can launch a pre-training benchma
   - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
   - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
 
-#### Parallelism arguments
+##### Parallelism arguments
 
 - `-tp/--tensor_model_parallel_size`: Tensor parallel degree. Intra-layer model parallelism; splits tensors across GPU ranks.
 - `-pp/--pipeline_model_parallel_size`: Pipeline parallel degree. Inter-layer model parallelism; splits transformer layers across GPU ranks.
@@ -118,19 +146,19 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-ep/--expert_model_parallel_size`: MoE expert parallel degree. Distributes MoE experts across sub data parallel dimension.
 - `-et/--expert_tensor_parallel_size`: Expert tensor parallel degree. Intra-layer tensor model parallelism for expert layer. Use `-et` (no value) for `None` or `-et <int>`.
 
-#### Slurm arguments
+##### Slurm arguments
 
 - `-a/--account`: Slurm account to use for experiment.
 - `-p/--partition`: Slurm partition to use for experiment.
 - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
-- `-gn/--gpus_per_node`: GPUs per node. Default `8`.
+- `-gn/--gpus_per_node`: GPUs per node. Default `None`. If not provided, will be inferred from the GPU type.
 - `-cm/--custom_mounts`: Comma-separated list of host mounts to expose inside the container.
 - `-ce/--custom_env_vars`: Comma-separated string of environment variables (format: `key1=value1,key2=value2`).
 - `-cs/--custom_srun_args`: Comma-separated string of srun arguments.
 - `--gres`: Slurm generic resources to request (e.g., `gpu:4`).
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
 
-#### DGXCloud arguments
+##### DGXCloud arguments
 
 - `--dgxc_cluster`: DGXCloud cluster to use for experiment.
 - `--dgxc_base_url`: DGXCloud base URL.
@@ -141,18 +169,21 @@ The following line shows an example of how you can launch a pre-training benchma
 - `--dgxc_pvc_claim_name`: DGXCloud PVC claim name.
 - `--dgxc_pvc_mount_path`: DGXCloud PVC mount path.
 
-#### Performance arguments
+##### Performance arguments
 
-- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`).
+- `-g/--gpu`: Target GPU type (`h100`, `b200`, `gb200`, `gb300`, `b300`).
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
+- `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.
 - `--profiling_stop_step`: Defines stop step for profiling. Default `11`.
+- `-mh/--record_memory_history`: Enable PyTorch profiler memory history recording. Pass `true` or `false`. Enabled by default (if pytorch_profiler is enabled).
 - `--profiling_gpu_metrics`: Enable nsys GPU metrics. Disabled by default.
 - `--profiling_ranks`: Comma-separated list of ranks to target for profiling. Defaults to just the first rank.
 - `--use_tokendrop`: Enable token drop (currently DeepSeek v3 only). Pass `true` or `false`. Disabled by default.
 - `--use_megatron_fsdp`: Enable Megatron FSDP integration. Pass `true` or `false`. Disabled by default.
+- `--nccl_ub`: Enable NCCL user buffer for FSDP communication. Pass `true` or `false`. Disabled by default.
 - `--cuda_graph_impl`: CUDA graph implementation (`none`, `local`, `transformer_engine`).
 - `--cuda_graph_scope`: CUDA graph capture scope (`full_iteration`, `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, `mamba`). Comma-separated list of scopes is allowed.
 - `--moe_a2a_overlap`: Set the `moe_a2a_overlap` configuration flag. Pass `true` or `false`.
@@ -160,7 +191,7 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-ol/--activation_offload_layers`: Number of transformer layers to offload activations to CPU memory.
 - `--recompute_modules`: Comma-separated list of modules to recompute.
 
-#### Logging arguments
+##### Logging arguments
 
 - `-l/--log_dir`: Directory for logging experiment results. Defaults to `NEMORUN_HOME`.
   - Make sure the environment variable `NEMORUN_HOME=<log_dir>` is accessible and set correctly in your virtual environment.
@@ -170,8 +201,14 @@ The following line shows an example of how you can launch a pre-training benchma
 - `-wde/--wandb_entity_name`: Weights & Biases entity name.
 - `-wdj/--wandb_experiment_name`: Weights & Biases experiment/run name.
 - `-wds/--wandb_save_dir`: Weights & Biases save directory.
+- - `--save_config_filepath`: Path to save the task configuration file.
 
-#### Testing arguments
+##### Config variant arguments
+
+- `-cv/--config_variant`: Config variant to use (e.g., `"v1"`, `"v2"`). Defaults to `"v2"` (`"v1"` if `"v2"` doens't exist). Use `--list_config_variants` to see available options.
+- `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
+
+##### Testing arguments
 
 - `--is_long_convergence_run`: If set, runs a long convergence run.
 - `--golden_values_path`: Path to golden values file.

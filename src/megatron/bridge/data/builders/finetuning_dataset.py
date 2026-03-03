@@ -22,7 +22,6 @@ from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
-from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -77,6 +76,7 @@ class FinetuningDatasetBuilder:
         self.packed_sequence_size = -1 if not packed_sequence_specs else packed_sequence_specs.packed_sequence_size
         self.dataset_kwargs = dataset_kwargs or {}
         self._pad_cu_seqlens = False if not packed_sequence_specs else packed_sequence_specs.pad_cu_seqlens
+        self._pad_seq_to_mult = None if not packed_sequence_specs else packed_sequence_specs.pad_seq_to_mult
 
         self.do_validation = do_validation
         self.do_test = do_test
@@ -106,6 +106,7 @@ class FinetuningDatasetBuilder:
                     seed=self.seed,
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
+                    pad_seq_to_mult=self._pad_seq_to_mult,
                 )
 
             if self.do_validation and not self.validation_path_packed.is_file():
@@ -119,6 +120,7 @@ class FinetuningDatasetBuilder:
                     seed=self.seed,
                     output_metadata_path=self.pack_metadata,
                     dataset_kwargs=self.dataset_kwargs,
+                    pad_seq_to_mult=self._pad_seq_to_mult,
                 )
 
     def build(self) -> list[Optional[Any]]:
@@ -216,6 +218,7 @@ class FinetuningDatasetBuilder:
             is_test=is_test,
             pack_metadata_file_path=None if is_not_packing else pack_metadata_path,
             pad_cu_seqlens=False if is_not_packing else self._pad_cu_seqlens,
+            pad_seq_to_mult=1 if is_not_packing else self._pad_seq_to_mult,
             **kwargs,
         )
 
@@ -235,7 +238,9 @@ class FinetuningDatasetBuilder:
             The Path object for the default packing directory.
         """
         tokenizer_model_name = self._extract_tokenizer_model_name()
-        default_pack_path = self.dataset_root / "packed" / tokenizer_model_name
+        default_pack_path = (
+            self.dataset_root / "packed" / f"{tokenizer_model_name}_pad_seq_to_mult{self._pad_seq_to_mult}"
+        )
         if not default_pack_path.exists():
             default_pack_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Using default path for packing files: {str(default_pack_path)}")
@@ -315,21 +320,13 @@ class FinetuningDatasetBuilder:
     def _extract_tokenizer_model_name(self) -> str:
         """Automatically get the model name from model path."""
         # Legacy tokenizer compatibility
-        if getattr(self.tokenizer, "legacy", False):
-            tokenizer_cls = _HuggingFaceTokenizer
-            tokenizer_instance = self.tokenizer
-        else:
-            tokenizer_cls = HuggingFaceTokenizer
-            tokenizer_instance = self.tokenizer._tokenizer
+        tokenizer_cls = HuggingFaceTokenizer
+        tokenizer_instance = self.tokenizer._tokenizer
 
         if self.packed_sequence_specs and self.packed_sequence_specs.tokenizer_model_name is not None:
             return self.packed_sequence_specs.tokenizer_model_name
         elif isinstance(tokenizer_instance, tokenizer_cls):
-            # Legacy tokenizer compatibility
-            if getattr(self.tokenizer, "legacy", False):
-                name = self.tokenizer._tokenizer.name_or_path
-            else:
-                name = self.tokenizer.path
+            name = self.tokenizer.path
 
             if name.endswith("context/nemo_tokenizer"):
                 # NEMO_HOME/hf_org/hf_model/context/nemo_tokenizer => hf_org--hf_model

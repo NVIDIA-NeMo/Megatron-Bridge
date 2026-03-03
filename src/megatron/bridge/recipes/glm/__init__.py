@@ -13,16 +13,20 @@
 # limitations under the License.
 
 from .glm45 import (
-    glm45_355b_finetune_config,
+    glm45_355b_peft_config,
     glm45_355b_pretrain_config,
-    glm45_air_106b_finetune_config,
+    glm45_355b_sft_config,
+    glm45_air_106b_peft_config,
     glm45_air_106b_pretrain_config,
+    glm45_air_106b_sft_config,
 )
 
 
 __all__ = [
     "glm45_355b_pretrain_config",
     "glm45_air_106b_pretrain_config",
-    "glm45_355b_finetune_config",
-    "glm45_air_106b_finetune_config",
+    "glm45_355b_sft_config",
+    "glm45_air_106b_sft_config",
+    "glm45_355b_peft_config",
+    "glm45_air_106b_peft_config",
 ]

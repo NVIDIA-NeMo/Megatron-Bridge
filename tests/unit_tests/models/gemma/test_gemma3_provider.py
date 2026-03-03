@@ -416,6 +416,89 @@ class TestGemma3CustomComponents:
             # Verify that RotaryEmbedding was called for local rope
             assert mock_rotary_embedding.call_count >= 1
 
+    def test_gemma3_rotary_embedding_forward_with_cp_group(self):
+        """Test Gemma3RotaryEmbedding forward method with cp_group (non-None path)."""
+        # Create a minimal Gemma3RotaryEmbedding instance via __new__ to avoid complex init
+        rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
+
+        # Mock the rope_local attribute
+        mock_rope_local = Mock()
+        mock_rope_local.forward = Mock(return_value=torch.tensor([1.0, 2.0]))
+        rope_emb.rope_local = mock_rope_local
+
+        # Mock the parent class forward method (called via super().forward)
+        mock_global_output = torch.tensor([3.0, 4.0])
+        mock_local_output = torch.tensor([1.0, 2.0])
+
+        # Create a mock cp_group (ProcessGroup)
+        mock_cp_group = Mock()
+
+        with patch.object(
+            Gemma3RotaryEmbedding.__bases__[0], "forward", return_value=mock_global_output
+        ) as mock_super_forward:
+            result = rope_emb.forward(max_seq_len=1024, offset=0, packed_seq=False, cp_group=mock_cp_group)
+
+            # Verify super().forward was called with cp_group
+            mock_super_forward.assert_called_once_with(1024, 0, False, mock_cp_group)
+
+            # Verify rope_local.forward was called with cp_group
+            mock_rope_local.forward.assert_called_once_with(1024, 0, False, mock_cp_group)
+
+            # Verify return is tensor with (rope_local, rope_global) as first dim
+            assert isinstance(result, torch.Tensor)
+            assert result.ndim >= 1
+            assert result.size(0) == 2
+            rope_local_result, rope_global_result = result
+            assert torch.equal(rope_local_result, mock_local_output)
+            assert torch.equal(rope_global_result, mock_global_output)
+
+    def test_gemma3_rotary_embedding_forward_without_cp_group(self):
+        """Test Gemma3RotaryEmbedding forward method without cp_group (cached path)."""
+        # Create a minimal Gemma3RotaryEmbedding instance via __new__
+        rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
+
+        # Mock the _forward_cached method
+        mock_cached_result = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        rope_emb._forward_cached = Mock(return_value=mock_cached_result)
+
+        # Call forward without cp_group (None)
+        result = rope_emb.forward(max_seq_len=1024, offset=0, packed_seq=False, cp_group=None)
+
+        # Verify _forward_cached was called
+        rope_emb._forward_cached.assert_called_once_with(1024, 0, False)
+
+        # Verify result matches cached result
+        compare_results = torch.all(result == mock_cached_result)
+        assert compare_results.item()
+
+    def test_gemma3_rotary_embedding_forward_cached(self):
+        """Test Gemma3RotaryEmbedding _forward_cached method."""
+        # Create a minimal Gemma3RotaryEmbedding instance via __new__
+        rope_emb = Gemma3RotaryEmbedding.__new__(Gemma3RotaryEmbedding)
+
+        # Mock the rope_local attribute
+        mock_rope_local = Mock()
+        mock_rope_local.forward = Mock(return_value=torch.tensor([1.0, 2.0]))
+        rope_emb.rope_local = mock_rope_local
+
+        mock_global_output = torch.tensor([3.0, 4.0])
+
+        with patch.object(
+            Gemma3RotaryEmbedding.__bases__[0], "forward", return_value=mock_global_output
+        ) as mock_super_forward:
+            result = rope_emb._forward_cached(max_seq_len=512, offset=10, packed_seq=True)
+
+            # Verify super().forward was called with cp_group=None
+            mock_super_forward.assert_called_once_with(512, 10, True, None)
+
+            # Verify rope_local.forward was called with cp_group=None
+            mock_rope_local.forward.assert_called_once_with(512, 10, True, None)
+
+            # Verify return is tensor with (rope_local, rope_global) as first dim
+            assert isinstance(result, torch.Tensor)
+            assert result.ndim >= 1
+            assert result.size(0) == 2
+
     def test_te_row_parallel_linear_layer_norm(self):
         """Test TERowParallelLinearLayerNorm initialization and forward."""
         # Test that the class exists and can be imported

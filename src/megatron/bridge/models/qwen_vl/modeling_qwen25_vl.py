@@ -168,7 +168,7 @@ class Qwen25VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
 
             if pixel_values is not None:
-                image_embeds = self.get_image_features(pixel_values, image_grid_thw)
+                image_embeds = self.get_image_features(pixel_values, image_grid_thw, return_dict=True).pooler_output
                 image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
                 image_mask, _ = self.get_placeholder_mask(
                     input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
@@ -176,7 +176,9 @@ class Qwen25VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
             if pixel_values_videos is not None:
-                video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw)
+                video_embeds = self.get_video_features(
+                    pixel_values_videos, video_grid_thw, return_dict=True
+                ).pooler_output
                 video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
                 _, video_mask = self.get_placeholder_mask(
                     input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
@@ -210,6 +212,7 @@ class Qwen25VLModel(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 

@@ -30,6 +30,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
@@ -78,7 +79,12 @@ class TestSupervisedFinetuning:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Create finetune config and run (lower LR, different seed, use pretrained checkpoint)
             finetune_cfg = self._create_config(
@@ -91,7 +97,12 @@ class TestSupervisedFinetuning:
                 pretrained_checkpoint=pretrain_checkpoint_dir,
             )
             finetune(finetune_cfg, forward_step)
-            verify_checkpoint_files(finetune_checkpoint_dir, finetune_iters)
+            verify_checkpoint_files(
+                finetune_checkpoint_dir,
+                finetune_iters,
+                ckpt_format=finetune_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=finetune_cfg.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(shared_base_dir)
@@ -107,15 +118,21 @@ class TestSupervisedFinetuning:
         pretrained_checkpoint=None,
     ):
         """Create training configuration with customizable parameters."""
+        # Keep warmup strictly below total iterations to avoid scheduler assertion.
+        warmup_iters = 2 if train_iters >= 10 else 1
+        if train_iters is not None:
+            warmup_iters = min(warmup_iters, max(train_iters - 1, 0))
         return ConfigContainer(
             model=Llama3ModelProvider145M(seq_length=seq_length),
             train=TrainingConfig(
                 train_iters=train_iters,
-                eval_interval=5,
-                eval_iters=0,
                 global_batch_size=8,
                 micro_batch_size=1,
                 exit_signal_handler=True,
+            ),
+            validation=ValidationConfig(
+                eval_interval=5,
+                eval_iters=0,
             ),
             optimizer=OptimizerConfig(
                 optimizer="adam",
@@ -123,7 +140,7 @@ class TestSupervisedFinetuning:
                 fp16=False,
                 adam_beta1=0.9,
                 adam_beta2=0.95,
-                adam_eps=1e-5,
+                adam_eps=1e-8,
                 use_distributed_optimizer=True,
                 clip_grad=1.0,
                 lr=lr,
@@ -135,7 +152,7 @@ class TestSupervisedFinetuning:
                 end_weight_decay=0.033,
                 weight_decay_incr_style="constant",
                 lr_decay_style="cosine",
-                lr_warmup_iters=2 if train_iters >= 10 else 1,
+                lr_warmup_iters=warmup_iters,
                 lr_warmup_init=0.0,
                 lr_decay_iters=train_iters,
                 override_opt_param_scheduler=True,

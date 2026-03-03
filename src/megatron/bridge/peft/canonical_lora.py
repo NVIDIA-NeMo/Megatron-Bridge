@@ -18,11 +18,12 @@ from typing import Any, List, Literal, Optional, Tuple
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.transformer.moe.router import TopKRouter
 from torch import nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, LoRATopKRouter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -269,7 +270,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         """
 
         # Skip already transformed modules
-        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate)):
+        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
@@ -280,9 +281,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            input_is_parallel, in_features, out_features, disable_tp_comm, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(m, is_expert=is_expert)
-            )
+            attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 
             adapter_kwargs = dict(
                 dim=self.dim,
@@ -292,15 +291,15 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 column_init_method=self.lora_A_init_method,
                 row_init_method=self.lora_B_init_method,
                 gather_output=False,
-                input_is_parallel=input_is_parallel,
+                input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert,
-                disable_tensor_parallel_comm=disable_tp_comm,
-                disable_sequence_parallel_comm=disable_sp_comm,
-                base_linear_is_parallel=base_linear_is_parallel,
+                disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
+                disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
 
             canonical_submodules = self.canonical_mapping[match]
@@ -310,25 +309,27 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 kv_out_features = m.config.kv_channels * m.config.num_query_groups
                 q_out_features = m.config.kv_channels * m.config.num_attention_heads
                 if "linear_q" in canonical_submodules:
-                    adapter_q = ParallelLinearAdapter(in_features, q_out_features, **adapter_kwargs)
+                    adapter_q = ParallelLinearAdapter(attrs.in_features, q_out_features, **adapter_kwargs)
                 if "linear_k" in canonical_submodules:
-                    adapter_k = ParallelLinearAdapter(in_features, kv_out_features, **adapter_kwargs)
+                    adapter_k = ParallelLinearAdapter(attrs.in_features, kv_out_features, **adapter_kwargs)
                 if "linear_v" in canonical_submodules:
-                    adapter_v = ParallelLinearAdapter(in_features, kv_out_features, **adapter_kwargs)
+                    adapter_v = ParallelLinearAdapter(attrs.in_features, kv_out_features, **adapter_kwargs)
                 adapters = ModuleDict({"adapter_q": adapter_q, "adapter_k": adapter_k, "adapter_v": adapter_v})
                 return LoRALinearSplitQKV(m, adapters)
 
             if name == "linear_fc1":
                 adapter_up, adapter_gate = None, None
                 if "linear_fc1_up" in canonical_submodules:
-                    adapter_up = ParallelLinearAdapter(in_features, out_features // 2, **adapter_kwargs)
+                    adapter_up = ParallelLinearAdapter(attrs.in_features, attrs.out_features // 2, **adapter_kwargs)
                 if "linear_fc1_gate" in canonical_submodules:
-                    adapter_gate = ParallelLinearAdapter(in_features, out_features // 2, **adapter_kwargs)
+                    adapter_gate = ParallelLinearAdapter(attrs.in_features, attrs.out_features // 2, **adapter_kwargs)
                 adapters = ModuleDict({"adapter_up": adapter_up, "adapter_gate": adapter_gate})
                 return LoRALinearSplitFC1UpGate(m, adapters)
 
-            adapter = ParallelLinearAdapter(in_features, out_features, **adapter_kwargs)
+            adapter = ParallelLinearAdapter(attrs.in_features, attrs.out_features, **adapter_kwargs)
             logger.info(f"Adding lora to: {full_name}")
+            if isinstance(m, TopKRouter):
+                return LoRATopKRouter(m, adapter)
             return LoRALinear(m, adapter)
 
         return m

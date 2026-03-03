@@ -21,6 +21,9 @@ from megatron.core import tensor_parallel
 from megatron.core.enums import ModelType
 from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.core.models.gpt import GPTModel
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_decoder_block_spec,
     get_gpt_layer_local_spec,
@@ -48,7 +51,7 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
         use_kitchen: Whether to use kitchen extension
 
     Returns:
-        transformer_layer_spec: The transformer layer specification
+        ModuleSpec: The transformer layer specification
     """
     if use_te:
         return get_gpt_layer_with_transformer_engine_spec(
@@ -56,7 +59,6 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
-            experimental_attention_variant=getattr(args, "experimental_attention_variant", None),
             moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             qk_l2_norm=args.qk_l2_norm,
             use_kitchen=use_kitchen,
@@ -67,7 +69,6 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
-            experimental_attention_variant=getattr(args, "experimental_attention_variant", None),
             moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             normalization=args.normalization,
             use_kitchen=use_kitchen,
@@ -90,7 +91,11 @@ def _gpt_provider(
     if config is None:
         config = _transformer_config_from_args(args)
 
-    if args.num_experts:
+    if getattr(args, "experimental_attention_variant", None) is not None:
+        transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
+            config=config, vp_stage=vp_stage
+        )
+    elif args.num_experts:
         # Define the decoder block spec
         transformer_layer_spec = get_gpt_decoder_block_spec(
             config,

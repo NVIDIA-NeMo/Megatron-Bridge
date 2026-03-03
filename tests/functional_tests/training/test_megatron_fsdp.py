@@ -32,6 +32,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -87,14 +88,22 @@ def create_base_training_config(
     """Create a standardized training configuration."""
     base_config = {
         "train_iters": train_iters,
-        "eval_interval": train_iters + 1,  # Disable evaluation to avoid hanging
-        "eval_iters": 0,  # No evaluation iterations
         "global_batch_size": global_batch_size,
         "micro_batch_size": micro_batch_size,
         "exit_signal_handler": True,
     }
     base_config.update(kwargs)
     return TrainingConfig(**base_config)
+
+
+def create_base_validation_config(train_iters: int, **kwargs) -> ValidationConfig:
+    """Create a standardized validation configuration."""
+    base_config = {
+        "eval_interval": train_iters + 1,  # Disable evaluation to avoid hanging
+        "eval_iters": 0,  # No evaluation iterations
+    }
+    base_config.update(kwargs)
+    return ValidationConfig(**base_config)
 
 
 def create_base_optimizer_config(**kwargs) -> OptimizerConfig:
@@ -221,6 +230,7 @@ def create_fsdp_config_container(
         model=create_fsdp_model_config(seq_length, **overrides.pop("model", {})),
         dist=DistributedInitConfig(use_megatron_fsdp=True),
         train=create_base_training_config(train_iters, **overrides.pop("train", {})),
+        validation=create_base_validation_config(train_iters, **overrides.pop("validation", {})),
         optimizer=create_base_optimizer_config(**overrides.pop("optimizer", {})),
         scheduler=create_base_scheduler_config(train_iters, **overrides.pop("scheduler", {})),
         ddp=create_base_ddp_config(overlap_param_gather, **overrides.pop("ddp", {})),
@@ -266,7 +276,6 @@ class TestMegatronFSDP:
         finally:
             clear_directories(tmp_path)
 
-    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_with_checkpoint(self, tmp_path):
         """
@@ -302,7 +311,12 @@ class TestMegatronFSDP:
 
             # Verify FSDP DTensor checkpoint files
             torch.distributed.barrier()
-            verify_checkpoint_files(checkpoint_dir, total_iters, ckpt_format=cfg.checkpoint.ckpt_format)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                total_iters,
+                ckpt_format=cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(tmp_path)
@@ -346,7 +360,12 @@ class TestMegatronFSDP:
             torch.distributed.barrier()
 
             # Verify FSDP DTensor checkpoint files from first run
-            verify_checkpoint_files(checkpoint_dir, checkpoint_iters, ckpt_format=cfg_first.checkpoint.ckpt_format)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                checkpoint_iters,
+                ckpt_format=cfg_first.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_first.checkpoint.storage_writers_per_rank,
+            )
 
             torch.distributed.barrier()
 
@@ -367,7 +386,12 @@ class TestMegatronFSDP:
             torch.distributed.barrier()
 
             # Verify FSDP DTensor checkpoint files from second run (should be at total_iters)
-            verify_checkpoint_files(checkpoint_dir, total_iters, ckpt_format=cfg_second.checkpoint.ckpt_format)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                total_iters,
+                ckpt_format=cfg_second.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg_second.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(shared_base_dir)

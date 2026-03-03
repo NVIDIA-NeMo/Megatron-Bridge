@@ -14,20 +14,28 @@
 
 import types
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers import AutoModel, Gemma3Model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+from megatron.bridge.utils.common_utils import (
+    hook_hf_module_setattr_for_tp_grad_sync,
+    slice_batch_for_context_parallel,
+)
 from megatron.bridge.utils.import_utils import safe_import_from
+
+
+if TYPE_CHECKING:
+    from megatron.core.packed_seq_params import PackedSeqParams
 
 
 TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
@@ -110,12 +118,16 @@ class Gemma3VLModel(MegatronModule):
         pixel_values: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
+        packed_seq_params: Optional["PackedSeqParams"] = None,
         *,
         loss_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         r"""
-        image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
-            The temporal, height and width of feature shape of each image in LLM.
+        Forward pass combining HuggingFace vision encoder with Megatron language model.
+
+        Returns:
+            tuple: (output_tensor, loss_mask) where output_tensor contains model output
+                   and loss_mask is the CP-sliced mask for consistent loss computation.
         """
         if self.pre_process:
             if inputs_embeds is None:
@@ -126,7 +138,7 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
 
             if pixel_values is not None:
-                image_features = self.get_image_features(pixel_values)
+                image_features = self.get_image_features(pixel_values, return_dict=True).pooler_output
 
                 # TODO might need to check if input_ids is None
                 assert input_ids is not None
@@ -134,7 +146,7 @@ class Gemma3VLModel(MegatronModule):
                 special_image_mask = special_image_mask.expand_as(inputs_embeds).to(inputs_embeds.device)
 
                 if inputs_embeds[special_image_mask].numel() != image_features.numel():
-                    image_tokens_in_text = special_image_mask.sum(dim=1).item(dim=0)[0]
+                    image_tokens_in_text = special_image_mask[:, :, 0].sum().item()
                     raise ValueError(
                         f"Number of images does not match number of special image tokens in the input text. "
                         f"Got {image_tokens_in_text} image tokens in the text but {image_features.shape[0] * image_features.shape[1]} "
@@ -144,18 +156,38 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
+            # Apply sequence parallelism scatter if enabled
+            if self.config.sequence_parallel:
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+
+        # Compute attention mask on FULL sequence (before CP slicing)
+        # This is needed because image regions need bidirectional attention
         attention_mask = self._compute_attention_mask(input_ids)
+
+        # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
+        # This must happen AFTER vision-text merge so image token positions are correct
+        inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
+            inputs_embeds=inputs_embeds,
+            labels=labels,
+            loss_mask=loss_mask,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=packed_seq_params,
+            pg_collection=self.config._pg_collection,
+        )
 
         outputs = self.language_model.forward(
             input_ids=None,
             position_ids=position_ids,
-            attention_mask=attention_mask,  # (B, 1, T, T)
-            decoder_input=inputs_embeds,  # (T, B, D)
-            labels=labels,  # (B, T)
+            attention_mask=attention_mask,
+            decoder_input=inputs_embeds,
+            labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
-        return outputs
+        # Return both outputs and the CP-sliced loss_mask for consistent loss computation
+        return (outputs, loss_mask)
 
     def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):
         """Freeze model modules.
@@ -191,7 +223,7 @@ class Gemma3VLModel(MegatronModule):
     def _compute_attention_mask(
         self,
         input_ids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Optional[torch.Tensor]:
         if not self.pre_process:
             return None
         batch_size, seq_len = input_ids.shape

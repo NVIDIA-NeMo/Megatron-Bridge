@@ -38,6 +38,7 @@ from megatron.bridge.training.config import (
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -275,7 +276,7 @@ def _qwen25_vl_common(
     peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
-    _dataset_choice = dataset_type or "mock"
+    _dataset_choice = dataset_type or "hf"
     _processor_model = tokenizer_model or hf_path
 
     if _dataset_choice == "mock":
@@ -323,13 +324,15 @@ def _qwen25_vl_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
             manual_gc_interval=100,
             manual_gc_eval=100,
+        ),
+        validation=ValidationConfig(
+            eval_interval=eval_interval,
+            eval_iters=32,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
