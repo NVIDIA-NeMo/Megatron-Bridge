@@ -55,10 +55,6 @@ inputs:
   runner:
     description: "Runner to use for test"
     required: true
-  mcore-ref:
-    description: "MCore commit SHA to checkout for non-main variant testing"
-    required: false
-    default: ""
 
 runs:
   using: "composite"
@@ -69,16 +65,20 @@ runs:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
 
-    - name: Update MCore submodule
-      if: ${{ inputs.mcore-ref != '' }}
+    - name: Update MCore submodule (if triggered from MCore)
+      if: ${{ github.event.inputs.mcore_commit != '' }}
       shell: bash
       working-directory: ${{ github.workspace }}/Megatron-Bridge
       run: |
-        echo "🔄 Updating MCore submodule to: ${{ inputs.mcore-ref }}"
+        echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+        echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
         cd 3rdparty/Megatron-LM
-        git fetch origin ${{ inputs.mcore-ref }}
-        git checkout ${{ inputs.mcore-ref }}
-        echo "✅ MCore submodule updated to: $(git rev-parse --short HEAD)"
+        git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
+        git checkout ${{ github.event.inputs.mcore_commit }}
+
+        ACTUAL_COMMIT=$(git rev-parse HEAD)
+        echo "✅ MCore submodule updated to: ${ACTUAL_COMMIT}"
+        git log -1 --oneline
 
     - name: Install Azure CLI
       if: ${{ inputs.has-azure-credentials == 'true' }}
@@ -164,14 +164,37 @@ runs:
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
 
-          # Reinstall MCore if a non-default submodule ref was specified
-          if [ -n "${{ inputs.mcore-ref }}" ]; then
+          # Reinstall MCore if the submodule was updated
+          if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
             echo "🔄 Reinstalling MCore from updated submodule..."
             cd /opt/Megatron-Bridge
+
+            # Force uninstall existing megatron-core to ensure fresh install
             uv pip uninstall megatron-core || true
+
+            # Reinstall from the updated submodule
             uv sync --all-extras --all-groups
-            echo "✅ MCore reinstalled from ref: ${{ inputs.mcore-ref }}"
+            echo "✅ MCore reinstalled"
+
+            # Verify the commit matches what we expected
+            cd 3rdparty/Megatron-LM
+            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+            ACTUAL_COMMIT=$(git rev-parse HEAD)
+            echo "🔍 Verifying MCore commit..."
+            echo "   Expected: ${EXPECTED_COMMIT}"
+            echo "   Actual:   ${ACTUAL_COMMIT}"
+
+            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+              echo "   ❌ ERROR: Commit mismatch!"
+              exit 1
+            fi
+
+            echo "   ✅ MCore commit verified"
             cd /opt/Megatron-Bridge
+
+            # Store commit SHA for verification (since Docker build file was overridden by volume mount)
+            echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
+            echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
           fi
 
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?

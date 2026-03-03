@@ -23,13 +23,22 @@
 set -euo pipefail
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Pinned commit hashes — update these when bumping Megatron-LM versions
+# Pinned commit hashes — read from .main.commit / .dev.commit at repo root
 # ──────────────────────────────────────────────────────────────────────────────
-MAIN_COMMIT="107f6ae34e75b686d27fd1f4706cbc7be4b6f5c4"   # main branch  # pragma: allowlist secret
-DEV_COMMIT="bc9298cb5d4a5505d69f5e2b45f510d1b9a3b8f2"    # dev branch  # pragma: allowlist secret
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
+
+read_commit_file() {
+    local file="$REPO_ROOT/$1"
+    if [ ! -f "$file" ]; then
+        echo "[switch_mcore] ERROR: Missing commit file: $1" >&2
+        exit 1
+    fi
+    tr -d '[:space:]' < "$file"
+}
+
+MAIN_COMMIT="$(read_commit_file .main.commit)"
+DEV_COMMIT="$(read_commit_file .dev.commit)"
 SUBMODULE_PATH="$REPO_ROOT/3rdparty/Megatron-LM"
 
 usage() {
