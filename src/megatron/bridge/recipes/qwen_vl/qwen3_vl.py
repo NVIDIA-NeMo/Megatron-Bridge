@@ -110,7 +110,7 @@ def qwen3_vl_8b_sft_config() -> ConfigContainer:
 
     # Validation config
     cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
+    cfg.validation.eval_iters = 10
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

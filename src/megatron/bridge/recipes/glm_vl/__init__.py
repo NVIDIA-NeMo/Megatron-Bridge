@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .glm_45v import glm_45v_finetune_config
+from .glm_45v import (
+    glm_45v_sft_config,
+    glm_45v_peft_config,
+    set_glm_45v_pipeline_model_parallel_layout,
+)
 
 
 __all__ = [
-    "glm_45v_finetune_config",
+    "glm_45v_sft_config",
+    "glm_45v_peft_config",
+    "set_glm_45v_pipeline_model_parallel_layout",
 ]
