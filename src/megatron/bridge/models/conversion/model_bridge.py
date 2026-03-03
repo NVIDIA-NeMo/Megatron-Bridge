@@ -529,9 +529,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         capture_unquantized_state_dict = export_weight_dtype == "fp8"
         # Optional: capture per-rank, per-parameter unquantized shards for initializing
         # for loading original weights when fp8_param=True.
-        captured_state_dicts: dict[str, torch.Tensor] | None = (
-            {} if capture_unquantized_state_dict else None
-        )
+        captured_state_dicts: dict[str, dict[str, torch.Tensor]] | None = None
+        if capture_unquantized_state_dict:
+            captured_state_dicts = {f"model{i}": {} for i in range(len(megatron_model))}
         self.unquantized_state_dict = None
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
             # None means megatron module not on current rank, skip if this task is not going to happen
@@ -574,7 +574,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                         f"  HF mapping: {task.mapping.hf_param}"
                     )
                 if capture_unquantized_state_dict:
-                    captured_state_dicts[task.param_name] = converted_weights.detach()
+                    vp_stage = task.vp_stage if task.vp_stage is not None else 0
+                    chunk_key = f"model{vp_stage}"
+                    captured_state_dicts[chunk_key][task.param_name] = converted_weights.detach()
                 # NOTE:
                 # For fp8_param (blockwise), `task.param_weight` can be a TransformerEngine
                 # Float8BlockwiseQTensor) that is a leaf with requires_grad=True.
@@ -584,7 +586,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     task.param_weight.copy_(converted_weights)
         self._broadcast_shared_embeddings(megatron_model)
         if capture_unquantized_state_dict:
-            self.unquantized_state_dict = captured_state_dicts
+            # Keep Megatron's single-chunk convention: "model" instead of "model0".
+            if len(megatron_model) == 1:
+                self.unquantized_state_dict = {"model": captured_state_dicts["model0"]}
+            else:
+                self.unquantized_state_dict = captured_state_dicts
         return megatron_model, self.unquantized_state_dict
 
     def stream_weights_hf_to_megatron(
@@ -1174,6 +1180,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             fp8_scale_inv_attr,
         )
 
+        from transformer_engine.pytorch.constants import TE_DType_To_Torch
         # 2) Expand the global name list with `*.scale_inv` entries.
         #    This defines the final deterministic task ordering.
         expanded_global_names: list[str] = []
@@ -1213,6 +1220,19 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                         rd = getattr(local_weights, "_rowwise_data")
                         if rd is not None:
                             export_weight_tensor = rd
+                            # TE blockwise _rowwise_data is stored as uint8; view to correct FP8 type.
+                            # Read _fp8_dtype from tensor when available (robust for future formats).
+                            # Megatron fp8_param weights are always e4m3 (forward pass) in both
+                            # fp8_format=e4m3 and fp8_format=hybrid; e5m2 is only for backward gradients.
+                            fp8_dtype = getattr(local_weights, "_fp8_dtype", None)
+                            torch_fp8_dtype = (
+                                TE_DType_To_Torch.get(fp8_dtype, torch.float8_e4m3fn)
+                                if fp8_dtype is not None
+                                else torch.float8_e4m3fn
+                            )
+                            export_weight_tensor = export_weight_tensor.contiguous().view(
+                                torch_fp8_dtype
+                            )
                 tasks[global_names_index_dict[global_name]] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
