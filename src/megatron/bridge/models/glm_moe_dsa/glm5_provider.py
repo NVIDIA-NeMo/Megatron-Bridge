@@ -26,7 +26,7 @@ class GLM5ModelProvider(DeepSeekV3ModelProvider):
     """GLM5 models share DeepSeek-V3.2 architecture defaults."""
 
     moe_aux_loss_coeff: float = 0.001
-    sparse_attention_type: str = "dsa"
-    index_head_dim: int = 128
-    index_n_heads: int = 32
-    index_topk: int = 2048
+    experimental_attention_variant: str = "dsa"
+    dsa_indexer_head_dim: int = 128
+    dsa_indexer_n_heads: int = 32
+    dsa_indexer_topk: int = 2048
