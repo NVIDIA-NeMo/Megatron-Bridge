@@ -208,7 +208,7 @@ def pretrain_mimo(
 
     Steps:
     1. Call setup_mimo() to get model, infra, communicators
-    2. Set grid map on model config (reuse from infra for consistency)
+    2. Validate constructor-time MIMO config wiring
     3. Create MimoOptimizer using get_mimo_optimizer()
     4. Call train_mimo() with all components
 
@@ -249,12 +249,19 @@ def pretrain_mimo(
         global_state=global_state,
     )
 
-    # Set grid map on model config for get_mimo_optimizer()
-    # Use the SAME grid map already built for communicator/schedule - ensures consistency
     # Unwrap Float16Module/DDP wrapper to access mimo_config on the underlying MimoModel
     unwrapped_model = unwrap_mimo_model(setup_output.model)
-    unwrapped_model.mimo_config.module_to_grid_map = setup_output.mimo_infra.module_to_grid_map
-    unwrapped_model.mimo_config.language_module_key = "llm"  # Hardcoded, no extra plumbing
+    if setup_output.mimo_infra.module_to_grid_map:
+        # Role/materialization decisions happen in MimoModel.__init__. Provider wiring
+        # must pass these fields at construction time, not by mutating afterwards.
+        assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
+            "MimoModelConfig.module_to_grid_map must be set at model construction time. "
+            "Ensure MimoModelProvider.provide() passes module_to_grid_map for MIMO parallelism."
+        )
+        assert unwrapped_model.mimo_config.language_module_key is not None, (
+            "MimoModelConfig.language_module_key must be set at model construction time. "
+            "Ensure MimoModelProvider.provide() sets language_module_key for MIMO parallelism."
+        )
 
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
 

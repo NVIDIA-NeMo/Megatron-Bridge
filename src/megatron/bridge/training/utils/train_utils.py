@@ -347,6 +347,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
@@ -370,6 +371,8 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
+        pg_collection (Optional[Any]): ProcessGroupCollection to use for logging reductions.
+            If None, falls back to extracting from model wrappers.
         log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
@@ -383,7 +386,7 @@ def training_log(
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
-    pg_collection = get_pg_collection(model)
+    pg_collection = pg_collection or get_pg_collection(model)
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"

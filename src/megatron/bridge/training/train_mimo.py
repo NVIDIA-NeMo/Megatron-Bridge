@@ -219,7 +219,19 @@ def train_mimo(
     if isinstance(multimodule_pg_collection, list):
         raise RuntimeError(
             "MultiModuleProcessGroupCollection is required for MIMO training. "
-            "The list-based fallback is not supported. Ensure Megatron-LM PR 3129 is available."
+            "The list-based fallback is not supported. Ensure Megatron-LM PR 3212 is available."
+        )
+
+    # Use rank-local module PG for logging reductions to avoid global MPU fallback.
+    # NOTE: In non-colocated MIMO each rank participates in exactly one module, so
+    # "first non-None" unambiguously selects that module's PG. For colocated MIMO
+    # (where a rank participates in multiple modules), this selection must be
+    # replaced with per-module logging or an explicit module-aware reduction strategy.
+    local_pg_collection = next((pg for pg in mimo_infra.pg_collections.values() if pg is not None), None)
+    if local_pg_collection is None:
+        raise RuntimeError(
+            "No local ProcessGroupCollection found for this rank. "
+            "Ensure rank participation is correctly configured in MIMO infrastructure."
         )
 
     # Configure gradient hooks on model config
@@ -335,6 +347,7 @@ def train_mimo(
             global_state=global_state,
             history_wct=history_wct,
             model=[model],
+            pg_collection=local_pg_collection,
         )
 
         # Evaluation at specified intervals

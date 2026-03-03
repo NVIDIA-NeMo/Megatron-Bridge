@@ -30,7 +30,7 @@ from megatron.core.utils import get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 
-# Multimodule support from PR 3129 (optional - fallback if not available)
+# Multimodule support from PR 3212 (optional - fallback if not available)
 try:
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection

@@ -195,9 +195,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                     cp=grid.get_pg(["cp"]),
                     ep=grid.get_pg(["ep"]),
                     dp_cp=grid.get_pg(["dp", "cp"]),
-                    # Position embeddings only on first PP stage
+                    mp=grid.get_pg(["tp", "pp"]),
+                    tp_ep_pp=grid.get_pg(["tp", "ep", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,
-                    # Word embeddings on first and last PP stages (for tied embeddings)
                     embd=embd_pg if (first_stage or last_stage) else None,
                 )
             else:
@@ -300,6 +300,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             language_model_spec=language_spec,
             modality_submodules_spec=modality_specs,
             special_token_ids=self.special_token_ids,
+            module_to_grid_map=(infra.module_to_grid_map if self.mimo_parallelism_config is not None else None),
+            language_module_key="llm" if self.mimo_parallelism_config is not None else None,
         )
 
         mimo_model = MimoModel(mimo_model_config)
@@ -413,7 +415,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             for m in model_list:
                 m.cuda(torch.cuda.current_device())
 
-        # Set variable_seq_lengths=True for multimodule pipeline support (required by PR 3129)
+        # Set variable_seq_lengths=True for multimodule pipeline support (required by PR 3212)
         # This must be set before the model is used in the training loop
         for m in model_list:
             model_config = get_model_config(m)

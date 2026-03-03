@@ -91,6 +91,9 @@ class TestMimoModelProvider:
 
         # Should not build grids when no parallelism config
         mock_build_grids.assert_not_called()
+        config_arg = mock_mimo_model.call_args[0][0]
+        assert config_arg.module_to_grid_map is None
+        assert config_arg.language_module_key is None
 
     @patch("megatron.bridge.models.mimo.mimo_provider.MimoModel")
     @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
@@ -244,6 +247,9 @@ class TestMimoModelProvider:
 
         # Should return model directly
         assert model == mock_model_instance
+        config_arg = mock_mimo_model.call_args[0][0]
+        assert config_arg.module_to_grid_map == {"llm": mock_grid}
+        assert config_arg.language_module_key == "llm"
 
         # Infrastructure should be available via build_infra()
         infra = provider.build_infra()
@@ -646,3 +652,63 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         # Middle stage should have neither embedding group
         assert pg_collections["llm"].pos_embd is None
         assert pg_collections["llm"].embd is None
+
+    @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_last_stage")
+    @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_first_stage")
+    @patch("megatron.bridge.models.mimo.mimo_provider.populate_embedding_and_position_groups")
+    @patch("torch.distributed.get_rank")
+    def test_pg_collection_includes_composite_groups(self, mock_get_rank, mock_populate, mock_is_first, mock_is_last):
+        """Test that pg_collection includes mp, tp_ep_pp, and expt_dp composite groups."""
+        mock_get_rank.return_value = 0
+        mock_populate.return_value = (MagicMock(), MagicMock())
+        mock_is_first.return_value = True
+        mock_is_last.return_value = True
+
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2, data_parallel_size=2),
+            },
+        )
+
+        mock_tp = MagicMock(name="tp_pg")
+        mock_dp = MagicMock(name="dp_pg")
+        mock_pp = MagicMock(name="pp_pg")
+        mock_cp = MagicMock(name="cp_pg")
+        mock_ep = MagicMock(name="ep_pg")
+        mock_dp_cp = MagicMock(name="dp_cp_pg")
+        mock_mp = MagicMock(name="mp_pg")
+        mock_tp_ep_pp = MagicMock(name="tp_ep_pp_pg")
+
+        pg_map = {
+            ("tp",): mock_tp,
+            ("dp",): mock_dp,
+            ("pp",): mock_pp,
+            ("cp",): mock_cp,
+            ("ep",): mock_ep,
+            ("dp", "cp"): mock_dp_cp,
+            ("tp", "pp"): mock_mp,
+            ("tp", "ep", "pp"): mock_tp_ep_pp,
+        }
+
+        mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
+        mock_grid.size = 4
+        mock_grid.get_pg.side_effect = lambda dims: pg_map[tuple(dims)]
+
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mimo_parallelism_config,
+        )
+
+        pg_collections = provider._get_pg_collections_from_grids({"llm": mock_grid})
+
+        pgc = pg_collections["llm"]
+        assert pgc.tp == mock_tp
+        assert pgc.dp == mock_dp
+        assert pgc.pp == mock_pp
+        assert pgc.cp == mock_cp
+        assert pgc.ep == mock_ep
+        assert pgc.dp_cp == mock_dp_cp
+        assert pgc.mp == mock_mp
+        assert pgc.tp_ep_pp == mock_tp_ep_pp
