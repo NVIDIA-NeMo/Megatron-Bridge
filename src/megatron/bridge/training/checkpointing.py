@@ -1905,20 +1905,26 @@ def _resolve_checkpoint_iteration(load_dir: str | None, ckpt_step_override: int 
     """Resolve which checkpoint iteration to load.
 
     This function determines the checkpoint iteration by:
-    1. If load_dir is already a specific iteration directory, return iteration 0
-       (the path itself is used directly — no sub-directory resolution needed)
-    2. If ckpt_step is specified, use it directly (no file I/O needed)
-    3. Otherwise, read from the tracker file (latest_train_state.pt or legacy format)
+    1. If ``load_dir`` is already a specific iteration directory (detected via
+       ``is_checkpoint_iteration_directory``), return
+       ``_DIRECT_ITERATION_DIR_SENTINEL`` so the caller uses ``load_dir``
+       directly without sub-directory resolution.
+    2. If ``ckpt_step_override`` is specified, validate the corresponding
+       ``iter_*`` sub-directory exists and return that integer directly.
+    3. Otherwise, read from the tracker file (``latest_train_state.pt`` or
+       legacy ``latest_checkpointed_iteration.txt``).
 
     Args:
         load_dir: Base checkpoint directory, or a specific iteration directory.
         ckpt_step_override: User-specified iteration override (from ckpt_step config).
 
     Returns:
-        Tuple of (iteration, release) where iteration=-1 means no checkpoint found.
+        Tuple of (iteration, release) where:
+        - ``iteration = _DIRECT_ITERATION_DIR_SENTINEL`` means ``load_dir`` is
+          an iteration directory and should be used as-is.
+        - ``iteration = -1`` means no checkpoint was found.
+        - Any other non-negative value is the resolved iteration number.
     """
-    # If load_dir is already an iteration directory (contains metadata.json),
-    # signal this with a sentinel so the caller uses it directly.
     if is_checkpoint_iteration_directory(load_dir):
         print_rank_0(f"Loading checkpoint directly from iteration directory {load_dir}")
         return _DIRECT_ITERATION_DIR_SENTINEL, False

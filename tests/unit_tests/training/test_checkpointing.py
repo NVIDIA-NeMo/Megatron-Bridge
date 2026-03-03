@@ -1165,7 +1165,7 @@ class TestLoadBaseCheckpoint:
 
         result = _load_base_checkpoint("/ckpt/iter_0001000", base_config, rank0=True, pg_collection=mock_pg_collection)
 
-        state_dict, checkpoint_name, release, ckpt_type = result
+        state_dict, _, _, ckpt_type = result
         assert state_dict == {"model": "data"}
         assert ckpt_type == CheckpointType.GLOBAL
 
@@ -1194,7 +1194,7 @@ class TestLoadBaseCheckpoint:
 
         result = _load_base_checkpoint("/ckpt/iter_0001000", base_config, rank0=True, pg_collection=mock_pg_collection)
 
-        state_dict, checkpoint_name, release, ckpt_type = result
+        _, _, _, ckpt_type = result
         assert ckpt_type == CheckpointType.FSDP_DTENSOR
 
         mock_load_fsdp.assert_called_once()
