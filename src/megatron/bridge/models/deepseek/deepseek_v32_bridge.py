@@ -16,7 +16,9 @@ from functools import partial
 from typing import Dict, Mapping
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec
+)
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -48,7 +50,7 @@ class DeepSeekV32Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
@@ -58,9 +60,9 @@ class DeepSeekV32Bridge(MegatronModelBridge):
         provider.multi_latent_attention = True
 
         provider.experimental_attention_variant = "dsa"
-        provider.dsa_indexer_head_dim = 128
-        provider.dsa_indexer_n_heads = 64
-        provider.dsa_indexer_topk = 2048
+        provider.dsa_indexer_head_dim = hf_config.index_head_dim
+        provider.dsa_indexer_n_heads = hf_config.index_n_heads
+        provider.dsa_indexer_topk = hf_config.index_topk
         provider.dsa_indexer_loss_coeff = 0.001
 
         provider.moe_grouped_gemm = True
@@ -107,6 +109,7 @@ class DeepSeekV32Bridge(MegatronModelBridge):
                 hf_param="model.layers.*.mlp.gate.e_score_correction_bias",
             )
         )
+        AutoMapping.register_module_type("LinearCrossEntropyModule", "replicated")
         return MegatronMappingRegistry(*mapping_list)
 
     def maybe_modify_converted_hf_weight(
