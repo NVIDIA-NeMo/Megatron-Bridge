@@ -35,8 +35,9 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
     checkpoint_exists,
-    init_checkpointing_context,
-    load_checkpoint,
+    CheckpointLoadContext,
+    CheckpointManager,
+    create_checkpoint_manager,
 )
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -65,8 +66,7 @@ class SetupOutput(NamedTuple):
         train_data_iterator: The data iterator for the training dataset, if applicable.
         valid_data_iterator: The data iterator for the validation dataset, if applicable.
         test_data_iterator: The data iterator for the testing dataset, if applicable.
-        checkpointing_context: A dictionary holding context for checkpointing operations,
-                               especially for non-persistent local checkpointing.
+        checkpoint_manager: The checkpoint manager for save/load operations.
         pg_collection: The process group collection initialized for this run.
     """
 
@@ -77,7 +77,7 @@ class SetupOutput(NamedTuple):
     train_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    checkpointing_context: dict[str, Any]
+    checkpoint_manager: CheckpointManager
     pg_collection: ProcessGroupCollection
 
 def setup(
@@ -168,8 +168,8 @@ def setup(
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
 
-    # Context used for persisting some state between checkpoint saves.
-    checkpointing_context = init_checkpointing_context(cfg.checkpoint)
+    # Create checkpoint manager for save/load operations.
+    checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
 
     # Tokenizer
     timers("tokenizer-setup", log_level=0).start(barrier=True)
@@ -254,14 +254,13 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            state,
-            model,
-            optimizer,
-            scheduler,
-            checkpointing_context=checkpointing_context,
+        checkpoint_manager.load(CheckpointLoadContext(
+            state=state,
+            model=model,
+            optimizer=optimizer,
+            opt_param_scheduler=scheduler,
             skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
-        )
+        ))
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 
@@ -319,7 +318,7 @@ def setup(
         train_data_iterator,
         valid_data_iterator,
         test_data_iterator,
-        checkpointing_context,
+        checkpoint_manager,
         pg_collection,
     )
 
