@@ -844,7 +844,16 @@ class CheckpointConfig:
     Assumed when loading a release checkpoint."""
 
     pretrained_checkpoint: Optional[str] = None
-    """Directory containing a pretrained model checkpoint for finetuning."""
+    """Directory containing a pretrained model checkpoint for finetuning.
+
+    This can be either:
+      - A parent checkpoint directory (e.g. ``/checkpoints/my_model/``) that
+        contains tracker files (``latest_train_state.pt``) and ``iter_*``
+        subdirectories.
+      - A specific iteration directory (e.g.
+        ``/checkpoints/my_model/iter_0001000/``) that directly contains the
+        checkpoint payload (``run_config.yaml``, weight shards, etc.).
+    """
 
     ckpt_step: Optional[int] = None
     """Checkpoint step to load model from."""

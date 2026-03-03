@@ -195,13 +195,22 @@ class TestCheckpointUtilities:
     @patch("os.path.exists")
     def test_checkpoint_exists_normal(self, mock_exists):
         """Test checkpoint existence checking for normal checkpoints."""
-        # Test when NeMo-LM checkpoint exists
-        mock_exists.return_value = True
+        # A parent checkpoint directory does NOT contain iteration-dir markers
+        # (run_config.yaml, train_state.pt, etc.) — only tracker files.
+        _iter_markers = {"run_config.yaml", "train_state.pt", "metadata.json", ".metadata"}
+
+        def parent_dir_exists(path):
+            if os.path.basename(path) in _iter_markers:
+                return False
+            return True
+
+        mock_exists.side_effect = parent_dir_exists
         result = checkpoint_exists("/checkpoints")
         assert result is True
         mock_exists.assert_called_with("/checkpoints/latest_train_state.pt")
 
         # Test when no checkpoint exists
+        mock_exists.side_effect = None
         mock_exists.return_value = False
         with patch("os.path.isfile", return_value=False):
             result = checkpoint_exists("/checkpoints")

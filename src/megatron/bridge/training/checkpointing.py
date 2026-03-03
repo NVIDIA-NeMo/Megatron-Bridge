@@ -72,6 +72,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_run_config_filename,
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
+    is_checkpoint_iteration_directory,
     read_run_config,
     read_train_state,
 )
@@ -107,6 +108,7 @@ _CHECKPOINT_VERSION = None
 
 logger = getLogger(__name__)
 _NON_PERSISTENT_CKPT_SUBDIR = "non_persistent"
+_DIRECT_ITERATION_DIR_SENTINEL = -2
 
 
 # ============================================================================
@@ -1542,22 +1544,24 @@ def _load_checkpoint_from_path(
         # Handle fsdp_dtensor format
         from torch.distributed.checkpoint import FileSystemReader
 
-        # Get checkpoint path using Bridge's utilities
-        tracker_filename = get_checkpoint_train_state_filename(load_dir, prefix=TRACKER_PREFIX)
-        if file_exists(tracker_filename):
-            train_state = read_train_state(tracker_filename)
-            iteration = train_state.step
-            release = False
+        # Resolve checkpoint path
+        if is_checkpoint_iteration_directory(load_dir):
+            checkpoint_name = load_dir
         else:
-            # Fallback to legacy Megatron-LM tracker
-            legacy_tracker_filename = get_checkpoint_tracker_filename(load_dir)
-            if file_exists(legacy_tracker_filename):
-                iteration, release = read_metadata(legacy_tracker_filename)
+            tracker_filename = get_checkpoint_train_state_filename(load_dir, prefix=TRACKER_PREFIX)
+            if file_exists(tracker_filename):
+                train_state = read_train_state(tracker_filename)
+                iteration = train_state.step
+                release = False
             else:
-                print_rank_0(f"WARNING: could not find metadata file in {load_dir}")
-                return 0, 0
+                legacy_tracker_filename = get_checkpoint_tracker_filename(load_dir)
+                if file_exists(legacy_tracker_filename):
+                    iteration, release = read_metadata(legacy_tracker_filename)
+                else:
+                    print_rank_0(f"WARNING: could not find metadata file in {load_dir}")
+                    return 0, 0
+            checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
 
-        checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
         reader = FileSystemReader(checkpoint_name)
         try:
             state_dict_metadata = reader.read_metadata().state_dict_metadata
@@ -1901,16 +1905,24 @@ def _resolve_checkpoint_iteration(load_dir: str | None, ckpt_step_override: int 
     """Resolve which checkpoint iteration to load.
 
     This function determines the checkpoint iteration by:
-    1. If ckpt_step is specified, use it directly (no file I/O needed)
-    2. Otherwise, read from the tracker file (latest_train_state.pt or legacy format)
+    1. If load_dir is already a specific iteration directory, return iteration 0
+       (the path itself is used directly — no sub-directory resolution needed)
+    2. If ckpt_step is specified, use it directly (no file I/O needed)
+    3. Otherwise, read from the tracker file (latest_train_state.pt or legacy format)
 
     Args:
-        load_dir: Base checkpoint directory.
+        load_dir: Base checkpoint directory, or a specific iteration directory.
         ckpt_step_override: User-specified iteration override (from ckpt_step config).
 
     Returns:
         Tuple of (iteration, release) where iteration=-1 means no checkpoint found.
     """
+    # If load_dir is already an iteration directory (contains metadata.json),
+    # signal this with a sentinel so the caller uses it directly.
+    if is_checkpoint_iteration_directory(load_dir):
+        print_rank_0(f"Loading checkpoint directly from iteration directory {load_dir}")
+        return _DIRECT_ITERATION_DIR_SENTINEL, False
+
     # If user specified ckpt_step, validate the checkpoint directory exists
     if ckpt_step_override is not None:
         # Note: load_dir is guaranteed to be non-None by CheckpointConfig.finalize()
@@ -2060,22 +2072,36 @@ def _load_global_dist_base_checkpoint(
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
-    iteration: int,
+    iteration: Optional[int],
     release: bool,
+    checkpoint_path_override: Optional[str] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
-    """Load the base state_dict from the given directory containing the global distributed checkpoint."""
+    """Load the base state_dict from the given directory containing the global distributed checkpoint.
+
+    Args:
+        checkpoint_path_override: If provided, use this path directly instead of
+            constructing it from ``load_dir`` / ``iteration``.  Used when
+            ``load_dir`` is already a specific iteration directory.
+    """
     if rank0:
-        checkpoint_name = find_checkpoint_rank_0(load_dir, iteration, release)
+        if checkpoint_path_override is not None:
+            checkpoint_name = checkpoint_path_override
+        else:
+            checkpoint_name = find_checkpoint_rank_0(load_dir, iteration, release)
         state_dict = dist_checkpointing.load_common_state_dict(checkpoint_name)
         return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
     if sharded_state_dict is None:
         raise RuntimeError("Detected load from a distributed checkpoint, but sharded state dict is not provided.")
 
-    checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+    checkpoint_name = (
+        checkpoint_path_override
+        if checkpoint_path_override is not None
+        else get_checkpoint_name(load_dir, iteration, release)
+    )
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
     if ckpt_cfg.fully_parallel_load:
         load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
@@ -2112,6 +2138,46 @@ def _load_base_checkpoint(
     Returns:
         Tuple of (state_dict, checkpoint_name, release, ckpt_type).
     """
+    # Resolve which iteration to load
+    iteration, release = _resolve_checkpoint_iteration(
+        load_dir=load_dir,
+        ckpt_step_override=None if ignore_ckpt_step else ckpt_cfg.ckpt_step,
+    )
+
+    # When load_dir is already a specific iteration directory, use it directly
+    # and skip non-persistent checkpoint and tracker file logic.
+    if iteration == _DIRECT_ITERATION_DIR_SENTINEL:
+        checkpoint_path = load_dir
+        ckpt_format = _get_checkpoint_format(checkpoint_path)
+        if not rank0:
+            print_rank_0(f" loading {ckpt_format} checkpoint directly from {checkpoint_path}")
+        if ckpt_format == "torch_dist":
+            return _load_global_dist_base_checkpoint(
+                load_dir,
+                ckpt_cfg,
+                rank0,
+                sharded_state_dict,
+                iteration=None,
+                release=False,
+                checkpoint_path_override=checkpoint_path,
+                checkpointing_context=checkpointing_context,
+                pg_collection=pg_collection,
+            )
+        elif ckpt_format == "fsdp_dtensor":
+            return _load_fsdp_dtensor_base_checkpoint(
+                load_dir,
+                ckpt_cfg,
+                rank0,
+                sharded_state_dict,
+                iteration=None,
+                release=False,
+                checkpoint_path_override=checkpoint_path,
+                checkpointing_context=checkpointing_context,
+                cfg=cfg,
+            )
+        else:
+            raise NotImplementedError(f"Checkpoint format {ckpt_format} not supported")
+
     # Try to load non-persistent checkpoint first
     non_persistent_global_dir = (
         ckpt_cfg.non_persistent_global_ckpt_dir
@@ -2120,11 +2186,6 @@ def _load_base_checkpoint(
     )
     non_persistent_iteration = _get_non_persistent_iteration(
         non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
-    )
-    # Resolve which iteration to load
-    iteration, release = _resolve_checkpoint_iteration(
-        load_dir=load_dir,
-        ckpt_step_override=None if ignore_ckpt_step else ckpt_cfg.ckpt_step,
     )
 
     tracker_filename = "because load directory is not defined"
@@ -2205,8 +2266,9 @@ def _load_fsdp_dtensor_base_checkpoint(
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
-    iteration: int,
+    iteration: Optional[int],
     release: bool,
+    checkpoint_path_override: Optional[str] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
     cfg: Optional[ConfigContainer] = None,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
@@ -2222,6 +2284,8 @@ def _load_fsdp_dtensor_base_checkpoint(
         sharded_state_dict: State dict for distributed loading.
         iteration: The checkpoint iteration to load.
         release: Whether this is a release checkpoint.
+        checkpoint_path_override: If provided, use this path directly instead of
+            constructing it from ``load_dir`` / ``iteration``.
         checkpointing_context: Context for caching strategies.
         cfg: Full configuration object (needed for preprocessing).
 
@@ -2230,7 +2294,12 @@ def _load_fsdp_dtensor_base_checkpoint(
     """
     if rank0:
         # For rank 0, return empty state dict (no common metadata for fsdp_dtensor)
-        return {}, get_checkpoint_name(load_dir, iteration, release), release, CheckpointType.FSDP_DTENSOR
+        checkpoint_name = (
+            checkpoint_path_override
+            if checkpoint_path_override is not None
+            else get_checkpoint_name(load_dir, iteration, release)
+        )
+        return {}, checkpoint_name, release, CheckpointType.FSDP_DTENSOR
 
     if not HAVE_MEGATRON_FSDP:
         raise RuntimeError("Megatron FSDP is required but not available for loading FSDP DTensor checkpoints.")
@@ -2250,7 +2319,11 @@ def _load_fsdp_dtensor_base_checkpoint(
     model = state_dict.pop("_model")
     state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
-    checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+    checkpoint_name = (
+        checkpoint_path_override
+        if checkpoint_path_override is not None
+        else get_checkpoint_name(load_dir, iteration, release)
+    )
     fs_storage_reader = torch.distributed.checkpoint.FileSystemReader(checkpoint_name)
 
     # Configure partial loading based on strict_fsdp_dtensor_load setting
