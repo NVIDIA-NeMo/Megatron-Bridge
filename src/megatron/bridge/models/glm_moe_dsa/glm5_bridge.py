@@ -110,8 +110,13 @@ class GLM5Bridge(MegatronModelBridge):
             configs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
 
         provider = GLM5ModelProvider(**configs)
-        # Required for mixed dense/MoE layouts; otherwise early dense layers may be built as MoE.
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        # Use experimental-attention spec for DSA
+        from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+            get_transformer_block_with_experimental_attention_variant_spec,
+        )
+        provider.transformer_layer_spec = (
+            get_transformer_block_with_experimental_attention_variant_spec
+        )
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
