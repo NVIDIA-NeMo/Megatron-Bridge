@@ -45,8 +45,6 @@ class TestQwen3Ckpt:
         config.checkpoint.load = MCORE_CKPT if os.path.exists(MCORE_CKPT) else None
         config.checkpoint.load_optim = False
 
-        config.model.num_layers = 24
-
         config.train.train_iters = 10 if config.checkpoint.load else 5
         config.train.eval_iters = 5
         config.train.save_interval = 5
@@ -90,7 +88,7 @@ class TestQwen3Ckpt:
                 "1000000",
                 "--use-rotary-position-embeddings",
                 "--num-layers",
-                "24",
+                "36",
                 "--hidden-size",
                 "2560",
                 "--num-attention-heads",

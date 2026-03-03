@@ -380,9 +380,9 @@ jobs:
           # - script: L2_Launch_quantization_export
           - script: L2_Launch_recipes_llama_cuda_graphs
           - script: L2_Launch_utils
-          - script: L2_Launch_ckpts_mbridge_to_mlm_llama32_1b.sh
-          - script: L2_Launch_ckpts_mbridge_to_mlm_qwen3_4b.sh 
-          - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b.sh
+          - script: L2_Launch_ckpts_mbridge_to_mlm_llama32_1b
+          - script: L2_Launch_ckpts_mbridge_to_mlm_qwen3_4b
+          - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
