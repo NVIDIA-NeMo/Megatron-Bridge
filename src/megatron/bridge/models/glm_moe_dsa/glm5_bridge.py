@@ -31,14 +31,6 @@ from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
-
-
 logger = logging.getLogger(__name__)
 
 
