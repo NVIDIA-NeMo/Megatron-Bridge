@@ -14,11 +14,9 @@
 
 import logging
 import re
-from functools import partial
 from typing import Dict, Mapping, Optional, Tuple
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import GlmMoeDsaForCausalLM
 
