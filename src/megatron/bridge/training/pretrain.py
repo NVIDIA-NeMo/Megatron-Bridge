@@ -17,7 +17,6 @@ from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
-from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -154,22 +153,6 @@ def _pretrain(
             )
 
         barrier_and_log("after training is done")
-        ckpt_config = config.checkpoint
-        if (
-            ckpt_config.save
-            and state.train_state.step != 0
-            and ckpt_config.save_interval != 0
-            and state.train_state.step % ckpt_config.save_interval != 0
-        ):
-            save_checkpoint(
-                state,
-                model,
-                optimizer,
-                scheduler,
-                state.train_state.floating_point_operations_so_far,
-                ckpt_context,
-                train_data_iterator=train_data_iterator,
-            )
 
     else:
         print_rank_0("skipping training ...")
