@@ -85,6 +85,11 @@ class GLM5Bridge(MegatronModelBridge):
             "dsa_indexer_head_dim": hf_config.index_head_dim,
             "dsa_indexer_n_heads": hf_config.index_n_heads,
             "dsa_indexer_topk": hf_config.index_topk,
+            "dsa_indexer_loss_coeff": 0.001,
+            "dsa_indexer_use_sparse_loss": True,
+            # MTP params
+            "mtp_num_layers": hf_config.num_nextn_predict_layers,
+            "mtp_loss_scaling_factor": 0.1,
             # GLM5 uses default rope parameters (not yarn rope_scaling)
             "rotary_scaling_factor": 1.0,
             "mscale": 1.0,
