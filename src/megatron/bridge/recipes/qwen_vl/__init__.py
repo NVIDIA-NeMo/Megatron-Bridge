@@ -13,25 +13,24 @@
 # limitations under the License.
 
 # Qwen2.5-VL models
-from .qwen25_vl import (
-    qwen25_vl_3b_sft_config,
-    qwen25_vl_7b_sft_config,
-    qwen25_vl_32b_sft_config,
-    qwen25_vl_72b_sft_config,
-    qwen25_vl_3b_peft_config,
-    qwen25_vl_7b_peft_config,
-    qwen25_vl_32b_peft_config,
-    qwen25_vl_72b_peft_config,
-)
-
 # Qwen3-VL models
 from .qwen3_vl import (
-    qwen3_vl_8b_sft_config,
-    qwen3_vl_30b_a3b_sft_config,
-    qwen3_vl_235b_a22b_sft_config,
     qwen3_vl_8b_peft_config,
+    qwen3_vl_8b_sft_config,
     qwen3_vl_30b_a3b_peft_config,
+    qwen3_vl_30b_a3b_sft_config,
     qwen3_vl_235b_a22b_peft_config,
+    qwen3_vl_235b_a22b_sft_config,
+)
+from .qwen25_vl import (
+    qwen25_vl_3b_peft_config,
+    qwen25_vl_3b_sft_config,
+    qwen25_vl_7b_peft_config,
+    qwen25_vl_7b_sft_config,
+    qwen25_vl_32b_peft_config,
+    qwen25_vl_32b_sft_config,
+    qwen25_vl_72b_peft_config,
+    qwen25_vl_72b_sft_config,
 )
 
 

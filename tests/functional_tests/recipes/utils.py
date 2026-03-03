@@ -213,7 +213,8 @@ def run_pretrain_vl_recipe_test(
     megatron.bridge.training.vlm_step.forward_step.
 
     Args:
-        config_func: The recipe's pretrain_config function
+        config_func: The recipe's config function (parameterless API for SFT,
+                     or takes peft_scheme parameter for PEFT)
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
@@ -228,13 +229,20 @@ def run_pretrain_vl_recipe_test(
         vlm_forward_step = forward_step_func
 
     initialize_distributed()
-    shared_base_dir = broadcast_path(tmp_path)
+    shared_base_dir = Path(broadcast_path(tmp_path))
 
     try:
-        # Note: qwen_vl recipe config functions do not support 'mock' kwarg
-        config: ConfigContainer = config_func(
-            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", dataset_type="mock"
-        )
+        # VLM recipe configs use parameterless API - call without arguments
+        config: ConfigContainer = config_func()
+
+        # Set up output directories after instantiation
+        run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
+        checkpoint_dir = run_output_dir / "checkpoints"
+        tensorboard_dir = run_output_dir / "tb_logs"
+        config.checkpoint.save = str(checkpoint_dir)
+        config.checkpoint.load = str(checkpoint_dir)
+        config.logger.tensorboard_dir = str(tensorboard_dir)
+
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
         config.validation.eval_interval = 5
@@ -249,9 +257,12 @@ def run_pretrain_vl_recipe_test(
 
         # Disable pin-memory and worker persistence in tests to avoid
         # pin-memory device mismatches under torchrun+pytest environments.
-        config.dataset.pin_memory = False
-        config.dataset.num_workers = 0
-        config.dataset.persistent_workers = False
+        if hasattr(config.dataset, "pin_memory"):
+            config.dataset.pin_memory = False
+        if hasattr(config.dataset, "num_workers"):
+            config.dataset.num_workers = 0
+        if hasattr(config.dataset, "persistent_workers"):
+            config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
         eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
@@ -267,9 +278,11 @@ def run_pretrain_vl_recipe_test(
         config.dataset.split = [train_split, valid_split, test_split]
 
         if tensor_model_parallel_size is not None:
-            config.model.tensor_model_parallel_size = tensor_model_parallel_size
+            if hasattr(config.model, "tensor_model_parallel_size"):
+                config.model.tensor_model_parallel_size = tensor_model_parallel_size
         if pipeline_model_parallel_size is not None:
-            config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+            if hasattr(config.model, "pipeline_model_parallel_size"):
+                config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
@@ -281,7 +294,7 @@ def run_pretrain_vl_recipe_test(
             for attribute_name, attribute_value in dataset_overrides.items():
                 setattr(config.dataset, attribute_name, attribute_value)
 
-        if config.dataset.pack_sequences_in_batch:
+        if hasattr(config.dataset, "pack_sequences_in_batch") and config.dataset.pack_sequences_in_batch:
             config.train.micro_batch_size = 2
 
         pretrain(config, vlm_forward_step)

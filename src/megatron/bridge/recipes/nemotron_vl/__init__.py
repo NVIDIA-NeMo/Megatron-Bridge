@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from .nemotron_nano_v2_vl import (
-    nemotron_nano_v2_vl_12b_sft_config,
     nemotron_nano_v2_vl_12b_peft_config,
+    nemotron_nano_v2_vl_12b_sft_config,
 )
 
 
