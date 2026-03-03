@@ -127,7 +127,6 @@ url = "https://pypi.nvidia.com"
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
-nemo-run = { git = "https://github.com/NVIDIA/NeMo-Run.git", rev = "c1c3e920d4662c8188611263e18fd2e39e3c84f3" }
 
 [project.optional-dependencies]
 recipes = [
