@@ -81,9 +81,10 @@ class GLM5Bridge(MegatronModelBridge):
             "layernorm_epsilon": hf_config.rms_norm_eps,
             "multi_latent_attention": True,
             # DSA indexer params (v3.2-compatible interface)
-            "index_head_dim": hf_config.index_head_dim,
-            "index_n_heads": hf_config.index_n_heads,
-            "index_topk": hf_config.index_topk,
+            "experimental_attention_variant": "dsa",
+            "dsa_indexer_head_dim": hf_config.index_head_dim,
+            "dsa_indexer_n_heads": hf_config.index_n_heads,
+            "dsa_indexer_topk": hf_config.index_topk,
             # GLM5 uses default rope parameters (not yarn rope_scaling)
             "rotary_scaling_factor": 1.0,
             "mscale": 1.0,
