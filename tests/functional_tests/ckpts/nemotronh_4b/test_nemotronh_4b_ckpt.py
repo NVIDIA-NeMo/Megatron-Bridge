@@ -59,7 +59,7 @@ class TestNemotronhCkpt:
         config.logger.log_interval = 1
 
         pretrain(config=config, forward_step_func=forward_step)
-    
+
     @pytest.mark.run_only_on("GPU")
     def test_nemotronh_4b_ckpt_mcore(self, monkeypatch):
         """Functional test for Nemotron Hybrid MCore checkpoint."""
@@ -149,7 +149,7 @@ class TestNemotronhCkpt:
                 load_dir,
                 "--save",
                 MCORE_CKPT,
-                "--ckpt-format", 
+                "--ckpt-format",
                 "torch_dist",
                 "--log-progress",
                 "--bf16",

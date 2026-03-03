@@ -167,4 +167,3 @@ class TestLlama32Ckpt:
         shutil.rmtree(BASE_DIR)
 
         assert not os.path.exists(BASE_DIR)
-
