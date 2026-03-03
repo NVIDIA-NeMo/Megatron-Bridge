@@ -13,16 +13,20 @@
 # limitations under the License.
 
 from .gpt_oss import (
-    gpt_oss_20b_finetune_config,
+    gpt_oss_20b_peft_config,
     gpt_oss_20b_pretrain_config,
-    gpt_oss_120b_finetune_config,
+    gpt_oss_20b_sft_config,
+    gpt_oss_120b_peft_config,
     gpt_oss_120b_pretrain_config,
+    gpt_oss_120b_sft_config,
 )
 
 
 __all__ = [
     "gpt_oss_20b_pretrain_config",
     "gpt_oss_120b_pretrain_config",
-    "gpt_oss_20b_finetune_config",
-    "gpt_oss_120b_finetune_config",
+    "gpt_oss_20b_sft_config",
+    "gpt_oss_120b_sft_config",
+    "gpt_oss_20b_peft_config",
+    "gpt_oss_120b_peft_config",
 ]

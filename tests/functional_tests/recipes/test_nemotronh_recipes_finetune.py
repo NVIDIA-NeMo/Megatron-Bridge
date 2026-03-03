@@ -27,8 +27,10 @@ from transformers import AutoConfig, AutoTokenizer, dynamic_module_utils
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.recipes.nemotronh import (
-    nemotron_3_nano_finetune_config,
-    nemotron_nano_9b_v2_finetune_config,
+    nemotron_3_nano_peft_config,
+    nemotron_3_nano_sft_config,
+    nemotron_nano_9b_v2_peft_config,
+    nemotron_nano_9b_v2_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
@@ -152,24 +154,26 @@ class TestNemotronNanoV2FinetuneRecipes:
         return str(megatron_checkpoint_dir)
 
     def _finetune_wrapper_lora(self, checkpoint_dir, **kwargs):
-        """Wrapper to adapt Nemotron Nano v2 finetune_config to the test runner signature (with LoRA).
+        """Wrapper to adapt Nemotron Nano v2 peft_config to the test runner signature (with LoRA).
 
-        The runner will pass (dir, name) among others; we forward
-        everything to finetune_config and inject the toy model checkpoint.
+        The runner will pass (dir, name) among others; we create the config
+        with the new parameterless API and inject the toy model checkpoint.
         """
-        kwargs.setdefault("pretrained_checkpoint", checkpoint_dir)
-        kwargs.setdefault("peft", "lora")  # Explicitly use LoRA
-        return nemotron_nano_9b_v2_finetune_config(**kwargs)
+        config = nemotron_nano_9b_v2_peft_config(peft_scheme="lora")
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Don't try to resume from default path and load from pretrained checkpoint
+        return config
 
     def _finetune_wrapper_full(self, checkpoint_dir, **kwargs):
-        """Wrapper to adapt Nemotron Nano v2 finetune_config to the test runner signature (full SFT, no LoRA).
+        """Wrapper to adapt Nemotron Nano v2 sft_config to the test runner signature (full SFT, no LoRA).
 
-        The runner will pass (dir, name) among others; we forward
-        everything to finetune_config and inject the toy model checkpoint.
+        The runner will pass (dir, name) among others; we create the config
+        with the new parameterless API and inject the toy model checkpoint.
         """
-        kwargs.setdefault("pretrained_checkpoint", checkpoint_dir)
-        kwargs.setdefault("peft", None)  # No PEFT for full finetuning
-        return nemotron_nano_9b_v2_finetune_config(**kwargs)
+        config = nemotron_nano_9b_v2_sft_config()
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Don't try to resume from default path and load from pretrained checkpoint
+        return config
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
@@ -443,19 +447,23 @@ class TestNemotron3NanoFinetuneRecipes:
 
     def _get_finetune_config(self, checkpoint_dir: str, peft: Optional[str] = None, **kwargs) -> ConfigContainer:
         """
-        Wrapper to adapt Nemotron 3 Nano finetune_config to the test runner signature.
+        Wrapper to adapt Nemotron 3 Nano sft/peft config to the test runner signature.
 
         Args:
             checkpoint_dir: Path to the pretrained Megatron checkpoint.
             peft: PEFT method to use (e.g. "lora"). If None, full finetuning is used.
-            **kwargs: Additional arguments to pass to the config function.
+            **kwargs: Additional arguments (ignored, kept for compatibility).
 
         Returns:
             ConfigContainer: The generated finetuning configuration.
         """
-        kwargs.setdefault("pretrained_checkpoint", checkpoint_dir)
-        kwargs.setdefault("peft", peft)
-        return nemotron_3_nano_finetune_config(**kwargs)
+        if peft is not None:
+            config = nemotron_3_nano_peft_config(peft_scheme=peft)
+        else:
+            config = nemotron_3_nano_sft_config()
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Don't try to resume from default path and load from pretrained checkpoint
+        return config
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(

@@ -385,7 +385,7 @@ def main(
     error_msg = None
     n_attempts = 0
     exp_name = (
-        exp_name[:37] if dgxc_cluster is not None else exp_name
+        exp_name[:33] if dgxc_cluster is not None else exp_name
     )  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
     while n_attempts <= max_retries:

@@ -12,16 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import torch.nn.functional as F
 
+from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
+_lora_seq_stats_cache: dict = {}
+
+
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     """Return the number of floating point operations"""
-    # If the model provider has a custom TFLOPS calculation method, use it.
-    if hasattr(cfg.model, "_get_num_floating_point_operations"):
+    peft = getattr(cfg, "peft", None)
+    is_lora = isinstance(peft, LoRA)
+    # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
+    if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
@@ -183,6 +192,46 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         num_query_groups = (
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
+
+        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) == "squad"
+        hf_model_id = getattr(cfg.model, "hf_model_id", None)
+        is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
+        packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)
+        packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
+        # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
+        # computes this path dynamically, but dataset_root is available from the config).
+        if packed_data_path is None and packed_specs is not None:
+            dataset_root = getattr(cfg.dataset, "dataset_root", None)
+            seq_size = getattr(packed_specs, "packed_sequence_size", None)
+            if dataset_root is not None and seq_size is not None:
+                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
+                if matches:
+                    packed_data_path = str(matches[0])
+        if is_lora and is_squad and is_llama3_70b and packed_data_path is not None and Path(packed_data_path).exists():
+            gbs = cfg.train.global_batch_size
+            seq_len = cfg.model.seq_length
+            cache_key = (packed_data_path, gbs, seq_len)
+            if cache_key not in _lora_seq_stats_cache:
+                _lora_seq_stats_cache[cache_key] = calculate_avg_seqlen(
+                    packed_data_path, gbs, seq_len, drop_remainder=True
+                )
+            _, avg_tokens, _, avg_seqlen2 = _lora_seq_stats_cache[cache_key]
+
+            hs = cfg.model.hidden_size
+            n_layers = cfg.model.num_layers
+            n_heads = cfg.model.num_attention_heads
+            ffn_hs = cfg.model.ffn_hidden_size
+            vocab_size = cfg.model.vocab_size
+
+            model_flops_frozen = (
+                avg_tokens
+                * n_layers
+                * hs**2
+                * (12 + 12 * num_query_groups / n_heads + 18 * ffn_hs / hs + 6 * vocab_size / (n_layers * hs))
+            )
+            model_flops_unfrozen = n_layers * hs**2 * (12 * avg_seqlen2 / hs)
+
+            return batch_size * (model_flops_frozen * (2.0 / 3.0) + model_flops_unfrozen)
         # MoE.
         if cfg.model.num_moe_experts is None:
             # Every Transformer MLP is dense.

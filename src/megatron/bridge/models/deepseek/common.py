@@ -48,7 +48,7 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
     configs["hidden_size"] = hf_config.hidden_size
     configs["ffn_hidden_size"] = hf_config.intermediate_size
     configs["num_attention_heads"] = hf_config.num_attention_heads
-    configs["kv_channels"] = hf_config.num_key_value_heads
+    configs["num_query_groups"] = hf_config.num_key_value_heads
     configs["q_lora_rank"] = hf_config.q_lora_rank
     configs["num_moe_experts"] = hf_config.n_routed_experts
     configs["moe_ffn_hidden_size"] = hf_config.moe_intermediate_size
@@ -67,7 +67,6 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
 
     # Ensure MLA is enabled
     configs["multi_latent_attention"] = True
-    configs["generation_config"] = hf_pretrained.generation_config
     configs["vocab_size"] = hf_config.vocab_size
     configs["rotary_base"] = hf_config.rope_theta
     configs["init_method_std"] = hf_config.initializer_range

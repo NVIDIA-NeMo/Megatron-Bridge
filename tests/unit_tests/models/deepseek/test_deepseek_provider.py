@@ -60,7 +60,7 @@ class TestDeepSeekProviderDefaults:
         assert provider.hidden_size == 5120
         assert provider.num_moe_experts == 160
         assert provider.moe_router_topk == 6
-        assert provider.qk_layernorm is True
+        # Note: qk_layernorm is set by the bridge, not the provider class
         assert provider.mscale == 0.707
         assert provider.mscale_all_dim == 0.707
 

@@ -12,63 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Dict, Mapping
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
-from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider
+from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
-@MegatronModelBridge.register_bridge(source="DeepseekV3ForCausalLM", target=GPTModel)
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+@MegatronModelBridge.register_bridge(
+    source="DeepseekV3ForCausalLM",
+    target=GPTModel,
+    provider=MLAModelProvider,
+    model_type="deepseek_v3",
+)
 class DeepSeekV3Bridge(MegatronModelBridge):
-    """
-    Megatron Bridge for DeepSeek-V3.
+    """Megatron Bridge for DeepSeek-V3."""
 
-    As a user you would not use this bridge directly, but through `AutoBridge`.
-
-    Example:
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3-Base", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
-    """
-
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV3ModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
+        provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
-        configs = get_common_configs(hf_pretrained)
 
-        configs["fp16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16
-        configs["bf16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16
-        configs["params_dtype"] = self.dtype_from_hf(hf_config, default=torch.float32)
+        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.normalization = "RMSNorm"
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.share_embeddings_and_output_weights = False
+        provider.qk_layernorm = True
+        provider.multi_latent_attention = True
 
-        configs["make_vocab_size_divisible_by"] = 1280
-        configs["moe_router_score_function"] = "sigmoid"
-        configs["moe_router_enable_expert_bias"] = True
-        # aux_loss_alpha is not set in all DSv3 HF configs
-        if hasattr(hf_config, "aux_loss_alpha"):
-            configs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
+        provider.moe_grouped_gemm = True
+        provider.moe_router_pre_softmax = True
+        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        provider.moe_shared_expert_overlap = True
+        provider.moe_router_enable_expert_bias = True
+        provider.moe_router_dtype = "fp32"
+        provider.moe_permute_fusion = True
+        provider.moe_aux_loss_coeff = 0.0001
+
+        provider.apply_rope_fusion = False
+        provider.bias_activation_fusion = True
+        provider.bias_dropout_fusion = True
+        provider.cross_entropy_fusion_impl = "te"
+        provider.cross_entropy_loss_fusion = True
+        provider.masked_softmax_fusion = True
+        provider.persist_layer_norm = True
+        provider.async_tensor_model_parallel_allreduce = True
+        provider.gradient_accumulation_fusion = True
+
+        provider.hidden_dropout = 0.0
+        provider.attention_softmax_in_fp32 = False
+
+        provider.make_vocab_size_divisible_by = 1280
+        provider.seq_length = 4096
+
+        provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
+            hf_config.num_hidden_layers - hf_config.first_k_dense_replace
+        )
+        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
 
         # TODO: mtp
+        provider.mtp_num_layers = None
 
-        provider = DeepSeekV3ModelProvider(**configs)
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = get_common_mapping_list()
-
-        param_mappings = {
-            # expert bias
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-        }
-
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-
+        mapping_list.append(
+            AutoMapping(
+                megatron_param="decoder.layers.*.mlp.router.expert_bias",
+                hf_param="model.layers.*.mlp.gate.e_score_correction_bias",
+            )
+        )
         return MegatronMappingRegistry(*mapping_list)
 
     def maybe_modify_converted_hf_weight(
@@ -77,12 +109,8 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """
-        Add rotary embedding inverse frequency parameter if needed but not present.
-        This is needed for moonshotai related models (e.g., Moonlight-16B-A3B-Instruct).
-        """
+        """Add rotary embedding inverse frequency parameter if needed."""
         global_name = task.global_param_name
-        # Shipped together with input_layernorm.weight
         if not global_name.startswith("decoder.layers.") or not global_name.endswith(".input_layernorm.weight"):
             return converted_weights_dict
 

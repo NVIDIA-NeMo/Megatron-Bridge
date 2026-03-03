@@ -23,10 +23,10 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV2ModelProvider, DeepSeekV3ModelProvider
 from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 class TestDeepSeekV2Bridge:
@@ -94,7 +94,8 @@ class TestDeepSeekV2Bridge:
 
     @pytest.fixture
     def mock_pretrained_v2(self, ds_v2_config):
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(ds_v2_config.keys()))
         for k, v in ds_v2_config.items():
             setattr(cfg, k, v)
 
@@ -109,7 +110,7 @@ class TestDeepSeekV2Bridge:
     def test_provider_bridge_maps_config(self, mock_pretrained_v2):
         bridge = DeepSeekV2Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v2)
-        assert isinstance(provider, DeepSeekV2ModelProvider)
+        assert isinstance(provider, MLAModelProvider)
         assert provider.hidden_size == mock_pretrained_v2.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_v2.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_v2.config.intermediate_size
@@ -183,6 +184,7 @@ class TestDeepSeekV3Bridge:
             "tie_word_embeddings": False,
             "topk_group": 4,
             "topk_method": "noaux_tc",
+            "aux_loss_alpha": 0.0001,
             "torch_dtype": "bfloat16",
             "transformers_version": "4.33.1",
             "use_cache": True,
@@ -192,7 +194,8 @@ class TestDeepSeekV3Bridge:
 
     @pytest.fixture
     def mock_pretrained_v3(self, ds_v3_config):
-        cfg = Mock()
+        # Use spec to prevent Mock from auto-creating undefined attributes
+        cfg = Mock(spec=list(ds_v3_config.keys()))
         for k, v in ds_v3_config.items():
             setattr(cfg, k, v)
 
@@ -207,7 +210,7 @@ class TestDeepSeekV3Bridge:
     def test_provider_bridge_maps_config(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v3)
-        assert isinstance(provider, DeepSeekV3ModelProvider)
+        assert isinstance(provider, MLAModelProvider)
         assert provider.hidden_size == mock_pretrained_v3.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_v3.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_v3.config.intermediate_size
