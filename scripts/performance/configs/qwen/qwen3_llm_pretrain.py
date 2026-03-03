@@ -314,6 +314,8 @@ def qwen3_30b_a3b_pretrain_config_h100(
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
+    cfg.model.moe_token_dispatcher_type = "flex"
+
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
