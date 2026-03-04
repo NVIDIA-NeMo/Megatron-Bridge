@@ -206,6 +206,7 @@ class PerfEnvPlugin(Plugin):
     cp_size: int | None = None
     pp_size: int | None = None
     ep_size: int | None = None
+    etp_size: int | None = None
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
     moe_a2a_overlap: bool = False
     model_family_name: str
@@ -325,19 +326,24 @@ class PerfEnvPlugin(Plugin):
         moe_flex_dispatcher_backend: str,
         gpu: str,
         ep_size: int,
+        etp_size: int,
     ):
         if moe_flex_dispatcher_backend == "hybridep":
+            # HybridEP's communication group spans EP * ETP ranks (the tp_ep_group in Megatron-LM).
+            hybrid_ep_group_size = ep_size * etp_size
             if gpu in ["h100", "b200", "b300"]:
                 # Hopper/B200/B300 use NVL8 topology
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "8"
                 executor.env_vars["USE_MNNVL"] = "0"
-                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = "8" if ep_size > 8 else str(ep_size)
+                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = (
+                    "8" if hybrid_ep_group_size > 8 else str(hybrid_ep_group_size)
+                )
             else:
                 # GB200/GB300 use NVL72 topology
-                assert ep_size <= 72, "ep_size must be less than or equal to 72"
+                assert hybrid_ep_group_size <= 72, "ep_size * etp_size must be less than or equal to 72"
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
                 executor.env_vars["USE_MNNVL"] = "1"
-                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
+                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(hybrid_ep_group_size)
 
     def _set_nccl_pp_comm_chunksize(
         self,
@@ -418,6 +424,9 @@ class PerfEnvPlugin(Plugin):
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
         ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
+        etp_size = (
+            self.etp_size if self.etp_size is not None else (workload_base_config.expert_tensor_parallel_size or 1)
+        )
 
         # Force program order kernel launch for TP, CP overlap
         moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
@@ -449,6 +458,7 @@ class PerfEnvPlugin(Plugin):
             moe_flex_dispatcher_backend,
             self.gpu,
             ep_size,
+            etp_size,
         )
 
         # Set the chunk size of P2P communications
