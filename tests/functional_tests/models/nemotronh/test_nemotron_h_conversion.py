@@ -218,7 +218,7 @@ class TestNemotronHConversion:
         if pp > 1:
             config_data["hybrid_override_pattern"] = (
                 HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][:2]
-                + '|' 
+                + "|"
                 + HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][2:]
             )
         else:
