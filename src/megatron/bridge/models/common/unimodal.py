@@ -49,7 +49,7 @@ def unimodal_build_distributed_models(
     use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
-    data_parallel_random_init: bool = True,
+    data_parallel_random_init: bool = False,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
     model_type: ModelType = ModelType.encoder_or_decoder,
