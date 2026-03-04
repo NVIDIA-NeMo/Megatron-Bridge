@@ -307,6 +307,11 @@ class PerfEnvPlugin(Plugin):
             if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
+        if model_recipe_name in ["nemotron_3_nano"] and compute_dtype == "nvfp4":
+            executor.env_vars["NVTE_NVFP4_DISABLE_RHT"] = "1"
+            executor.env_vars["NVTE_NVFP4_DISABLE_STOCHASTIC_ROUNDING"] = "1"
+            executor.env_vars["NVTE_NVFP4_DISABLE_2D_QUANTIZATION"] = "1"
+
     def _set_layernorm_sm_margin(
         self,
         task: Union["run.Partial", "run.Script"],
