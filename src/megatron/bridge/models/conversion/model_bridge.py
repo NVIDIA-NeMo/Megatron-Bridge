@@ -960,7 +960,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
-            adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+            adapter_tasks_by_base = self.build_adapter_conversion_tasks(hf_pretrained, megatron_model)
 
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
@@ -1205,6 +1205,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
         hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys()
 
         mapping_registry = self.mapping_registry()
@@ -1394,6 +1397,7 @@ def stream_weights_megatron_to_hf(
 def stream_adapter_weights_megatron_to_hf(
     dispatch_instance: MegatronModel,
     megatron_model: Union[MegatronModel, List[MegatronModel]],
+    hf_pretrained: HFPreTrained,
     cpu: bool = True,
     show_progress: bool = True,
 ) -> Iterable[HFWeightTuple]:
@@ -1437,7 +1441,8 @@ def register_bridge_implementation(
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
-        # allow bridge to access model config (config-only shims or raw configs lack .config)
+        # allow bridge to access model config
+        bridge.hf_pretrained = hf_pretrained
         bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         return bridge.stream_weights_megatron_to_hf(
@@ -1453,12 +1458,19 @@ def register_bridge_implementation(
     def _adapter_stream_registered_impl(
         _,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
         cpu: bool = True,
         show_progress: bool = True,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
+
+        # allow bridge to access model config
+        bridge.hf_pretrained = hf_pretrained
+        bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
         return bridge.stream_adapter_weights_megatron_to_hf(
             megatron_model,
+            hf_pretrained,
             cpu=cpu,
             show_progress=show_progress,
         )

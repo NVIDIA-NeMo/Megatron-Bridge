@@ -44,7 +44,12 @@ from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attrib
 
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-    from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronWeightTuple, WeightConversionTask
+    from megatron.bridge.models.conversion.model_bridge import (
+        HFPreTrained,
+        HFWeightTuple,
+        MegatronWeightTuple,
+        WeightConversionTask,
+    )
 
 
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
@@ -439,7 +444,7 @@ class MegatronPeftBridge:
         return linear_in_name, linear_out_name
 
     def build_adapter_conversion_tasks(
-        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+        self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> Dict[str, List[AdapterWeightConversionTask]]:
         """Construct adapter merge tasks keyed by their base parameter.
 
@@ -448,6 +453,9 @@ class MegatronPeftBridge:
         contains the adapter tasks (canonical or regular) that should be
         merged into that base weight.
         """
+
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
@@ -598,6 +606,7 @@ class MegatronPeftBridge:
     def stream_adapter_weights_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
         cpu: bool = True,
         show_progress: bool = True,
     ) -> Iterable[HFWeightTuple]:
@@ -610,7 +619,7 @@ class MegatronPeftBridge:
             megatron_model = [megatron_model]
 
         num_moe_experts = megatron_model[0].config.num_moe_experts
-        adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+        adapter_tasks_by_base = self.build_adapter_conversion_tasks(hf_pretrained, megatron_model)
         adapter_tasks = list(itertools.chain.from_iterable(adapter_tasks_by_base.values()))
         if not adapter_tasks:
             return
