@@ -24,7 +24,7 @@ class TestNemotronNano12Bv2VLModelProvider:
             num_attention_heads=40,
         )
         provider.finalize()
-        
+
         # Core fields
         assert provider.num_layers == 28
         assert provider.hidden_size == 5120
@@ -56,7 +56,7 @@ class TestNemotronNano12Bv2VLModelProvider:
             freeze_vision_projection=True,
         )
         provider.finalize()
-        
+
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True
         assert provider.freeze_vision_projection is True

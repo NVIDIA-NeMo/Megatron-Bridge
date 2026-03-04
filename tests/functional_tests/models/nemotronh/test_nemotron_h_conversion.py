@@ -216,11 +216,14 @@ class TestNemotronHConversion:
             config_data = json.load(f)
 
         if pp > 1:
-            config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][:2] \
-                + '|' + HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][2:]
+            config_data["hybrid_override_pattern"] = (
+                HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][:2]
+                + '|' 
+                + HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][2:]
+            )
         else:
             config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
-        
+
         with open(config_file, "w") as f:
             json.dump(config_data, f, indent=2)
 

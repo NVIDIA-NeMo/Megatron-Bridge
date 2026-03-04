@@ -96,7 +96,7 @@ class TestNemotronHModelProvider:
             num_attention_heads=32,
         )
         provider.finalize()
-        
+
         # Check MoE default configurations
         assert provider.moe_aux_loss_coeff == 0.0001
         assert provider.moe_router_score_function == "sigmoid"
@@ -116,7 +116,7 @@ class TestNemotronHModel4BProvider:
         """Test Nemotron-H 4B model has correct default configuration."""
         provider = NemotronHModel4BProvider()
         provider.finalize()
-        
+
         # Check Nemotron-H 4B specific configuration
         assert provider.num_layers == 52
         assert provider.hidden_size == 3072
@@ -136,7 +136,7 @@ class TestNemotronHModel4BProvider:
             use_mamba_mem_eff_path=True,
         )
         provider.finalize()
-        
+
         # Check overridden values
         assert provider.seq_length == 16384
         assert provider.hidden_dropout == 0.1
@@ -155,7 +155,7 @@ class TestNemotronHModel8BProvider:
         """Test Nemotron-H 8B model has correct default configuration."""
         provider = NemotronHModel8BProvider()
         provider.finalize()
-        
+
         # Check Nemotron-H 8B specific configuration
         assert provider.num_layers == 52
         assert provider.hidden_size == 4096
@@ -187,7 +187,7 @@ class TestNemotronHModel47BProvider:
         """Test Nemotron-H 47B model has correct default configuration."""
         provider = NemotronHModel47BProvider()
         provider.finalize()
-        
+
         # Check Nemotron-H 47B specific configuration
         assert provider.num_layers == 98
         assert provider.hidden_size == 8192
@@ -206,7 +206,7 @@ class TestNemotronHModel47BProvider:
             hidden_dropout=0.1,
         )
         provider.finalize()
-        
+
         # Check overridden values
         assert provider.seq_length == 65536
         assert provider.hidden_dropout == 0.1
@@ -223,7 +223,7 @@ class TestNemotronHModel56BProvider:
         """Test Nemotron-H 56B model has correct default configuration."""
         provider = NemotronHModel56BProvider()
         provider.finalize()
-        
+
         # Check Nemotron-H 56B specific configuration
         assert provider.num_layers == 118
         assert provider.hidden_size == 8192
@@ -242,7 +242,7 @@ class TestNemotronHModel56BProvider:
             hidden_dropout=0.1,
         )
         provider.finalize()
-        
+
         # Check overridden values
         assert provider.seq_length == 131072
         assert provider.hidden_dropout == 0.1
@@ -325,7 +325,7 @@ class TestNemotronNano9Bv2Provider:
             mamba_head_dim=96,
         )
         provider.finalize()
-        
+
         # Check overridden values
         assert provider.seq_length == 16384
         assert provider.hidden_dropout == 0.1
@@ -385,7 +385,7 @@ class TestNemotron3NanoProvider:
         """Test Nemotron 3 Nano model has correct default configuration."""
         provider = Nemotron3NanoProvider()
         provider.finalize()
-        
+
         # Check Nemotron 3 Nano specific configuration
         assert provider.seq_length == 262144
         assert provider.num_layers == 52
@@ -403,7 +403,7 @@ class TestNemotron3NanoProvider:
         """Test Nemotron 3 Nano model MoE-specific configuration."""
         provider = Nemotron3NanoProvider()
         provider.finalize()
-        
+
         # Check MoE-specific configuration
         assert provider.num_moe_experts == 128
         assert provider.moe_ffn_hidden_size == 1856
@@ -421,7 +421,7 @@ class TestNemotron3NanoProvider:
             num_moe_experts=64,
         )
         provider.finalize()
-        
+
         # Check overridden values
         assert provider.seq_length == 16384
         assert provider.hidden_dropout == 0.1
@@ -440,7 +440,7 @@ class TestNemotron3NanoProvider:
         """Test Nemotron 3 Nano inherits MoE defaults from base class."""
         provider = Nemotron3NanoProvider()
         provider.finalize()
-        
+
         # Check inherited MoE defaults from NemotronHModelProvider
         assert provider.moe_aux_loss_coeff == 0.0001
         assert provider.moe_router_score_function == "sigmoid"

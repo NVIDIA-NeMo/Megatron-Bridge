@@ -80,7 +80,7 @@ class TestNemotronVLBridgeProviderBridge:
     def test_provider_bridge_basic_config(self, nemotron_vl_bridge, mock_hf_pretrained):
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
         provider.finalize()
-        
+
         assert isinstance(provider, NemotronNano12Bv2VLModelProvider)
 
         assert provider.num_layers == 28
@@ -97,6 +97,7 @@ class TestNemotronVLBridgeProviderBridge:
     def test_provider_bridge_dtype_fp16(self, mock_dtype_from_hf, nemotron_vl_bridge, mock_hf_pretrained):
         mock_dtype_from_hf.return_value = torch.float16
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
+        provider.finalize()
         assert provider.fp16 is True
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float16
@@ -105,6 +106,7 @@ class TestNemotronVLBridgeProviderBridge:
     def test_provider_bridge_dtype_bf16(self, mock_dtype_from_hf, nemotron_vl_bridge, mock_hf_pretrained):
         mock_dtype_from_hf.return_value = torch.bfloat16
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
+        provider.finalize()
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
@@ -113,6 +115,7 @@ class TestNemotronVLBridgeProviderBridge:
     def test_provider_bridge_dtype_fp32(self, mock_dtype_from_hf, nemotron_vl_bridge, mock_hf_pretrained):
         mock_dtype_from_hf.return_value = torch.float32
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
+        provider.finalize()
         assert provider.fp16 is False
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float32

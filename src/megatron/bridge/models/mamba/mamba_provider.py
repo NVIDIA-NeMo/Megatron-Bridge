@@ -132,7 +132,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     restore_modelopt_state: bool = False
 
     def finalize(self) -> None:
-        """Finalize the Mamba model provider. 
+        """Finalize the Mamba model provider.
         Calculates the number of layers from the hybrid_layer_pattern.
         Executes the deferred MCore post-init logic.
         """
@@ -140,8 +140,8 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         used_hybrid_override_pattern = False
         if self.hybrid_override_pattern is not None:
             assert self.hybrid_layer_pattern is None, (
-                'hybrid_override_pattern and hybrid_layer_pattern cannot both be specified. '
-                'hybrid_override_pattern is deprecated; use hybrid_layer_pattern instead.'
+                "hybrid_override_pattern and hybrid_layer_pattern cannot both be specified. "
+                "hybrid_override_pattern is deprecated; use hybrid_layer_pattern instead."
             )
             if get_rank_safe() == 0:
                 warnings.warn(
@@ -151,7 +151,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
                 )
             self.hybrid_layer_pattern = self.hybrid_override_pattern
             used_hybrid_override_pattern = True
-        
+
         # Check if hybrid_layer_pattern is specified and derive num_layers from pattern
         if self.hybrid_layer_pattern is not None:
             # Derive num_layers from pattern
@@ -159,14 +159,14 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             if self.num_layers is not None:
                 if used_hybrid_override_pattern:
                     assert self.num_layers == num_layers_in_pattern, (
-                        f'num_layers ({self.num_layers}) does not match the number of layers '
-                        f'derived from hybrid_override_pattern ({num_layers_in_pattern}). '
-                        f'Please correct num_layers or the pattern.'
+                        f"num_layers ({self.num_layers}) does not match the number of layers "
+                        f"derived from hybrid_override_pattern ({num_layers_in_pattern}). "
+                        f"Please correct num_layers or the pattern."
                     )
                 else:
                     assert False, (
-                        'If hybrid_layer_pattern is specified, num_layers should not be specified. '
-                        'The number of layers is derived from the pattern.'
+                        "If hybrid_layer_pattern is specified, num_layers should not be specified. "
+                        "The number of layers is derived from the pattern."
                     )
             self.num_layers = num_layers_in_pattern
 

@@ -93,11 +93,11 @@ class MambaModelConfig(ModelConfig):
     on the embedded ``transformer`` config are accessible directly on this object
     via ``__getattr__``/``__setattr__`` proxying.
 
-    Supports hybrid SSM/attention architectures via ``hybrid_layer_pattern`` 
+    Supports hybrid SSM/attention architectures via ``hybrid_layer_pattern``
 
     Note:
         ``vocab_size`` must be set before passing this config to ``MambaModelBuilder``.
-        ``hybrid_attention_ratio``,``hybrid_mlp_ratio``, and 
+        ``hybrid_attention_ratio``,``hybrid_mlp_ratio``, and
         ``hybrid_override_pattern`` are deprecated and will be removed in a future release.
     """
 
