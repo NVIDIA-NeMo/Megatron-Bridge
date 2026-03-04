@@ -15,6 +15,8 @@
 """Unit tests for flop_utils module."""
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -376,3 +378,48 @@ class TestHybridLayerCounting:
             f"Non-SwiGLU: expected {expected_no_swiglu:.2e} but got {flops_no_swiglu:.2e}"
         )
         assert flops_swiglu == expected_swiglu, f"SwiGLU: expected {expected_swiglu:.2e} but got {flops_swiglu:.2e}"
+
+
+class TestHybridMtpPatternParsing:
+    """Tests for hybrid/MTP pattern parsing in FLOPs accounting."""
+
+    def test_inferred_mtp_depth_scales_hybrid_logit_flops(self):
+        """When mtp_num_layers is inferred from parsed pattern, logits FLOPs should scale accordingly."""
+        batch_size = 1
+        seq_len = 256
+        hidden_size = 1024
+        vocab_size = 32000  # divisible by 128, so padded vocab is unchanged.
+
+        base_cfg = dict(
+            is_hybrid_model=True,
+            hybrid_override_pattern="M*/MM/MM",
+            num_layers=2,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=8,
+            vocab_size=vocab_size,
+            moe_ffn_hidden_size=2048,
+            moe_shared_expert_intermediate_size=0,
+            moe_router_topk=1,
+            gated_linear_unit=False,
+            mtp_num_layers=0,  # overridden below for inferred-vs-explicit comparison
+        )
+
+        cfg_explicit_zero = MockConfigContainer(model=MockModelConfig(**base_cfg))
+        cfg_inferred = MockConfigContainer(model=MockModelConfig(**(base_cfg | {"mtp_num_layers": None})))
+
+        parsed_pattern = SimpleNamespace(main_pattern="M*", mtp_pattern="MM", mtp_num_depths=2)
+        mock_module = MagicMock()
+        mock_module.parse_hybrid_pattern.return_value = parsed_pattern
+
+        with patch("megatron.bridge.training.utils.flop_utils.importlib.import_module", return_value=mock_module):
+            flops_explicit_zero = num_floating_point_operations(cfg_explicit_zero, batch_size=batch_size)
+            flops_inferred = num_floating_point_operations(cfg_inferred, batch_size=batch_size)
+
+        # Only the logits term should differ here:
+        #   delta = 2 * B * S * H * vocab * inferred_mtp_num_layers, then *3 for fwd+bwd factor.
+        expected_delta = 2 * batch_size * seq_len * hidden_size * vocab_size * 2 * 3
+        actual_delta = flops_inferred - flops_explicit_zero
+        assert actual_delta == expected_delta, f"Expected logits delta {expected_delta:.2e} but got {actual_delta:.2e}"

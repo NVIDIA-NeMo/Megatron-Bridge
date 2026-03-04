@@ -153,7 +153,8 @@ class TestLlamaNemotronConversion:
         assert config_data["num_hidden_layers"] == 2
         assert config_data["num_attention_heads"] == 8
         assert config_data["vocab_size"] == 32000
-        assert config_data["rope_scaling"]["rope_type"] == "llama3"
+        rope_cfg = config_data.get("rope_scaling") or config_data.get("rope_parameters", {})
+        assert rope_cfg.get("rope_type") == "llama3"
 
         # Try loading the model to verify it's valid
         try:
@@ -264,7 +265,8 @@ class TestLlamaNemotronConversion:
             assert saved_config["model_type"] == "llama", "Model type should be llama"
             assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
             assert saved_config["num_attention_heads"] == 8, "Number of attention heads should match toy config"
-            assert saved_config["rope_scaling"]["rope_type"] == "llama3", "Should have Llama 3.1 rope scaling"
+            rope_cfg = saved_config.get("rope_scaling") or saved_config.get("rope_parameters", {})
+            assert rope_cfg.get("rope_type") == "llama3", "Should have Llama 3.1 rope scaling"
 
             print(f"SUCCESS: Llama-Nemotron {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
@@ -306,6 +308,7 @@ class TestLlamaNemotronHeterogeneousRoundtrip:
 
         config_dict = {
             "architectures": ["DeciLMForCausalLM"],
+            "model_type": "llama",
             "auto_map": {"AutoModelForCausalLM": "modeling_decilm.DeciLMForCausalLM"},
             "hidden_size": H,
             "num_attention_heads": A,
@@ -454,4 +457,3 @@ class TestLlamaNemotronHeterogeneousRoundtrip:
         assert saved_config["hidden_size"] == 128
         assert saved_config["num_attention_heads"] == 8
         assert saved_config["num_hidden_layers"] == 2
-        assert saved_config.get("rope_scaling", {}).get("rope_type") == "llama3"

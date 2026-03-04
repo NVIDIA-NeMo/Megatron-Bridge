@@ -113,7 +113,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
-        data_parallel_random_init: bool = True,
+        data_parallel_random_init: bool = False,
         use_cpu_initialization: None | bool = False,
         init_model_with_meta_device: bool | None = None,
         pre_wrap_hook: Union[
@@ -466,7 +466,6 @@ class ModelParallelKwargs(TypedDict, total=False):
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
-    moe_extended_tp: bool
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
@@ -483,7 +482,7 @@ def get_model(
     use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
-    data_parallel_random_init: bool = True,
+    data_parallel_random_init: bool = False,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
     pre_wrap_hook: Union[

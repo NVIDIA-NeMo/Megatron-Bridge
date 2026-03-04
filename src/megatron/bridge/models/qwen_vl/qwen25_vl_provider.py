@@ -36,6 +36,7 @@ class Qwen25VLModelProvider(GPTModelProvider):
 
     # Vision configuration
     vision_config: Qwen2_5_VLVisionConfig = field(default_factory=Qwen2_5_VLVisionConfig)
+    return_dict: bool = True
 
     # Token IDs
     bos_token_id: int = 151643
