@@ -518,9 +518,6 @@ class CommOverlapConfig:
                 model_cfg.overlap_moe_expert_parallel_comm
                 or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
             ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
-            assert not model_cfg.moe_use_legacy_grouped_gemm, (
-                "delay_wgrad_compute is not supported with legacy groupedgemm implementation"
-            )
 
             # CUDA graph scope-specific validations for delayed wgrad.
             cuda_graph_scope = getattr(model_cfg, "cuda_graph_scope", []) or []
