@@ -447,6 +447,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                 answer = turn["content"]
                 answer_tokens = self.hf_tokenizer.encode(answer, add_special_tokens=False)
                 answer_start, answer_end = find_pattern_indices(input_ids, answer_tokens, search_start_index)
+                answer_end += 1
                 assert answer_start > 0, "Not found valid answer in conversation."
                 target[answer_start:answer_end] = input_ids[answer_start:answer_end]
                 search_start_index = answer_end
