@@ -79,7 +79,8 @@ class TestNemotronVLBridgeInitialization:
 class TestNemotronVLBridgeProviderBridge:
     def test_provider_bridge_basic_config(self, nemotron_vl_bridge, mock_hf_pretrained):
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
-
+        provider.finalize()
+        
         assert isinstance(provider, NemotronNano12Bv2VLModelProvider)
 
         assert provider.num_layers == 28

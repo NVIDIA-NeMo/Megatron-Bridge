@@ -33,10 +33,10 @@ class TestNemotronHModelProvider:
     def test_nemotron_h_model_provider_initialization(self):
         """Test NemotronHModelProvider can be initialized with default values."""
         provider = NemotronHModelProvider(
-            num_layers=52,
             hidden_size=4096,
             num_attention_heads=32,
         )
+        provider.finalize()
 
         # Check required transformer config fields
         assert provider.num_layers == 52
@@ -63,11 +63,11 @@ class TestNemotronHModelProvider:
             return torch.pow(F.relu(x), 2)
 
         provider = NemotronHModelProvider(
-            num_layers=52,
             hidden_size=4096,
             num_attention_heads=32,
             activation_func=custom_activation,
         )
+        provider.finalize()
 
         # Test that the activation function is set correctly
         test_input = torch.tensor([1.0, -1.0, 2.0])
@@ -79,12 +79,12 @@ class TestNemotronHModelProvider:
     def test_nemotron_h_mamba_configuration(self):
         """Test NemotronHModelProvider Mamba-specific configuration."""
         provider = NemotronHModelProvider(
-            num_layers=52,
             hidden_size=4096,
             num_attention_heads=32,
             mamba_num_groups=16,
             mamba_head_dim=128,
         )
+        provider.finalize()
 
         assert provider.mamba_num_groups == 16
         assert provider.mamba_head_dim == 128
@@ -92,11 +92,11 @@ class TestNemotronHModelProvider:
     def test_nemotron_h_moe_default_configuration(self):
         """Test NemotronHModelProvider MoE default configuration."""
         provider = NemotronHModelProvider(
-            num_layers=52,
             hidden_size=4096,
             num_attention_heads=32,
         )
-
+        provider.finalize()
+        
         # Check MoE default configurations
         assert provider.moe_aux_loss_coeff == 0.0001
         assert provider.moe_router_score_function == "sigmoid"
@@ -115,7 +115,8 @@ class TestNemotronHModel4BProvider:
     def test_nemotron_h_4b_default_configuration(self):
         """Test Nemotron-H 4B model has correct default configuration."""
         provider = NemotronHModel4BProvider()
-
+        provider.finalize()
+        
         # Check Nemotron-H 4B specific configuration
         assert provider.num_layers == 52
         assert provider.hidden_size == 3072
@@ -134,7 +135,8 @@ class TestNemotronHModel4BProvider:
             hidden_dropout=0.1,
             use_mamba_mem_eff_path=True,
         )
-
+        provider.finalize()
+        
         # Check overridden values
         assert provider.seq_length == 16384
         assert provider.hidden_dropout == 0.1
@@ -152,7 +154,8 @@ class TestNemotronHModel8BProvider:
     def test_nemotron_h_8b_default_configuration(self):
         """Test Nemotron-H 8B model has correct default configuration."""
         provider = NemotronHModel8BProvider()
-
+        provider.finalize()
+        
         # Check Nemotron-H 8B specific configuration
         assert provider.num_layers == 52
         assert provider.hidden_size == 4096
@@ -183,7 +186,8 @@ class TestNemotronHModel47BProvider:
     def test_nemotron_h_47b_default_configuration(self):
         """Test Nemotron-H 47B model has correct default configuration."""
         provider = NemotronHModel47BProvider()
-
+        provider.finalize()
+        
         # Check Nemotron-H 47B specific configuration
         assert provider.num_layers == 98
         assert provider.hidden_size == 8192
@@ -201,7 +205,8 @@ class TestNemotronHModel47BProvider:
             seq_length=65536,
             hidden_dropout=0.1,
         )
-
+        provider.finalize()
+        
         # Check overridden values
         assert provider.seq_length == 65536
         assert provider.hidden_dropout == 0.1
@@ -217,7 +222,8 @@ class TestNemotronHModel56BProvider:
     def test_nemotron_h_56b_default_configuration(self):
         """Test Nemotron-H 56B model has correct default configuration."""
         provider = NemotronHModel56BProvider()
-
+        provider.finalize()
+        
         # Check Nemotron-H 56B specific configuration
         assert provider.num_layers == 118
         assert provider.hidden_size == 8192
@@ -235,7 +241,8 @@ class TestNemotronHModel56BProvider:
             seq_length=131072,  # 128k context
             hidden_dropout=0.1,
         )
-
+        provider.finalize()
+        
         # Check overridden values
         assert provider.seq_length == 131072
         assert provider.hidden_dropout == 0.1
@@ -317,7 +324,8 @@ class TestNemotronNano9Bv2Provider:
             hidden_dropout=0.1,
             mamba_head_dim=96,
         )
-
+        provider.finalize()
+        
         # Check overridden values
         assert provider.seq_length == 16384
         assert provider.hidden_dropout == 0.1
@@ -356,6 +364,7 @@ class TestNemotronNano12Bv2Provider:
             hidden_dropout=0.1,
             mamba_head_dim=96,
         )
+        provider.finalize()
 
         # Check overridden values
         assert provider.seq_length == 32768
@@ -375,7 +384,8 @@ class TestNemotron3NanoProvider:
     def test_nemotron_3_nano_default_configuration(self):
         """Test Nemotron 3 Nano model has correct default configuration."""
         provider = Nemotron3NanoProvider()
-
+        provider.finalize()
+        
         # Check Nemotron 3 Nano specific configuration
         assert provider.seq_length == 262144
         assert provider.num_layers == 52
@@ -392,7 +402,8 @@ class TestNemotron3NanoProvider:
     def test_nemotron_3_nano_moe_configuration(self):
         """Test Nemotron 3 Nano model MoE-specific configuration."""
         provider = Nemotron3NanoProvider()
-
+        provider.finalize()
+        
         # Check MoE-specific configuration
         assert provider.num_moe_experts == 128
         assert provider.moe_ffn_hidden_size == 1856
@@ -409,7 +420,8 @@ class TestNemotron3NanoProvider:
             hidden_dropout=0.1,
             num_moe_experts=64,
         )
-
+        provider.finalize()
+        
         # Check overridden values
         assert provider.seq_length == 16384
         assert provider.hidden_dropout == 0.1
@@ -427,7 +439,8 @@ class TestNemotron3NanoProvider:
     def test_nemotron_3_nano_inherits_moe_defaults(self):
         """Test Nemotron 3 Nano inherits MoE defaults from base class."""
         provider = Nemotron3NanoProvider()
-
+        provider.finalize()
+        
         # Check inherited MoE defaults from NemotronHModelProvider
         assert provider.moe_aux_loss_coeff == 0.0001
         assert provider.moe_router_score_function == "sigmoid"
@@ -456,7 +469,7 @@ class TestHybridPatterns:
         ]
 
         for provider in providers:
-            pattern = provider.hybrid_layer_pattern
+            pattern = provider.hybrid_override_pattern
             assert "M" in pattern  # Mamba layers
             assert "*" in pattern  # Attention layers
             assert len(pattern) > 0

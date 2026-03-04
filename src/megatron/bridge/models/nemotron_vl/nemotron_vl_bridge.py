@@ -44,6 +44,9 @@ class NemotronVLBridge(MegatronModelBridge):
         ("hybrid_override_pattern", "hybrid_layer_pattern"),
     ]
 
+    # Remove num_hidden_layers from CONFIG_MAPPING as it is derived from hybrid_layer_pattern
+    CONFIG_MAPPING.remove(("num_hidden_layers", "num_layers"))
+
     # ------------------------------------------------------------------
     # Provider translation
     # ------------------------------------------------------------------

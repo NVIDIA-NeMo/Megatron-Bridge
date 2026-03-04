@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
@@ -28,6 +29,7 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -129,6 +131,47 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
     restore_modelopt_state: bool = False
 
+    def finalize(self) -> None:
+        """Finalize the Mamba model provider. 
+        Calculates the number of layers from the hybrid_layer_pattern.
+        Executes the deferred MCore post-init logic.
+        """
+        # Check if hybrid_override_pattern is specified and throw deprecation warning
+        used_hybrid_override_pattern = False
+        if self.hybrid_override_pattern is not None:
+            assert self.hybrid_layer_pattern is None, (
+                'hybrid_override_pattern and hybrid_layer_pattern cannot both be specified. '
+                'hybrid_override_pattern is deprecated; use hybrid_layer_pattern instead.'
+            )
+            if get_rank_safe() == 0:
+                warnings.warn(
+                    "hybrid_override_pattern is deprecated. Use hybrid_layer_pattern instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            self.hybrid_layer_pattern = self.hybrid_override_pattern
+            used_hybrid_override_pattern = True
+        
+        # Check if hybrid_layer_pattern is specified and derive num_layers from pattern
+        if self.hybrid_layer_pattern is not None:
+            # Derive num_layers from pattern
+            num_layers_in_pattern = get_hybrid_total_layer_count(self.hybrid_layer_pattern)
+            if self.num_layers is not None:
+                if used_hybrid_override_pattern:
+                    assert self.num_layers == num_layers_in_pattern, (
+                        f'num_layers ({self.num_layers}) does not match the number of layers '
+                        f'derived from hybrid_override_pattern ({num_layers_in_pattern}). '
+                        f'Please correct num_layers or the pattern.'
+                    )
+                else:
+                    assert False, (
+                        'If hybrid_layer_pattern is specified, num_layers should not be specified. '
+                        'The number of layers is derived from the pattern.'
+                    )
+            self.num_layers = num_layers_in_pattern
+
+        super().finalize()
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
 
@@ -163,44 +206,11 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         else:
             padded_vocab_size = self.vocab_size
 
-        # Check if hybrid_override_pattern is specified and throw deprecation warning
-        used_hybrid_override_pattern = False
-        if self.hybrid_override_pattern is not None:
-            assert self.hybrid_layer_pattern is None, (
-                '--hybrid-override-pattern and --hybrid-layer-pattern cannot both be specified. '
-                '--hybrid-override-pattern is deprecated; use --hybrid-layer-pattern instead.'
-            )
-            logger.warning(
-                "--hybrid-override-pattern is deprecated. Use --hybrid-layer-pattern instead.",
-            )
-            self.hybrid_layer_pattern = self.hybrid_override_pattern
-            used_hybrid_override_pattern = True
-        
-        # Check if hybrid_layer_pattern is specified and derive num_layers from pattern
-        if self.hybrid_layer_pattern is not None:
-            # Derive num_layers from pattern
-            num_layers_in_pattern = get_hybrid_total_layer_count(self.hybrid_layer_pattern)
-            if self.num_layers is not None:
-                if used_hybrid_override_pattern:
-                    assert self.num_layers == num_layers_in_pattern, (
-                        f'--num-layers ({self.num_layers}) does not match the number of layers '
-                        f'derived from --hybrid-override-pattern ({num_layers_in_pattern}). '
-                        f'Please correct --num-layers or the pattern.'
-                    )
-                else:
-                    assert False, (
-                        'If --hybrid-layer-pattern is specified, --num-layers should not be specified. '
-                        'The number of layers is derived from the pattern.'
-                    )
-            self.num_layers = num_layers_in_pattern
-
         return MCoreMambaModel(
             self,
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,
-            hybrid_attention_ratio=self.hybrid_attention_ratio,
-            hybrid_mlp_ratio=self.hybrid_mlp_ratio,
             hybrid_layer_pattern=self.hybrid_layer_pattern,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,

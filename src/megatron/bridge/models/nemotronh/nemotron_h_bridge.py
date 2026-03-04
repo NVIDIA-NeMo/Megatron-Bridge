@@ -68,6 +68,9 @@ class NemotronHBridge(MegatronModelBridge):
         # MoE-specific fields (already in base but with different HF names)
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
     ]
+    
+    # Remove num_hidden_layers from CONFIG_MAPPING as it is derived from hybrid_layer_pattern
+    CONFIG_MAPPING.remove(("num_hidden_layers", "num_layers"))
 
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]

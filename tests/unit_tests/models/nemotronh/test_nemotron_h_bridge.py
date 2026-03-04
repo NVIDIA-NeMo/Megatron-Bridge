@@ -116,12 +116,14 @@ class TestNemotronHBridge:
 
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
+        result.finalize()
 
         # Check that it returns a MambaModelProvider instance
         assert isinstance(result, MambaModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_nemotronh_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == mock_nemotronh_config.hybrid_override_pattern
         assert result.hidden_size == mock_nemotronh_config.hidden_size
         assert result.add_bias_linear == mock_nemotronh_config.use_bias
         assert result.num_attention_heads == mock_nemotronh_config.num_attention_heads
