@@ -1082,6 +1082,21 @@ class LoggerConfig:
     mlflow_tags: Optional[dict[str, str]] = None
     """Optional tags to apply to the MLFlow run."""
 
+    comet_project: Optional[str] = None
+    """The Comet ML project name. Comet logging is disabled when this is None."""
+
+    comet_experiment_name: Optional[str] = None
+    """The Comet ML experiment name."""
+
+    comet_workspace: Optional[str] = None
+    """The Comet ML workspace. If not set, uses the default workspace for the API key."""
+
+    comet_api_key: Optional[str] = None
+    """The Comet ML API key. Can also be set via COMET_API_KEY environment variable."""
+
+    comet_tags: Optional[list[str]] = None
+    """Optional list of tags to apply to the Comet ML experiment."""
+
     logging_level: int = logging.INFO
     """Set default logging level"""
 
@@ -1123,6 +1138,28 @@ class LoggerConfig:
                 raise ModuleNotFoundError(
                     "MLFlow logging is configured, but the 'mlflow' package is not installed. "
                     "Install it via pip install mlflow or uv add mlflow"
+                ) from exc
+
+        if self.comet_project and (self.comet_experiment_name is None or self.comet_experiment_name == ""):
+            raise ValueError("Set logger.comet_experiment_name when enabling Comet ML logging.")
+
+        using_comet = any(
+            [
+                self.comet_project,
+                self.comet_experiment_name,
+                self.comet_workspace,
+            ]
+        )
+
+        if using_comet:
+            try:
+                import importlib
+
+                importlib.import_module("comet_ml")
+            except ModuleNotFoundError as exc:
+                raise ModuleNotFoundError(
+                    "Comet ML logging is configured, but the 'comet_ml' package is not installed. "
+                    "Install it via pip install comet-ml or uv add comet-ml"
                 ) from exc
 
 
