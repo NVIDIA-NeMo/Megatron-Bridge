@@ -201,13 +201,14 @@ class TestQwen25OmniModel:
         return language_model_layer_spec
 
     @staticmethod
-    def get_data_batch(processor, random_image):
+    def get_data_batch(processor, random_image, random_video, random_audio):
         """Generate a batch of data for model forward pass.
 
         Args:
             processor: HuggingFace processor.
             random_image: Random PIL image.
-
+            random_video: Random video.
+            random_audio: Random audio.
         Returns:
             dict: A dictionary containing all inputs needed for model forward pass:
                 - input_ids: Token IDs [batch, seq_len]
