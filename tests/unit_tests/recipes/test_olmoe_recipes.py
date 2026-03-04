@@ -34,41 +34,43 @@ _OLMOE_RECIPE_FUNCS = [
     if callable(getattr(_olmoe_module, name, None))
 ]
 
-# OLMoE finetune-specific tests
-_OLMOE_FINETUNE_FUNCS = [
-    getattr(_olmoe_module, name)
-    for name in ["olmoe_7b_finetune_config"]
-    if callable(getattr(_olmoe_module, name, None))
+# OLMoE SFT-specific tests
+_OLMOE_SFT_FUNCS = [
+    getattr(_olmoe_module, name) for name in ["olmoe_7b_sft_config"] if callable(getattr(_olmoe_module, name, None))
+]
+
+# OLMoE PEFT-specific tests
+_OLMOE_PEFT_FUNCS = [
+    getattr(_olmoe_module, name) for name in ["olmoe_7b_peft_config"] if callable(getattr(_olmoe_module, name, None))
 ]
 
 
 def _safe_overrides_for(name: str) -> dict:
     """Return overrides for recipe functions.
 
-    Pretrain configs use the new parameterless API (return empty dict).
-    Finetune configs still accept parameters.
+    All configs now use the new parameterless API (return empty dict).
     """
-    is_finetune = "finetune" in name.lower()
+    return {}
 
-    if is_finetune:
-        # Finetuning-specific overrides - finetune configs still accept parameters
-        overrides = {
-            "name": f"unit_{name}",
-            "dir": ".",
-            "train_iters": 10,
-            "micro_batch_size": 1,
-            "seq_length": 64,
-            "min_lr": 1e-5,
-            "lr_warmup_iters": 2,
-            "tokenizer_path": "allenai/OLMoE-1B-7B-0125",
-            "finetune_lr": 1e-4,
-            "global_batch_size": 2,
-        }
-    else:
-        # Pretrain configs use the new parameterless API
-        overrides = {}
 
-    return overrides
+def _apply_test_overrides(cfg, name: str):
+    """Apply test-friendly overrides to a config after creation."""
+    lname = name.lower()
+
+    # Apply common test overrides for SFT/PEFT configs
+    if "sft" in lname or "peft" in lname:
+        cfg.train.train_iters = 10
+        cfg.train.micro_batch_size = 1
+        cfg.train.global_batch_size = 2
+        cfg.dataset.seq_length = 64
+        cfg.scheduler.min_lr = 1e-5
+        cfg.scheduler.lr_warmup_iters = 2
+        cfg.optimizer.lr = 1e-4
+        cfg.logger.name = f"unit_{name}"
+        cfg.logger.dir = "."
+        cfg.tokenizer.tokenizer_model = "allenai/OLMoE-1B-7B-0125"
+
+    return cfg
 
 
 class _FakeOlMoEModelProvider:
@@ -135,16 +137,22 @@ def test_each_olmoe_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
     # Monkeypatch the OlMoEModelProvider class
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
+    func_name = recipe_func.__name__
+    is_peft = "peft" in func_name.lower()
+    is_sft = "sft" in func_name.lower()
 
-    cfg = recipe_func(**overrides)
+    # New API: SFT/PEFT configs are parameterless (PEFT has optional peft_scheme)
+    if is_peft:
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
     # Ensure tokenizer choice matches recipe type
-    is_finetune = "finetune" in recipe_func.__name__.lower()
-    if is_finetune:
-        # Finetuning recipes always use HF tokenizer
+    is_sft_or_peft = is_sft or is_peft
+    if is_sft_or_peft:
+        # SFT/PEFT recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
@@ -157,19 +165,19 @@ def test_each_olmoe_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
 
 
-@pytest.mark.parametrize("recipe_func", _OLMOE_FINETUNE_FUNCS)
-def test_olmoe_finetune_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each OLMoE finetune recipe builds a valid config."""
+@pytest.mark.parametrize("recipe_func", _OLMOE_SFT_FUNCS)
+def test_olmoe_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each OLMoE SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    cfg = recipe_func(**overrides)
+    cfg = recipe_func()
+    _apply_test_overrides(cfg, recipe_func.__name__)
 
     _assert_basic_config(cfg)
 
-    # Finetuning always uses HF tokenizer
+    # SFT always uses HF tokenizer
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model is not None
 
@@ -178,27 +186,50 @@ def test_olmoe_finetune_config_builds(recipe_func: Callable, monkeypatch: pytest
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
 
+    # SFT should not have PEFT config
+    assert cfg.peft is None
 
-@pytest.mark.parametrize("recipe_func", _OLMOE_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "dora", None])
-def test_olmoe_finetune_peft_vs_full_sft(recipe_func: Callable, peft, monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT and full SFT configurations are correctly applied."""
+
+@pytest.mark.parametrize("recipe_func", _OLMOE_PEFT_FUNCS)
+def test_olmoe_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each OLMoE PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    overrides["peft"] = peft
+    cfg = recipe_func(peft_scheme="lora")
+    _apply_test_overrides(cfg, recipe_func.__name__)
 
-    cfg = recipe_func(**overrides)
+    _assert_basic_config(cfg)
+
+    # PEFT always uses HF tokenizer
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model is not None
+
+    # Check parallelism
+    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
+
+    # PEFT should have PEFT config
+    assert cfg.peft is not None
+
+
+@pytest.mark.parametrize("recipe_func", _OLMOE_PEFT_FUNCS)
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_olmoe_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT configurations are correctly applied with different schemes."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
+
+    cfg = recipe_func(peft_scheme=peft_scheme)
+    _apply_test_overrides(cfg, recipe_func.__name__)
 
     _assert_basic_config(cfg)
 
     # Check PEFT config presence
-    if peft in ["lora", "dora"]:
-        assert cfg.peft is not None
-    elif peft is None:
-        assert cfg.peft is None
+    assert cfg.peft is not None
 
 
 def test_olmoe_7b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -227,17 +258,15 @@ def test_olmoe_7b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.tokenizer.vocab_size == cfg.model.vocab_size
 
 
-def test_olmoe_7b_finetune_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+def test_olmoe_7b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that OLMoE-7B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+    from megatron.bridge.recipes.olmoe import olmoe_7b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for("olmoe_7b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = olmoe_7b_finetune_config(**overrides)
+    cfg = olmoe_7b_peft_config(peft_scheme="lora")
+    _apply_test_overrides(cfg, "olmoe_7b_peft_config")
 
     _assert_basic_config(cfg)
 
@@ -252,17 +281,15 @@ def test_olmoe_7b_finetune_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_olmoe_7b_finetune_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+def test_olmoe_7b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that OLMoE-7B DoRA has correct default parallelism."""
-    from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+    from megatron.bridge.recipes.olmoe import olmoe_7b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for("olmoe_7b_finetune_config")
-    overrides["peft"] = "dora"
-
-    cfg = olmoe_7b_finetune_config(**overrides)
+    cfg = olmoe_7b_peft_config(peft_scheme="dora")
+    _apply_test_overrides(cfg, "olmoe_7b_peft_config")
 
     _assert_basic_config(cfg)
 
@@ -277,17 +304,15 @@ def test_olmoe_7b_finetune_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_olmoe_7b_finetune_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+def test_olmoe_7b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that OLMoE-7B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+    from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for("olmoe_7b_finetune_config")
-    overrides["peft"] = None
-
-    cfg = olmoe_7b_finetune_config(**overrides)
+    cfg = olmoe_7b_sft_config()
+    _apply_test_overrides(cfg, "olmoe_7b_sft_config")
 
     _assert_basic_config(cfg)
 
@@ -302,15 +327,15 @@ def test_olmoe_7b_finetune_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.manual_gc_interval == 5
 
 
-def test_olmoe_7b_finetune_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch):
-    """Test that OLMoE-7B finetune uses precision-aware optimizer settings."""
-    from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+def test_olmoe_7b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch):
+    """Test that OLMoE-7B SFT uses precision-aware optimizer settings."""
+    from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for("olmoe_7b_finetune_config")
-    cfg = olmoe_7b_finetune_config(**overrides)
+    cfg = olmoe_7b_sft_config()
+    _apply_test_overrides(cfg, "olmoe_7b_sft_config")
 
     _assert_basic_config(cfg)
 
@@ -323,15 +348,15 @@ def test_olmoe_7b_finetune_precision_aware_optimizer(monkeypatch: pytest.MonkeyP
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
 
 
-def test_olmoe_7b_finetune_tokenizer_with_trust_remote_code(monkeypatch: pytest.MonkeyPatch):
-    """Test that OLMoE-7B finetune uses HF tokenizer with trust_remote_code."""
-    from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+def test_olmoe_7b_sft_tokenizer_with_trust_remote_code(monkeypatch: pytest.MonkeyPatch):
+    """Test that OLMoE-7B SFT uses HF tokenizer with trust_remote_code."""
+    from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for("olmoe_7b_finetune_config")
-    cfg = olmoe_7b_finetune_config(**overrides)
+    cfg = olmoe_7b_sft_config()
+    _apply_test_overrides(cfg, "olmoe_7b_sft_config")
 
     _assert_basic_config(cfg)
 
@@ -384,15 +409,15 @@ def test_olmoe_7b_pretrain_mixed_precision_config(monkeypatch: pytest.MonkeyPatc
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
 
 
-def test_olmoe_7b_finetune_mixed_precision_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that OLMoE-7B finetune has correct mixed precision settings."""
-    from megatron.bridge.recipes.olmoe import olmoe_7b_finetune_config
+def test_olmoe_7b_sft_mixed_precision_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that OLMoE-7B SFT has correct mixed precision settings."""
+    from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.olmoe.olmoe_7b")
     monkeypatch.setattr(mod, "OlMoEModelProvider", _FakeOlMoEModelProvider)
 
-    overrides = _safe_overrides_for("olmoe_7b_finetune_config")
-    cfg = olmoe_7b_finetune_config(**overrides)
+    cfg = olmoe_7b_sft_config()
+    _apply_test_overrides(cfg, "olmoe_7b_sft_config")
 
     _assert_basic_config(cfg)
 
