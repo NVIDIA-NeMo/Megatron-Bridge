@@ -22,6 +22,18 @@ from .qwen3_vl import (
     qwen3_vl_235b_a22b_pretrain_config,
 )
 
+# Qwen3.5 models
+from .qwen35_vl import (
+    qwen35_vl_2b_finetune_config,
+    qwen35_vl_4b_finetune_config,
+    qwen35_vl_9b_finetune_config,
+    qwen35_vl_27b_finetune_config,
+    qwen35_vl_35b_a3b_finetune_config,
+    qwen35_vl_122b_a10b_finetune_config,
+    qwen35_vl_397b_a17b_finetune_config,
+    qwen35_vl_800m_finetune_config,
+)
+
 
 __all__ = [
     # Qwen3-VL pretrain configs
@@ -32,4 +44,14 @@ __all__ = [
     "qwen3_vl_8b_finetune_config",
     "qwen3_vl_30b_a3b_finetune_config",
     "qwen3_vl_235b_a22b_finetune_config",
+    # Qwen3.5-VL finetune configs — dense (with PEFT support)
+    "qwen35_vl_800m_finetune_config",
+    "qwen35_vl_2b_finetune_config",
+    "qwen35_vl_4b_finetune_config",
+    "qwen35_vl_9b_finetune_config",
+    "qwen35_vl_27b_finetune_config",
+    # Qwen3.5-VL finetune configs — MoE (with PEFT support)
+    "qwen35_vl_35b_a3b_finetune_config",
+    "qwen35_vl_122b_a10b_finetune_config",
+    "qwen35_vl_397b_a17b_finetune_config",
 ]
