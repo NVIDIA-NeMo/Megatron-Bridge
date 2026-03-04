@@ -390,9 +390,13 @@ class TestLoRAMerge:
         # Create LoRALinear instance (what LoRA creates for Megatron modules)
         lora_linear = LoRALinear(base_module, adapter)
 
-        # Create merge instance and apply
-        merge = LoRAMerge()
-        merged_result = merge.transform(lora_linear)
+        # Mock parallel state for TP=1
+        with patch("megatron.bridge.peft.lora.parallel_state") as mock_ps:
+            mock_ps.get_tensor_model_parallel_world_size.return_value = 1
+
+            # Create merge instance and apply
+            merge = LoRAMerge()
+            merged_result = merge.transform(lora_linear)
 
         # Should return the LoRALinear wrapper (matches NeMo behavior)
         assert merged_result is lora_linear
@@ -458,9 +462,13 @@ class TestLoRAMerge:
         # Create LoRALinear instance
         lora_linear = LoRALinear(base_module, adapter)
 
-        # Create merge instance and apply
-        merge = LoRAMerge()
-        merged_result = merge.transform(lora_linear)
+        # Mock parallel state for TP=1
+        with patch("megatron.bridge.peft.lora.parallel_state") as mock_ps:
+            mock_ps.get_tensor_model_parallel_world_size.return_value = 1
+
+            # Create merge instance and apply
+            merge = LoRAMerge()
+            merged_result = merge.transform(lora_linear)
 
         # Verify result is the wrapper
         assert merged_result is lora_linear
@@ -479,6 +487,163 @@ class TestLoRAMerge:
 
         assert torch.allclose(merged_weight0, expected_merged0, atol=1e-6)
         assert torch.allclose(merged_weight1, expected_merged1, atol=1e-6)
+
+    def test_lora_merge_tp1_baseline(self):
+        """Test LoRA merge with TP=1 (no sharding) as baseline."""
+        # Create a mock base module
+        in_features, out_features, dim = 64, 128, 8
+        base_module = nn.Linear(in_features, out_features)
+        original_weight = base_module.weight.data.clone()
+
+        # Create a mock LoRA adapter
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = 16
+                self.dim = dim
+                self.linear_in = nn.Linear(in_features, dim, bias=False)
+                self.linear_out = nn.Linear(dim, out_features, bias=False)
+
+                # Initialize with known values
+                with torch.no_grad():
+                    self.linear_in.weight.data.fill_(0.1)
+                    self.linear_out.weight.data.fill_(0.05)
+
+        adapter = MockAdapter()
+        lora_linear = LoRALinear(base_module, adapter)
+
+        # Mock parallel state for TP=1
+        with patch("megatron.bridge.peft.lora.parallel_state") as mock_ps:
+            mock_ps.get_tensor_model_parallel_world_size.return_value = 1
+
+            # Create merge instance and apply
+            merge = LoRAMerge()
+            merge.transform(lora_linear)
+
+        # Verify the weight was merged correctly
+        merged_weight = lora_linear.to_wrap.weight.data
+        expected_lora_weight = (adapter.alpha / adapter.dim) * (adapter.linear_out.weight @ adapter.linear_in.weight)
+        expected_merged = original_weight + expected_lora_weight
+        assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
+
+    def test_lora_merge_column_parallel_tp2(self):
+        """Test LoRA merge with TP=2 for ColumnParallelLinear (sharded linear_in)."""
+        # ColumnParallelLinear shards output dimension and linear_in's first dimension
+        in_features, out_features_per_rank, dim_per_rank = 64, 64, 4  # Total: out=128, dim=8
+        dim_total = dim_per_rank * 2
+        alpha = 16
+
+        # Create base module (already sharded)
+        base_module = nn.Linear(in_features, out_features_per_rank)
+        original_weight = base_module.weight.data.clone()
+
+        # Create sharded LoRA adapter (simulating what's on one rank)
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = alpha
+                self.dim = dim_total
+                # linear_in is sharded: (dim/TP, in_features)
+                self.linear_in = nn.Linear(in_features, dim_per_rank, bias=False)
+                # linear_out is sharded on output: (out_features/TP, dim)
+                self.linear_out = nn.Linear(dim_total, out_features_per_rank, bias=False)
+
+                with torch.no_grad():
+                    self.linear_in.weight.data.fill_(0.1)
+                    self.linear_out.weight.data.fill_(0.05)
+
+        adapter = MockAdapter()
+        lora_linear = LoRALinear(base_module, adapter)
+
+        # Mock the distributed environment for TP=2
+        tp_size = 2
+        with (
+            patch("megatron.bridge.peft.lora.parallel_state") as mock_ps,
+            patch("megatron.bridge.peft.lora.dist") as mock_dist,
+        ):
+            mock_ps.get_tensor_model_parallel_world_size.return_value = tp_size
+            mock_ps.get_tensor_model_parallel_group.return_value = None
+
+            # Mock all_gather to simulate gathering from 2 ranks
+            def mock_all_gather(tensor_list, tensor, group=None):
+                # Simulate gathering: each rank has identical shards for this test
+                for i in range(tp_size):
+                    tensor_list[i].copy_(tensor)
+
+            mock_dist.all_gather.side_effect = mock_all_gather
+
+            # Apply merge
+            merge = LoRAMerge()
+            merge.transform(lora_linear)
+
+        # Verify the merge used gathered weights
+        merged_weight = lora_linear.to_wrap.weight.data
+
+        # Reconstruct what the full linear_in would be after gathering
+        linear_in_full = torch.cat([adapter.linear_in.weight.data] * tp_size, dim=0)
+
+        # Expected merge with full linear_in
+        expected_lora_weight = (alpha / dim_total) * (adapter.linear_out.weight @ linear_in_full)
+        expected_merged = original_weight + expected_lora_weight
+
+        assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
+
+    def test_lora_merge_row_parallel_tp2(self):
+        """Test LoRA merge with TP=2 for RowParallelLinear (sharded linear_out)."""
+        # RowParallelLinear shards input dimension
+        in_features_per_rank, out_features, dim_total = 32, 128, 8  # Total: in=64
+        alpha = 16
+
+        # Create base module (already sharded on input)
+        base_module = nn.Linear(in_features_per_rank, out_features)
+        original_weight = base_module.weight.data.clone()
+
+        # Create sharded LoRA adapter (simulating what's on one rank)
+        class MockAdapter(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.alpha = alpha
+                self.dim = dim_total
+                # linear_in is sharded on input: (dim, in_features/TP)
+                self.linear_in = nn.Linear(in_features_per_rank, dim_total, bias=False)
+                # linear_out is sharded on output for gathering: (out_features/TP, dim)
+                self.linear_out = nn.Linear(dim_total, out_features // 2, bias=False)
+
+        adapter = MockAdapter()
+        lora_linear = LoRALinear(base_module, adapter)
+
+        # Mock the distributed environment for TP=2
+        tp_size = 2
+        with (
+            patch("megatron.bridge.peft.lora.parallel_state") as mock_ps,
+            patch("megatron.bridge.peft.lora.dist") as mock_dist,
+        ):
+            mock_ps.get_tensor_model_parallel_world_size.return_value = tp_size
+            mock_ps.get_tensor_model_parallel_group.return_value = None
+
+            # Mock all_gather to simulate gathering from 2 ranks
+            def mock_all_gather(tensor_list, tensor, group=None):
+                # Simulate gathering: each rank has identical shards for this test
+                for i in range(tp_size):
+                    tensor_list[i].copy_(tensor)
+
+            mock_dist.all_gather.side_effect = mock_all_gather
+
+            # Apply merge
+            merge = LoRAMerge()
+            merge.transform(lora_linear)
+
+        # Verify the merge used gathered weights
+        merged_weight = lora_linear.to_wrap.weight.data
+
+        # Reconstruct what the full linear_out would be after gathering
+        linear_out_full = torch.cat([adapter.linear_out.weight.data] * tp_size, dim=0)
+
+        # Expected merge with full linear_out
+        expected_lora_weight = (alpha / dim_total) * (linear_out_full @ adapter.linear_in.weight)
+        expected_merged = original_weight + expected_lora_weight
+
+        assert torch.allclose(merged_weight, expected_merged, atol=1e-6)
 
 
 class TestLoRAIntegration:

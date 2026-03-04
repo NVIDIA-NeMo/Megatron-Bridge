@@ -242,6 +242,21 @@ class TestKimiK2PretrainConfig:
         assert cfg.checkpoint.save_interval == 2000
         assert cfg.checkpoint.async_save is False
 
+    def test_pretrain_config_adam_optimizer(self):
+        """Test config with Adam optimizer has correct DDP and precision settings."""
+        cfg = kimi_k2_pretrain_config(optimizer_type="adam")
+
+        assert isinstance(cfg, ConfigContainer)
+        assert cfg.ddp.use_distributed_optimizer is True
+        assert cfg.ddp.overlap_param_gather is True
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+
+    def test_pretrain_config_invalid_optimizer_raises(self):
+        """Test that an invalid optimizer_type raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid optimizer type"):
+            kimi_k2_pretrain_config(optimizer_type="invalid")
+
     def test_pretrain_config_pipeline_layout(self):
         """Test pipeline layout is configured."""
         cfg = kimi_k2_pretrain_config()
