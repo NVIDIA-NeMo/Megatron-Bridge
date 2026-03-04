@@ -21,7 +21,7 @@ Direction 1 — MLM → Bridge (default):
   Output:  Bridge Hydra overrides, standalone recipe, or launch command
 
 Direction 2 — Bridge → MLM (``--reverse``):
-  Input:   Bridge CLI overrides string (section.field=value ...)
+  Input:   Recipe name (``--recipe``) and/or CLI overrides (``--args``)
   Output:  MLM pretrain_gpt.py CLI args or launch command
 
 Examples:
@@ -37,19 +37,29 @@ Examples:
   python scripts/translate_mlm_to_bridge.py \\
       --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
 
-  # Bridge → MLM: overrides to args
+  # Bridge → MLM: recipe + overrides (most common)
+  python scripts/translate_mlm_to_bridge.py --reverse \\
+      --recipe llama32_1b_pretrain_config \\
+      --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
+
+  # Bridge → MLM: recipe only (all defaults)
+  python scripts/translate_mlm_to_bridge.py --reverse \\
+      --recipe vanilla_gpt_pretrain_config
+
+  # Bridge → MLM: overrides only (no recipe)
   python scripts/translate_mlm_to_bridge.py --reverse \\
       --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
 
   # Bridge → MLM: full command
   python scripts/translate_mlm_to_bridge.py --reverse --emit command \\
-      --args "model.num_layers=32 model.hidden_size=4096"
+      --recipe llama32_1b_pretrain_config --nproc 8
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import re
 import shlex
 import sys
 import textwrap
@@ -92,22 +102,29 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "rotary-base":                       ("model.rotary_base",                    None),
     "rotary-percent":                    ("model.rotary_percent",                 None),
     "normalization":                     ("model.normalization",                  None),
+    "layernorm-epsilon":                 ("model.layernorm_epsilon",              "alias"),
     "norm-epsilon":                      ("model.layernorm_epsilon",              None),
-    "layernorm-epsilon":                 ("model.layernorm_epsilon",              None),
     "init-method-std":                   ("model.init_method_std",               None),
     "make-vocab-size-divisible-by":      ("model.make_vocab_size_divisible_by",   None),
     "vocab-size":                        ("tokenizer.vocab_size",                 None),
     "padded-vocab-size":                 ("model.vocab_size",                     None),
 
+    "window-size":                       ("model.window_size",                    None),
+    "attention-backend":                 ("model.attention_backend",              None),
+    "rotary-seq-len-interpolation-factor": ("model.seq_len_interpolation_factor", None),
+    "attention-softmax-in-fp32":         ("model.attention_softmax_in_fp32",      "flag"),
+    "fp16-lm-cross-entropy":             ("model.fp16_lm_cross_entropy",         "flag"),
+    "calculate-per-token-loss":          ("model.calculate_per_token_loss",       "flag"),
+
     # Boolean architecture flags
-    "swiglu":                            ("model._swiglu",                        "swiglu"),
-    "squared-relu":                      ("model._squared_relu",                  "squared_relu"),
+    "swiglu":                            (None,                                   "swiglu"),
+    "squared-relu":                      (None,                                   "squared_relu"),
     "disable-bias-linear":               ("model.add_bias_linear",                "flag_invert"),
     "add-qkv-bias":                      ("model.add_qkv_bias",                  "flag"),
     "untie-embeddings-and-output-weights": ("model.share_embeddings_and_output_weights", "flag_invert"),
     "qk-layernorm":                      ("model.qk_layernorm",                  "flag"),
-    "group-query-attention":             ("model._gqa_flag",                      "flag"),  # info only
-    "use-flash-attn":                    ("model._flash_attn",                    "flag"),  # Bridge default
+    "group-query-attention":             (None,                                   "skip"),  # implied by num-query-groups
+    "use-flash-attn":                    (None,                                   "skip"),  # Bridge default
     "sequence-parallel":                 ("model.sequence_parallel",              "flag"),
     "cross-entropy-loss-fusion":         ("model.cross_entropy_loss_fusion",      "flag"),
     "cross-entropy-fusion-impl":         ("model.cross_entropy_fusion_impl",      None),
@@ -150,6 +167,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     # ── Parallelism ─────────────────────────────────────────────────────
     "tensor-model-parallel-size":        ("model.tensor_model_parallel_size",    None),
     "pipeline-model-parallel-size":      ("model.pipeline_model_parallel_size",  None),
+    "pipeline-model-parallel-layout":    ("model.pipeline_model_parallel_layout", None),
     "context-parallel-size":             ("model.context_parallel_size",         None),
     "expert-model-parallel-size":        ("model.expert_model_parallel_size",    None),
     "expert-tensor-parallel-size":       ("model.expert_tensor_parallel_size",   None),
@@ -162,9 +180,13 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "train-iters":                       ("train.train_iters",                   None),
     "train-samples":                     ("train.train_samples",                 None),
     "exit-duration-in-mins":             ("train.exit_duration_in_mins",         None),
+    "exit-interval":                     ("train.exit_interval",                 None),
+    "skip-train":                        ("train.skip_train",                    "flag"),
     "manual-gc":                         ("train.manual_gc",                     "flag"),
     "manual-gc-interval":                ("train.manual_gc_interval",            None),
     "seq-length":                        ("dataset.sequence_length",             None),
+    "dataloader-type":                   ("dataset.dataloader_type",             None),
+    "num-dataset-builder-threads":       ("dataset.num_dataset_builder_threads", None),
 
     # ── Optimizer / regularization ──────────────────────────────────────
     "lr":                                ("optimizer.lr",                        None),
@@ -174,6 +196,8 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "adam-eps":                          ("optimizer.adam_eps",                  None),
     "weight-decay":                      ("optimizer.weight_decay",             None),
     "clip-grad":                         ("optimizer.clip_grad",                None),
+    "decoupled-lr":                      ("optimizer.decoupled_lr",             None),
+    "decoupled-min-lr":                  ("optimizer.decoupled_min_lr",         None),
     "attention-dropout":                 ("model.attention_dropout",             None),
     "hidden-dropout":                    ("model.hidden_dropout",               None),
 
@@ -185,10 +209,18 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "lr-warmup-init":                    ("scheduler.lr_warmup_init",           None),
     "lr-decay-iters":                    ("scheduler.lr_decay_iters",           None),
     "lr-decay-samples":                  ("scheduler.lr_decay_samples",         None),
+    "lr-wsd-decay-style":               ("scheduler.lr_wsd_decay_style",       None),
+    "lr-wsd-decay-iters":               ("scheduler.lr_wsd_decay_iters",       None),
+    "lr-wsd-decay-samples":             ("scheduler.lr_wsd_decay_samples",     None),
+    "override-opt-param-scheduler":     ("scheduler.override_opt_param_scheduler", "flag"),
+    "use-checkpoint-opt-param-scheduler": ("scheduler.use_checkpoint_opt_param_scheduler", "flag"),
+    "start-weight-decay":               ("scheduler.start_weight_decay",       None),
+    "end-weight-decay":                  ("scheduler.end_weight_decay",         None),
+    "weight-decay-incr-style":           ("scheduler.weight_decay_incr_style",  None),
 
     # ── Data / dataset ──────────────────────────────────────────────────
-    "data-path":                         ("dataset.blend",                      None),
-    "split":                             ("dataset.split",                      None),
+    "data-path":                         ("dataset.blend",                      "data_path"),
+    "split":                             ("dataset.split",                      "split"),
     "data-cache-path":                   ("dataset.path_to_cache",             None),
     "num-workers":                       ("dataset.num_workers",                None),
     "no-mmap-bin-files":                 ("dataset.mmap_bin_files",             "flag_invert"),
@@ -212,10 +244,15 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "load":                              ("checkpoint.load",                    None),
     "save-interval":                     ("checkpoint.save_interval",           None),
     "finetune":                          ("checkpoint.finetune",                "flag"),
+    "pretrained-checkpoint":             ("checkpoint.pretrained_checkpoint",   None),
     "no-save-optim":                     ("checkpoint.save_optim",             "flag_invert"),
     "no-load-optim":                     ("checkpoint.load_optim",             "flag_invert"),
     "no-load-rng":                       ("checkpoint.load_rng",               "flag_invert"),
-    "auto-detect-ckpt-format":           ("checkpoint._auto_detect",           "flag"),  # info only
+    "auto-detect-ckpt-format":           (None,                                "skip"),
+    "use-checkpoint-args":               ("checkpoint.use_checkpoint_args",     "flag"),
+    "exit-on-missing-checkpoint":        ("checkpoint.exit_on_missing_checkpoint", "flag"),
+    "async-save":                        ("checkpoint.async_save",             "flag"),
+    "ckpt-fully-parallel-load":          ("checkpoint.fully_parallel_load",    "flag"),
     "dist-ckpt-strictness":              ("checkpoint.dist_ckpt_strictness",   None),
     "ckpt-format":                       ("checkpoint.ckpt_format",            None),
 
@@ -223,6 +260,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "overlap-grad-reduce":               ("ddp.overlap_grad_reduce",           "flag"),
     "overlap-param-gather":              ("ddp.overlap_param_gather",          "flag"),
     "no-check-for-nan-in-loss-and-grad": ("ddp.check_for_nan_in_grad",        "flag_invert"),
+    "grad-reduce-in-fp32":               ("ddp.grad_reduce_in_fp32",          "flag"),
 
     # ── Precision ───────────────────────────────────────────────────────
     "bf16":                              ("mixed_precision._bf16",             "flag"),
@@ -260,50 +298,8 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
 }
 # fmt: on
 
-# Known flags that take no value in MLM CLI
-FLAG_ARGS = {k for k, (_, t) in ARG_MAP.items() if t in ("flag", "flag_invert", "swiglu", "squared_relu", "skip")} | {
-    "mock-data",
-    "use-mcore-models",
-    "use-flash-attn",
-    "sequence-parallel",
-    "use-distributed-optimizer",
-    "bf16",
-    "fp16",
-    "swiglu",
-    "squared-relu",
-    "disable-bias-linear",
-    "untie-embeddings-and-output-weights",
-    "qk-layernorm",
-    "group-query-attention",
-    "multi-latent-attention",
-    "overlap-grad-reduce",
-    "overlap-param-gather",
-    "moe-grouped-gemm",
-    "moe-permute-fusion",
-    "moe-router-fusion",
-    "moe-router-enable-expert-bias",
-    "no-save-optim",
-    "no-load-optim",
-    "no-load-rng",
-    "no-mmap-bin-files",
-    "no-create-attention-mask-in-dataloader",
-    "no-check-for-nan-in-loss-and-grad",
-    "cross-entropy-loss-fusion",
-    "manual-gc",
-    "finetune",
-    "auto-detect-ckpt-format",
-    "log-timers-to-tensorboard",
-    "log-memory-to-tensorboard",
-    "log-validation-ppl-to-tensorboard",
-    "log-throughput",
-    "log-num-zeros-in-grad",
-    "log-params-norm",
-    "reset-position-ids",
-    "reset-attention-mask",
-    "eod-mask-loss",
-    "add-qkv-bias",
-    "enable-experimental",
-}
+# Known flags that take no value in MLM CLI (auto-detected from ARG_MAP transforms)
+FLAG_ARGS = {k for k, (_, t) in ARG_MAP.items() if t in ("flag", "flag_invert", "swiglu", "squared_relu", "skip")}
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +341,7 @@ def _try_parse_value(val: str) -> Any:
 
 
 def parse_yaml_config(path: str) -> dict[str, Any]:
-    """Parse a Megatron-MoE-ModelZoo style YAML into a flat arg dict.
+    """Parse a Megatron-LM style YAML into a flat arg dict.
 
     Expected YAML structure:
         ENV_VARS:
@@ -453,23 +449,36 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
 
         bridge_path, transform = ARG_MAP[arg_name]
 
-        # Skip args that don't map to Bridge
-        if transform == "skip" or bridge_path is None:
-            result.skipped.append((arg_name, arg_val))
-            continue
-
-        # Handle special transforms
-        if transform == "flag":
-            result.add_override(bridge_path, True)
-        elif transform == "flag_invert":
-            result.add_override(bridge_path, False)
-        elif transform == "swiglu":
+        # Handle special transforms first (these may have bridge_path=None)
+        if transform == "swiglu":
             result.add_override("model.gated_linear_unit", True)
             result.add_override("model.activation_func", "silu")
             result.add_note("swiglu: set model.gated_linear_unit=true + model.activation_func=silu")
         elif transform == "squared_relu":
             result.add_override("model.activation_func", "squared_relu")
             result.add_note("squared_relu: set model.activation_func=squared_relu")
+        elif transform == "data_path":
+            # Bridge blend expects ([paths], weights_or_null)
+            if isinstance(arg_val, str):
+                paths = arg_val.split() if " " in str(arg_val) else [arg_val]
+            elif isinstance(arg_val, (list, tuple)):
+                paths = list(arg_val)
+            else:
+                paths = [str(arg_val)]
+            result.add_override(bridge_path, (paths, None))
+        elif transform == "split":
+            # Normalize to comma-separated string (may arrive as tuple from ast.literal_eval)
+            if isinstance(arg_val, (list, tuple)):
+                split_str = ",".join(str(x) for x in arg_val)
+            else:
+                split_str = str(arg_val)
+            result.add_override(bridge_path, split_str)
+        elif transform == "skip" or bridge_path is None:
+            result.skipped.append((arg_name, arg_val))
+        elif transform == "flag":
+            result.add_override(bridge_path, True)
+        elif transform == "flag_invert":
+            result.add_override(bridge_path, False)
         elif transform is None:
             result.add_override(bridge_path, arg_val)
         else:
@@ -488,6 +497,15 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
         if "._" in key:
             del result.overrides[key]
 
+    # Warn about sequence_parallel + TP=1 (Bridge validates, MLM silently ignores)
+    tp = result.overrides.get("model.tensor_model_parallel_size", 1)
+    sp = result.overrides.get("model.sequence_parallel")
+    if sp is True and (tp is None or int(tp) <= 1):
+        result.add_note(
+            "sequence_parallel=true requires tensor_model_parallel_size > 1 in Bridge. "
+            "Set model.sequence_parallel=false or increase TP."
+        )
+
     return result
 
 
@@ -496,14 +514,24 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
 # ---------------------------------------------------------------------------
 
 
-def _format_value_for_override(val: Any) -> str:
+def _format_value_for_override(val: Any, key: str = "") -> str:
     """Format a Python value for Hydra CLI override syntax."""
     if isinstance(val, bool):
         return "true" if val else "false"
     if isinstance(val, str):
+        if key == "dataset.split":
+            return f"\"'{val}'\""
         if " " in val or "," in val:
             return f"'{val}'"
         return val
+    if isinstance(val, tuple) and len(val) == 2 and key == "dataset.blend":
+        # Bridge blend format: ([paths_list], weights_or_null)
+        paths, weights = val
+        paths_str = ",".join(str(p) for p in paths)
+        if weights is None:
+            return f'"[[{paths_str}],null]"'
+        weights_str = ",".join(str(w) for w in weights)
+        return f'"[[{paths_str}],[{weights_str}]]"'
     if isinstance(val, (list, tuple)):
         return repr(val)
     if val is None:
@@ -549,7 +577,7 @@ def emit_overrides(result: TranslationResult) -> str:
         label = section_labels.get(section, section)
         lines.append(f"\n# ── {label} {'─' * max(1, 50 - len(label))}")
         for path, val in entries:
-            lines.append(f"  {path}={_format_value_for_override(val)} \\")
+            lines.append(f"  {path}={_format_value_for_override(val, key=path)} \\")
 
     if result.unknown:
         lines.append("\n# ── Unknown args (not mapped) ─────────────────────────")
@@ -578,7 +606,7 @@ def emit_command(result: TranslationResult, base_recipe: str = "vanilla_gpt_pret
     lines.append(f"  --recipe {base_recipe} \\")
 
     for path, val in result.overrides.items():
-        lines.append(f"  {path}={_format_value_for_override(val)} \\")
+        lines.append(f"  {path}={_format_value_for_override(val, key=path)} \\")
 
     # Remove trailing backslash from last line
     if lines and lines[-1].endswith(" \\"):
@@ -929,8 +957,6 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
         "fully_parallel_save": True,
     }
     ckpt_merged = {**ckpt_defaults, **checkpoint_fields}
-    # Remove internal keys
-    ckpt_merged.pop("_auto_detect", None)
     for k, v in ckpt_merged.items():
         if k == "save" and v and "$" in str(v):
             lines.append(f"            # save={repr(v)},  # Contains env var - set via override")
@@ -969,7 +995,7 @@ for _mlm_arg, (_bridge_path, _transform) in ARG_MAP.items():
         continue
     if "._" in _bridge_path:
         continue
-    if _transform in ("swiglu", "squared_relu"):
+    if _transform in ("swiglu", "squared_relu", "data_path", "split", "alias"):
         continue
     _rev = None
     if _transform == "flag":
@@ -1205,6 +1231,66 @@ def parse_bridge_overrides(overrides_str: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+#  Recipe loading (Bridge → flat dict)
+# ---------------------------------------------------------------------------
+
+
+def _load_recipe_to_flat_dict(recipe_name: str) -> dict[str, Any]:
+    """Load a Bridge recipe by name and flatten it to a ``section.field`` dict.
+
+    Requires ``megatron.bridge`` to be importable.
+
+    Raises:
+        ImportError: If megatron.bridge is not installed.
+        ValueError: If the recipe is not found.
+    """
+    import dataclasses
+
+    import megatron.bridge.recipes as recipes
+
+    try:
+        from megatron.bridge.utils.activation_map import callable_to_str as _act_to_str
+    except ImportError:
+        _act_to_str = None
+
+    if not hasattr(recipes, recipe_name):
+        available = [n for n in dir(recipes) if "config" in n]
+        raise ValueError(
+            f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.\nAvailable (sample): {available[:20]}"
+        )
+
+    cfg = getattr(recipes, recipe_name)()
+
+    def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            for f in dataclasses.fields(obj):
+                if f.name.startswith("_"):
+                    continue
+                val = getattr(obj, f.name)
+                key = f"{prefix}.{f.name}" if prefix else f.name
+                if dataclasses.is_dataclass(val) and not isinstance(val, type):
+                    out.update(_flatten(val, key))
+                elif callable(val) and not isinstance(val, type):
+                    if _act_to_str is not None:
+                        try:
+                            out[key] = _act_to_str(val)
+                        except (ValueError, KeyError):
+                            pass
+                elif isinstance(val, dict):
+                    for dk, dv in val.items():
+                        out[f"{key}.{dk}"] = dv
+                else:
+                    out[key] = val
+        else:
+            if prefix:
+                out[prefix] = obj
+        return out
+
+    return _flatten(cfg)
+
+
+# ---------------------------------------------------------------------------
 #  Reverse translation engine (Bridge → MLM)
 # ---------------------------------------------------------------------------
 
@@ -1263,6 +1349,35 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
             result.add_arg("fp16")
         else:
             result.add_note(f"mixed_precision={mp}: unknown precision mode")
+
+    # --- Special: dataset.blend → --data-path ----------------------------
+    blend = overrides.get("dataset.blend")
+    if blend is not None:
+        consumed.add("dataset.blend")
+        if isinstance(blend, (list, tuple)) and len(blend) == 2:
+            paths = blend[0] if isinstance(blend[0], (list, tuple)) else [blend[0]]
+            result.add_arg("data-path", " ".join(str(p) for p in paths))
+        elif isinstance(blend, str):
+            # May arrive as "[[/path],null]" from CLI — extract paths
+            s = blend.strip().strip('"').strip("'")
+            if s.startswith("[[") and "]" in s:
+                inner = re.findall(r"\[([^\[\]]+)\]", s)
+                if inner:
+                    paths = [p.strip() for p in inner[0].split(",") if p.strip()]
+                    result.add_arg("data-path", " ".join(paths))
+                else:
+                    result.add_arg("data-path", s)
+            else:
+                result.add_arg("data-path", s)
+
+    # --- Special: dataset.split → --split --------------------------------
+    split = overrides.get("dataset.split")
+    if split is not None:
+        consumed.add("dataset.split")
+        if isinstance(split, (list, tuple)):
+            result.add_arg("split", ",".join(str(x) for x in split))
+        else:
+            result.add_arg("split", str(split))
 
     # --- Main loop -------------------------------------------------------
     for bridge_key, val in overrides.items():
@@ -1397,13 +1512,21 @@ def main():
           python scripts/translate_mlm_to_bridge.py --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
 
         Examples (Bridge → MLM, --reverse):
-          python scripts/translate_mlm_to_bridge.py --reverse --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
-          python scripts/translate_mlm_to_bridge.py --reverse --emit command --args "model.num_layers=32 ..."
+          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config
+          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config \\
+              --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
+          python scripts/translate_mlm_to_bridge.py --reverse --emit command --recipe llama32_1b_pretrain_config
+          python scripts/translate_mlm_to_bridge.py --reverse --args "model.num_layers=32 model.hidden_size=4096"
         """),
     )
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument("--yaml", type=str, help="Path to Megatron-MoE-ModelZoo YAML config")
-    input_group.add_argument("--args", type=str, help="Raw args string (MLM flags or Bridge overrides)")
+    parser.add_argument("--yaml", type=str, help="Path to Megatron-LM YAML config (MLM→Bridge)")
+    parser.add_argument("--args", type=str, help="Raw args string (MLM flags or Bridge overrides)")
+    parser.add_argument(
+        "--recipe",
+        type=str,
+        help="Bridge recipe name for --reverse (e.g., llama32_1b_pretrain_config). "
+        "Loads recipe defaults; combine with --args to add overrides on top.",
+    )
 
     parser.add_argument(
         "--reverse",
@@ -1434,23 +1557,52 @@ def main():
         "--nproc",
         type=int,
         default=8,
-        help="nproc_per_node for --reverse --emit command",
+        help="nproc_per_node for --emit command",
     )
     parser.add_argument("--output", "-o", type=str, help="Write output to file instead of stdout")
 
     cli_args = parser.parse_args()
 
+    # ── Input validation ──
+    if cli_args.reverse:
+        if not cli_args.recipe and not cli_args.args and not cli_args.yaml:
+            parser.error("--reverse requires at least one of: --recipe, --args, --yaml")
+    else:
+        if not cli_args.yaml and not cli_args.args:
+            parser.error("MLM→Bridge direction requires --yaml or --args")
+        if cli_args.recipe:
+            parser.error("--recipe is only used with --reverse")
+
     if cli_args.reverse:
         # ── Bridge → MLM direction ──
+        bridge_overrides: dict[str, Any] = {}
+
+        # 1) Load recipe defaults as base
+        if cli_args.recipe:
+            try:
+                bridge_overrides = _load_recipe_to_flat_dict(cli_args.recipe)
+                print(
+                    f"# Loaded recipe '{cli_args.recipe}': {len(bridge_overrides)} fields",
+                    file=sys.stderr,
+                )
+            except ImportError:
+                print(
+                    "ERROR: megatron.bridge must be importable to use --recipe. "
+                    "Run from a Bridge environment or use --args instead.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        # 2) Merge CLI overrides on top
         if cli_args.yaml:
             if not HAS_YAML:
                 print("ERROR: PyYAML required. Install with: pip install pyyaml", file=sys.stderr)
                 sys.exit(1)
             with open(cli_args.yaml) as f:
                 raw = yaml.safe_load(f)
-            bridge_overrides = _flatten_dict(raw)
-        else:
-            bridge_overrides = parse_bridge_overrides(cli_args.args)
+            bridge_overrides.update(_flatten_dict(raw))
+        elif cli_args.args:
+            bridge_overrides.update(parse_bridge_overrides(cli_args.args))
 
         result = translate_bridge_to_mlm(bridge_overrides)
 
@@ -1463,6 +1615,8 @@ def main():
 
         # Summary
         print("\n# Summary:", file=sys.stderr)
+        if cli_args.recipe:
+            print(f"#   Recipe:     {cli_args.recipe}", file=sys.stderr)
         print(f"#   Translated: {len(result.mlm_args)} MLM args", file=sys.stderr)
         if result.skipped:
             print(f"#   Skipped:    {len(result.skipped)} (Bridge-only, no MLM equivalent)", file=sys.stderr)
