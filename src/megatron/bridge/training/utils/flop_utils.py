@@ -12,11 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+from pathlib import Path
+
 import torch.nn.functional as F
 
+from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+_lora_seq_stats_cache: dict = {}
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
@@ -31,9 +38,23 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         """Calculate the number of attention, Mamba, MLP, and MoE layers."""
         if hasattr(cfg.model, "hybrid_override_pattern") and cfg.model.hybrid_override_pattern:
             counts = {"M": 0, "*": 0, "-": 0, "E": 0}
-            for layer_type in cfg.model.hybrid_override_pattern:
-                if layer_type in counts:
-                    counts[layer_type] += 1
+            try:
+                parse_hybrid_pattern = importlib.import_module(
+                    "megatron.core.ssm.mamba_hybrid_layer_allocation"
+                ).parse_hybrid_pattern
+                parsed = parse_hybrid_pattern(cfg.model.hybrid_override_pattern)
+                if parsed.main_pattern:
+                    for layer_type in parsed.main_pattern:
+                        if layer_type in counts:
+                            counts[layer_type] += 1
+                if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+                    for layer_type in parsed.mtp_pattern:
+                        if layer_type in counts:
+                            counts[layer_type] += parsed.mtp_num_depths
+            except (ImportError, ModuleNotFoundError):
+                for layer_type in cfg.model.hybrid_override_pattern:
+                    if layer_type in counts:
+                        counts[layer_type] += 1
             return counts["*"], counts["M"], counts["-"], counts["E"]
         else:
             num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
@@ -138,6 +159,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         shared_expert_ffn_hidden_size=2048,
         num_experts_routed_to=1,
         vocab_size=256000,
+        mtp_num_layers=0,
     ):
         """Calculate total FLOPs for the hybrid model."""
         flops_fwd = (
@@ -172,7 +194,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                 moe_latent_size,
                 swiglu,
             )
-            + (2 * batch_size * seq_len * hidden_size * vocab_size)  # logits computation
+            + (2 * batch_size * seq_len * hidden_size * vocab_size * (1 + mtp_num_layers))  # logits computation
         )
         return flops_fwd * 3
 
@@ -187,15 +209,29 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        if is_lora:
-            _LORA_SEQ_STATS = {
-                4096: (842603, 4096),
-                2048: (488991, 2030),
-            }
+        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) == "squad"
+        hf_model_id = getattr(cfg.model, "hf_model_id", None)
+        is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
+        packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)
+        packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
+        # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
+        # computes this path dynamically, but dataset_root is available from the config).
+        if packed_data_path is None and packed_specs is not None:
+            dataset_root = getattr(cfg.dataset, "dataset_root", None)
+            seq_size = getattr(packed_specs, "packed_sequence_size", None)
+            if dataset_root is not None and seq_size is not None:
+                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
+                if matches:
+                    packed_data_path = str(matches[0])
+        if is_lora and is_squad and is_llama3_70b and packed_data_path is not None and Path(packed_data_path).exists():
+            gbs = cfg.train.global_batch_size
             seq_len = cfg.model.seq_length
-            if seq_len not in _LORA_SEQ_STATS:
-                raise ValueError(f"No LoRA stats for seq_length={seq_len}. Add it to _LORA_SEQ_STATS.")
-            avg_seqlen2, avg_tokens = _LORA_SEQ_STATS[seq_len]
+            cache_key = (packed_data_path, gbs, seq_len)
+            if cache_key not in _lora_seq_stats_cache:
+                _lora_seq_stats_cache[cache_key] = calculate_avg_seqlen(
+                    packed_data_path, gbs, seq_len, drop_remainder=True
+                )
+            _, avg_tokens, _, avg_seqlen2 = _lora_seq_stats_cache[cache_key]
 
             hs = cfg.model.hidden_size
             n_layers = cfg.model.num_layers
@@ -392,6 +428,21 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
     if getattr(cfg.model, "is_hybrid_model", False):
         # Calculate the number of each type of layer.
         num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers = calculate_layer_counts()
+        mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
+        if mtp_num_layers is None:
+            # When using unified hybrid patterns, infer MTP depth count from the pattern.
+            hybrid_pattern = getattr(cfg.model, "hybrid_override_pattern", None)
+            if hybrid_pattern:
+                try:
+                    parse_hybrid_pattern = importlib.import_module(
+                        "megatron.core.ssm.mamba_hybrid_layer_allocation"
+                    ).parse_hybrid_pattern
+                    parsed = parse_hybrid_pattern(hybrid_pattern)
+                    mtp_num_layers = parsed.mtp_num_depths if parsed.mtp_pattern else 0
+                except (ImportError, ModuleNotFoundError):
+                    mtp_num_layers = 0
+            else:
+                mtp_num_layers = 0
         padded_vocab_size = calculate_padded_vocab_size(
             cfg.model.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
@@ -433,6 +484,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             ),
             num_experts_routed_to=getattr(cfg.model, "moe_router_topk", 1),
             vocab_size=padded_vocab_size,
+            mtp_num_layers=mtp_num_layers,
         )
     else:
         # Compute standard Transformer model FLOPs.
