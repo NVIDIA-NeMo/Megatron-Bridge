@@ -117,7 +117,7 @@ override-dependencies = [
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
     "urllib3>=2.6.3",    # To address CVE-2026-21441
-    "nemo-run @ git+https://github.com/NVIDIA/NeMo-Run.git@c1c3e920d4662c8188611263e18fd2e39e3c84f3"
+    "nemo-run @ git+https://github.com/NVIDIA/NeMo-Run.git@ebf34079777f977158ce2c098838c2d26ccb8fd8"
 ]
 
 [[tool.uv.index]]
