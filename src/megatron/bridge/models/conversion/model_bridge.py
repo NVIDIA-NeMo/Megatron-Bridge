@@ -17,8 +17,8 @@ import contextlib
 import fnmatch
 import itertools
 import logging
-import re
 import math
+import re
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -156,6 +156,7 @@ class _HFNameSuffixMapping:
             return out
         # Append suffix to every exported HF parameter name.
         return {f"{k}{self._suffix}": v for k, v in out.items()}
+
 
 def _megatron_local_name_to_global(
     models: MegatronModule | List[MegatronModule],
@@ -1150,7 +1151,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         fp8_scale_inv_attr: str = "_rowwise_scale_inv",
     ) -> List[None | WeightConversionTask]:
         """
-            Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for blockwise FP8 params.
+        Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for blockwise FP8 params.
         """
 
         # Ensure hf_pretrained has the required state structure (reuse existing ordering assumptions)
@@ -1181,6 +1182,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         )
 
         from transformer_engine.pytorch.constants import TE_DType_To_Torch
+
         # 2) Expand the global name list with `*.scale_inv` entries.
         #    This defines the final deterministic task ordering.
         expanded_global_names: list[str] = []
@@ -1230,9 +1232,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                                 if fp8_dtype is not None
                                 else torch.float8_e4m3fn
                             )
-                            export_weight_tensor = export_weight_tensor.contiguous().view(
-                                torch_fp8_dtype
-                            )
+                            export_weight_tensor = export_weight_tensor.contiguous().view(torch_fp8_dtype)
                 tasks[global_names_index_dict[global_name]] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
@@ -1308,7 +1308,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         block_len = getattr(quantizer, "block_len", None)
         is_2d_scaled = getattr(local_weights, "_is_2D_scaled", None)
         if block_len is None or not is_2d_scaled:
-            logger.warning(f"WARNING: block_len or not is_2d_scaled")
+            logger.warning("WARNING: block_len or not is_2d_scaled")
             return scale_tensor
 
         q_k = local_weights.shape[-1]

@@ -379,9 +379,7 @@ class AutoBridge(Generic[MegatronModelT]):
             if not isinstance(model, list):
                 model = [model]
             # Use FP8 export tasks for blockwise FP8 weights
-            conversion_tasks = self._model_bridge.build_export_fp8_tasks(
-                self.hf_pretrained, model
-            )
+            conversion_tasks = self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
