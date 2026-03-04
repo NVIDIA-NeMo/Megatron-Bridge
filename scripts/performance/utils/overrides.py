@@ -124,6 +124,46 @@ def _set_cuda_graph_overrides(
     return recipe
 
 
+def _set_vision_cuda_graph_overrides(
+    recipe: ConfigContainer,
+    vision_cuda_graph_impl: Optional[str] = None,
+    vision_cuda_graph_scope: Optional[str | List[str]] = None,
+) -> ConfigContainer:
+    """Set the vision encoder CUDA graph overrides.
+    
+    This enables TE CUDA graph for the vision encoder separately from the language model.
+    
+    Args:
+        recipe: The config container
+        vision_cuda_graph_impl: Vision encoder CUDA graph implementation ("none" or "transformer_engine")
+        vision_cuda_graph_scope: Vision encoder CUDA graph scope (e.g., ["attn"])
+    
+    Returns:
+        Updated config container
+    """
+    if isinstance(vision_cuda_graph_scope, str):
+        vision_cuda_graph_scope = [vision_cuda_graph_scope]
+    
+    if vision_cuda_graph_impl is not None:
+        recipe.model.vision_cuda_graph_impl = vision_cuda_graph_impl
+        
+        if vision_cuda_graph_impl == "transformer_engine":
+            # Ensure TE RNG tracker is enabled for CUDA graph compatibility
+            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
+            
+            valid_te_scopes = ["attn", "mlp"]  # Vision encoder typically only has attn and mlp
+            if vision_cuda_graph_scope:
+                assert all(scope in valid_te_scopes for scope in vision_cuda_graph_scope), (
+                    f"Invalid vision cuda graph scope: {vision_cuda_graph_scope}. "
+                    f"Valid options for vision encoder are: {valid_te_scopes}"
+                )
+    
+    if vision_cuda_graph_scope is not None:
+        recipe.model.vision_cuda_graph_scope = vision_cuda_graph_scope
+    
+    return recipe
+
+
 def _set_recompute_overrides(
     recipe: ConfigContainer,
     cpu_offloading_num_layers: Optional[int] = None,

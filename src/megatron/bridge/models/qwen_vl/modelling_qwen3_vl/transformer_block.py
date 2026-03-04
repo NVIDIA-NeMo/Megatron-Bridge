@@ -51,6 +51,7 @@ if HAVE_TE:
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 class Qwen3VLVisionTransformerBlock(TransformerBlock):
@@ -121,6 +122,19 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                         if use_inner_fp8_context
                         else nullcontext()
                     )
+                    # Check if layer will use TE CUDA graph replay - if so, don't pass
+                    # packed_seq_params since CUDA graph only accepts tensor inputs.
+                    # Use layer.config (not self.config) because the layer's config is what
+                    # determines if _should_call_te_cudagraph returns True.
+                    layer_uses_te_cudagraph = (
+                        hasattr(layer, 'cuda_graphs')
+                        and layer.cuda_graphs
+                        and layer.training
+                        and hasattr(layer, 'config')
+                        and getattr(layer.config, 'cuda_graph_impl', 'none') == "transformer_engine"
+                    )
+                    layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
+
                     with inner_fp8_context:
                         hidden_states, context = layer(
                             hidden_states=hidden_states,
@@ -130,7 +144,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                             rotary_pos_emb=rotary_pos_emb,
                             attention_bias=attention_bias,
                             inference_context=None,
-                            packed_seq_params=packed_seq_params,
+                            packed_seq_params=layer_packed_seq_params,
                         )
 
                         l_no = layer.layer_number - 1
@@ -323,6 +337,19 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     )
                     assert l_no == layer.layer_number - 1
                     with self.offload_context, inner_fp8_context:
+                        # Check if layer will use TE CUDA graph replay - if so, don't pass
+                        # packed_seq_params since CUDA graph only accepts tensor inputs.
+                        # Use layer.config (not self.config) because the layer's config is what
+                        # determines if _should_call_te_cudagraph returns True.
+                        layer_uses_te_cudagraph = (
+                            hasattr(layer, 'cuda_graphs')
+                            and layer.cuda_graphs
+                            and layer.training
+                            and hasattr(layer, 'config')
+                            and getattr(layer.config, 'cuda_graph_impl', 'none') == "transformer_engine"
+                        )
+                        layer_packed_seq_params = None if layer_uses_te_cudagraph else packed_seq_params
+
                         hidden_states, context = layer(
                             hidden_states=hidden_states,
                             attention_mask=attention_mask,
@@ -333,7 +360,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                             rotary_pos_sin=rotary_pos_sin,
                             attention_bias=attention_bias,
                             inference_context=inference_context,
-                            packed_seq_params=packed_seq_params,
+                            packed_seq_params=layer_packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
                         )
 
