@@ -511,7 +511,6 @@ class TestMegatronCommOverlapConfig:
             recompute_num_layers=None,
             moe_shared_expert_overlap=False,
             mtp_num_layers=None,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=False,
         )
 
@@ -541,7 +540,6 @@ class TestMegatronCommOverlapConfig:
             num_moe_experts=2,
             moe_token_dispatcher_type="alltoall",
             bf16=True,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=False,
         )
 
@@ -570,7 +568,6 @@ class TestMegatronCommOverlapConfig:
             num_moe_experts=2,
             moe_token_dispatcher_type="alltoall",
             bf16=True,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=False,
             gradient_accumulation_fusion=True,
         )
@@ -600,7 +597,6 @@ class TestMegatronCommOverlapConfig:
             num_moe_experts=2,
             moe_token_dispatcher_type="alltoall",
             bf16=True,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=False,
         )
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
@@ -631,7 +627,6 @@ class TestMegatronCommOverlapConfig:
             num_moe_experts=2,
             moe_token_dispatcher_type="alltoall",
             bf16=True,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=False,
             add_qkv_bias=False,
             gradient_accumulation_fusion=False,
@@ -665,7 +660,6 @@ class TestMegatronCommOverlapConfig:
             num_moe_experts=2,
             moe_token_dispatcher_type="alltoall",
             bf16=True,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=True,
             add_qkv_bias=False,
             gradient_accumulation_fusion=True,
@@ -699,7 +693,6 @@ class TestMegatronCommOverlapConfig:
             num_moe_experts=2,
             moe_token_dispatcher_type="alltoall",
             bf16=True,
-            moe_use_legacy_grouped_gemm=False,
             add_bias_linear=False,
             add_qkv_bias=False,
             gradient_accumulation_fusion=True,

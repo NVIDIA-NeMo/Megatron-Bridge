@@ -12,24 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Ministral3 models
-from .ministral3 import (
-    ministral3_3b_peft_config,
-    ministral3_3b_sft_config,
-    ministral3_8b_peft_config,
-    ministral3_8b_sft_config,
-    ministral3_14b_peft_config,
-    ministral3_14b_sft_config,
-)
+from megatron.bridge.models.sarvam.sarvam_mla_bridge import SarvamMLABridge
+from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 
 
 __all__ = [
-    # Ministral3 SFT configs
-    "ministral3_3b_sft_config",
-    "ministral3_8b_sft_config",
-    "ministral3_14b_sft_config",
-    # Ministral3 PEFT configs
-    "ministral3_3b_peft_config",
-    "ministral3_8b_peft_config",
-    "ministral3_14b_peft_config",
+    "SarvamMoEBridge",
+    "SarvamMLABridge",
 ]
