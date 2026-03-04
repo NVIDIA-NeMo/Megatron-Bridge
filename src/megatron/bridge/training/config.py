@@ -1148,6 +1148,8 @@ class LoggerConfig:
                 self.comet_project,
                 self.comet_experiment_name,
                 self.comet_workspace,
+                self.comet_api_key,
+                self.comet_tags,
             ]
         )
 
