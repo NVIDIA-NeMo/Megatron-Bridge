@@ -155,6 +155,46 @@ class TestQwen3MoEModelProvider:
         # Qwen3 MoE uses QK layernorm unlike Qwen2
         assert provider.qk_layernorm is True
 
+    def test_qwen3_moe_model_provider_with_yarn_rope(self):
+        """Test Qwen3MoEModelProvider with YaRN RoPE configuration."""
+        provider = Qwen3MoEModelProvider(
+            num_layers=32,
+            hidden_size=4096,
+            num_attention_heads=32,
+            position_embedding_type="yarn",
+            yarn_rotary_scaling_factor=4.0,
+            yarn_original_max_position_embeddings=32768,
+            yarn_beta_fast=32.0,
+            yarn_beta_slow=1.0,
+            yarn_mscale=1.0,
+            yarn_mscale_all_dim=1.0,
+            yarn_correction_range_round_to_int=True,
+        )
+
+        assert provider.yarn_rotary_scaling_factor == 4.0
+        assert provider.yarn_original_max_position_embeddings == 32768
+        assert provider.yarn_beta_fast == 32.0
+        assert provider.yarn_beta_slow == 1.0
+        assert provider.yarn_mscale == 1.0
+        assert provider.yarn_mscale_all_dim == 1.0
+        assert provider.yarn_correction_range_round_to_int is True
+
+    def test_qwen3_moe_model_provider_yarn_defaults_none(self):
+        """Test Qwen3MoEModelProvider YaRN fields default to None/False."""
+        provider = Qwen3MoEModelProvider(
+            num_layers=32,
+            hidden_size=4096,
+            num_attention_heads=32,
+        )
+
+        assert provider.yarn_rotary_scaling_factor is None
+        assert provider.yarn_original_max_position_embeddings is None
+        assert provider.yarn_beta_fast is None
+        assert provider.yarn_beta_slow is None
+        assert provider.yarn_mscale is None
+        assert provider.yarn_mscale_all_dim is None
+        assert provider.yarn_correction_range_round_to_int is False
+
     def test_qwen3_moe_model_provider_dtype_configuration(self):
         """Test Qwen3MoEModelProvider dtype configuration."""
         provider = Qwen3MoEModelProvider(
