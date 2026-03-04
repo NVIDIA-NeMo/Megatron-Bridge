@@ -312,7 +312,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
-        data_parallel_random_init: bool = True,
+        data_parallel_random_init: bool = False,
         use_cpu_initialization: Optional[bool] = False,
         init_model_with_meta_device: Optional[bool] = None,
         pre_wrap_hook: Optional[
