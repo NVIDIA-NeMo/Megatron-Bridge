@@ -294,7 +294,7 @@ class GlobalState:
 
             logger_cfg = cfg.logger
             if logger_cfg.comet_project and get_rank_safe() == (get_world_size_safe() - 1):
-                if logger_cfg.comet_experiment_name == "":
+                if not logger_cfg.comet_experiment_name:
                     raise ValueError("Please specify the comet_experiment_name for Comet ML logging!")
 
                 import comet_ml
@@ -308,8 +308,9 @@ class GlobalState:
                 if api_key is None:
                     api_key = os.environ.get("COMET_API_KEY")
                 if api_key:
+                    api_key = api_key.strip()
                     if "COMET_API_KEY" in os.environ:
-                        os.environ["COMET_API_KEY"] = os.environ["COMET_API_KEY"].strip()
+                        os.environ["COMET_API_KEY"] = api_key
                     init_kwargs["api_key"] = api_key
 
                 if logger_cfg.comet_workspace:
@@ -521,4 +522,4 @@ def _timers_write_to_comet(
         except Exception:
             import warnings
 
-            warnings.warn("Failed to log timer metrics to Comet ML; continuing without timer metrics.")
+            warnings.warn("Failed to log timer metrics to Comet ML; continuing without timer metrics.", stacklevel=2)
