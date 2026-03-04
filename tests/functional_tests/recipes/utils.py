@@ -222,6 +222,8 @@ def run_pretrain_vl_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
         dataset_overrides: Optional mapping of dataset attribute overrides to apply
     """
+    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+
     if forward_step_func is None:
         # Import locally to avoid loading VLM stack for non-VL tests
         from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -253,29 +255,19 @@ def run_pretrain_vl_recipe_test(
         config.scheduler.lr_warmup_iters = 1
         test_seq_length = 1024
         config.model.seq_length = test_seq_length
-        config.dataset.seq_length = test_seq_length
 
-        # Disable pin-memory and worker persistence in tests to avoid
-        # pin-memory device mismatches under torchrun+pytest environments.
-        if hasattr(config.dataset, "pin_memory"):
-            config.dataset.pin_memory = False
-        if hasattr(config.dataset, "num_workers"):
-            config.dataset.num_workers = 0
-        if hasattr(config.dataset, "persistent_workers"):
-            config.dataset.persistent_workers = False
+        # Get the HF processor path from the original dataset config before replacing
+        hf_processor_path = getattr(config.dataset, "hf_processor_path", None)
+        pack_sequences_in_batch = getattr(config.dataset, "pack_sequences_in_batch", False)
 
-        train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
-        test_samples_needed = 8
-
-        total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
-
-        # Set dataset split ratios for minimal dataset
-        train_split = train_samples_needed / total_samples
-        valid_split = eval_samples_needed / total_samples
-        test_split = test_samples_needed / total_samples
-
-        config.dataset.split = [train_split, valid_split, test_split]
+        # Replace the real dataset with a mock dataset provider for tests
+        # MockVLMConversationProvider generates synthetic data and doesn't need a split attribute
+        # since the DatasetBuildContext calculates sample counts from training configuration
+        config.dataset = MockVLMConversationProvider(
+            seq_length=test_seq_length,
+            hf_processor_path=hf_processor_path,
+            pack_sequences_in_batch=pack_sequences_in_batch,
+        )
 
         if tensor_model_parallel_size is not None:
             if hasattr(config.model, "tensor_model_parallel_size"):
