@@ -122,6 +122,10 @@ class TestGLM45Bridge:
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
         m.generation_config = Mock(spec=GenerationConfig)
+        m.state = Mock()
+        m.state.source = Mock()
+        m.state.source.get_all_keys.return_value = []
+        m.state.source.has_glob.return_value = False
         return m
 
     @pytest.fixture
@@ -135,6 +139,10 @@ class TestGLM45Bridge:
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
         m.generation_config = Mock(spec=GenerationConfig)
+        m.state = Mock()
+        m.state.source = Mock()
+        m.state.source.get_all_keys.return_value = []
+        m.state.source.has_glob.return_value = False
         return m
 
     def test_registration(self):
@@ -198,9 +206,11 @@ class TestGLM45Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
-    def test_mapping_registry_exists(self):
+    def test_mapping_registry_exists(self, mock_pretrained_355b):
         """Test that mapping registry is properly defined."""
         bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b
+        bridge.hf_config = mock_pretrained_355b.config
         registry = bridge.mapping_registry()
 
         # Verify registry has mappings
