@@ -421,8 +421,15 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             model_config = get_model_config(m)
             model_config.variable_seq_lengths = True
 
-        # Wrap submodules with DDP (before Float16Module)
-        # MIMO uses per-submodule DDP for heterogeneous parallelism
+        # Dtype cast must precede DDP wrapping so hooks bind to final parameters.
+        use_fp16 = fp16 if fp16 is not None else self.fp16
+        use_bf16 = bf16 if bf16 is not None else self.bf16
+        if use_fp16:
+            model_list = [m.half() for m in model_list]
+        elif use_bf16:
+            model_list = [m.bfloat16() for m in model_list]
+
+        # Per-submodule DDP for heterogeneous parallelism
         if wrap_with_ddp and ddp_config is not None and self.mimo_parallelism_config:
             model_list = [
                 wrap_mimo_model_distributed(
@@ -434,17 +441,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 )
                 for m in model_list
             ]
-
-        # Cast parameters directly instead of wrapping with Float16Module.
-        # Float16Module requires a single pg_collection for PP stage checks,
-        # but MimoModel has multiple modules with different PP groups (and
-        # modules can be colocated). Direct casting avoids this issue.
-        use_fp16 = fp16 if fp16 is not None else self.fp16
-        use_bf16 = bf16 if bf16 is not None else self.bf16
-        if use_fp16:
-            model_list = [m.half() for m in model_list]
-        elif use_bf16:
-            model_list = [m.bfloat16() for m in model_list]
 
         # Apply post-wrap hooks
         if final_post_wrap_hook:
