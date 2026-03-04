@@ -83,7 +83,7 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]",
     "mamba-ssm",
-    "nvidia-resiliency-ext",
+    "nvidia-resiliency-ext~=0.4.1",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
