@@ -84,7 +84,7 @@ class Qwen25OmniBridge(MegatronModelBridge):
             vision_start_token_id=getattr(thinker_config, "vision_start_token_id", 151652),
             audio_start_token_id=getattr(thinker_config, "audio_start_token_id", 151647),
             audio_end_token_id=getattr(thinker_config, "audio_end_token_id", 151648),
-            mrope_section=getattr(text_config, "rope_scaling", {}).get("mrope_section", [16, 24, 24]),
+            mrope_section=(getattr(text_config, "rope_scaling", None) or {}).get("mrope_section", [16, 24, 24]),
             position_id_per_seconds=getattr(thinker_config, "position_id_per_seconds", 25),
             seconds_per_chunk=getattr(thinker_config, "seconds_per_chunk", 2),
         )

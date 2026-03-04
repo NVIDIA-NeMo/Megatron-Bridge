@@ -111,20 +111,20 @@ def get_rope_index(
             device=input_ids.device,
         )
         image_idx, video_idx, audio_idx = 0, 0, 0
-        for i, input_ids in enumerate(total_input_ids):
+        for i, batch_input_ids in enumerate(total_input_ids):
             if attention_mask is not None:
-                input_ids = input_ids[attention_mask[i]]
+                batch_input_ids = batch_input_ids[attention_mask[i]]
             image_nums, video_nums, audio_nums = 0, 0, 0
-            vision_start_indices = torch.argwhere(input_ids == vision_start_token_id).squeeze(1)
-            vision_tokens = input_ids[vision_start_indices + 1]
-            audio_nums = torch.sum(input_ids == audio_start_token_id)
+            vision_start_indices = torch.argwhere(batch_input_ids == vision_start_token_id).squeeze(1)
+            vision_tokens = batch_input_ids[vision_start_indices + 1]
+            audio_nums = torch.sum(batch_input_ids == audio_start_token_id)
             image_nums = (vision_tokens == image_token_id).sum()
             video_nums = (
                 (vision_tokens == audio_start_token_id).sum()
                 if use_audio_in_video
                 else (vision_tokens == video_token_id).sum()
             )
-            input_tokens = input_ids.tolist()
+            input_tokens = batch_input_ids.tolist()
             llm_pos_ids_list: list = []
             st = 0
             remain_images, remain_videos, remain_audios = image_nums, video_nums, audio_nums
@@ -295,8 +295,8 @@ def get_rope_index(
                 position_ids[..., i, attention_mask[i]] = llm_positions.to(position_ids.device)
             else:
                 position_ids[..., i, :] = llm_positions.to(position_ids.device)
-            mrope_position_deltas.append(llm_positions.max() + 1 - len(input_ids))
-        mrope_position_deltas = torch.tensor(mrope_position_deltas).unsqueeze(1).to(device=input_ids.device)
+            mrope_position_deltas.append(llm_positions.max() + 1 - len(batch_input_ids))
+        mrope_position_deltas = torch.tensor(mrope_position_deltas).unsqueeze(1).to(device=total_input_ids.device)
 
         return position_ids, mrope_position_deltas
     else:

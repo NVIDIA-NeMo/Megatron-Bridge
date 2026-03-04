@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import List
 
 from megatron.core.transformer.transformer_config import TransformerConfig
 
@@ -37,7 +36,7 @@ class Qwen25OmniTransformerConfig(TransformerConfig):
     rotary_base: float = 10000
 
     # Multimodal rope section for [temporal, height, width] dimensions
-    mrope_section: List[int] = field(default_factory=lambda: [16, 24, 24])
+    mrope_section: list[int] = field(default_factory=lambda: [16, 24, 24])
     apply_rope_fusion: bool = False
 
     image_token_id: int = 151655

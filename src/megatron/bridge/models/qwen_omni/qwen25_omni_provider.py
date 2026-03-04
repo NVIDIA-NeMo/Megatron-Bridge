@@ -21,7 +21,6 @@ Reference: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
 """
 
 from dataclasses import dataclass, field
-from typing import List
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -76,7 +75,7 @@ class Qwen25OmniModelProvider(Qwen2ModelProvider):
 
     position_embedding_type: str = "mrope"
     apply_rotary_pos_emb_in_fp32: bool = False
-    mrope_section: List[int] = field(default_factory=lambda: [16, 24, 24])
+    mrope_section: list[int] = field(default_factory=lambda: [16, 24, 24])
     rotary_base: float = 1000000
     spatial_merge_size: int = 2
     temporal_patch_size: int = 2

@@ -18,7 +18,7 @@ from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniMode
 
 
 __all__ = [
-    "Qwen25OmniModel",
     "Qwen25OmniBridge",
+    "Qwen25OmniModel",
     "Qwen25OmniModelProvider",
 ]

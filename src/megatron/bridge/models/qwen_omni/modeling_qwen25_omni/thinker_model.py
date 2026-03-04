@@ -59,7 +59,7 @@ class Qwen25OmniThinkerModel(MegatronModule):
         post_process: bool = True,
         add_encoder: bool = True,
         add_decoder: bool = True,
-        pg_collection: ProcessGroupCollection = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -182,10 +182,11 @@ class Qwen25OmniThinkerModel(MegatronModule):
         if feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
             input_features = input_features.permute(0, 2, 1)[feature_attention_mask.bool()].permute(1, 0)
-        else:
-            audio_feature_lengths = None
 
-        feature_lens = audio_feature_lengths if audio_feature_lengths is not None else feature_attention_mask.sum(-1)
+        if audio_feature_lengths is None:
+            raise ValueError("Either feature_attention_mask or audio_feature_lengths must be provided")
+
+        feature_lens = audio_feature_lengths
         audio_feat_lengths, audio_output_lengths = self.audio_model._get_feat_extract_output_lengths(feature_lens)
 
         audio_outputs = self.audio_model(
@@ -200,29 +201,31 @@ class Qwen25OmniThinkerModel(MegatronModule):
         self,
         input_ids: torch.Tensor,
         input_features=None,
-        position_ids: torch.Tensor = None,
-        attention_mask: torch.Tensor = None,
-        labels: torch.Tensor = None,
-        loss_mask: torch.Tensor = None,
-        inference_params: InferenceParams = None,
-        packed_seq_params: PackedSeqParams = None,
-        extra_block_kwargs: dict = None,
-        pixel_values: torch.Tensor = None,
-        pixel_values_videos: torch.Tensor = None,
-        image_grid_thw: torch.Tensor = None,
-        video_grid_thw: torch.Tensor = None,
-        image_input_mask: torch.Tensor = None,
-        video_input_mask: torch.Tensor = None,
+        position_ids: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
+        loss_mask: torch.Tensor | None = None,
+        inference_params: InferenceParams | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
+        extra_block_kwargs: dict | None = None,
+        pixel_values: torch.Tensor | None = None,
+        pixel_values_videos: torch.Tensor | None = None,
+        image_grid_thw: torch.Tensor | None = None,
+        video_grid_thw: torch.Tensor | None = None,
+        image_input_mask: torch.Tensor | None = None,
+        video_input_mask: torch.Tensor | None = None,
         feature_attention_mask=None,
         audio_feature_lengths=None,
-        cp_img_num: list[int] = None,
-        images_padded: list[bool] = None,
+        cp_img_num: list[int] | None = None,
+        images_padded: list[bool] | None = None,
         use_audio_in_video=None,
         video_second_per_grid=None,
         **kwargs,
     ) -> torch.Tensor:
-        assert inference_params is None, "not support inference"
-        assert packed_seq_params is None, "not support packed_seq_params"
+        if inference_params is not None:
+            raise NotImplementedError("inference is not supported")
+        if packed_seq_params is not None:
+            raise NotImplementedError("packed_seq_params is not supported")
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
