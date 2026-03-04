@@ -38,6 +38,10 @@ QUANT_CFG_CHOICES = {
     "int4_awq": mtq.INT4_AWQ_CFG,
     "w4a8_awq": mtq.W4A8_AWQ_BETA_CFG,
     "nvfp4": mtq.NVFP4_DEFAULT_CFG,
+    "mamba_moe_fp8_aggressive": mtq.MAMBA_MOE_FP8_AGGRESSIVE_CFG,
+    "mamba_moe_fp8_conservative": mtq.MAMBA_MOE_FP8_CONSERVATIVE_CFG,
+    "mamba_moe_nvfp4_aggressive": mtq.MAMBA_MOE_NVFP4_AGGRESSIVE_CFG,
+    "mamba_moe_nvfp4_conservative": mtq.MAMBA_MOE_NVFP4_CONSERVATIVE_CFG,
 }
 
 

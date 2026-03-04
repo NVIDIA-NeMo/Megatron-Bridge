@@ -128,7 +128,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
         self.input_size = config.hidden_size
         if self.use_postshuffle_norm:
             self.input_size = self.hidden_size
-        tp_group = get_tensor_model_parallel_group_if_none(tp_group, is_expert=False)
+        self.tp_group = get_tensor_model_parallel_group_if_none(tp_group, is_expert=False)
 
         self.patch_norm = build_module(
             submodules.patch_norm,

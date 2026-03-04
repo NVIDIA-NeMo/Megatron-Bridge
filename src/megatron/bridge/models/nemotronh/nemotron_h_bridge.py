@@ -339,8 +339,6 @@ class NemotronHBridge(MegatronModelBridge):
             # MoE layers
             "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
-            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
-            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
             # TODO(liding): check compatibility: if model does not have `fc1_latent_proj` and `fc2_latent_proj` layer
             # in megatron model: nano v3 does not have these layers, but super v3 does
             # in hf model: both variants have these layers (nano v3 has nn.Identity, super v3 has nn.Linear)
@@ -348,6 +346,12 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.fc2_latent_proj.weight": "backbone.layers.*.mixer.fc2_latent_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
+            # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...
+            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
+            # SequentialMLP (moe_grouped_gemm=False): expert weights are stored per local_expert
+            "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "backbone.layers.*.mixer.experts.*.down_proj.weight",
         }
 
         mtp_layers_per_block = int(self._mtp_layers_per_block or 0)
