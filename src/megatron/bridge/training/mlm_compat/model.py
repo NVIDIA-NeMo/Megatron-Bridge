@@ -59,7 +59,6 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
-            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             qk_l2_norm=args.qk_l2_norm,
             use_kitchen=use_kitchen,
         )
@@ -69,7 +68,6 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
             moe_grouped_gemm=args.moe_grouped_gemm,
             qk_layernorm=args.qk_layernorm,
             multi_latent_attention=args.multi_latent_attention,
-            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             normalization=args.normalization,
             use_kitchen=use_kitchen,
         )
