@@ -417,6 +417,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return model_bridge.stream_adapter_weights_megatron_to_hf(
             dispatch_instance,
             model,
+            self.hf_pretrained,
             cpu=cpu,
             show_progress=show_progress,
         )
