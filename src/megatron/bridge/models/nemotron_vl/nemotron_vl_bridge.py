@@ -44,9 +44,6 @@ class NemotronVLBridge(MegatronModelBridge):
         ("hybrid_override_pattern", "hybrid_layer_pattern"),
     ]
 
-    # Remove num_hidden_layers from CONFIG_MAPPING as it is derived from hybrid_layer_pattern
-    CONFIG_MAPPING.remove(("num_hidden_layers", "num_layers"))
-
     # ------------------------------------------------------------------
     # Provider translation
     # ------------------------------------------------------------------
@@ -57,6 +54,9 @@ class NemotronVLBridge(MegatronModelBridge):
 
         # Use base class helper for common config mapping
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
+
+        # Remove num_layers from provider as it is derived from hybrid_layer_pattern
+        provider_kwargs["num_layers"] = None
 
         # Handle vocab size divisibility
         provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)

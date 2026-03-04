@@ -127,9 +127,6 @@ class TestMambaModelConfigInitialization:
         assert config.fp16_lm_cross_entropy is False
         assert config.parallel_output is True
         assert config.share_embeddings_and_output_weights is False
-        assert config.hybrid_attention_ratio == 0.0
-        assert config.hybrid_mlp_ratio == 0.0
-        assert config.hybrid_override_pattern is None
         assert config.hybrid_layer_pattern is None
         assert config.seq_length == 8192
         assert config.position_embedding_type == "none"
@@ -390,8 +387,6 @@ class TestMambaModelBuilderBuildModel:
         config = _make_mamba_config(
             vocab_size=32000,
             seq_length=4096,
-            hybrid_attention_ratio=0.1,
-            hybrid_mlp_ratio=0.2,
             hybrid_layer_pattern="M-A-",
             fp16_lm_cross_entropy=True,
             parallel_output=False,
@@ -408,8 +403,6 @@ class TestMambaModelBuilderBuildModel:
         assert kw["config"] is config.transformer
         assert kw["vocab_size"] == 32000
         assert kw["max_sequence_length"] == 4096
-        assert kw["hybrid_attention_ratio"] == 0.1
-        assert kw["hybrid_mlp_ratio"] == 0.2
         assert kw["hybrid_layer_pattern"] == "M-A-"
         assert kw["fp16_lm_cross_entropy"] is True
         assert kw["parallel_output"] is False

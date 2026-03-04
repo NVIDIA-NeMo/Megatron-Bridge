@@ -43,9 +43,6 @@ class TestMambaModelProvider:
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.mamba_num_groups == 8
-        assert provider.hybrid_attention_ratio == 0.0
-        assert provider.hybrid_mlp_ratio == 0.0
-        assert provider.hybrid_override_pattern is None
         assert provider.hybrid_layer_pattern is None
         assert provider.seq_length == 8192
         assert provider.position_embedding_type == "none"

@@ -69,9 +69,6 @@ class NemotronHBridge(MegatronModelBridge):
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
     ]
 
-    # Remove num_hidden_layers from CONFIG_MAPPING as it is derived from hybrid_layer_pattern
-    CONFIG_MAPPING.remove(("num_hidden_layers", "num_layers"))
-
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
@@ -80,6 +77,9 @@ class NemotronHBridge(MegatronModelBridge):
         # Use base class for common config conversion
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+
+        # Remove num_layers from provider as it is derived from hybrid_layer_pattern
+        provider.num_layers = None
 
         # Nemotron-H specific defaults
         provider.activation_func = squared_relu

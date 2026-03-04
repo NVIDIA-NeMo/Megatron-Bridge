@@ -39,7 +39,6 @@ class TestNemotronHModelProvider:
         provider.finalize()
 
         # Check required transformer config fields
-        assert provider.num_layers == 52
         assert provider.hidden_size == 4096
         assert provider.num_attention_heads == 32
 
@@ -469,7 +468,8 @@ class TestHybridPatterns:
         ]
 
         for provider in providers:
-            pattern = provider.hybrid_override_pattern
+            provider.finalize()
+            pattern = provider.hybrid_layer_pattern
             assert "M" in pattern  # Mamba layers
             assert "*" in pattern  # Attention layers
             assert len(pattern) > 0
