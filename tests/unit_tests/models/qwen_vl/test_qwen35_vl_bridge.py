@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transform
 
 def _make_dense_text_config():
     """Create a mock text config matching Qwen3.5-27B dense architecture."""
-    cfg = Mock()
+    cfg = Mock(spec=[])
     cfg.num_hidden_layers = 64
     cfg.hidden_size = 5120
     cfg.intermediate_size = 17408
@@ -58,18 +58,14 @@ def _make_dense_text_config():
     cfg.linear_num_value_heads = 48
     cfg.bos_token_id = 248045
     cfg.eos_token_id = 248044
-    cfg.q_lora_rank = None
-    cfg.kv_lora_rank = None
-    cfg.qk_nope_head_dim = None
-    cfg.qk_rope_head_dim = None
-    cfg.v_head_dim = None
     cfg.num_nextn_predict_layers = None
+    cfg.torch_dtype = "bfloat16"
     return cfg
 
 
 def _make_moe_text_config():
     """Create a mock text config matching Qwen3.5-397B-A17B MoE architecture."""
-    cfg = Mock()
+    cfg = Mock(spec=[])
     cfg.num_hidden_layers = 60
     cfg.hidden_size = 4096
     cfg.intermediate_size = 1024
@@ -98,12 +94,8 @@ def _make_moe_text_config():
     cfg.shared_expert_intermediate_size = 4096
     cfg.bos_token_id = 248045
     cfg.eos_token_id = 248046
-    cfg.q_lora_rank = None
-    cfg.kv_lora_rank = None
-    cfg.qk_nope_head_dim = None
-    cfg.qk_rope_head_dim = None
-    cfg.v_head_dim = None
     cfg.num_nextn_predict_layers = None
+    cfg.torch_dtype = "bfloat16"
     return cfg
 
 
