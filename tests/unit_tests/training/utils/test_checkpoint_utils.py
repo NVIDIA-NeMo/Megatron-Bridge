@@ -30,6 +30,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_run_config_filename,
     get_checkpoint_train_state_filename,
     get_hf_model_id_from_checkpoint,
+    is_checkpoint_iteration_directory,
     read_run_config,
     read_train_state,
 )
@@ -766,3 +767,67 @@ class TestCheckpointUtils:
             assert isinstance(result["model"]["learning_rate"], float)
             assert isinstance(result["flags"]["enabled"], bool)
             assert result["flags"]["debug"] is None
+
+    def test_is_iteration_dir_with_run_config(self, tmp_path):
+        """Test detection via run_config.yaml (Bridge checkpoint)."""
+        iter_dir = tmp_path / "iter_0001000"
+        iter_dir.mkdir()
+        (iter_dir / CONFIG_FILE).touch()
+
+        assert is_checkpoint_iteration_directory(str(iter_dir)) is True
+
+    def test_is_iteration_dir_with_train_state(self, tmp_path):
+        """Test detection via train_state.pt (Bridge per-iteration state)."""
+        iter_dir = tmp_path / "iter_0000800"
+        iter_dir.mkdir()
+        (iter_dir / TRAIN_STATE_FILE).touch()
+
+        assert is_checkpoint_iteration_directory(str(iter_dir)) is True
+
+    def test_is_iteration_dir_with_metadata_json(self, tmp_path):
+        """Test detection via metadata.json (torch_dist checkpoint)."""
+        iter_dir = tmp_path / "iter_0000500"
+        iter_dir.mkdir()
+        (iter_dir / "metadata.json").touch()
+
+        assert is_checkpoint_iteration_directory(str(iter_dir)) is True
+
+    def test_is_iteration_dir_with_dot_metadata(self, tmp_path):
+        """Test detection via .metadata (fsdp_dtensor checkpoint)."""
+        iter_dir = tmp_path / "iter_0000100"
+        iter_dir.mkdir()
+        (iter_dir / ".metadata").touch()
+
+        assert is_checkpoint_iteration_directory(str(iter_dir)) is True
+
+    def test_is_iteration_dir_empty_directory(self, tmp_path):
+        """Test that an empty directory is not detected as an iteration dir."""
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        assert is_checkpoint_iteration_directory(str(empty_dir)) is False
+
+    def test_is_iteration_dir_none(self):
+        """Test that None returns False."""
+        assert is_checkpoint_iteration_directory(None) is False
+
+    def test_is_iteration_dir_nonexistent(self):
+        """Test that a nonexistent path returns False."""
+        assert is_checkpoint_iteration_directory("/nonexistent/iter_0000000") is False
+
+    def test_checkpoint_exists_with_iteration_directory(self, tmp_path):
+        """Test checkpoint_exists detects a direct iteration directory."""
+        iter_dir = tmp_path / "iter_0001000"
+        iter_dir.mkdir()
+        (iter_dir / CONFIG_FILE).touch()
+
+        assert checkpoint_exists(str(iter_dir)) is True
+
+    def test_checkpoint_exists_prefers_iteration_dir_over_tracker(self, tmp_path):
+        """Test that a directory with both markers is still detected."""
+        ckpt_dir = tmp_path / "checkpoints"
+        ckpt_dir.mkdir()
+        (ckpt_dir / CONFIG_FILE).touch()
+        (ckpt_dir / f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}").touch()
+
+        assert checkpoint_exists(str(ckpt_dir)) is True
