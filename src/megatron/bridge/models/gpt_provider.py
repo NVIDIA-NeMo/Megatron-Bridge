@@ -363,112 +363,35 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         return None
 
 
-@dataclass
-class GPTProvider126M(GPTModelProvider):
-    """Configuration for a 126M parameter GPT model.
+def _patch_yarn_concentration_factor():
+    """Patch MCore _yarn_get_concentration_factor_from_config for None handling.
 
-    Predefined configuration for a small GPT model with 12 layers,
-    768 hidden size, and 12 attention heads.
+    GPTModelProvider defines yarn_rotary_scaling_factor as Optional[float] = None,
+    but MCore uses hasattr() which returns True for dataclass fields set to None.
+    This causes a crash for non-YARN models. Use getattr + is not None instead.
+
+    TODO: Remove once upstream MCore merges the fix.
     """
+    try:
+        import megatron.core.models.common.embeddings.yarn_rotary_pos_embedding as _yarn_mod
+        import megatron.core.transformer.attention as _attn_mod
 
-    seq_length: int = 2048
-    num_layers: int = 12
-    hidden_size: int = 768
-    ffn_hidden_size: int = 3072
-    num_attention_heads: int = 12
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
+        _get_factor = _yarn_mod._yarn_get_concentration_factor
 
+        def _fixed_from_config(config):
+            yarn_scaling = getattr(config, "yarn_rotary_scaling_factor", None)
+            if yarn_scaling is not None:
+                return _get_factor(
+                    yarn_scaling,
+                    getattr(config, "yarn_mscale", None),
+                    getattr(config, "yarn_mscale_all_dim", None),
+                )
+            return 1.0
 
-@dataclass
-class GPTProvider5B(GPTModelProvider):
-    """Configuration for a 5B parameter GPT model.
-
-    Predefined configuration for a medium-sized GPT model with 24 layers,
-    4096 hidden size, and 32 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 24
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 16384
-    num_attention_heads: int = 32
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
+        _yarn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
+        _attn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
+    except ImportError:
+        pass
 
 
-@dataclass
-class GPTProvider7B(GPTModelProvider):
-    """Configuration for a 7B parameter GPT model.
-
-    Predefined configuration for a medium-sized GPT model with 32 layers,
-    4096 hidden size, and 32 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 32
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 10880
-    num_attention_heads: int = 32
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider20B(GPTModelProvider):
-    """Configuration for a 20B parameter GPT model.
-
-    Predefined configuration for a large GPT model with 44 layers,
-    6144 hidden size, and 48 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 44
-    hidden_size: int = 6144
-    ffn_hidden_size: int = 24576
-    num_attention_heads: int = 48
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider40B(GPTModelProvider):
-    """Configuration for a 40B parameter GPT model.
-
-    Predefined configuration for a large GPT model with 48 layers,
-    8192 hidden size, and 64 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 48
-    hidden_size: int = 8192
-    ffn_hidden_size: int = 32768
-    num_attention_heads: int = 64
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider175B(GPTModelProvider):
-    """Configuration for a 175B parameter GPT model.
-
-    Predefined configuration for a massive GPT model with 96 layers,
-    12288 hidden size, and 96 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 96
-    hidden_size: int = 12288
-    ffn_hidden_size: int = 49152
-    num_attention_heads: int = 96
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-    layernorm_zero_centered_gamma: bool = True
+_patch_yarn_concentration_factor()
