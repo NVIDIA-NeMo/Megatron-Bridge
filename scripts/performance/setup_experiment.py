@@ -481,6 +481,15 @@ def main(
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
 
             wandb_run = None
+            # Bug 2 fix: wandb online mode redirects fd 2 at the OS level via os.dup2(),
+            # making all stderr writes invisible. Grab a private copy of fd 2 *before*
+            # wandb.init() so our StreamHandler bypasses wandb's capture pipe.
+            _dup_file = os.fdopen(os.dup(2), "w", buffering=1)
+            _dup_handler = logging.StreamHandler(_dup_file)
+            _dup_handler.setLevel(logging.DEBUG)
+            _dup_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+            logger.addHandler(_dup_handler)
+
             if HAVE_WANDB and wandb_key:
                 wandb_run = wandb.init(
                     project=wandb_project_name,
@@ -512,6 +521,9 @@ def main(
             if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
+
+            logger.removeHandler(_dup_handler)
+            _dup_file.close()
 
             if not is_long_convergence_run:
                 n_attempts = max_retries + 1
