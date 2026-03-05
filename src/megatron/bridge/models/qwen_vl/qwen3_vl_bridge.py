@@ -29,6 +29,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
@@ -89,6 +91,11 @@ class Qwen3VLBridge(MegatronModelBridge):
         provider.add_bias_linear = False
         provider.qk_layernorm = True
         provider.hidden_dropout = 0.0
+        provider.rotary_base = rope_theta_from_hf(text_config)
+
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        # text_config inherits PretrainedConfig's default of True which is wrong.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # VL-specific overrides
         provider.position_embedding_type = "mrope"
@@ -101,7 +108,8 @@ class Qwen3VLBridge(MegatronModelBridge):
         provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
         provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
         provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
-        provider.mrope_section = text_config.rope_scaling.get("mrope_section", [24, 20, 20])
+        rope_cfg = getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", {})
+        provider.mrope_section = rope_cfg.get("mrope_section", [24, 20, 20])
 
         return provider
 
@@ -246,6 +254,10 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         provider.add_bias_linear = False
         provider.qk_layernorm = True
         provider.hidden_dropout = 0.0
+        provider.rotary_base = rope_theta_from_hf(text_config)
+
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # MoE specific parameters
         provider.moe_ffn_hidden_size = text_config.moe_intermediate_size
@@ -273,7 +285,8 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
         provider.image_token_id = getattr(hf_config, "image_token_id", 151655)
         provider.video_token_id = getattr(hf_config, "video_token_id", 151656)
-        provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [24, 20, 20])
+        rope_cfg = getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", {})
+        provider.mrope_section = rope_cfg.get("mrope_section", [24, 20, 20])
 
         return provider
 
@@ -300,9 +313,11 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.output_layer.weight": "lm_head.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-            # Layer normalization for attention
+            # Layer normalization for attention (TE format - fused into linear)
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
-            # MoE-specific: pre-MLP layernorm
+            # Layer normalization (non-TE/quantization format - separate modules)
+            "language_model.decoder.layers.*.input_layernorm.weight": "model.language_model.layers.*.input_layernorm.weight",
+            # MoE-specific: pre-MLP layernorm (already in non-TE format for MoE)
             "language_model.decoder.layers.*.pre_mlp_layernorm.weight": "model.language_model.layers.*.post_attention_layernorm.weight",
             # Attention output projection
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
@@ -426,67 +441,67 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                     self.hf_weights_cache[key][global_expert_number] = exp_val
             if len(self.hf_weights_cache[key]) == num_experts:
                 logging.debug(f"All experts are loaded for {key}")
-                # all experts are loaded
-                if self.hf_weights_cache[key][0].ndim == 3:  # expert 0
-                    # gate up
-                    merged_hf_gate_weights = torch.cat(
-                        [self.hf_weights_cache[key][i][0].unsqueeze(0) for i in range(num_experts)], dim=0
-                    )
-                    merged_hf_up_weights = torch.cat(
-                        [self.hf_weights_cache[key][i][1].unsqueeze(0) for i in range(num_experts)], dim=0
-                    )
-                    del self.hf_weights_cache[key]
-                    return {key: torch.cat([merged_hf_gate_weights, merged_hf_up_weights], dim=-1)}
-                elif self.hf_weights_cache[key][0].ndim == 2:  # expert 0
-                    # down
-                    merged_hf_down_weights = torch.cat(
-                        [self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0
-                    )
-                    del self.hf_weights_cache[key]
-                    return {key: merged_hf_down_weights}
-                else:
-                    raise ValueError(
-                        f"Incorrect shape of self.hf_weights_cache[key]: {key} {self.hf_weights_cache[key].shape}"
-                    )
+                merged = torch.cat([self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0)
+                del self.hf_weights_cache[key]
+                return {key: merged}
             else:
                 # not all experts are loaded yet, return empty dict
                 logging.debug(f"{len(self.hf_weights_cache[key])}/{num_experts} experts are loaded for {key}")
                 return {}
 
 
+def _align_weight_to_shape(weight: torch.Tensor, target_shape: torch.Size, name: str) -> torch.Tensor:
+    """Auto-detect whether a transpose is needed to match the Megatron target shape.
+
+    Transformers <5.0 stored fused expert weights transposed as
+    [num_experts, hidden_size, 2*intermediate_size], while transformers 5.0+
+    uses the standard nn.Linear convention [num_experts, 2*intermediate_size, hidden_size].
+    This helper accepts either layout and transposes only when necessary, so the
+    bridge works with both real checkpoints (old format) and toy models or new
+    checkpoints created with transformers 5.0+.
+    """
+    if tuple(weight.shape) == tuple(target_shape):
+        return weight
+    if weight.ndim == 2 and tuple(weight.t().shape) == tuple(target_shape):
+        return weight.t().contiguous()
+    raise ValueError(f"Unexpected {name} shape {tuple(weight.shape)}; expected {tuple(target_shape)}.")
+
+
 class ExpertMLPDownProjMapping(AutoMapping):
-    """Mapping for expert MLP down projection weights between HF and Megatron formats."""
+    """Mapping for expert MLP down projection weights between HF and Megatron formats.
 
-    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
-        global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        # hf_weights: [num_experts, down_in, mlp_out]
-        expert_weight = hf_weights[global_expert_number].transpose(0, 1).contiguous()
-        return super().hf_to_megatron(expert_weight, megatron_module)
-
-    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        # [ep_size, down_in, mlp_out]
-        # experts need subsequently merged by maybe_modify_converted_hf_weight
-        converted_weights_dict = super().megatron_to_hf(megatron_weights, megatron_module)
-        for key in converted_weights_dict:
-            converted_weights_dict[key] = converted_weights_dict[key].transpose(-1, -2).contiguous()
-        return converted_weights_dict
-
-    def _validate_patterns(self, *args, **kwargs):
-        # allow number of wildcards to mismatch in this mapping
-        pass
-
-
-class ExpertMLPGateUpProjMapping(AutoMapping):
-    """Mapping for expert MLP gate+up projection using shared GatedMLPMapping logic."""
+    Uses _align_weight_to_shape so both pre-5.0 (transposed) and 5.0+
+    (standard) HF expert weight layouts are handled transparently.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Qwen3-VL MoE expert shards use mismatched wildcard counts; relax validation globally.
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 3 else hf_weights
+
+        normalized_param = self._normalize_expert_param_name(self.megatron_param)
+        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+        expert_weight = _align_weight_to_shape(expert_weight, target_param.shape, "down_proj")
+        return super().hf_to_megatron(expert_weight, megatron_module)
+
+    def _validate_patterns(self, *args, **kwargs):
+        pass
+
+
+class ExpertMLPGateUpProjMapping(AutoMapping):
+    """Mapping for expert MLP gate+up projection using shared GatedMLPMapping logic.
+
+    Uses _align_weight_to_shape so both pre-5.0 (transposed) and 5.0+
+    (standard) HF expert weight layouts are handled transparently.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
         GatedMLPMapping._validate_patterns = lambda *args, **kwargs: None
 
-        # Reuse the generic TP-aware split/gather, but we still handle expert selection
-        # and HF<->Megatron transpose at this wrapper layer.
         self._gated_mapping = GatedMLPMapping(
             megatron_param=self.megatron_param,
             gate=f"{self.hf_param}.gate",
@@ -495,37 +510,41 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
 
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
-        # hf_weights: [num_experts, mlp_in, fused_gate_up_out]
-        expert_weight = hf_weights[global_expert_number].transpose(0, 1).contiguous()
+        expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 3 else hf_weights
 
-        # HF gate_up_proj is [2 * hidden, hidden]; Megatron expects transposed.
-        gate, up = torch.chunk(expert_weight, 2, dim=0)
+        normalized_param = self._normalize_expert_param_name(self.megatron_param)
+        _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
+        target_shape = target_param.shape
+        gate_target_shape = (target_shape[0] // 2, target_shape[1])
+
+        if target_shape[0] % 2 != 0:
+            raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
+
+        if expert_weight.ndim == 3 and expert_weight.shape[0] == 2:
+            gate = _align_weight_to_shape(expert_weight[0], gate_target_shape, "gate")
+            up = _align_weight_to_shape(expert_weight[1], gate_target_shape, "up")
+        else:
+            expert_weight = _align_weight_to_shape(expert_weight, target_shape, "gate_up")
+            gate, up = torch.chunk(expert_weight, 2, dim=0)
+
         return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        # Let the shared mapping handle TP/PP/EP gather.
         converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
         if not converted:
             return {}
 
         fused: Dict[str, torch.Tensor] = {}
-
-        # only one pair of gate and up for current group of experts
         for name, tensor in converted.items():
-            if name.endswith(".gate"):
-                base_name = name[: -len(".gate")]
-                # [ep_size, mlp_in, gate_out]
-                gate_tensor = tensor.transpose(-1, -2).contiguous()
-                # [ep_size, mlp_in, up_out]
-                up_tensor = converted.get(f"{base_name}.up").transpose(-1, -2).contiguous()
-                assert up_tensor is not None
-                # Back to HF fused layout: stack [gate; up] along dim 0.
-                # [ep_size, 2, mlp_in, gate_out/up_out]
-                fused[base_name] = torch.stack([gate_tensor, up_tensor], dim=0 if up_tensor.ndim == 2 else 1)
-
-        # experts need subsequently merged by maybe_modify_converted_hf_weight
+            if not name.endswith(".gate"):
+                continue
+            base_name = name[: -len(".gate")]
+            up_tensor = converted.get(f"{base_name}.up")
+            if up_tensor is None:
+                continue
+            concat_dim = 0 if tensor.ndim == 2 else 1
+            fused[base_name] = torch.cat([tensor, up_tensor], dim=concat_dim)
         return fused
 
     def _validate_patterns(self, *args, **kwargs):
-        # allow number of wildcards to mismatch in this mapping
         pass

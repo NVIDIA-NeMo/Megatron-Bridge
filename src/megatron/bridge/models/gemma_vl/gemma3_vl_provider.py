@@ -33,6 +33,7 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
 
     # Vision configuration
     vision_config: SiglipVisionConfig = field(default_factory=SiglipVisionConfig)
+    return_dict: bool = True
     # We need to provide the HF text config in order to initialize the Gemma3MultiModalProjector
     vision_projector_config: Gemma3VLMultimodalProjectorConfig = field(
         default_factory=Gemma3VLMultimodalProjectorConfig
