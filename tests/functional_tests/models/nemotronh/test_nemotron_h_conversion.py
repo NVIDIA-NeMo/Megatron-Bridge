@@ -282,8 +282,8 @@ class TestNemotronHConversion:
 
 # Overrides for Nemotron-3-Nano MoE model (30B total, 3B active)
 HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES = {
-    "num_hidden_layers": 3,
-    "hybrid_override_pattern": "M*E",
+    "num_hidden_layers": 4,
+    "hybrid_override_pattern": "M*EM",
     "hidden_size": 672,
     "n_routed_experts": 16,
 }
