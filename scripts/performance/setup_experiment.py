@@ -59,6 +59,7 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
 def check_training_finished(log_file_paths: List[str]) -> bool:
@@ -478,40 +479,18 @@ def main(
             )
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
+
             wandb_run = None
             if HAVE_WANDB and wandb_key:
-                # wandb.init() redirects at the OS fd level (os.dup2), so saving/restoring
-                # sys.stdout/sys.stderr Python objects is not enough.  Save a dup of fd 1/2
-                # before init() so we can restore the actual file descriptors afterwards.
-                _saved_stdout_fd = os.dup(1)
-                _saved_stderr_fd = os.dup(2)
-                _saved_py_stdout, _saved_py_stderr = sys.stdout, sys.stderr
                 wandb_run = wandb.init(
                     project=wandb_project_name,
                     entity=wandb_entity_name,
                     id=wandb_run_id,
                     resume="allow",
-                    settings=wandb.Settings(console="off"),
                 )
-                # Flush wandb's captured buffers then restore original fds and Python streams.
-                sys.stdout.flush()
-                sys.stderr.flush()
-                os.dup2(_saved_stdout_fd, 1)
-                os.dup2(_saved_stderr_fd, 2)
-                os.close(_saved_stdout_fd)
-                os.close(_saved_stderr_fd)
-                sys.stdout, sys.stderr = _saved_py_stdout, _saved_py_stderr
 
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
-
-            # Patch all Rich console handlers so long log lines are not truncated.
-            # This must run after nemo_run finishes its lazy logging setup.
-            logging.getLogger().setLevel(logging.DEBUG)
-            for _h in logging.getLogger().handlers:
-                _h.setLevel(logging.DEBUG)
-                if hasattr(_h, "console"):
-                    _h.console.width = 10_000
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
