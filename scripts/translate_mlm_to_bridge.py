@@ -96,7 +96,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "num-attention-heads":               ("model.num_attention_heads",            None),
     "num-query-groups":                  ("model.num_query_groups",               None),
     "kv-channels":                       ("model.kv_channels",                    None),
-    "max-position-embeddings":           ("model.seq_length",                     None),
+    "max-position-embeddings":           ("model.max_position_embeddings",        None),
     "position-embedding-type":           ("model.position_embedding_type",        None),
     "rotary-base":                       ("model.rotary_base",                    None),
     "rotary-percent":                    ("model.rotary_percent",                 None),
@@ -158,6 +158,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "moe-token-dispatcher-type":         ("model.moe_token_dispatcher_type",     None),
     "moe-permute-fusion":                ("model.moe_permute_fusion",            "flag"),
     "moe-router-fusion":                 ("model.moe_router_fusion",             "flag"),
+    "moe-router-pre-softmax":            ("model.moe_router_pre_softmax",        "flag"),
 
     # ── MTP ─────────────────────────────────────────────────────────────
     "mtp-num-layers":                    ("model.mtp_num_layers",                None),
@@ -183,7 +184,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "skip-train":                        ("train.skip_train",                    "flag"),
     "manual-gc":                         ("train.manual_gc",                     "flag"),
     "manual-gc-interval":                ("train.manual_gc_interval",            None),
-    "seq-length":                        ("dataset.sequence_length",             None),
+    "seq-length":                        ("dataset.sequence_length",             "seq_length"),
     "dataloader-type":                   ("dataset.dataloader_type",             None),
     "num-dataset-builder-threads":       ("dataset.num_dataset_builder_threads", None),
 
@@ -292,7 +293,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     # ── Misc (informational / noop in Bridge) ───────────────────────────
     "use-mcore-models":                  (None,                                 "skip"),
     "transformer-impl":                  (None,                                 "skip"),
-    "distributed-timeout-minutes":       (None,                                 "skip"),
+    "distributed-timeout-minutes":       ("dist.distributed_timeout_minutes",   None),
     "enable-experimental":               (None,                                 "skip"),
 }
 # fmt: on
@@ -469,6 +470,9 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
             else:
                 split_str = str(arg_val)
             result.add_override(bridge_path, split_str)
+        elif transform == "seq_length":
+            result.add_override("dataset.sequence_length", arg_val)
+            result.add_override("model.seq_length", arg_val)
         elif transform == "skip" or bridge_path is None:
             result.skipped.append((arg_name, arg_val))
         elif transform == "flag":
@@ -983,7 +987,7 @@ for _mlm_arg, (_bridge_path, _transform) in ARG_MAP.items():
         continue
     if "._" in _bridge_path:
         continue
-    if _transform in ("swiglu", "squared_relu", "data_path", "split", "alias"):
+    if _transform in ("swiglu", "squared_relu", "data_path", "split", "seq_length", "alias"):
         continue
     _rev = None
     if _transform == "flag":
@@ -1365,6 +1369,19 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
             result.add_arg("split", ",".join(str(x) for x in split))
         else:
             result.add_arg("split", str(split))
+
+    # --- Special: model.seq_length / dataset.sequence_length → --seq-length
+    seq_len = overrides.get("model.seq_length", overrides.get("dataset.sequence_length"))
+    if seq_len is not None:
+        consumed.add("model.seq_length")
+        consumed.add("dataset.sequence_length")
+        result.add_arg("seq-length", seq_len)
+
+    # --- Special: model.max_position_embeddings → --max-position-embeddings
+    max_pos = overrides.get("model.max_position_embeddings")
+    if max_pos is not None:
+        consumed.add("model.max_position_embeddings")
+        result.add_arg("max-position-embeddings", max_pos)
 
     # --- Main loop -------------------------------------------------------
     for bridge_key, val in overrides.items():

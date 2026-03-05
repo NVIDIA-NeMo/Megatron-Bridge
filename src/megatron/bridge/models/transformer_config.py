@@ -103,6 +103,8 @@ class TransformerConfig(MCoreTransformerConfig):
         _resolve_string_fields(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreTransformerConfig.__post_init__(self)
 
     def __deepcopy__(self, memo):
@@ -169,6 +171,8 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         _resolve_string_fields(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreMLATransformerConfig.__post_init__(self)
 
 
@@ -217,6 +221,8 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         It can be called multiple times safely.
         """
         _resolve_string_fields(self)
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
 
     def get_config_for_layer(self, layer_number: int) -> MCoreTransformerConfig:
