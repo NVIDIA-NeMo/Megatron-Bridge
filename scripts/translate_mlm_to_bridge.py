@@ -59,7 +59,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import re
 import shlex
 import sys
 import textwrap
@@ -219,7 +218,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "weight-decay-incr-style":           ("scheduler.weight_decay_incr_style",  None),
 
     # ── Data / dataset ──────────────────────────────────────────────────
-    "data-path":                         ("dataset.blend",                      "data_path"),
+    "data-path":                         ("dataset.data_path",                  "data_path"),
     "split":                             ("dataset.split",                      "split"),
     "data-cache-path":                   ("dataset.path_to_cache",             None),
     "num-workers":                       ("dataset.num_workers",                None),
@@ -458,14 +457,11 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
             result.add_override("model.activation_func", "squared_relu")
             result.add_note("squared_relu: set model.activation_func=squared_relu")
         elif transform == "data_path":
-            # Bridge blend expects ([paths], weights_or_null)
-            if isinstance(arg_val, str):
-                paths = arg_val.split() if " " in str(arg_val) else [arg_val]
-            elif isinstance(arg_val, (list, tuple)):
-                paths = list(arg_val)
+            # dataset.data_path accepts a space-separated string (like MLM --data-path)
+            if isinstance(arg_val, (list, tuple)):
+                result.add_override(bridge_path, " ".join(str(p) for p in arg_val))
             else:
-                paths = [str(arg_val)]
-            result.add_override(bridge_path, (paths, None))
+                result.add_override(bridge_path, str(arg_val))
         elif transform == "split":
             # Normalize to comma-separated string (may arrive as tuple from ast.literal_eval)
             if isinstance(arg_val, (list, tuple)):
@@ -524,14 +520,6 @@ def _format_value_for_override(val: Any, key: str = "") -> str:
         if " " in val or "," in val:
             return f"'{val}'"
         return val
-    if isinstance(val, tuple) and len(val) == 2 and key == "dataset.blend":
-        # Bridge blend format: ([paths_list], weights_or_null)
-        paths, weights = val
-        paths_str = ",".join(str(p) for p in paths)
-        if weights is None:
-            return f'"[[{paths_str}],null]"'
-        weights_str = ",".join(str(w) for w in weights)
-        return f'"[[{paths_str}],[{weights_str}]]"'
     if isinstance(val, (list, tuple)):
         return repr(val)
     if val is None:
@@ -1350,25 +1338,24 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         else:
             result.add_note(f"mixed_precision={mp}: unknown precision mode")
 
-    # --- Special: dataset.blend → --data-path ----------------------------
+    # --- Special: dataset.data_path → --data-path --------------------------
+    data_path = overrides.get("dataset.data_path")
+    if data_path is not None:
+        consumed.add("dataset.data_path")
+        if isinstance(data_path, (list, tuple)):
+            result.add_arg("data-path", " ".join(str(p) for p in data_path))
+        else:
+            result.add_arg("data-path", str(data_path))
+
+    # Legacy: also handle dataset.blend if someone still passes it directly
     blend = overrides.get("dataset.blend")
-    if blend is not None:
+    if blend is not None and data_path is None:
         consumed.add("dataset.blend")
         if isinstance(blend, (list, tuple)) and len(blend) == 2:
             paths = blend[0] if isinstance(blend[0], (list, tuple)) else [blend[0]]
             result.add_arg("data-path", " ".join(str(p) for p in paths))
         elif isinstance(blend, str):
-            # May arrive as "[[/path],null]" from CLI — extract paths
-            s = blend.strip().strip('"').strip("'")
-            if s.startswith("[[") and "]" in s:
-                inner = re.findall(r"\[([^\[\]]+)\]", s)
-                if inner:
-                    paths = [p.strip() for p in inner[0].split(",") if p.strip()]
-                    result.add_arg("data-path", " ".join(paths))
-                else:
-                    result.add_arg("data-path", s)
-            else:
-                result.add_arg("data-path", s)
+            result.add_arg("data-path", str(blend))
 
     # --- Special: dataset.split → --split --------------------------------
     split = overrides.get("dataset.split")
