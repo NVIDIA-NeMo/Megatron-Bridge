@@ -82,7 +82,7 @@ NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
 )
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
     _NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100,
-    recompute_modules=["moe", "layernorm", "mlp", "core_attn", "moe_act"],
+    recompute_modules=["moe", "layernorm", "core_attn", "moe_act"],
 )
 
 __all__ = [
