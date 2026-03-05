@@ -496,6 +496,7 @@ def save_checkpoint_fixtures():
     mock_cfg.checkpoint.save_rng = True
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_ckpt_type = "global"
+    mock_cfg.checkpoint.fully_parallel_save = False
     mock_cfg.checkpoint.save_tokenizer_assets = False  # Disable for unit tests
 
     # Create nested mock attributes
