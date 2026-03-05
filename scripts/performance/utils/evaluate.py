@@ -656,8 +656,16 @@ def calc_convergence_and_performance(
     # check for performance
     golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
     current_iter_time_values = np.array([current_iter_time.get(s, float("nan")) for s in steps])
-    golden_gpu_util_values = np.array([golden_gpu_util.get(s, float("nan")) for s in steps])
-    current_gpu_util_values = np.array([current_gpu_util.get(s, float("nan")) for s in steps])
+    # Use explicit None-check: dict.get(key, default) only applies the default when the key is
+    # absent; if the key exists but its value is None (e.g. "GPU utilization" missing from the
+    # golden file for that step), .get() returns None — not the default — creating an object
+    # array that breaks np.nanmean.
+    golden_gpu_util_values = np.array(
+        [float(v) if (v := golden_gpu_util.get(s)) is not None else float("nan") for s in steps]
+    )
+    current_gpu_util_values = np.array(
+        [float(v) if (v := current_gpu_util.get(s)) is not None else float("nan") for s in steps]
+    )
     _logger.info(f"Current GPU util values (last 15): {current_gpu_util_values[-15:]}")
     _logger.info(f"Golden GPU util values (last 15): {golden_gpu_util_values[-15:]}")
     performance_result = validate_performance(

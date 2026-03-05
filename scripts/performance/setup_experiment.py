@@ -480,8 +480,12 @@ def main(
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
             wandb_run = None
             if HAVE_WANDB and wandb_key:
-                # Save real streams: wandb.init() redirects sys.stdout/stderr regardless of settings
-                _stdout, _stderr = sys.stdout, sys.stderr
+                # wandb.init() redirects at the OS fd level (os.dup2), so saving/restoring
+                # sys.stdout/sys.stderr Python objects is not enough.  Save a dup of fd 1/2
+                # before init() so we can restore the actual file descriptors afterwards.
+                _saved_stdout_fd = os.dup(1)
+                _saved_stderr_fd = os.dup(2)
+                _saved_py_stdout, _saved_py_stderr = sys.stdout, sys.stderr
                 wandb_run = wandb.init(
                     project=wandb_project_name,
                     entity=wandb_entity_name,
@@ -489,8 +493,14 @@ def main(
                     resume="allow",
                     settings=wandb.Settings(console="off"),
                 )
-                # Restore so that logger output remains visible after wandb.init()
-                sys.stdout, sys.stderr = _stdout, _stderr
+                # Flush wandb's captured buffers then restore original fds and Python streams.
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os.dup2(_saved_stdout_fd, 1)
+                os.dup2(_saved_stderr_fd, 2)
+                os.close(_saved_stdout_fd)
+                os.close(_saved_stderr_fd)
+                sys.stdout, sys.stderr = _saved_py_stdout, _saved_py_stderr
 
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
