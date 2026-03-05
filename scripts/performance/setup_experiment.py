@@ -60,14 +60,6 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# nemo_run sets up a RichHandler before basicConfig runs (making it a no-op) and with a narrow
-# console width. Override: widen all Rich consoles on the root logger to avoid line truncation,
-# and ensure root logger is at DEBUG so evaluate.py logs are not silently dropped.
-logging.getLogger().setLevel(logging.DEBUG)
-for _h in logging.getLogger().handlers:
-    if hasattr(_h, "console"):
-        _h.console.width = 10_000
-
 
 def check_training_finished(log_file_paths: List[str]) -> bool:
     """Check if training is finished."""
@@ -489,11 +481,22 @@ def main(
             wandb_run = None
             if HAVE_WANDB and wandb_key:
                 wandb_run = wandb.init(
-                    project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
+                    project=wandb_project_name,
+                    entity=wandb_entity_name,
+                    id=wandb_run_id,
+                    resume="allow",
+                    settings=wandb.Settings(console="off"),
                 )
 
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
+
+            # Patch all Rich console handlers so long log lines are not truncated.
+            # This must run after nemo_run finishes its lazy logging setup.
+            logging.getLogger().setLevel(logging.DEBUG)
+            for _h in logging.getLogger().handlers:
+                if hasattr(_h, "console"):
+                    _h.console.width = 10_000
 
             is_testing_passed, error_msg = calc_convergence_and_performance(
                 model_family_name=model_family_name,
