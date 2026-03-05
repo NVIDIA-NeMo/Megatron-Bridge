@@ -592,7 +592,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 self.unquantized_state_dict = {"model": captured_state_dicts["model0"]}
             else:
                 self.unquantized_state_dict = captured_state_dicts
-        return megatron_model, self.unquantized_state_dict
+        return megatron_model
 
     def stream_weights_hf_to_megatron(
         self,
