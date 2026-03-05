@@ -125,6 +125,8 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "group-query-attention":             (None,                                   "skip"),  # implied by num-query-groups
     "use-flash-attn":                    (None,                                   "skip"),  # Bridge default
     "sequence-parallel":                 ("model.sequence_parallel",              "flag"),
+    "account-for-embedding-in-pipeline-split": ("model.account_for_embedding_in_pipeline_split", "flag"),
+    "account-for-loss-in-pipeline-split": ("model.account_for_loss_in_pipeline_split", "flag"),
     "cross-entropy-loss-fusion":         ("model.cross_entropy_loss_fusion",      "flag"),
     "cross-entropy-fusion-impl":         ("model.cross_entropy_fusion_impl",      None),
 
@@ -172,6 +174,8 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "expert-model-parallel-size":        ("model.expert_model_parallel_size",    None),
     "expert-tensor-parallel-size":       ("model.expert_tensor_parallel_size",   None),
     "virtual-pipeline-model-parallel-size": ("model.virtual_pipeline_model_parallel_size", None),
+    "num-virtual-stages-per-pipeline-rank": ("model.virtual_pipeline_model_parallel_size", None),
+    "num-layers-per-virtual-pipeline-stage": ("model.virtual_pipeline_model_parallel_size", "vpp_from_layers"),
     "use-distributed-optimizer":         ("ddp.use_distributed_optimizer",       "flag"),
 
     # ── Training ────────────────────────────────────────────────────────
@@ -473,6 +477,21 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
         elif transform == "seq_length":
             result.add_override("dataset.sequence_length", arg_val)
             result.add_override("model.seq_length", arg_val)
+        elif transform == "vpp_from_layers":
+            layers_per_vpp_stage = int(arg_val)
+            num_layers = int(args.get("num-layers", 0))
+            pp = int(args.get("pipeline-model-parallel-size", 1))
+            effective_layers = num_layers
+            if args.get("account-for-embedding-in-pipeline-split"):
+                effective_layers += 1
+            if args.get("account-for-loss-in-pipeline-split"):
+                effective_layers += 1
+            if pp > 0 and layers_per_vpp_stage > 0:
+                layers_per_stage = effective_layers // pp
+                vpp = layers_per_stage // layers_per_vpp_stage
+                result.add_override(bridge_path, vpp)
+            else:
+                result.unknown.append((arg_name, arg_val))
         elif transform == "skip" or bridge_path is None:
             result.skipped.append((arg_name, arg_val))
         elif transform == "flag":
@@ -987,7 +1006,7 @@ for _mlm_arg, (_bridge_path, _transform) in ARG_MAP.items():
         continue
     if "._" in _bridge_path:
         continue
-    if _transform in ("swiglu", "squared_relu", "data_path", "split", "seq_length", "alias"):
+    if _transform in ("swiglu", "squared_relu", "data_path", "split", "seq_length", "vpp_from_layers", "alias"):
         continue
     _rev = None
     if _transform == "flag":
