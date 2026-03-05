@@ -136,6 +136,41 @@ python scripts/performance/setup_experiment.py
 - `-hf/--hf_token`: HuggingFace token for accessing tokenizers and checkpoints.
   - User can generate a token from- huggingface.co/settings/tokens (click on "Create new token" button)
   - For a "Fine-grained" token, only "User permissions" are needed. Under "User permissions", make selections for "Repositories", "Webhooks" and "Collections".
+- `--offline`: Set `HF_HUB_OFFLINE=1` (Slurm launcher path).
+  - Cannot be used together with `--hf_token`.
+
+##### HuggingFace connectivity and cache behavior (Slurm launcher)
+
+This launcher uses split defaults:
+
+- `TRANSFORMERS_OFFLINE=1`
+- `HF_HUB_OFFLINE=0`
+
+What each variable controls in this workflow:
+
+- `TRANSFORMERS_OFFLINE`: Transformers calls (for example `AutoTokenizer`) stay offline unless `--hf_token` is provided.
+- `HF_HUB_OFFLINE`: HuggingFace Hub calls (for example Hub-backed config/model resolution such as `AutoConfig`) stay online unless `--offline` is provided.
+
+Why this split exists:
+
+- Most benchmark recipes use `NullTokenizer`, so `TRANSFORMERS_OFFLINE=1` avoids unnecessary network traffic.
+- Most performance model families (`llama`, `qwen`, `qwen_vl`, `deepseek`, `gpt_oss`) use HF-backed config/model lookup paths.
+
+Flag mapping:
+
+- `--hf_token` sets `HF_TOKEN` and `TRANSFORMERS_OFFLINE=0`.
+- `--offline` sets `HF_HUB_OFFLINE=1`.
+- `--hf_token` and `--offline` are mutually exclusive.
+
+Practical guidance:
+
+1. Prefetch required model/tokenizer/config files into a local HF cache.
+2. Mount that cache into the container with `-cm/--custom_mounts`.
+3. Set `HF_HOME` to that mounted cache path before launch (Slurm exports env vars by default), for example `export HF_HOME=/path/to/hf_cache`.
+4. If needed, explicitly override `HF_HOME` with `-ce/--custom_env_vars`.
+5. Pass `--offline` to block Hub network checks.
+
+Note: with `HF_HUB_OFFLINE=0`, jobs may still contact HuggingFace even when files are mounted, which can trigger rate limits.
 
 ##### Parallelism arguments
 
@@ -152,6 +187,7 @@ python scripts/performance/setup_experiment.py
 - `-p/--partition`: Slurm partition to use for experiment.
 - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
 - `-gn/--gpus_per_node`: GPUs per node. Default `8`.
+- Launcher behavior: `--container-writable` is always added to `srun` for benchmark compatibility on clusters where containers are read-only by default.
 - `-cm/--custom_mounts`: Comma-separated list of host mounts to expose inside the container.
 - `-ce/--custom_env_vars`: Comma-separated string of environment variables (format: `key1=value1,key2=value2`).
 - `-cs/--custom_srun_args`: Comma-separated string of srun arguments.
