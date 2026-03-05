@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 
 import pytest
@@ -281,8 +282,6 @@ class TestPretrain:
                 ),
                 rng=RNGConfig(seed=1234),
             )
-
-            import logging
 
             with caplog.at_level(logging.INFO, logger="megatron.bridge.training.optim"):
                 pretrain(cfg, forward_step)
