@@ -31,37 +31,38 @@ from utils.utils import WorkloadBaseConfig
 BASE_NEMOTRON_3_NANO_CONFIG = WorkloadBaseConfig(
     num_gpus=8,
     global_batch_size=512,
-    micro_batch_size=2,
     tensor_model_parallel_size=1,
     expert_tensor_parallel_size=1,
     expert_model_parallel_size=8,
     moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "mamba", "moe_router", "moe_preprocess"],
 )
 
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     BASE_NEMOTRON_3_NANO_CONFIG,
-    tensor_model_parallel_size=1,
+    micro_batch_size=4,
 )
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_BF16_V1
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_NVFP4_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_BF16_V1
 
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
     BASE_NEMOTRON_3_NANO_CONFIG,
-    tensor_model_parallel_size=1,
+    micro_batch_size=2,
 )
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB200_BF16_V1
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB200_NVFP4_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB200_BF16_V1
 
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     BASE_NEMOTRON_3_NANO_CONFIG,
-    tensor_model_parallel_size=1,
+    micro_batch_size=4,
 )
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_B300_FP8_MX_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_B300_BF16_V1
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_B300_NVFP4_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_B300_BF16_V1
 
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     BASE_NEMOTRON_3_NANO_CONFIG,
-    tensor_model_parallel_size=1,
+    micro_batch_size=2,
 )
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_B200_FP8_MX_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_B200_BF16_V1
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_B200_NVFP4_V1 = NEMOTRON_3_NANO_PRETRAIN_CONFIG_B200_BF16_V1
@@ -72,6 +73,8 @@ _NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100 = replace(
     global_batch_size=1024,
     micro_batch_size=1,
     recompute_modules=["moe", "layernorm"],
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "mamba"],
 )
 
 NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_BF16_V1 = _NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100
