@@ -140,7 +140,17 @@ def _compare_top_k(
 # ---------------------------------------------------------------------------
 
 
-def _build_megatron_lora_model(hf_model_path, peft_checkpoint, trust_remote_code, *, tp=1, pp=1, ep=1, cpu=False):
+def _build_megatron_lora_model(
+    hf_model_path,
+    peft_checkpoint,
+    trust_remote_code,
+    *,
+    tp=1,
+    pp=1,
+    ep=1,
+    cpu=False,
+    adapter_cfg: dict | None = None,
+):
     from megatron.core import dist_checkpointing
 
     from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -176,6 +186,15 @@ def _build_megatron_lora_model(hf_model_path, peft_checkpoint, trust_remote_code
             "freeze_vision_projection",
         }
         peft_cfg = {k: v for k, v in peft_cfg.items() if k in allowed}
+    elif adapter_cfg:
+        peft_cfg = {
+            "dim": adapter_cfg.get("r", 32),
+            "alpha": adapter_cfg.get("lora_alpha", 32),
+            "dropout": adapter_cfg.get("lora_dropout", 0.0),
+        }
+        print(
+            f"  (no run_config.yaml found; using adapter_config.json: dim={peft_cfg['dim']}, alpha={peft_cfg['alpha']})"
+        )
 
     lora = peft_class(**peft_cfg)
     print(f"  LoRA config: class={peft_class.__name__}, dim={lora.dim}, alpha={lora.alpha}")
@@ -251,16 +270,17 @@ def main() -> None:
     peft_logits = None
     tokenizer = None
 
+    # Read adapter_config.json (all ranks need this for LoRA config fallback)
+    adapter_cfg_path = Path(args.hf_adapter_path) / "adapter_config.json"
+    with open(adapter_cfg_path) as f:
+        adapter_cfg = json.load(f)
+
     # ------------------------------------------------------------------
     # Steps 0-2: HF model operations (rank 0 only)
     # ------------------------------------------------------------------
     if is_rank_0:
         tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
 
-        # 0) Read adapter_config.json
-        adapter_cfg_path = Path(args.hf_adapter_path) / "adapter_config.json"
-        with open(adapter_cfg_path) as f:
-            adapter_cfg = json.load(f)
         print(
             f"\nadapter_config.json: r={adapter_cfg['r']}, lora_alpha={adapter_cfg['lora_alpha']}, "
             f"target_modules={adapter_cfg.get('target_modules')}"
@@ -328,6 +348,7 @@ def main() -> None:
         pp=args.pp,
         ep=args.ep,
         cpu=args.cpu,
+        adapter_cfg=adapter_cfg,
     )
 
     try:
@@ -352,6 +373,8 @@ def main() -> None:
             torch_dtype=torch.float32,
             trust_remote_code=args.trust_remote_code,
         )
+        if getattr(mg_hf.config, "tie_word_embeddings", False) and "lm_head.weight" not in mg_merged_sd:
+            mg_merged_sd["lm_head.weight"] = mg_merged_sd["model.embed_tokens.weight"]
         mg_hf.load_state_dict(mg_merged_sd, strict=True)
         mg_hf = mg_hf.to(device)
         mg_logits = _forward_logits(mg_hf, tokenizer, args.prompt, device)
