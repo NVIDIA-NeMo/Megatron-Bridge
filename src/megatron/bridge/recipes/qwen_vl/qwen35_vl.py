@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen3.5-VL finetuning recipes with parameterless API.
+"""Qwen3.5-VL finetuning recipes.
 
 This module provides SFT and PEFT configurations for Qwen3.5-VL models:
 
@@ -33,7 +33,7 @@ from megatron.bridge.training.config import ConfigContainer
 # =============================================================================
 # Qwen3.5-VL 800M SFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_800m_sft_config() -> ConfigContainer:
+def qwen35_vl_800m_sft_config(hf_path: str = "Qwen/Qwen3.5-0.8B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 800M (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -42,11 +42,13 @@ def qwen35_vl_800m_sft_config() -> ConfigContainer:
     - Sequence length: 4096
 
     Note: num_kv_heads=2, so max TP=2.
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-0.8B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -130,7 +132,7 @@ def qwen35_vl_800m_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 2B SFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_2b_sft_config() -> ConfigContainer:
+def qwen35_vl_2b_sft_config(hf_path: str = "Qwen/Qwen3.5-2B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 2B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -139,11 +141,13 @@ def qwen35_vl_2b_sft_config() -> ConfigContainer:
     - Sequence length: 4096
 
     Note: num_kv_heads=2, so max TP=2.
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-2B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -227,7 +231,7 @@ def qwen35_vl_2b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 4B SFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_4b_sft_config() -> ConfigContainer:
+def qwen35_vl_4b_sft_config(hf_path: str = "Qwen/Qwen3.5-4B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 4B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -236,11 +240,13 @@ def qwen35_vl_4b_sft_config() -> ConfigContainer:
     - Sequence length: 4096
 
     Note: num_kv_heads=4, so max TP=4.
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-4B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -324,7 +330,7 @@ def qwen35_vl_4b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 9B SFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_9b_sft_config() -> ConfigContainer:
+def qwen35_vl_9b_sft_config(hf_path: str = "Qwen/Qwen3.5-9B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 9B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -333,11 +339,13 @@ def qwen35_vl_9b_sft_config() -> ConfigContainer:
     - Sequence length: 4096
 
     Note: num_kv_heads=4, so max TP=4.
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-9B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -421,18 +429,20 @@ def qwen35_vl_9b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 27B SFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_27b_sft_config() -> ConfigContainer:
+def qwen35_vl_27b_sft_config(hf_path: str = "Qwen/Qwen3.5-27B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 27B (dense).
 
     Default configuration: 2 nodes, 16 GPUs total
     - TP=4, PP=4
     - LR=5e-6 (full SFT)
     - Sequence length: 4096
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-27B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -516,18 +526,20 @@ def qwen35_vl_27b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 35B-A3B SFT Configuration (MoE)
 # =============================================================================
-def qwen35_vl_35b_a3b_sft_config() -> ConfigContainer:
+def qwen35_vl_35b_a3b_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE).
 
     Default configuration: 2 nodes, 16 GPUs
     - TP=2, PP=1, EP=16
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-35B-A3B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -630,18 +642,20 @@ def qwen35_vl_35b_a3b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 122B-A10B SFT Configuration (MoE)
 # =============================================================================
-def qwen35_vl_122b_a10b_sft_config() -> ConfigContainer:
+def qwen35_vl_122b_a10b_sft_config(hf_path: str = "Qwen/Qwen3.5-122B-A10B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 122B-A10B (MoE).
 
     Default configuration: 4 nodes, 32 GPUs
     - TP=2, PP=6, EP=8
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-122B-A10B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -746,18 +760,20 @@ def qwen35_vl_122b_a10b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 397B-A17B SFT Configuration (MoE)
 # =============================================================================
-def qwen35_vl_397b_a17b_sft_config() -> ConfigContainer:
+def qwen35_vl_397b_a17b_sft_config(hf_path: str = "Qwen/Qwen3.5-397B-A17B") -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 397B-A17B (MoE).
 
     Default configuration: 16 nodes, 128 GPUs
     - TP=2, PP=4, EP=32
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
+
+    Args:
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-397B-A17B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -862,7 +878,9 @@ def qwen35_vl_397b_a17b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Qwen3.5-VL 800M PEFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_800m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_800m_peft_config(
+    peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-0.8B"
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 800M (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -872,6 +890,7 @@ def qwen35_vl_800m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -882,7 +901,6 @@ def qwen35_vl_800m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-0.8B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -966,7 +984,7 @@ def qwen35_vl_800m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
 # =============================================================================
 # Qwen3.5-VL 2B PEFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-2B") -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 2B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -976,6 +994,7 @@ def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -986,7 +1005,6 @@ def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-2B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1070,7 +1088,7 @@ def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 # =============================================================================
 # Qwen3.5-VL 4B PEFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-4B") -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 4B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -1080,6 +1098,7 @@ def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -1090,7 +1109,6 @@ def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-4B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1174,7 +1192,7 @@ def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 # =============================================================================
 # Qwen3.5-VL 9B PEFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-9B") -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 9B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -1184,6 +1202,7 @@ def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -1194,7 +1213,6 @@ def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-9B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1278,7 +1296,7 @@ def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 # =============================================================================
 # Qwen3.5-VL 27B PEFT Configuration (Dense)
 # =============================================================================
-def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-27B") -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 27B (dense).
 
     Default configuration: 1 node, 8 GPUs
@@ -1288,6 +1306,7 @@ def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -1298,7 +1317,6 @@ def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-27B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1381,7 +1399,9 @@ def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 # =============================================================================
 # Qwen3.5-VL 35B-A3B PEFT Configuration (MoE)
 # =============================================================================
-def qwen35_vl_35b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_35b_a3b_peft_config(
+    peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-35B-A3B"
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 35B-A3B (MoE).
 
     Default configuration: 1 node, 8 GPUs
@@ -1391,6 +1411,7 @@ def qwen35_vl_35b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCon
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -1401,7 +1422,6 @@ def qwen35_vl_35b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCon
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-35B-A3B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1504,7 +1524,9 @@ def qwen35_vl_35b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCon
 # =============================================================================
 # Qwen3.5-VL 122B-A10B PEFT Configuration (MoE)
 # =============================================================================
-def qwen35_vl_122b_a10b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_122b_a10b_peft_config(
+    peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-122B-A10B"
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 122B-A10B (MoE).
 
     Default configuration: 2 nodes, 16 GPUs
@@ -1514,6 +1536,7 @@ def qwen35_vl_122b_a10b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -1524,7 +1547,6 @@ def qwen35_vl_122b_a10b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-122B-A10B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1627,7 +1649,9 @@ def qwen35_vl_122b_a10b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
 # =============================================================================
 # Qwen3.5-VL 397B-A17B PEFT Configuration (MoE)
 # =============================================================================
-def qwen35_vl_397b_a17b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def qwen35_vl_397b_a17b_peft_config(
+    peft_scheme: str | PEFT = "lora", hf_path: str = "Qwen/Qwen3.5-397B-A17B"
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 397B-A17B (MoE).
 
     Default configuration: 4 nodes, 32 GPUs
@@ -1637,6 +1661,7 @@ def qwen35_vl_397b_a17b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_path: HuggingFace model ID or local path to model directory.
     """
     cfg = _peft_common_vlm()
 
@@ -1647,7 +1672,6 @@ def qwen35_vl_397b_a17b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3.5-397B-A17B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
