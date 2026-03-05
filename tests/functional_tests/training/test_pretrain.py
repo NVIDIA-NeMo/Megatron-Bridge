@@ -169,7 +169,7 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_mup(self, tmp_path):
+    def test_pretrain_with_mup(self, tmp_path, caplog):
         """
         Test end to end training with μP (Maximal Update Parameterization) enabled.
 
@@ -282,7 +282,20 @@ class TestPretrain:
                 rng=RNGConfig(seed=1234),
             )
 
-            pretrain(cfg, forward_step)
+            import logging
+
+            with caplog.at_level(logging.INFO, logger="megatron.bridge.training.optim"):
+                pretrain(cfg, forward_step)
+
+            # Assert μP optimizer overrides were applied (not just a smoke test)
+            mup_log_messages = [r.message for r in caplog.records if "μP enabled" in r.message]
+            assert mup_log_messages, (
+                "Expected μP optimizer override log message but found none. "
+                "Check that use_mup=True flows through setup_optimizer."
+            )
+            assert "width_mult=2" in mup_log_messages[0], (
+                f"Expected width_mult=2 in μP log, got: {mup_log_messages[0]}"
+            )
 
         finally:
             clear_directories(tmp_path)

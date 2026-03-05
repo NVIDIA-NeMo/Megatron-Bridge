@@ -15,8 +15,6 @@
 import logging
 from typing import Optional, Union
 
-logger = logging.getLogger(__name__)
-
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
@@ -34,6 +32,8 @@ from megatron.bridge.training.config import (
     OptimizerConfigOverrideProviderContext,
     SchedulerConfig,
 )
+
+G_LOGGER = logging.getLogger(__name__)
 
 
 def setup_optimizer(
@@ -75,7 +75,7 @@ def setup_optimizer(
         )
         if mup_overrides:
             config_overrides = {**(config_overrides or {}), **mup_overrides}
-            logger.info(
+            G_LOGGER.info(
                 f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
             )

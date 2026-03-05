@@ -48,7 +48,7 @@ class TestSetupOptimizerMuP:
     @patch("megatron.bridge.training.optim._get_scheduler")
     @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
-    def test_mup_disabled_skips_overrides(self, mock_get_model_config, mock_get_optimizer, mock_get_scheduler):
+    def test_mup_disabled_skips_overrides(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """When use_mup=False, get_mup_config_overrides is not called."""
         from megatron.bridge.training.optim import setup_optimizer
 
@@ -67,7 +67,7 @@ class TestSetupOptimizerMuP:
     @patch("megatron.bridge.training.optim._get_scheduler")
     @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
-    def test_mup_enabled_calls_overrides(self, mock_get_model_config, mock_get_optimizer, mock_get_scheduler):
+    def test_mup_enabled_calls_overrides(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """When use_mup=True, get_mup_config_overrides is called with correct args."""
         from megatron.bridge.training.optim import setup_optimizer
 
@@ -93,7 +93,7 @@ class TestSetupOptimizerMuP:
     @patch("megatron.bridge.training.optim._get_scheduler")
     @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
-    def test_mup_overrides_merged_with_existing(self, mock_get_model_config, mock_get_optimizer, mock_get_scheduler):
+    def test_mup_overrides_merged_with_existing(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """μP overrides are merged with existing config_overrides."""
         from megatron.bridge.training.optim import setup_optimizer
 
@@ -130,7 +130,7 @@ class TestSetupOptimizerMuP:
     @patch("megatron.bridge.training.optim._get_scheduler")
     @patch("megatron.bridge.training.optim.get_megatron_optimizer")
     @patch("megatron.bridge.training.optim.get_model_config")
-    def test_mup_model_list_uses_first_chunk(self, mock_get_model_config, mock_get_optimizer, mock_get_scheduler):
+    def test_mup_model_list_uses_first_chunk(self, mock_get_model_config, mock_get_optimizer, _mock_get_scheduler):
         """When model is a list, get_model_config is called on the first chunk."""
         from megatron.bridge.training.optim import setup_optimizer
 
