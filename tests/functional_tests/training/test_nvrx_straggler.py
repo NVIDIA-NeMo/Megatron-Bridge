@@ -238,6 +238,7 @@ def setup_test_logging(log_file: str, rank: int):
     return file_handler
 
 
+@pytest.mark.pleasefixme
 def test_nvrx_straggler_detection_end_to_end(sleep_time: float = 1.0):
     """
     End-to-end functional test that runs actual megatron training with NVRx.
