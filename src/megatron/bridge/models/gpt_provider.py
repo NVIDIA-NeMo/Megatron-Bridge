@@ -141,6 +141,17 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     rope_scaling_factor: float = 1.0
     rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
+
+    # YARN (Yet Another RoPE extensioN) position embedding parameters
+    # Used when position_embedding_type == "yarn"
+    yarn_rotary_scaling_factor: Optional[float] = None
+    yarn_original_max_position_embeddings: Optional[int] = None
+    yarn_beta_fast: Optional[float] = None
+    yarn_beta_slow: Optional[float] = None
+    yarn_mscale: Optional[float] = None
+    yarn_mscale_all_dim: Optional[float] = None
+    yarn_correction_range_round_to_int: Optional[bool] = None
+
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
     deallocate_pipeline_outputs: bool = True
