@@ -30,6 +30,9 @@ from megatron.bridge.recipes.qwen_vl.qwen35_vl import qwen35_vl_27b_sft_config
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
 
+pytestmark = pytest.mark.integration
+
+
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
 _TINY_MODEL = {"num_layers": 4}
 
@@ -117,11 +120,15 @@ class TestQwen35VLFinetuneRecipes:
         If a previous test fails mid-pretrain, destroy_global_state() never
         runs and the calculator leaks into the next test.
         """
-        yield
         from megatron.core.num_microbatches_calculator import (
             _GLOBAL_NUM_MICROBATCHES_CALCULATOR,
             destroy_num_microbatches_calculator,
         )
+
+        if _GLOBAL_NUM_MICROBATCHES_CALCULATOR is not None:
+            destroy_num_microbatches_calculator()
+
+        yield
 
         if _GLOBAL_NUM_MICROBATCHES_CALCULATOR is not None:
             destroy_num_microbatches_calculator()

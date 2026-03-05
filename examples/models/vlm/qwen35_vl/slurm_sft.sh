@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +32,7 @@
 #   9B (dense):      TP=4, PP=1         (1 node)
 #   27B (dense):     TP=4, PP=4         (2 nodes)
 #   35B-A3B (MoE):   TP=2, PP=1, EP=16  (2 nodes)
-#   122B-A10B (MoE): TP=2, PP=1, EP=32  (4 nodes)
+#   122B-A10B (MoE): TP=2, PP=6, EP=8   (4 nodes)
 #   397B-A17B (MoE): TP=2, PP=4, EP=32  (16 nodes)
 #
 # Examples:
@@ -47,8 +48,8 @@
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpu
 #SBATCH --account=my_account
-#SBATCH --output=logs/qwen35vl_sft_%j.out
-#SBATCH --error=logs/qwen35vl_sft_%j.err
+#SBATCH --output=qwen35vl_sft_%j.out
+#SBATCH --error=qwen35vl_sft_%j.err
 #SBATCH --exclusive
 
 # ==============================================================================
@@ -149,8 +150,6 @@ echo "Model: $HF_MODEL_NAME"
 echo "Recipe: $RECIPE"
 echo "Checkpoint: $PRETRAINED_CHECKPOINT"
 echo "======================================"
-
-mkdir -p logs
 
 CLI_OVERRIDES="\
     checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \

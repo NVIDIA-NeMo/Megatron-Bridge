@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,8 +47,8 @@
 #SBATCH --time=08:00:00
 #SBATCH --partition=gpu
 #SBATCH --account=my_account
-#SBATCH --output=logs/qwen35vl_lora_%j.out
-#SBATCH --error=logs/qwen35vl_lora_%j.err
+#SBATCH --output=qwen35vl_lora_%j.out
+#SBATCH --error=qwen35vl_lora_%j.err
 #SBATCH --exclusive
 
 # ==============================================================================
@@ -148,8 +149,6 @@ echo "Recipe: $RECIPE"
 echo "PEFT: LoRA"
 echo "Checkpoint: $PRETRAINED_CHECKPOINT"
 echo "======================================"
-
-mkdir -p logs
 
 CLI_OVERRIDES="\
     checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
