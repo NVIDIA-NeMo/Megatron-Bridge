@@ -17,24 +17,45 @@
 Verify an exported HuggingFace PEFT adapter by loading it with the PEFT
 library and comparing logits against the Megatron checkpoint.
 
+Supports both CPU-only (single process) and multi-GPU (torchrun) modes.
+
 Verification criteria (configurable with ``--top-k``):
   * PEFT model logits must differ from the base model (adapter has effect).
-  * When ``--megatron-peft-checkpoint`` is given, the top-k predicted tokens
+  * When ``--lora-checkpoint`` is given, the top-k predicted tokens
     from the PEFT model must match those from the Megatron model with merged
     weights.
 
-Usage::
+CPU mode (no GPU required)::
 
     uv run python examples/conversion/adapter/verify_adapter.py \\
-        --hf-model-id Qwen/Qwen3-0.6B \\
+        --hf-model-path Qwen/Qwen3-0.6B \\
         --hf-adapter-path ./my_adapter \\
-        --megatron-peft-checkpoint /path/to/finetune_ckpt/iter_0000020
+        --lora-checkpoint /path/to/finetune_ckpt/iter_0000020 \\
+        --cpu
+
+GPU mode (single GPU)::
+
+    uv run python examples/conversion/adapter/verify_adapter.py \\
+        --hf-model-path Qwen/Qwen3-0.6B \\
+        --hf-adapter-path ./my_adapter \\
+        --lora-checkpoint /path/to/finetune_ckpt/iter_0000020
+
+Multi-GPU mode (TP=2)::
+
+    uv run python -m torch.distributed.run --nproc_per_node=2 \\
+        examples/conversion/adapter/verify_adapter.py \\
+        --hf-model-path Qwen/Qwen3-0.6B \\
+        --hf-adapter-path ./my_adapter \\
+        --lora-checkpoint /path/to/finetune_ckpt/iter_0000020 \\
+        --tp 2
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 
 import torch
@@ -47,16 +68,21 @@ def parse_args() -> argparse.Namespace:
         description="Verify exported HF PEFT adapter",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--hf-model-id", required=True, help="HF base model name or path.")
+    parser.add_argument("--hf-model-path", required=True, help="HF base model name or path.")
     parser.add_argument("--hf-adapter-path", required=True, help="Exported HF PEFT adapter directory.")
     parser.add_argument(
-        "--megatron-peft-checkpoint",
+        "--lora-checkpoint",
         default=None,
         help="Megatron PEFT checkpoint (iter dir). Required for Megatron-side verification.",
     )
     parser.add_argument("--prompt", default="The capital of France is", help="Prompt for the forward pass.")
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--top-k", type=int, default=5, help="Number of top tokens to compare.")
+
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallel size")
+    parser.add_argument("--cpu", action="store_true", help="Run entirely on CPU (no GPU required)")
     return parser.parse_args()
 
 
@@ -65,9 +91,9 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 
-def _forward_logits(model, tokenizer, prompt: str) -> torch.Tensor:
+def _forward_logits(model, tokenizer, prompt: str, device: torch.device) -> torch.Tensor:
     """Single forward pass, return last-token logits as float32 on CPU."""
-    inputs = tokenizer(prompt, return_tensors="pt")
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
     model.eval()
     with torch.no_grad():
         logits = model(**inputs).logits[0, -1, :]
@@ -114,7 +140,7 @@ def _compare_top_k(
 # ---------------------------------------------------------------------------
 
 
-def _build_megatron_lora_model(hf_model_id, peft_checkpoint, trust_remote_code):
+def _build_megatron_lora_model(hf_model_path, peft_checkpoint, trust_remote_code, *, tp=1, pp=1, ep=1, cpu=False):
     from megatron.core import dist_checkpointing
 
     from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -126,7 +152,7 @@ def _build_megatron_lora_model(hf_model_id, peft_checkpoint, trust_remote_code):
     from megatron.bridge.training.model_load_save import temporary_distributed_context
     from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
+    bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=trust_remote_code)
 
     ckpt_path = Path(peft_checkpoint).expanduser().resolve()
     peft_class: type = LoRA
@@ -157,15 +183,23 @@ def _build_megatron_lora_model(hf_model_id, peft_checkpoint, trust_remote_code):
     provider = bridge.to_megatron_provider(load_weights=True)
     provider.pipeline_dtype = torch.float32
     provider.params_dtype = torch.float32
+    provider.tensor_model_parallel_size = tp
+    provider.pipeline_model_parallel_size = pp
+    provider.expert_model_parallel_size = ep
     provider.finalize()
     provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
 
-    ctx = temporary_distributed_context(backend="gloo")
-    ctx.__enter__()
+    dist_ctx = None
+    if not torch.distributed.is_initialized():
+        backend = "gloo" if cpu else "nccl"
+        dist_ctx = temporary_distributed_context(backend=backend)
+        dist_ctx.__enter__()
+    else:
+        provider.initialize_model_parallel(seed=0)
 
     model = provider.provide_distributed_model(
         wrap_with_ddp=False,
-        use_cpu_initialization=True,
+        use_cpu_initialization=cpu,
         init_model_with_meta_device=False,
     )
 
@@ -175,7 +209,7 @@ def _build_megatron_lora_model(hf_model_id, peft_checkpoint, trust_remote_code):
     model_key = "model" if "model" in loaded_sd else next(k for k in loaded_sd if k.startswith("model"))
     model[0].load_state_dict(loaded_sd[model_key], strict=False)
 
-    return bridge, model, lora, ctx
+    return bridge, model, lora, dist_ctx
 
 
 # ---------------------------------------------------------------------------
@@ -187,75 +221,113 @@ def main() -> None:
     """Run adapter verification checks."""
     args = parse_args()
     k = args.top_k
+    use_gpu = not args.cpu
+    is_multi_gpu = args.tp > 1 or args.pp > 1 or args.ep > 1
+
+    if is_multi_gpu and args.cpu:
+        print("ERROR: TP/PP/EP > 1 requires GPU; do not use --cpu", file=sys.stderr)
+        sys.exit(1)
+
+    if is_multi_gpu and os.environ.get("WORLD_SIZE") is None:
+        print(
+            "ERROR: TP/PP/EP > 1 requires torchrun. Run with:\n"
+            f"  python -m torch.distributed.run --nproc_per_node=<gpus> {sys.argv[0]} ...",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if use_gpu and os.environ.get("WORLD_SIZE") is not None and not torch.distributed.is_initialized():
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+        torch.distributed.init_process_group("nccl")
+
+    rank = int(os.environ.get("RANK", 0))
+    is_rank_0 = rank == 0
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    device = torch.device(f"cuda:{local_rank}") if use_gpu else torch.device("cpu")
+
     all_pass = True
-
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_id, trust_remote_code=args.trust_remote_code)
-
-    # ------------------------------------------------------------------
-    # 0) Read adapter_config.json
-    # ------------------------------------------------------------------
-    adapter_cfg_path = Path(args.hf_adapter_path) / "adapter_config.json"
-    with open(adapter_cfg_path) as f:
-        adapter_cfg = json.load(f)
-    print(
-        f"\nadapter_config.json: r={adapter_cfg['r']}, lora_alpha={adapter_cfg['lora_alpha']}, "
-        f"target_modules={adapter_cfg.get('target_modules')}"
-    )
+    base_logits = None
+    peft_logits = None
+    tokenizer = None
 
     # ------------------------------------------------------------------
-    # 1) HF base model logits
+    # Steps 0-2: HF model operations (rank 0 only)
     # ------------------------------------------------------------------
-    print("\n[Step 1] Loading HF base model ...")
-    hf_base = AutoModelForCausalLM.from_pretrained(
-        args.hf_model_id,
-        torch_dtype=torch.float32,
-        trust_remote_code=args.trust_remote_code,
-    )
-    base_logits = _forward_logits(hf_base, tokenizer, args.prompt)
-    _print_top_k("HF base (no adapter)", base_logits, tokenizer, k)
-    del hf_base
+    if is_rank_0:
+        tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
 
-    # ------------------------------------------------------------------
-    # 2) PEFT library loading check
-    # ------------------------------------------------------------------
-    print("\n[Step 2] Loading adapter with PEFT library ...")
-    from peft import PeftModel
+        # 0) Read adapter_config.json
+        adapter_cfg_path = Path(args.hf_adapter_path) / "adapter_config.json"
+        with open(adapter_cfg_path) as f:
+            adapter_cfg = json.load(f)
+        print(
+            f"\nadapter_config.json: r={adapter_cfg['r']}, lora_alpha={adapter_cfg['lora_alpha']}, "
+            f"target_modules={adapter_cfg.get('target_modules')}"
+        )
 
-    peft_base = AutoModelForCausalLM.from_pretrained(
-        args.hf_model_id,
-        torch_dtype=torch.float32,
-        trust_remote_code=args.trust_remote_code,
-    )
-    peft_model = PeftModel.from_pretrained(peft_base, args.hf_adapter_path)
-    peft_model.eval()
-    peft_logits = _forward_logits(peft_model, tokenizer, args.prompt)
-    _print_top_k("HF PEFT", peft_logits, tokenizer, k)
-    del peft_model, peft_base
+        # 1) HF base model logits
+        print("\n[Step 1] Loading HF base model ...")
+        hf_base = AutoModelForCausalLM.from_pretrained(
+            args.hf_model_path,
+            torch_dtype=torch.float32,
+            trust_remote_code=args.trust_remote_code,
+        ).to(device)
+        base_logits = _forward_logits(hf_base, tokenizer, args.prompt, device)
+        _print_top_k("HF base (no adapter)", base_logits, tokenizer, k)
+        del hf_base
 
-    peft_vs_base = (peft_logits - base_logits).abs().max().item()
-    if peft_vs_base < 1e-6:
-        print("\n  FAIL: PEFT model logits are identical to base model.")
-        print("  PEFT failed to load the adapter weights from the safetensors file.")
-        all_pass = False
-    else:
-        print(f"\n  Adapter effect on logits: max diff from base = {peft_vs_base:.6e}  PASS")
+        # 2) PEFT library loading check
+        print("\n[Step 2] Loading adapter with PEFT library ...")
+        from peft import PeftModel
 
-    if not args.megatron_peft_checkpoint:
-        print("\n\nSkipping Megatron-side checks (--megatron-peft-checkpoint not provided).")
-        if all_pass:
-            print("PASSED")
+        peft_base = AutoModelForCausalLM.from_pretrained(
+            args.hf_model_path,
+            torch_dtype=torch.float32,
+            trust_remote_code=args.trust_remote_code,
+        ).to(device)
+        peft_model = PeftModel.from_pretrained(peft_base, args.hf_adapter_path)
+        peft_model.eval()
+        peft_logits = _forward_logits(peft_model, tokenizer, args.prompt, device)
+        _print_top_k("HF PEFT", peft_logits, tokenizer, k)
+        del peft_model, peft_base
+
+        peft_vs_base = (peft_logits - base_logits).abs().max().item()
+        if peft_vs_base < 1e-6:
+            print("\n  FAIL: PEFT model logits are identical to base model.")
+            print("  PEFT failed to load the adapter weights from the safetensors file.")
+            all_pass = False
         else:
-            raise SystemExit("FAILED: see details above")
+            print(f"\n  Adapter effect on logits: max diff from base = {peft_vs_base:.6e}  PASS")
+
+    if not args.lora_checkpoint:
+        if is_rank_0:
+            print("\n\nSkipping Megatron-side checks (--lora-checkpoint not provided).")
+            if all_pass:
+                print("PASSED")
+            else:
+                raise SystemExit("FAILED: see details above")
+        _cleanup_distributed(args.cpu)
         return
 
+    # Synchronize before Megatron work (all ranks must participate together)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
     # ------------------------------------------------------------------
-    # 3) Megatron: load model with LoRA, export merged weights
+    # 3) Megatron: load model with LoRA, export merged weights (all ranks)
     # ------------------------------------------------------------------
-    print("\n[Step 3] Building Megatron model with LoRA from checkpoint ...")
+    if is_rank_0:
+        print("\n[Step 3] Building Megatron model with LoRA from checkpoint ...")
+
     bridge, mg_model, lora, dist_ctx = _build_megatron_lora_model(
-        args.hf_model_id,
-        args.megatron_peft_checkpoint,
+        args.hf_model_path,
+        args.lora_checkpoint,
         args.trust_remote_code,
+        tp=args.tp,
+        pp=args.pp,
+        ep=args.ep,
+        cpu=args.cpu,
     )
 
     try:
@@ -263,38 +335,50 @@ def main() -> None:
         for name, tensor in bridge.export_hf_weights(mg_model, cpu=True, merge_adapter_weights=True):
             mg_merged_sd[name] = tensor
     finally:
-        dist_ctx.__exit__(None, None, None)
+        if dist_ctx:
+            dist_ctx.__exit__(None, None, None)
 
     # ------------------------------------------------------------------
-    # 4) Logit-level verification (top-k)
+    # 4) Logit-level verification (top-k) — rank 0 only
     # ------------------------------------------------------------------
-    print(f"\n[Step 4] Top-{k} logit verification ...")
+    if is_rank_0:
+        if tokenizer is None:
+            tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
 
-    mg_hf = AutoModelForCausalLM.from_pretrained(
-        args.hf_model_id,
-        torch_dtype=torch.float32,
-        trust_remote_code=args.trust_remote_code,
-    )
-    mg_hf.load_state_dict(mg_merged_sd, strict=True)
-    mg_logits = _forward_logits(mg_hf, tokenizer, args.prompt)
-    _print_top_k("Megatron merged", mg_logits, tokenizer, k)
-    del mg_hf
+        print(f"\n[Step 4] Top-{k} logit verification ...")
 
-    if not _compare_top_k("PEFT vs Megatron merged", peft_logits, mg_logits, tokenizer, k):
-        all_pass = False
+        mg_hf = AutoModelForCausalLM.from_pretrained(
+            args.hf_model_path,
+            torch_dtype=torch.float32,
+            trust_remote_code=args.trust_remote_code,
+        )
+        mg_hf.load_state_dict(mg_merged_sd, strict=True)
+        mg_hf = mg_hf.to(device)
+        mg_logits = _forward_logits(mg_hf, tokenizer, args.prompt, device)
+        _print_top_k("Megatron merged", mg_logits, tokenizer, k)
+        del mg_hf
 
-    # ------------------------------------------------------------------
-    # Result
-    # ------------------------------------------------------------------
-    print(f"\n{'=' * 70}")
-    if all_pass:
-        print("  PASSED: adapter export is correct")
-    else:
-        print("  FAILED: see details above")
-    print(f"{'=' * 70}")
+        if not _compare_top_k("PEFT vs Megatron merged", peft_logits, mg_logits, tokenizer, k):
+            all_pass = False
 
-    if not all_pass:
-        raise SystemExit("Adapter verification failed")
+        # Result
+        print(f"\n{'=' * 70}")
+        if all_pass:
+            print("  PASSED: adapter export is correct")
+        else:
+            print("  FAILED: see details above")
+        print(f"{'=' * 70}")
+
+        if not all_pass:
+            raise SystemExit("Adapter verification failed")
+
+    _cleanup_distributed(args.cpu)
+
+
+def _cleanup_distributed(cpu: bool) -> None:
+    """Destroy the process group if it was initialized by us (not by temporary_distributed_context)."""
+    if not cpu and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

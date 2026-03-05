@@ -34,16 +34,16 @@ entirely on CPU — no GPU required.
 
 ```bash
 uv run python examples/conversion/adapter/export_adapter.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --megatron-peft-checkpoint /path/to/finetune_ckpt \
-    --output-hf-path ./my_adapter
+    --hf-model-path meta-llama/Llama-3.2-1B \
+    --lora-checkpoint /path/to/finetune_ckpt \
+    --output ./my_adapter
 ```
 
 | Argument | Description |
 |---|---|
-| `--hf-model-id` | HuggingFace model name or local path (architecture + base weights) |
-| `--megatron-peft-checkpoint` | Path to the Megatron-Bridge distributed checkpoint containing LoRA adapter weights |
-| `--output-hf-path` | Output directory (default: `./my_adapter`) |
+| `--hf-model-path` | HuggingFace model name or local path (architecture + base weights) |
+| `--lora-checkpoint` | Path to the Megatron-Bridge distributed checkpoint containing LoRA adapter weights |
+| `--output` | Output directory (default: `./my_adapter`) |
 | `--trust-remote-code` | Allow custom code from the HuggingFace repository |
 
 **Output structure:**
@@ -60,30 +60,53 @@ Loads the exported adapter with the `peft` library and runs verification
 checks:
 
 - The PEFT model logits must differ from the base model (adapter has effect).
-- When `--megatron-peft-checkpoint` is provided, the top-k predicted tokens
+- When `--lora-checkpoint` is provided, the top-k predicted tokens
   from the PEFT model must match those from the Megatron model with merged
   weights.
 
-```bash
-# Quick check (PEFT-only, no Megatron comparison)
-uv run python examples/conversion/adapter/verify_adapter.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
-    --hf-adapter-path ./my_adapter
+Supports CPU-only, single-GPU, and multi-GPU (TP/PP) modes.
 
-# Full verification (compares against Megatron checkpoint)
+```bash
+# Quick check (PEFT-only, no Megatron comparison, CPU)
 uv run python examples/conversion/adapter/verify_adapter.py \
-    --hf-model-id meta-llama/Llama-3.2-1B \
+    --hf-model-path meta-llama/Llama-3.2-1B \
     --hf-adapter-path ./my_adapter \
-    --megatron-peft-checkpoint /path/to/finetune_ckpt/iter_0000020
+    --cpu
+
+# Full verification on GPU (single GPU)
+uv run python examples/conversion/adapter/verify_adapter.py \
+    --hf-model-path meta-llama/Llama-3.2-1B \
+    --hf-adapter-path ./my_adapter \
+    --lora-checkpoint /path/to/finetune_ckpt/iter_0000020
+
+# Multi-GPU with TP=2
+uv run python -m torch.distributed.run --nproc_per_node=2 \
+    examples/conversion/adapter/verify_adapter.py \
+    --hf-model-path meta-llama/Llama-3.2-1B \
+    --hf-adapter-path ./my_adapter \
+    --lora-checkpoint /path/to/finetune_ckpt/iter_0000020 \
+    --tp 2
+
+# Multi-GPU with PP=4
+uv run python -m torch.distributed.run --nproc_per_node=4 \
+    examples/conversion/adapter/verify_adapter.py \
+    --hf-model-path meta-llama/Llama-3.2-1B \
+    --hf-adapter-path ./my_adapter \
+    --lora-checkpoint /path/to/finetune_ckpt/iter_0000020 \
+    --pp 4
 ```
 
 | Argument | Description |
 |---|---|
-| `--hf-model-id` | HuggingFace base model name or path |
+| `--hf-model-path` | HuggingFace base model name or path |
 | `--hf-adapter-path` | Exported HF PEFT adapter directory |
-| `--megatron-peft-checkpoint` | *(optional)* Megatron checkpoint iter directory for cross-check |
+| `--lora-checkpoint` | *(optional)* Megatron checkpoint iter directory for cross-check |
 | `--prompt` | Prompt for the forward pass (default: `"The capital of France is"`) |
 | `--top-k` | Number of top tokens to compare (default: `5`) |
+| `--tp` | Tensor parallel size (default: `1`) |
+| `--pp` | Pipeline parallel size (default: `1`) |
+| `--ep` | Expert parallel size (default: `1`) |
+| `--cpu` | Run entirely on CPU (no GPU required, TP/PP/EP must be 1) |
 
 ### 3. `stream_adapter_weights.py` — Low-Level Adapter Streaming
 
