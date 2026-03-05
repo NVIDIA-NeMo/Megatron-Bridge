@@ -522,6 +522,7 @@ def calc_convergence_and_performance(
     performance_config: Dict[str, Any],
     memory_config: Dict[str, Any],
     wandb_run: Optional["wandb.Run"] = None,
+    _logger: logging.Logger = None,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -541,7 +542,9 @@ def calc_convergence_and_performance(
             low_loss_tolerance, final_loss_tolerance, max_outlier_ratio, outlier_threshold,
             skip_first_percent_loss
         wandb_run: An optional wandb run object to log metrics to
+        _logger: Logger to use; defaults to this module's logger if not provided
     """
+    _logger = _logger or logger
 
     if not HAVE_WANDB:
         raise ImportError("wandb is required for calculating perf and convergence metrics")
@@ -559,7 +562,7 @@ def calc_convergence_and_performance(
     golden_values_file_name = pathlib.Path(golden_values_path).name
     next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
     expected_golden_values_path = os.path.join(pathlib.Path(golden_values_path).parent, golden_values_file_name)
-    logger.info(f"Golden values path: {expected_golden_values_path}")
+    _logger.info(f"Golden values path: {expected_golden_values_path}")
 
     # Always write actuals into experiment directory
     write_golden_values_to_disk(
@@ -602,10 +605,10 @@ def calc_convergence_and_performance(
             f"You will need to add the golden values ({expected_golden_values_path}) "
             "into the repository before the next run."
         )
-        logger.error(error_msg)
+        _logger.error(error_msg)
         sys.exit(1)
 
-    logger.info("Found existing golden values file, performing convergence check")
+    _logger.info("Found existing golden values file, performing convergence check")
     with open(expected_golden_values_path, "r") as f:
         expected_golden_values = json.load(f)
 
@@ -628,19 +631,19 @@ def calc_convergence_and_performance(
         golden_gpu_util[key] = value.get("GPU utilization")
 
     # Extract golden_lm_loss and golden_iter_time lists
-    logger.info(f"Comparing {len(steps)} training steps for convergence")
+    _logger.info(f"Comparing {len(steps)} training steps for convergence")
     steps = sorted(golden_train_loss.keys(), key=int)
 
     # check for convergence
     golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
     current_train_loss_values = np.array([current_train_loss.get(s, float("nan")) for s in steps])
-    logger.info(f"Current loss values (last 15): {current_train_loss_values[-15:]}")
-    logger.info(f"Golden loss values (last 15): {golden_train_loss_values[-15:]}")
+    _logger.info(f"Current loss values (last 15): {current_train_loss_values[-15:]}")
+    _logger.info(f"Golden loss values (last 15): {golden_train_loss_values[-15:]}")
     convergence_result = validate_convergence(
         current_values=current_train_loss_values,
         golden_values=golden_train_loss_values,
         steps=steps,
-        logger=logger,
+        logger=_logger,
         config=convergence_config,
         wandb_run=wandb_run,
     )
@@ -655,13 +658,13 @@ def calc_convergence_and_performance(
     current_iter_time_values = np.array([current_iter_time.get(s, float("nan")) for s in steps])
     golden_gpu_util_values = np.array([golden_gpu_util.get(s, float("nan")) for s in steps])
     current_gpu_util_values = np.array([current_gpu_util.get(s, float("nan")) for s in steps])
-    logger.info(f"Current GPU util values (last 15): {current_gpu_util_values[-15:]}")
-    logger.info(f"Golden GPU util values (last 15): {golden_gpu_util_values[-15:]}")
+    _logger.info(f"Current GPU util values (last 15): {current_gpu_util_values[-15:]}")
+    _logger.info(f"Golden GPU util values (last 15): {golden_gpu_util_values[-15:]}")
     performance_result = validate_performance(
         current_gpu_util_values=current_gpu_util_values,
         golden_gpu_util_values=golden_gpu_util_values,
         steps=steps,
-        logger=logger,
+        logger=_logger,
         config=performance_config,
         wandb_run=wandb_run,
     )
@@ -681,14 +684,14 @@ def calc_convergence_and_performance(
     # check for memory
     memory_metrics_missing = golden_alloc is None or golden_max_alloc is None
     if memory_metrics_missing:
-        logger.warning("Memory metrics (alloc, max_alloc) not found in golden values - skipping memory validation")
+        _logger.warning("Memory metrics (alloc, max_alloc) not found in golden values - skipping memory validation")
     else:
         memory_result = validate_memory(
             golden_alloc=golden_alloc,
             current_alloc=current_alloc,
             golden_max_alloc=golden_max_alloc,
             current_max_alloc=current_max_alloc,
-            logger=logger,
+            logger=_logger,
             wandb_run=wandb_run,
             config=memory_config,
         )
@@ -738,5 +741,5 @@ def calc_convergence_and_performance(
             error_msg += f'  "{alloc_metric}": {current_alloc},\n'
             error_msg += f'  "{max_alloc_metric}": {current_max_alloc}\n'
 
-    logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
+    _logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
     return has_validation_failures is False, error_msg

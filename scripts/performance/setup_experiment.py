@@ -60,6 +60,14 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# nemo_run sets up a RichHandler before basicConfig runs (making it a no-op) and with a narrow
+# console width. Override: widen all Rich consoles on the root logger to avoid line truncation,
+# and ensure root logger is at DEBUG so evaluate.py logs are not silently dropped.
+logging.getLogger().setLevel(logging.DEBUG)
+for _h in logging.getLogger().handlers:
+    if hasattr(_h, "console"):
+        _h.console.width = 10_000
+
 
 def check_training_finished(log_file_paths: List[str]) -> bool:
     """Check if training is finished."""
@@ -501,6 +509,7 @@ def main(
                 performance_config=performance_params,
                 memory_config=memory_params,
                 wandb_run=wandb_run,
+                _logger=logger,
             )
 
             if wandb_run:
