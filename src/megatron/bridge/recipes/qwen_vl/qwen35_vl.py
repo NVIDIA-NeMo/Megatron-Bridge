@@ -90,10 +90,6 @@ def qwen35_vl_800m_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -190,10 +186,6 @@ def qwen35_vl_2b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -292,10 +284,6 @@ def qwen35_vl_4b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -393,10 +381,6 @@ def qwen35_vl_9b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -491,10 +475,6 @@ def qwen35_vl_27b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -606,10 +586,6 @@ def qwen35_vl_35b_a3b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
 
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -727,10 +703,6 @@ def qwen35_vl_122b_a10b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -847,10 +819,6 @@ def qwen35_vl_397b_a17b_sft_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -958,10 +926,6 @@ def qwen35_vl_800m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -1065,10 +1029,6 @@ def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -1174,10 +1134,6 @@ def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -1282,10 +1238,6 @@ def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -1389,11 +1341,6 @@ def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -1513,10 +1460,6 @@ def qwen35_vl_35b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCon
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -1641,10 +1584,6 @@ def qwen35_vl_122b_a10b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
 
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
-
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200,
@@ -1767,10 +1706,6 @@ def qwen35_vl_397b_a17b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigC
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
-
-    # Validation config
-    cfg.validation.eval_interval = 500
-    cfg.validation.eval_iters = 32
 
     # Optimizer - higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
