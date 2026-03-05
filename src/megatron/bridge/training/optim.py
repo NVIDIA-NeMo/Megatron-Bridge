@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Optional, Union
+
+logger = logging.getLogger(__name__)
 
 from megatron.core.optimizer import (
     MegatronOptimizer,
@@ -72,6 +75,10 @@ def setup_optimizer(
         )
         if mup_overrides:
             config_overrides = {**(config_overrides or {}), **mup_overrides}
+            logger.info(
+                f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
+                f"applied {len(mup_overrides)} optimizer param-group override(s)."
+            )
 
     if hasattr(optimizer_config, "provide"):
         optimizer = optimizer_config.provide(
