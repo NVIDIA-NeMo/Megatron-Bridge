@@ -480,6 +480,8 @@ def main(
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
             wandb_run = None
             if HAVE_WANDB and wandb_key:
+                # Save real streams: wandb.init() redirects sys.stdout/stderr regardless of settings
+                _stdout, _stderr = sys.stdout, sys.stderr
                 wandb_run = wandb.init(
                     project=wandb_project_name,
                     entity=wandb_entity_name,
@@ -487,6 +489,8 @@ def main(
                     resume="allow",
                     settings=wandb.Settings(console="off"),
                 )
+                # Restore so that logger output remains visible after wandb.init()
+                sys.stdout, sys.stderr = _stdout, _stderr
 
             logger.info("Waiting 10 seconds for I/O to settle")
             time.sleep(10)
@@ -495,6 +499,7 @@ def main(
             # This must run after nemo_run finishes its lazy logging setup.
             logging.getLogger().setLevel(logging.DEBUG)
             for _h in logging.getLogger().handlers:
+                _h.setLevel(logging.DEBUG)
                 if hasattr(_h, "console"):
                     _h.console.width = 10_000
 
