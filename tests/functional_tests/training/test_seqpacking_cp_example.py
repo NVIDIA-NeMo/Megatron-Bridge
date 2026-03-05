@@ -20,7 +20,7 @@ import torch
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.squad import process_squad_example
-from megatron.bridge.recipes.llama.llama3 import llama32_1b_finetune_config as finetune_config
+from megatron.bridge.recipes.llama.llama3 import llama32_1b_sft_config
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from tests.functional_tests.utils import (
@@ -51,7 +51,7 @@ class TestPeftSftExample:
             os.makedirs(tensorboard_dir, exist_ok=True)
         torch.distributed.barrier()
 
-        cfg = finetune_config(peft=None)
+        cfg = llama32_1b_sft_config()
         cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
         cfg.tokenizer.tokenizer_model = "meta-llama/Llama-3.2-1B"
         cfg.model.calculate_per_token_loss = True
@@ -66,8 +66,8 @@ class TestPeftSftExample:
         cfg.train.train_iters = 2
         cfg.train.global_batch_size = 2
         cfg.train.micro_batch_size = 1
-        cfg.train.eval_interval = 1
-        cfg.train.eval_iters = 0
+        cfg.validation.eval_interval = 1
+        cfg.validation.eval_iters = 0
         cfg.scheduler.lr_warmup_iters = 0
         cfg.logger.log_interval = 1
         cfg.logger.tensorboard_dir = tensorboard_dir
@@ -99,6 +99,11 @@ class TestPeftSftExample:
 
         try:
             finetune(cfg, forward_step)
-            verify_checkpoint_files(checkpoint_dir, cfg.train.train_iters)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                cfg.train.train_iters,
+                ckpt_format=cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
+            )
         finally:
             clear_directories(shared_dir)

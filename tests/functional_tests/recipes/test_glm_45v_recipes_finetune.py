@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for Ministral 3 recipe configurations."""
-
-from functools import partial
+"""Functional smoke tests for GLM-4.5V recipe configurations."""
 
 import pytest
 
 from megatron.bridge.recipes.glm_vl.glm_45v import (
-    glm_45v_finetune_config,
+    glm_45v_sft_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
@@ -27,8 +25,8 @@ from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 GLM_45V_FINETUNE_RECIPES = [
     # Small model, only use 2 layers for quick functional test
     (
-        partial(glm_45v_finetune_config, peft=None),
-        "glm_45v",
+        glm_45v_sft_config,
+        "glm_45v_sft",
         {
             "tensor_model_parallel_size": 1,
             "pipeline_model_parallel_size": 1,
@@ -43,6 +41,26 @@ GLM_45V_FINETUNE_RECIPES = [
     ),
 ]
 
+GLM_45V_FINETUNE_PACKED_RECIPES = [
+    # Small model with packed sequences, only use 2 layers
+    (
+        glm_45v_sft_config,
+        "glm_45v_sft_packed",
+        {
+            "tensor_model_parallel_size": 1,
+            "pipeline_model_parallel_size": 1,
+            "expert_model_parallel_size": 1,
+            "num_layers": 2,
+            "num_moe_experts": 8,
+            "hidden_size": 4096,
+            "ffn_hidden_size": 512,
+            "moe_layer_freq": [0, 1],
+            "pipeline_model_parallel_layout": None,
+        },
+        {"pack_sequences_in_batch": True},
+    ),
+]
+
 
 class TestGLM45VRecipes:
     """Test class for GLM 4.5V recipe functional tests."""
@@ -52,3 +70,19 @@ class TestGLM45VRecipes:
     def test_glm_45v_finetune_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
         """Functional test for GLM 4.5V recipes with appropriate parallelism configurations."""
         run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "config_func,recipe_name,model_overrides,dataset_overrides", GLM_45V_FINETUNE_PACKED_RECIPES
+    )
+    def test_glm_45v_finetune_packed_recipes(
+        self, config_func, recipe_name, model_overrides, dataset_overrides, tmp_path
+    ):
+        """Functional test for GLM 4.5V recipes with packed sequences enabled."""
+        run_pretrain_vl_recipe_test(
+            config_func,
+            recipe_name,
+            tmp_path,
+            model_overrides=model_overrides,
+            dataset_overrides=dataset_overrides,
+        )

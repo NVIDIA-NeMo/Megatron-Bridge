@@ -29,12 +29,11 @@ class TestQwenVLInferenceWrapper:
     """
 
     @pytest.fixture
-    def wrapper(self, mock_model, mock_inference_wrapper_config):
+    def wrapper(self, mock_model):
         """Create a QwenVLInferenceWrapper with mocked parent initialization."""
         with patch.object(QwenVLInferenceWrapper, "__init__", lambda self, *args, **kwargs: None):
             wrapper = QwenVLInferenceWrapper.__new__(QwenVLInferenceWrapper)
             wrapper.model = mock_model
-            wrapper.inference_wrapper_config = mock_inference_wrapper_config
             wrapper.inference_params = None
             return wrapper
 

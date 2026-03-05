@@ -110,6 +110,7 @@ def setup(
         SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
     """
     cfg = state.cfg
+    maybe_log_and_save_config(cfg)
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
@@ -286,6 +287,10 @@ def setup(
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(
+            train_valid_test_datasets_provider, pg_collection=pg_collection
+        )
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
@@ -305,7 +310,6 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -484,7 +488,14 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
 
 
 def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
-    """Save configuration to disk and log it on rank 0."""
+    """Save configuration to disk and log non-default values on rank 0.
+
+    Instead of printing the full config YAML, this now logs only the values
+    that differ from Megatron Core defaults, making it easier to spot
+    unintended configuration deviations.
+
+    The full config can still be saved to a file via logger.save_config_filepath.
+    """
 
     if get_rank_safe() != 0:
         return
@@ -495,6 +506,4 @@ def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
         except Exception as e:
             print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
 
-    print("------- Task Configuration -------")
-    cfg.print_yaml()
-    print("----------------------------------")
+    cfg.log_non_default_values()

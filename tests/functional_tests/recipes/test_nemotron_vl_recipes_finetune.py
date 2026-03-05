@@ -14,30 +14,20 @@
 
 """Functional smoke tests for Nemotron Nano V2 VL recipe configurations."""
 
-import functools
-
 import pytest
 
-from megatron.bridge.recipes.nemotron_vl import nemotron_nano_v2_vl as nemotron_recipe
+from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import (
+    nemotron_nano_v2_vl_12b_sft_config,
+)
 from megatron.bridge.training import llava_step
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
-
-
-def _finetune_wrapper(**kwargs):
-    """Wrapper to adapt Nemotron VL finetune_config to the test runner signature.
-
-    The runner will pass (dir, name, dataset_type=mock) among others; we forward
-    everything to finetune_config and inject a dummy pretrained_checkpoint.
-    """
-    kwargs.setdefault("pretrained_checkpoint", "/tmp/fake_nemotron_vl_ckpt")
-    return nemotron_recipe.nemotron_nano_v2_vl_12b_finetune_config(**kwargs)
 
 
 NEMOTRON_VL_FINETUNE_RECIPES = [
     # Small model, only use 2 layers
     (
-        functools.partial(_finetune_wrapper, hf_model_path="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"),
-        "nemotron_vl_nano_v2",
+        nemotron_nano_v2_vl_12b_sft_config,
+        "nemotron_vl_nano_v2_sft",
         {
             "num_layers": 3,
             "hybrid_override_pattern": "M*-",

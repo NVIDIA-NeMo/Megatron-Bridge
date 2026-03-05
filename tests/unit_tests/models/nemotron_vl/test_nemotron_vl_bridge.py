@@ -27,16 +27,22 @@ from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
 
 @pytest.fixture
 def mock_llm_config():
-    cfg = Mock()
+    # Use spec=[] so hasattr() only returns True for explicitly-set attributes,
+    # matching real HF config behaviour (Nemotron config has no MLA fields
+    # like q_lora_rank, so they must not appear in the provider kwargs).
+    cfg = Mock(spec=[])
     cfg.num_hidden_layers = 28
     cfg.hidden_size = 5120
     cfg.intermediate_size = 20480
     cfg.num_attention_heads = 40
     cfg.num_key_value_heads = 8
     cfg.initializer_range = 0.02
-    cfg.layer_norm_epsilon = 1e-5
+    cfg.rms_norm_eps = 1e-5  # CONFIG_MAPPING uses rms_norm_eps -> layernorm_epsilon
     cfg.vocab_size = 262144
     cfg.max_position_embeddings = 131072
+    cfg.hidden_act = "relu2"
+    cfg.rope_scaling = None
+    cfg.torch_dtype = "bfloat16"
     return cfg
 
 

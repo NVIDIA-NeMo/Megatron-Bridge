@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import math
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Union
 
-import torch
 import torch.nn.functional as F
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama.llama4_utils import get_llama4_layer_spec
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -136,38 +129,13 @@ class Llama31ModelProvider(Llama3ModelProvider):
     """Configuration for Llama 3.1 models.
 
     Extends Llama3ModelProvider with specific settings for Llama 3.1 models,
-    including RoPE scaling parameters.
+    including RoPE scaling via Megatron Core's built-in support.
     """
 
-    scale_factor: float = 8.0
-    low_freq_factor: float = 1.0
-    high_freq_factor: float = 4.0
-    old_context_len: int = 8192
+    # RoPE scaling is now handled by Megatron Core's RotaryEmbedding
+    rope_scaling: bool = True
+    rope_scaling_factor: float = 8.0
     init_method_std: float = 0.02
-
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
-        """Configure and instantiate a Megatron Core Llama 3.1 model.
-
-        Extends the base configuration with Llama 3.1 specific RoPE scaling.
-
-        Args:
-            pre_process: Whether to include pre-processing in the model
-            post_process: Whether to include post-processing in the model
-            vp_stage: Virtual pipeline stage
-
-        Returns:
-            MCoreGPTModel: Configured Megatron Core GPT model instance
-        """
-        model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-        # Apply rope scaling for Llama3.1 model
-        model.rotary_pos_emb.inv_freq = apply_rope_scaling(
-            model.rotary_pos_emb.inv_freq,
-            factor=self.scale_factor,
-            low_freq_factor=self.low_freq_factor,
-            high_freq_factor=self.high_freq_factor,
-            old_context_len=self.old_context_len,
-        )
-        return model
 
 
 @dataclass
@@ -268,7 +236,7 @@ class Llama32ModelProvider1B(Llama31ModelProvider):
     2048 hidden size, and 32 attention heads (8 query groups).
     """
 
-    scale_factor: float = 32.0
+    rope_scaling_factor: float = 32.0
     share_embeddings_and_output_weights: bool = True
     rotary_base: int = 500_000
     seq_length: int = 131072
@@ -288,7 +256,7 @@ class Llama32ModelProvider3B(Llama31ModelProvider):
     3072 hidden size, and 24 attention heads (8 query groups).
     """
 
-    scale_factor: int = 32
+    rope_scaling_factor: float = 32.0
     share_embeddings_and_output_weights: bool = True
     rotary_base: int = 500_000
     seq_length: int = 131072
@@ -413,46 +381,3 @@ class Llama4Experts128ModelProvider(Llama4ModelProvider):
     rope_scaling: bool = False
     moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0, 1] * 24)
     qk_l2_norm: bool = False
-
-
-def apply_rope_scaling(
-    inv_freq,
-    factor: float = 8.0,
-    low_freq_factor: float = 1.0,
-    high_freq_factor: float = 4.0,
-    old_context_len: int = 8192,
-):
-    """Apply RoPE scaling for extending context length in Llama models.
-
-    This implements the NTK-aware RoPE scaling method used in Llama 3.1 models to
-    extend context length beyond the original training length.
-
-    Args:
-        inv_freq: Original inverse frequency tensor
-        factor: Scaling factor for context length extension
-        low_freq_factor: Factor for low frequency components
-        high_freq_factor: Factor for high frequency components
-        old_context_len: Original context length
-
-    Returns:
-        torch.Tensor: Modified inverse frequency tensor for extended context
-    """
-    logger.info(
-        f"Apply rope scaling with factor={factor}, low_freq_factor={low_freq_factor}, "
-        f"high_freq_factor={high_freq_factor}, old_context_len={old_context_len}."
-    )
-
-    low_freq_wavelen = old_context_len / low_freq_factor
-    high_freq_wavelen = old_context_len / high_freq_factor
-
-    wavelen = 2 * math.pi / inv_freq
-    # wavelen < high_freq_wavelen: do nothing
-    # wavelen > low_freq_wavelen: divide by factor
-    inv_freq_llama = torch.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
-    # otherwise: interpolate between the two, using a smooth factor
-    smooth_factor = (old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
-    smoothed_inv_freq = (1 - smooth_factor) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
-    is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
-    inv_freq_llama = torch.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
-
-    return inv_freq_llama

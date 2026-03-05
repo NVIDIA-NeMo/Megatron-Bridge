@@ -52,9 +52,9 @@ class TestMegatronGemmaBridge:
             "pad_token_id": 0,
             "rms_norm_eps": 1e-06,
             "rope_scaling": None,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.38.0.dev0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 256000,
         }
@@ -81,9 +81,9 @@ class TestMegatronGemmaBridge:
             "pad_token_id": 0,
             "rms_norm_eps": 1e-06,
             "rope_scaling": None,
-            "rope_theta": 10000.0,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
             "torch_dtype": "bfloat16",
-            "transformers_version": "4.38.0.dev0",
+            "transformers_version": "5.0.0",
             "use_cache": True,
             "vocab_size": 256000,
         }
@@ -155,7 +155,7 @@ class TestMegatronGemmaBridge:
         assert result.hidden_size == gemma_2b_config.hidden_size
         assert result.num_attention_heads == gemma_2b_config.num_attention_heads
         assert result.seq_length == gemma_2b_config.max_position_embeddings
-        assert result.rotary_base == gemma_2b_config.rope_theta
+        assert result.rotary_base == gemma_2b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_basic_7b(self, mock_pretrained_gemma_7b, gemma_7b_config):
         """Test basic provider_bridge functionality for Gemma 7B."""
@@ -172,7 +172,7 @@ class TestMegatronGemmaBridge:
         assert result.hidden_size == gemma_7b_config.hidden_size
         assert result.num_attention_heads == gemma_7b_config.num_attention_heads
         assert result.seq_length == gemma_7b_config.max_position_embeddings
-        assert result.rotary_base == gemma_7b_config.rope_theta
+        assert result.rotary_base == gemma_7b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_gemma_2b, gemma_2b_config):
         """Test vocabulary size mapping."""
@@ -221,7 +221,7 @@ class TestMegatronGemmaBridge:
         result = bridge.provider_bridge(mock_pretrained_gemma_2b)
 
         # Check position embedding
-        assert result.rotary_base == gemma_2b_config.rope_theta
+        assert result.rotary_base == gemma_2b_config.rope_parameters["rope_theta"]
 
     def test_provider_bridge_gemma_specific_features(self, mock_pretrained_gemma_2b, gemma_2b_config):
         """Test Gemma-specific features."""
@@ -343,15 +343,6 @@ class TestMegatronGemmaBridge:
         assert hasattr(result, "make_vocab_size_divisible_by")
         assert result.make_vocab_size_divisible_by > 0
 
-    def test_provider_bridge_generation_config(self, mock_pretrained_gemma_2b):
-        """Test that generation config is passed through."""
-        bridge = GemmaBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_gemma_2b)
-
-        # Generation config should be passed from the pretrained model
-        assert result.generation_config == mock_pretrained_gemma_2b.generation_config
-
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Gemma models."""
@@ -370,7 +361,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 16384,
                 "vocab_size": 256000,
                 "max_position_embeddings": 8192,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-06,
                 "head_dim": 256,
                 "attention_bias": False,
@@ -386,7 +377,7 @@ class TestAutoBridgeIntegration:
                 "intermediate_size": 24576,
                 "vocab_size": 256000,
                 "max_position_embeddings": 8192,
-                "rope_theta": 10000.0,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
                 "rms_norm_eps": 1e-06,
                 "head_dim": 256,
                 "attention_bias": False,

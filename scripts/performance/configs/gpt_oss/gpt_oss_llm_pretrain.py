@@ -49,10 +49,8 @@ def gpt_oss_120b_pretrain_config_gb300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = gpt_oss_120b_pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-    )
+    cfg = gpt_oss_120b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -73,10 +71,8 @@ def gpt_oss_120b_pretrain_config_gb200(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = gpt_oss_120b_pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-    )
+    cfg = gpt_oss_120b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -97,10 +93,8 @@ def gpt_oss_120b_pretrain_config_b300(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = gpt_oss_120b_pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-    )
+    cfg = gpt_oss_120b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -121,10 +115,8 @@ def gpt_oss_120b_pretrain_config_b200(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = gpt_oss_120b_pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-    )
+    cfg = gpt_oss_120b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -145,10 +137,8 @@ def gpt_oss_120b_pretrain_config_h100(
     )
     precision_config = get_precision_config(precision)
 
-    cfg = gpt_oss_120b_pretrain_config(
-        mock=mock,
-        precision_config=precision_config,
-    )
+    cfg = gpt_oss_120b_pretrain_config()
+    cfg.mixed_precision = precision_config
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
