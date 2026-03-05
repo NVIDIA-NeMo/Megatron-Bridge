@@ -367,8 +367,6 @@ class TestMambaModelProvider:
         args.spec = "megatron.core.models.mamba.mamba_layer_specs.mamba_stack_spec"
 
         # Hybrid model parameters
-        args.hybrid_attention_ratio = 0.3
-        args.hybrid_mlp_ratio = 0.3
         args.hybrid_layer_pattern = None
 
         return args
@@ -414,8 +412,6 @@ class TestMambaModelProvider:
             vocab_size=32000,
             max_sequence_length=2048,
             pre_process=True,
-            hybrid_attention_ratio=0.3,
-            hybrid_mlp_ratio=0.3,
             hybrid_layer_pattern=None,
             post_process=True,
             fp16_lm_cross_entropy=False,

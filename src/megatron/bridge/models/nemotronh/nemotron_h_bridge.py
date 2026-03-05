@@ -91,7 +91,7 @@ class NemotronHBridge(MegatronModelBridge):
         provider.is_hybrid_model = True
 
         # MoE-specific defaults (only if MoE is enabled)
-        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
+        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts is not None:
             provider.moe_aux_loss_coeff = 0.0001
             provider.moe_router_score_function = "sigmoid"
             provider.moe_router_enable_expert_bias = True

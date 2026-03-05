@@ -55,6 +55,8 @@ class NemotronHModelProvider(MambaModelProvider):
     moe_permute_fusion: bool = True
     moe_shared_expert_overlap: bool = True
 
+    # Num layers i
+
 
 @dataclass
 class NemotronHModelProvider4B(NemotronHModelProvider):

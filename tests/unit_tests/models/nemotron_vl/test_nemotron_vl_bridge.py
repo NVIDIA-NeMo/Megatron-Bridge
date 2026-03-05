@@ -31,7 +31,7 @@ def mock_llm_config():
     # matching real HF config behaviour (Nemotron config has no MLA fields
     # like q_lora_rank, so they must not appear in the provider kwargs).
     cfg = Mock(spec=[])
-    cfg.num_hidden_layers = 28
+    cfg.hybrid_override_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M-M*"
     cfg.hidden_size = 5120
     cfg.intermediate_size = 20480
     cfg.num_attention_heads = 40

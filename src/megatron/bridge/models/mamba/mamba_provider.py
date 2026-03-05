@@ -94,7 +94,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     params_dtype: torch.dtype = torch.bfloat16
     fp16: bool = False
     bf16: bool = True
-    num_layers: int = 2
+    num_layers: int = None
     mamba_num_groups: int = 8
     num_attention_heads: int = 1
     hybrid_attention_ratio: float = 0.0

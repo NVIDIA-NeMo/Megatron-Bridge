@@ -81,9 +81,9 @@ class TestNemotronHBridge:
             "use_conv_bias": True,
             "use_mamba_kernels": True,
             "vocab_size": 131072,
-            # Explicitly set to 0 to disable MoE; Mock objects return Mock for any attr access,
-            # so hasattr() always returns True - we need a real value for the `> 0` comparison.
-            "n_routed_experts": 0,
+            # Explicitly set to None to disable MoE; Mock objects return Mock for any attr access,
+            # so hasattr() always returns True.
+            "n_routed_experts": None,
         }
 
     @pytest.fixture

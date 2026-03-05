@@ -65,7 +65,6 @@ class TestMambaModelProvider:
     def test_mamba_provider_with_hybrid_configuration(self):
         """Test MambaModelProvider with hybrid attention/MLP configuration."""
         provider = MambaModelProvider(
-            num_layers=12,
             hidden_size=768,
             num_attention_heads=8,
             hybrid_attention_ratio=0.25,
