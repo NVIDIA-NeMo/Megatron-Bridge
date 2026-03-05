@@ -26,7 +26,7 @@ Run with:
 
 import pytest
 
-from megatron.bridge.recipes.qwen_vl.qwen35_vl import qwen35_vl_27b_finetune_config
+from megatron.bridge.recipes.qwen_vl.qwen35_vl import qwen35_vl_27b_sft_config
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
 
@@ -40,7 +40,7 @@ _TINY_MODEL = {"num_layers": 4}
 
 QWEN35_VL_SFT_NONE_FROZEN = [
     (
-        qwen35_vl_27b_finetune_config,
+        qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_none_frozen",
         _TP2_PP1,
         {
@@ -58,7 +58,7 @@ QWEN35_VL_SFT_NONE_FROZEN = [
 
 QWEN35_VL_SFT_LM_FROZEN = [
     (
-        qwen35_vl_27b_finetune_config,
+        qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_lm_frozen",
         _TP2_PP1,
         {
@@ -76,7 +76,7 @@ QWEN35_VL_SFT_LM_FROZEN = [
 
 QWEN35_VL_SFT_PROJ_ONLY = [
     (
-        qwen35_vl_27b_finetune_config,
+        qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_projection_only",
         _TP2_PP1,
         {
@@ -94,7 +94,7 @@ QWEN35_VL_SFT_PROJ_ONLY = [
 
 QWEN35_VL_SFT_RECOMPUTE = [
     (
-        qwen35_vl_27b_finetune_config,
+        qwen35_vl_27b_sft_config,
         "qwen35_vl_27b_sft_recompute",
         _TP2_PP1,
         {

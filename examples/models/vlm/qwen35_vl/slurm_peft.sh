@@ -60,35 +60,35 @@ MODEL_SIZE="${1:?Usage: sbatch $0 <model>  (model: 0.8B|2B|4B|9B|27B|35B-A3B|122
 case "$MODEL_SIZE" in
     0.8B)
         HF_MODEL_NAME="Qwen3.5-0.8B"
-        RECIPE="qwen35_vl_800m_finetune_config"
+        RECIPE="qwen35_vl_800m_peft_config"
         ;;
     2B)
         HF_MODEL_NAME="Qwen3.5-2B"
-        RECIPE="qwen35_vl_2b_finetune_config"
+        RECIPE="qwen35_vl_2b_peft_config"
         ;;
     4B)
         HF_MODEL_NAME="Qwen3.5-4B"
-        RECIPE="qwen35_vl_4b_finetune_config"
+        RECIPE="qwen35_vl_4b_peft_config"
         ;;
     9B)
         HF_MODEL_NAME="Qwen3.5-9B"
-        RECIPE="qwen35_vl_9b_finetune_config"
+        RECIPE="qwen35_vl_9b_peft_config"
         ;;
     27B)
         HF_MODEL_NAME="Qwen3.5-27B"
-        RECIPE="qwen35_vl_27b_finetune_config"
+        RECIPE="qwen35_vl_27b_peft_config"
         ;;
     35B-A3B)
         HF_MODEL_NAME="Qwen3.5-35B-A3B"
-        RECIPE="qwen35_vl_35b_a3b_finetune_config"
+        RECIPE="qwen35_vl_35b_a3b_peft_config"
         ;;
     122B-A10B)
         HF_MODEL_NAME="Qwen3.5-122B-A10B"
-        RECIPE="qwen35_vl_122b_a10b_finetune_config"
+        RECIPE="qwen35_vl_122b_a10b_peft_config"
         ;;
     397B-A17B)
         HF_MODEL_NAME="Qwen3.5-397B-A17B"
-        RECIPE="qwen35_vl_397b_a17b_finetune_config"
+        RECIPE="qwen35_vl_397b_a17b_peft_config"
         ;;
     *)
         echo "ERROR: Unknown model '$MODEL_SIZE'. Must be one of: 0.8B, 2B, 4B, 9B, 27B, 35B-A3B, 122B-A10B, 397B-A17B"
