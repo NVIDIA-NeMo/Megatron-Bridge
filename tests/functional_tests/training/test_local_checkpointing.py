@@ -14,6 +14,7 @@
 
 """Functional tests for local (non-persistent) checkpointing."""
 
+import gc
 import os
 from dataclasses import dataclass
 
@@ -83,18 +84,32 @@ class TrainStateAssertCallback(Callback):
         self.end_consumed_samples = context.state.train_state.consumed_train_samples
 
 
+def _free_gpu_memory():
+    """Force-free GPU memory between pretrain() calls within the same test."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _make_config(
     *,
     checkpoint_dir: str,
     local_ckpt_dir: str,
     tensorboard_dir: str,
     train_iters: int,
-    save_interval: int | None = None,
+    save_interval: int = 0,
     non_persistent_save_interval: int | None = None,
     most_recent_k: int = -1,
     load_dir: str | None = None,
 ) -> ConfigContainer:
-    """Build a ConfigContainer for local-checkpoint testing."""
+    """Build a ConfigContainer for local-checkpoint testing.
+
+    ``save_interval`` defaults to 0 (no global checkpoint saves) so
+    these tests exercise the local-checkpoint path in isolation.  In
+    production you'd typically set both ``save_interval`` and
+    ``non_persistent_save_interval`` so global checkpoints are saved at
+    a lower cadence alongside frequent local ones.
+    """
     seq_length = 512
 
     return ConfigContainer(
@@ -208,6 +223,7 @@ class TestLocalCheckpointing:
 
             pretrain(cfg_run1, forward_step)
             torch.distributed.barrier()
+            _free_gpu_memory()
 
             # Run 2: resume from the local checkpoint and train to iter 10
             cb = TrainStateAssertCallback()
@@ -273,6 +289,7 @@ class TestLocalCheckpointing:
 
             pretrain(cfg_run1, forward_step)
             torch.distributed.barrier()
+            _free_gpu_memory()
 
             # Run 2: resume and train to iter 10 with most_recent_k
             cb = TrainStateAssertCallback()

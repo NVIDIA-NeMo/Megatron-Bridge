@@ -2112,6 +2112,12 @@ def _load_non_persistent_base_checkpoint(
             pg_collection=pg_collection,
         )
     elif ckpt_cfg.non_persistent_ckpt_type == "local":
+        if rank0:
+            # The rank0 pass only needs metadata to make loading decisions
+            # (TP/PP checks, optimizer sharding type, etc.).
+            # For local checkpoints all of that is derived from the running config,
+            # so skip the expensive full load + to_state_dict conversion.
+            return {}, non_persistent_iteration, False, CheckpointType.LOCAL
         intermediate_state_dict, checkpoint_name = checkpointing_context["local_checkpoint_manager"].load()
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
