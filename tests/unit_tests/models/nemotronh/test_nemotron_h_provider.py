@@ -33,7 +33,7 @@ class TestNemotronHModelProvider:
     def test_nemotron_h_model_provider_initialization(self):
         """Test NemotronHModelProvider can be initialized with default values."""
         provider = NemotronHModelProvider(
-            hybrid_layer_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
+            hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=4096,
             num_attention_heads=32,
         )
@@ -64,7 +64,7 @@ class TestNemotronHModelProvider:
             return torch.pow(F.relu(x), 2)
 
         provider = NemotronHModelProvider(
-            hybrid_layer_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
+            hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=4096,
             num_attention_heads=32,
             activation_func=custom_activation,
@@ -81,7 +81,7 @@ class TestNemotronHModelProvider:
     def test_nemotron_h_mamba_configuration(self):
         """Test NemotronHModelProvider Mamba-specific configuration."""
         provider = NemotronHModelProvider(
-            hybrid_layer_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
+            hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=4096,
             num_attention_heads=32,
             mamba_num_groups=16,
@@ -95,7 +95,7 @@ class TestNemotronHModelProvider:
     def test_nemotron_h_moe_default_configuration(self):
         """Test NemotronHModelProvider MoE default configuration."""
         provider = NemotronHModelProvider(
-            hybrid_layer_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
+            hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=4096,
             num_attention_heads=32,
         )

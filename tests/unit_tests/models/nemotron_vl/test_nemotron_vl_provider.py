@@ -20,7 +20,7 @@ from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
 class TestNemotronNano12Bv2VLModelProvider:
     def test_provider_initialization_minimal(self):
         provider = NemotronNano12Bv2VLModelProvider(
-            hybrid_layer_pattern = "M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
+            hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=5120,
             num_attention_heads=40,
         )
