@@ -12,24 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Qwen3 models
+# Qwen2.5-VL models
+# Qwen3-VL models
 from .qwen3_vl import (
-    qwen3_vl_8b_finetune_config,
-    qwen3_vl_8b_pretrain_config,
-    qwen3_vl_30b_a3b_finetune_config,
-    qwen3_vl_30b_a3b_pretrain_config,
-    qwen3_vl_235b_a22b_finetune_config,
-    qwen3_vl_235b_a22b_pretrain_config,
+    qwen3_vl_8b_peft_config,
+    qwen3_vl_8b_sft_config,
+    qwen3_vl_30b_a3b_peft_config,
+    qwen3_vl_30b_a3b_sft_config,
+    qwen3_vl_235b_a22b_peft_config,
+    qwen3_vl_235b_a22b_sft_config,
+)
+from .qwen25_vl import (
+    qwen25_vl_3b_peft_config,
+    qwen25_vl_3b_sft_config,
+    qwen25_vl_7b_peft_config,
+    qwen25_vl_7b_sft_config,
+    qwen25_vl_32b_peft_config,
+    qwen25_vl_32b_sft_config,
+    qwen25_vl_72b_peft_config,
+    qwen25_vl_72b_sft_config,
 )
 
 
 __all__ = [
-    # Qwen3-VL pretrain configs
-    "qwen3_vl_8b_pretrain_config",
-    "qwen3_vl_30b_a3b_pretrain_config",
-    "qwen3_vl_235b_a22b_pretrain_config",
-    # Qwen3-VL finetune configs (with PEFT support)
-    "qwen3_vl_8b_finetune_config",
-    "qwen3_vl_30b_a3b_finetune_config",
-    "qwen3_vl_235b_a22b_finetune_config",
+    # Qwen2.5-VL SFT configs
+    "qwen25_vl_3b_sft_config",
+    "qwen25_vl_7b_sft_config",
+    "qwen25_vl_32b_sft_config",
+    "qwen25_vl_72b_sft_config",
+    # Qwen2.5-VL PEFT configs
+    "qwen25_vl_3b_peft_config",
+    "qwen25_vl_7b_peft_config",
+    "qwen25_vl_32b_peft_config",
+    "qwen25_vl_72b_peft_config",
+    # Qwen3-VL SFT configs
+    "qwen3_vl_8b_sft_config",
+    "qwen3_vl_30b_a3b_sft_config",
+    "qwen3_vl_235b_a22b_sft_config",
+    # Qwen3-VL PEFT configs
+    "qwen3_vl_8b_peft_config",
+    "qwen3_vl_30b_a3b_peft_config",
+    "qwen3_vl_235b_a22b_peft_config",
 ]
