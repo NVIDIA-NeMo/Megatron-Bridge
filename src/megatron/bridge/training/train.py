@@ -1364,8 +1364,7 @@ def _try_copy_main_params(optimizer: MegatronOptimizer) -> None:
     """
     # Note: FSDP's DistributedOptimizer doesn't have shard_fp32_from_float16_groups,
     # so we check for this attribute before calling _copy_main_params_to_param_buffer
-    if (isinstance(optimizer, DistributedOptimizer) and
-        hasattr(optimizer, "shard_fp32_from_float16_groups")):
+    if isinstance(optimizer, DistributedOptimizer) and hasattr(optimizer, "shard_fp32_from_float16_groups"):
         optimizer._copy_main_params_to_param_buffer()
 
 
