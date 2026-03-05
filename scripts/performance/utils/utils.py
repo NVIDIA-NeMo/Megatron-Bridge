@@ -238,6 +238,7 @@ def get_perf_optimized_recipe(
     compute_dtype: str,
     mock: bool = True,
     config_variant: str = "v1",
+    optimizer_type: Optional[str] = None,
 ):
     """Get the performance optimized recipe."""
     module_name = f"configs.{model_family_name}"
@@ -254,7 +255,10 @@ def get_perf_optimized_recipe(
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
     if train_task == "pretrain":
-        return recipe_builder(precision=compute_dtype, mock=mock, config_variant=config_variant)
+        kwargs = {"precision": compute_dtype, "mock": mock, "config_variant": config_variant}
+        if optimizer_type is not None and model_family_name == "kimi":
+            kwargs["optimizer_type"] = optimizer_type
+        return recipe_builder(**kwargs)
     else:
         return recipe_builder(precision=compute_dtype, config_variant=config_variant)
 
