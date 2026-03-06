@@ -681,14 +681,12 @@ def calc_convergence_and_performance(
         wandb_run=wandb_run,
     )
     # Add iter-time averages for debugging (not used for pass/fail)
-    _start = performance_config.get("eval_time_start_step")
-    if _start is None:
-        _start = max(1, int(len(steps) * performance_config.get("skip_first_percent_time", 0.1)))
-    _end = performance_config.get("eval_time_end_step")
-    performance_result["metrics"]["current_avg_iter_time_ms"] = float(
-        np.nanmean(current_iter_time_values[_start:_end])
-    )
-    performance_result["metrics"]["golden_avg_iter_time_ms"] = float(np.nanmean(golden_iter_time_values[_start:_end]))
+    start = performance_config.get("eval_time_start_step")
+    if start is None:
+        start = max(1, int(len(steps) * performance_config.get("skip_first_percent_time", 0.1)))
+    end = performance_config.get("eval_time_end_step")
+    performance_result["metrics"]["current_avg_iter_time_ms"] = float(np.nanmean(current_iter_time_values[start:end]))
+    performance_result["metrics"]["golden_avg_iter_time_ms"] = float(np.nanmean(golden_iter_time_values[start:end]))
     if not performance_result["passed"]:
         direction = performance_result["metrics"]["direction"]
         signed_diff = performance_result["metrics"]["signed_diff"]
