@@ -22,6 +22,13 @@ from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER
 from megatron.bridge.training.config import ConfigContainer
 
 
+def _enable_gpt_oss_hopper_fp8_current_scaling(cfg: ConfigContainer) -> ConfigContainer:
+    """Enable Hopper FP8 current scaling for GPT-OSS recipes."""
+    cfg.mixed_precision = "bf16_with_fp8_current_scaling_mixed"
+    cfg.model.moe_router_padding_for_fp8 = True
+    return cfg
+
+
 def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for GPT-OSS 20B variant.
 
@@ -252,6 +259,12 @@ def gpt_oss_120b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
 
     return cfg
+
+
+def gpt_oss_20b_pretrain_fp8_current_scaling_config() -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_pretrain_config()
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
 
 
 # =============================================================================
@@ -509,6 +522,12 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
     cfg.rng.seed = 5678
 
     return cfg
+
+
+def gpt_oss_20b_sft_fp8_current_scaling_config() -> ConfigContainer:
+    """Return a full SFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_sft_config()
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
 
 
 # =============================================================================
@@ -784,3 +803,11 @@ def gpt_oss_120b_peft_config(
     cfg.rng.seed = 5678
 
     return cfg
+
+
+def gpt_oss_20b_peft_fp8_current_scaling_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
