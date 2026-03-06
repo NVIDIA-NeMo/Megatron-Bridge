@@ -190,7 +190,9 @@ class TestNemotronHConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            pytest.param(1, 2, "PP", marks=pytest.mark.skip(reason="Skipping until a better resolution for | pattern is found")),
+            pytest.param(
+                1, 2, "PP", marks=pytest.mark.skip(reason="Skipping until a better resolution for | pattern is found")
+            ),
         ],
     )
     def test_nemotronh_conversion_parallelism(self, nemotronh_toy_model_path, tmp_path, tp, pp, test_name):
