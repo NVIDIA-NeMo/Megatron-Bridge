@@ -75,11 +75,15 @@ jobs:
           MATRIX_BRANCH = os.environ["MATRIX_BRANCH"]
           if MATRIX_BRANCH == "workflow_dispatch":
               MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_WORKFLOW_DISPATCH"])
-          elif CONTRIBUTOR_TYPE == "external":
-              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_EXTERNAL"])
+              API_BASE = f"https://api.github.com/repos/{REPO}"
+              WORKFLOW_NAME = "CICD NeMo"
           else:
-              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY"])
-          API_BASE = f"https://api.github.com/repos/NVIDIA/Megatron-LM"
+              if CONTRIBUTOR_TYPE == "external":
+                  MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_EXTERNAL"])
+              else:
+                  MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY"])
+              API_BASE = "https://api.github.com/repos/NVIDIA/Megatron-LM"
+              WORKFLOW_NAME = "CICD Megatron-LM"
 
           # Load SSO users for internal/external classification
           with open(os.environ["SSO_USERS_FILE"]) as f:
@@ -192,15 +196,22 @@ jobs:
               return branch_match and contributor_match
 
           # Get current running and queued workflows
+          print(f"\n=== Queue cell: branch=${{ matrix.branch }}, contributor_type={CONTRIBUTOR_TYPE} ===")
           print("Fetching workflow runs...")
           queued_workflow_runs = make_request("actions/runs?status=queued").get("workflow_runs", [])
           in_progress_workflow_runs = make_request("actions/runs?status=in_progress").get("workflow_runs", [])
 
-          # Filter for workflows belonging to PRs targeting ${{ matrix.branch }} with matching contributor type
-          queued_workflow_runs = [run for run in queued_workflow_runs
-                                  if run["name"] == "CICD Megatron-LM" and matches_queue(run, "${{ matrix.branch }}", CONTRIBUTOR_TYPE)]
-          in_progress_workflow_runs = [run for run in in_progress_workflow_runs
-                                      if run["name"] == "CICD Megatron-LM" and matches_queue(run, "${{ matrix.branch }}", CONTRIBUTOR_TYPE)]
+          def log_and_filter(runs, label):
+              cicd_runs = [r for r in runs if r["name"] == WORKFLOW_NAME]
+              print(f"{label}: {len(runs)} total, {len(cicd_runs)} {WORKFLOW_NAME}")
+              for r in cicd_runs:
+                  actor = (r.get("triggering_actor") or r.get("actor") or {}).get("login", "unknown")
+                  matched = matches_queue(r, "${{ matrix.branch }}", CONTRIBUTOR_TYPE)
+                  print(f"  run={r['id']} head_branch={r.get('head_branch')} event={r.get('event')} actor={actor} -> matched={matched}")
+              return [r for r in cicd_runs if matches_queue(r, "${{ matrix.branch }}", CONTRIBUTOR_TYPE)]
+
+          queued_workflow_runs = log_and_filter(queued_workflow_runs, "queued")
+          in_progress_workflow_runs = log_and_filter(in_progress_workflow_runs, "in_progress")
 
           # Count running and queued workflows
           queued_workflows = len(queued_workflow_runs)
@@ -217,11 +228,11 @@ jobs:
               exit(0)
 
           # Get waiting CI workflows for test environment
-          print("Fetching deployments...")
-          pending_workflows = make_request("actions/runs?status=waiting").get("workflow_runs", [])
-          print("Pending workflows:", len(pending_workflows))
-          pending_workflows = [run for run in pending_workflows
-                              if run["name"] == "CICD Megatron-LM" and matches_queue(run, "${{ matrix.branch }}", CONTRIBUTOR_TYPE)]
+          print("Fetching waiting deployments...")
+          pending_workflows = log_and_filter(
+              make_request("actions/runs?status=waiting").get("workflow_runs", []),
+              "waiting"
+          )
 
           # Sort deployments by creation date (oldest first)
           print("Sorting workflows...")
