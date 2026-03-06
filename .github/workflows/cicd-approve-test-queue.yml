@@ -56,7 +56,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }}
           MAX_CONCURRENCY: ${{ vars.MAX_CONCURRENCY || 1 }}
           MAX_CONCURRENCY_EXTERNAL: ${{ vars.MAX_CONCURRENCY_EXTERNAL || 3 }}
-          MAX_CONCURRENCY_WORKFLOW_DISPATCH: ${{ vars.MAX_CONCURRENCY_EXTERNAL || 1 }}
+          MAX_CONCURRENCY_WORKFLOW_DISPATCH: ${{ vars.MAX_CONCURRENCY || 1 }}
           CONTRIBUTOR_TYPE: ${{ matrix.contributor_type }}
           MATRIX_BRANCH: ${{ matrix.branch }}
           SSO_USERS_FILE: users_sso.json
