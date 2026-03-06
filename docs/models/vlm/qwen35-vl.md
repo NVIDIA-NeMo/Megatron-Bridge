@@ -1,6 +1,6 @@
 # Qwen3.5-VL
 
-[Alibaba Cloud's Qwen3.5-VL](https://huggingface.co/collections/Qwen/qwen35-vl) is a family of vision-language models supporting multimodal understanding across text, images, and videos. Qwen3.5-VL includes both dense models and Mixture-of-Experts (MoE) variants for improved efficiency at scale.
+[Alibaba Cloud's Qwen3.5-VL](https://huggingface.co/collections/Qwen/qwen35) is a family of vision-language models supporting multimodal understanding across text, images, and videos. Qwen3.5-VL includes both dense models and Mixture-of-Experts (MoE) variants for improved efficiency at scale.
 
 Qwen3.5-VL models feature a hybrid architecture combining GDN (Gated DeltaNet) layers with standard attention layers, SwiGLU activations, and RMSNorm. MoE variants use top-k routing with shared experts for better quality.
 
