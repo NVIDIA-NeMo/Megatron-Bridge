@@ -763,7 +763,7 @@ class TestMtpBlockSpec:
 
     def _make_config(self, mtp_num_layers=None):
         config = Mock()
-        config.mtp_num_layers = mtp_num_layers
+        config.transformer.mtp_num_layers = mtp_num_layers
         return config
 
     def test_returns_none_when_mtp_num_layers_is_none(self):
@@ -782,7 +782,7 @@ class TestMtpBlockSpec:
 
         result = mtp_block_spec(config, spec)
 
-        mock_get_mtp.assert_called_once_with(config, spec, use_transformer_engine=True, vp_stage=None)
+        mock_get_mtp.assert_called_once_with(config.transformer, spec, use_transformer_engine=True, vp_stage=None)
         assert result is mock_return
 
     @patch("megatron.bridge.models.gpt.gpt_builder.default_layer_spec")
@@ -825,4 +825,4 @@ class TestMtpBlockSpec:
 
         mtp_block_spec(config, spec, vp_stage=3)
 
-        mock_get_mtp.assert_called_once_with(config, spec, use_transformer_engine=True, vp_stage=3)
+        mock_get_mtp.assert_called_once_with(config.transformer, spec, use_transformer_engine=True, vp_stage=3)
