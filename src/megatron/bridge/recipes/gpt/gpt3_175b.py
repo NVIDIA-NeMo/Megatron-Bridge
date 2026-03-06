@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.gpt_provider import GPTProvider175B
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h12288_tp4_mbs1_seqlen2048
@@ -30,18 +30,7 @@ def gpt3_175b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = GPTModelProvider(
-        seq_length=2048,
-        num_layers=96,
-        hidden_size=12288,
-        ffn_hidden_size=49152,
-        num_attention_heads=96,
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-        bias_activation_fusion=True,
-        bias_dropout_add_fusion=True,
-        use_transformer_engine_full_layer_spec=True,
-        layernorm_zero_centered_gamma=True,
+    cfg.model = GPTProvider175B(
         tensor_model_parallel_size=4,
         pipeline_model_parallel_size=8,
         pipeline_dtype=torch.bfloat16,
