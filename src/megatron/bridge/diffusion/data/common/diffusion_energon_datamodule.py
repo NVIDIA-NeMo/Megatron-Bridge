@@ -24,7 +24,6 @@ from torch import int_repr
 
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
-from megatron.bridge.diffusion.data.dit.dit_taskencoder import DiTTaskEncoder
 
 
 @dataclass(kw_only=True)
@@ -32,27 +31,12 @@ class DiffusionDataModuleConfig(DatasetProvider):  # noqa: D101
     path: str
     seq_length: int
     micro_batch_size: int
-    task_encoder_seq_length: int
     packing_buffer_size: int
     global_batch_size: int
     num_workers: int_repr
+    task_encoder_seq_length: int = None
     dataloader_type: str = "external"
     use_train_split_for_val: bool = False
-
-    def __post_init__(self):
-        self.dataset = DiffusionDataModule(
-            path=self.path,
-            seq_length=self.seq_length,
-            task_encoder=DiTTaskEncoder(
-                seq_length=self.task_encoder_seq_length, packing_buffer_size=self.packing_buffer_size
-            ),
-            micro_batch_size=self.micro_batch_size,
-            packing_buffer_size=self.packing_buffer_size,
-            global_batch_size=self.global_batch_size,
-            num_workers=self.num_workers,
-            use_train_split_for_val=self.use_train_split_for_val,
-        )
-        self.sequence_length = self.dataset.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
         return (
