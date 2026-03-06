@@ -325,9 +325,12 @@ def validate_performance(
     config = default_config
 
     # Discard first N% of iterations for stable comparison
-    skip = max(1, int(len(steps) * config["skip_first_percent_time"]))
-    current_stable = current_gpu_util_values[skip:]
-    golden_stable = golden_gpu_util_values[skip:]
+    start = config.get("eval_time_start_step")
+    if start is None:
+        start = max(1, int(len(steps) * config["skip_first_percent_time"]))
+    end = config.get("eval_time_end_step")
+    current_stable = current_gpu_util_values[start:end]
+    golden_stable = golden_gpu_util_values[start:end]
 
     current_avg = float(np.nanmean(current_stable))
     golden_avg = float(np.nanmean(golden_stable))
@@ -339,7 +342,8 @@ def validate_performance(
     is_improvement = signed_diff > config["timing_threshold"]
 
     logger.info(
-        f"GPU utilization comparison (excluding first {config['skip_first_percent_time'] * 100:.1f}% of iterations):"
+        f"GPU utilization comparison (steps [{start}:{end if end is not None else len(steps)}] "
+        f"out of {len(steps)} total):"
     )
     logger.info(f"  Current average GPU util: {current_avg:.4f}%")
     logger.info(f"  Golden average GPU util: {golden_avg:.4f}%")
@@ -677,9 +681,14 @@ def calc_convergence_and_performance(
         wandb_run=wandb_run,
     )
     # Add iter-time averages for debugging (not used for pass/fail)
-    skip = max(1, int(len(steps) * performance_config.get("skip_first_percent_time", 0.1)))
-    performance_result["metrics"]["current_avg_iter_time_ms"] = float(np.nanmean(current_iter_time_values[skip:]))
-    performance_result["metrics"]["golden_avg_iter_time_ms"] = float(np.nanmean(golden_iter_time_values[skip:]))
+    _start = performance_config.get("eval_time_start_step")
+    if _start is None:
+        _start = max(1, int(len(steps) * performance_config.get("skip_first_percent_time", 0.1)))
+    _end = performance_config.get("eval_time_end_step")
+    performance_result["metrics"]["current_avg_iter_time_ms"] = float(
+        np.nanmean(current_iter_time_values[_start:_end])
+    )
+    performance_result["metrics"]["golden_avg_iter_time_ms"] = float(np.nanmean(golden_iter_time_values[_start:_end]))
     if not performance_result["passed"]:
         direction = performance_result["metrics"]["direction"]
         signed_diff = performance_result["metrics"]["signed_diff"]
