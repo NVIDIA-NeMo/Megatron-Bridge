@@ -92,6 +92,25 @@ See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning with 
 
 See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning with configurable model sizes.
 
+### Multi-Token Prediction (MTP)
+
+All Qwen3.5 models are trained with Multi-Token Prediction (`mtp_num_hidden_layers=1` in the HuggingFace config). MTP adds an auxiliary loss that predicts the next-next token alongside the standard next-token prediction, improving training quality.
+
+MTP is **enabled by default** in all recipes. The MTP layer uses standard attention (not GDN) and the same MLP architecture as the main decoder (dense MLP for dense models, MoE for MoE models). The MTP loss is scaled by `mtp_loss_scaling_factor=0.1` relative to the main LM loss.
+
+**Finetune with MTP** (default):
+```python
+cfg.model.mtp_num_layers = 1
+cfg.model.mtp_loss_scaling_factor = 0.1
+```
+
+**Finetune without MTP** (discard MTP weights, standard LM loss only):
+```python
+cfg.model.mtp_num_layers = None
+```
+
+When converting checkpoints, MTP weights are included by default. Setting `mtp_num_layers = None` skips MTP weight conversion and removes the MTP auxiliary loss during training.
+
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/rt6uzrvf) for the expected loss curves and grad norms.
 
