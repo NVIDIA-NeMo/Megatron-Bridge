@@ -39,7 +39,7 @@ from megatron.bridge.models.common import (
     unimodal_build_distributed_models,
 )
 from megatron.bridge.models.transformer_config import TransformerConfig
-from src.megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
@@ -294,7 +294,7 @@ class GPTModelBuilder(ModelBuilder[MCoreGPTModel, GPTModelConfig]):
         else:
             padded_vocab_size = self._model_config.vocab_size
 
-        mtp_spec = mtp_block_spec(self._model_config.transformer, transformer_layer_spec, vp_stage=vp_stage)
+        mtp_spec = mtp_block_spec(self._model_config, transformer_layer_spec, vp_stage=vp_stage)
 
         # override spec with local backend if configured
         if self._model_config.attention_backend == AttnBackend.local:
@@ -412,17 +412,17 @@ class GPTModelBuilder(ModelBuilder[MCoreGPTModel, GPTModelConfig]):
 
 
 def mtp_block_spec(
-    config: TransformerConfig, transformer_layer_spec: ModuleSpec, vp_stage: int | None = None
+    config: "GPTModelConfig", transformer_layer_spec: ModuleSpec, vp_stage: int | None = None
 ) -> ModuleSpec | None:
     """Create MTP block spec if model has MTP layers.
 
     Args:
-        config: TransformerConfig from model config
+        config: full model config
 
     Returns:
         ModuleSpec: The MTP module specification
     """
-    if config.mtp_num_layers is not None:
+    if config.transformer.mtp_num_layers is not None:
         from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
 
         if hasattr(transformer_layer_spec, "layer_specs") and len(transformer_layer_spec.layer_specs) == 0:
@@ -432,6 +432,6 @@ def mtp_block_spec(
         else:
             spec = transformer_layer_spec
 
-        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
+        return get_gpt_mtp_block_spec(config.transformer, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
