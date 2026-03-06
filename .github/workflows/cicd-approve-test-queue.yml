@@ -71,9 +71,9 @@ jobs:
           REPO = os.environ["GITHUB_REPOSITORY"]
           CONTRIBUTOR_TYPE = os.environ["CONTRIBUTOR_TYPE"]
           if CONTRIBUTOR_TYPE == "external":
-              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_EXTERNAL"]) // 2
+              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_EXTERNAL"])
           else:
-              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY"]) // 2
+              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY"])
           API_BASE = f"https://api.github.com/repos/NVIDIA/Megatron-LM"
 
           # Load SSO users for internal/external classification
