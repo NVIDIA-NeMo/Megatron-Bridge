@@ -363,6 +363,27 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         return None
 
 
+@dataclass
+class GPTProvider175B(GPTModelProvider):
+    """Configuration for a 175B parameter GPT model.
+
+    Predefined configuration for a massive GPT model with 96 layers,
+    12288 hidden size, and 96 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 96
+    hidden_size: int = 12288
+    ffn_hidden_size: int = 49152
+    num_attention_heads: int = 96
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+    layernorm_zero_centered_gamma: bool = True
+
+
 def _patch_yarn_concentration_factor():
     """Patch MCore _yarn_get_concentration_factor_from_config for None handling.
 
