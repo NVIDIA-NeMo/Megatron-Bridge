@@ -324,6 +324,11 @@ def parse_cli_args():
         type=str,
         help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
     )
+    tokenizer_args.add_argument(
+        "--offline",
+        action="store_true",
+        help="Enable offline HuggingFace Hub mode by setting HF_HUB_OFFLINE=1.",
+    )
 
     # Parallelism
     parallelism_args = parser.add_argument_group("Parallelism arguments")
