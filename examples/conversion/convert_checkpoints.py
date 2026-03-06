@@ -95,6 +95,7 @@ def import_hf_to_megatron(
     pp: int = 1,
     ep: int = 1,
     etp: int = 1,
+    
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -120,9 +121,6 @@ def import_hf_to_megatron(
     if device_map:
         kwargs["device_map"] = device_map
         print(f"   Using device_map: {device_map}")
-
-    # Always allow custom model code execution for compatibility with community models.
-    kwargs["trust_remote_code"] = True
 
     # Import using the convenience method
     print(f"📥 Loading HuggingFace model: {hf_model}")
@@ -201,7 +199,7 @@ def export_megatron_to_hf(
 
     # For demonstration, we'll create a bridge from a known config
     # This would typically be extracted from the checkpoint metadata
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model)
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
@@ -246,7 +244,7 @@ def export_mlm_to_hf(
     checkpoint_path = validate_path(megatron_path, must_exist=True)
     print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model)
 
     print_rank_0("📤 Exporting to HuggingFace format...")
     model_provider = bridge.to_megatron_provider(load_weights=False)
