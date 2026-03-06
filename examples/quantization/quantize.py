@@ -190,17 +190,12 @@ def main(
 
             console.print(table)
 
-    # Test quantized model with custom prompts
-    if is_rank_0:
-        console.print("[green]Testing quantized model with custom prompts...[/green]")
-
-    _custom_prompt_forward_loop_func(unwrapped_model, prompts, bridge.hf_pretrained.tokenizer, is_rank_0)
+    torch.distributed.barrier()
 
     # Save quantized model in Megatron format
     if megatron_save_path:
         save_path = megatron_save_path
     else:
-        # Create default save path using model name and quantization config
         model_name = hf_model_id.split("/")[-1]
         save_path = f"{model_name}_quantized_{export_quant_cfg}"
         if is_rank_0:
@@ -209,6 +204,15 @@ def main(
     if is_rank_0:
         console.print(f"Saving quantized Megatron checkpoint in {save_path}...")
     bridge.save_megatron_model(megatron_model, save_path)
+
+    torch.distributed.barrier()
+
+    # Test quantized model with custom prompts
+    if export_quant_cfg in QUANT_CFG_CHOICES:
+        if is_rank_0:
+            console.print("[green]Testing quantized model with custom prompts...[/green]")
+
+        _custom_prompt_forward_loop_func(unwrapped_model, prompts, bridge.hf_pretrained.tokenizer, is_rank_0)
 
 
 if __name__ == "__main__":

@@ -522,6 +522,14 @@ def parse_cli_args():
         default="bf16",
     )
     performance_args.add_argument(
+        "--optimizer_type",
+        type=str,
+        choices=["adam", "muon"],
+        help="Optimizer type for recipes that support it (e.g. Kimi-K2). Defaults to muon.",
+        required=False,
+        default="muon",
+    )
+    performance_args.add_argument(
         "-vb",
         "--enable_vboost",
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
