@@ -16,15 +16,15 @@
 
 import pytest
 
-from megatron.bridge.recipes.qwen_vl.qwen25_vl import qwen25_vl_3b_finetune_config
+from megatron.bridge.recipes.qwen_vl.qwen25_vl import qwen25_vl_3b_sft_config
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
 
 QWEN_VL_PRETRAIN_RECIPES = [
-    # (config_func, name, parallelism_overrides)
+    # (config_func, name, parallelism_overrides, model_overrides)
     # Two-GPU TP for local/CI multi-GPU runs
     (
-        qwen25_vl_3b_finetune_config,
+        qwen25_vl_3b_sft_config,
         "qwen25_vl_3b",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 2},
@@ -35,7 +35,7 @@ QWEN_VL_PRETRAIN_PACKED_RECIPES = [
     # (config_func, name, parallelism_overrides, model_overrides, dataset_overrides)
     # Two-GPU TP with packed sequences
     (
-        qwen25_vl_3b_finetune_config,
+        qwen25_vl_3b_sft_config,
         "qwen25_vl_3b_packed",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 2},

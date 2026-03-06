@@ -62,7 +62,6 @@ class MockModelParallelConfig:
         self.perform_initialization = True
         self.use_cpu_initialization = False
         self.gradient_accumulation_fusion = False
-        self.async_tensor_model_parallel_allreduce = False
 
 
 class MockColumnParallelLinear(ColumnParallelLinear):

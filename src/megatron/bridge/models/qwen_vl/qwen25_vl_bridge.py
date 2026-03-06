@@ -22,6 +22,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
@@ -49,7 +50,7 @@ class Qwen25VLBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen25VLModelProvider:
         hf_config = hf_pretrained.config
-        text_config = hf_config  # Qwen2.5-VL has text config fields directly on main config
+        text_config = hf_config.text_config
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
         provider = Qwen25VLModelProvider(**provider_kwargs)
@@ -60,12 +61,16 @@ class Qwen25VLBridge(MegatronModelBridge):
         provider.add_qkv_bias = True
         provider.add_bias_linear = False
         provider.hidden_dropout = 0.0
+        provider.rotary_base = rope_theta_from_hf(text_config)
+
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # VL-specific overrides
         provider.position_embedding_type = "mrope"
         provider.vision_config = hf_config.vision_config
-        provider.bos_token_id = getattr(hf_config, "bos_token_id", 151643)
-        provider.eos_token_id = getattr(hf_config, "eos_token_id", 151645)
+        provider.bos_token_id = getattr(text_config, "bos_token_id", 151643)
+        provider.eos_token_id = getattr(text_config, "eos_token_id", 151645)
         provider.vision_start_token_id = getattr(hf_config, "vision_start_token_id", 151652)
         provider.vision_end_token_id = getattr(hf_config, "vision_end_token_id", 151653)
         provider.vision_token_id = getattr(hf_config, "vision_token_id", 151654)
