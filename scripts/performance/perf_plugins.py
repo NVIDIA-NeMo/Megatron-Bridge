@@ -292,12 +292,18 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "deepseek":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
+            if model_family_name == "kimi":
+                if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
         if model_family_name in ["llama"] and train_task in ["sft"]:
             # TODO: Verify for H100 and 8b
             del_cudnn_ln = False
             if gpu in ["h100"] and model_recipe_name in ["llama3_70b"] and compute_dtype == "fp8_cs":
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
+        if model_recipe_name in ["nemotron_3_nano"]:
+            del_cudnn_ln = False
+
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
