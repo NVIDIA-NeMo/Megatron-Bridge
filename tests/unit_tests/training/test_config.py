@@ -1797,6 +1797,28 @@ class TestCheckpointConfig:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_pretrained_checkpoint_none_skips_validation(self):
+        """Test that finalize succeeds when pretrained_checkpoint is None (no file existence check)."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint=None)
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=True)
+    def test_pretrained_checkpoint_exists_passes(self, mock_file_exists):
+        """Test that finalize succeeds when pretrained_checkpoint path exists."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/valid/checkpoint")
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/valid/checkpoint")
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=False)
+    def test_pretrained_checkpoint_not_exists_raises(self, mock_file_exists):
+        """Test that finalize raises AssertionError when pretrained_checkpoint path does not exist."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/missing/checkpoint")
+        with pytest.raises(AssertionError, match="Pretrained checkpoint /path/to/missing/checkpoint does not exist"):
+            ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/missing/checkpoint")
+
 
 class TestMixedPrecisionConsistencyValidation:
     """Tests for _validate_mixed_precision_consistency function.

@@ -43,6 +43,7 @@ def main():
         compute_dtype=args.compute_dtype,
         mock=args.data == "mock",
         config_variant=args.config_variant,
+        optimizer_type=getattr(args, "optimizer_type", None),
     )
 
     recipe = set_cli_overrides(recipe, cli_overrides)

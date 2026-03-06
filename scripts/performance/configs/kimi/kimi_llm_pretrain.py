@@ -21,6 +21,7 @@ from utils.utils import get_workload_base_config
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import kimi_k2_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,17 @@ def set_kimi_k2_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
+    # WAR: MXFP8's fp8_param_gather and reuse_grad_buf_for_mxfp8_param_ag require
+    # DistributedOptimizer infrastructure, incompatible with Muon's LayerWiseDistributedOptimizer.
+    # Only disable for Muon + MXFP8; for Adam leave them on.
+    if (
+        cfg.optimizer.optimizer == "dist_muon"
+        and cfg.mixed_precision is not None
+        and cfg.mixed_precision.fp8_recipe == "mxfp8"
+    ):
+        cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+        cfg.mixed_precision.fp8_param_gather = False
+
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
@@ -39,13 +51,16 @@ def set_kimi_k2_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
-    cfg.model.qk_clip = True
+    cfg.model.qk_clip = False  # disable qk_clip for now, enable after MCORE fix drop in
 
 
 def kimi_k2_pretrain_config_gb300(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16",
+    mock: bool = True,
+    config_variant: str = "v1",
+    optimizer_type: str = "muon",
 ) -> ConfigContainer:
-    """GB300, baseline config."""
+    """GB300, baseline config. optimizer_type: 'adam' or 'muon' (default)."""
     base_cfg = get_workload_base_config(
         model_family_name="kimi",
         model_recipe_name="kimi_k2",
@@ -55,12 +70,13 @@ def kimi_k2_pretrain_config_gb300(
         config_variant=config_variant,
     )
 
-    cfg = pretrain_config()
+    cfg = pretrain_config(optimizer_type=optimizer_type)
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
 
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     if base_cfg.pp_layout:
         cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
@@ -75,6 +91,7 @@ def kimi_k2_pretrain_config_gb300(
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
+    cfg.rng.te_rng_tracker = True
 
     # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
     # we are debugging this and might change this in the future.
@@ -85,9 +102,12 @@ def kimi_k2_pretrain_config_gb300(
 
 
 def kimi_k2_pretrain_config_gb200(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16",
+    mock: bool = True,
+    config_variant: str = "v1",
+    optimizer_type: str = "muon",
 ) -> ConfigContainer:
-    """GB200, baseline config."""
+    """GB200, baseline config. optimizer_type: 'adam' or 'muon' (default)."""
     base_cfg = get_workload_base_config(
         model_family_name="kimi",
         model_recipe_name="kimi_k2",
@@ -97,12 +117,13 @@ def kimi_k2_pretrain_config_gb200(
         config_variant=config_variant,
     )
 
-    cfg = pretrain_config()
+    cfg = pretrain_config(optimizer_type=optimizer_type)
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
 
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     if base_cfg.pp_layout:
         cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
@@ -127,9 +148,12 @@ def kimi_k2_pretrain_config_gb200(
 
 
 def kimi_k2_pretrain_config_b200(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16",
+    mock: bool = True,
+    config_variant: str = "v1",
+    optimizer_type: str = "muon",
 ) -> ConfigContainer:
-    """B200, baseline config."""
+    """B200, baseline config. optimizer_type: 'adam' or 'muon' (default)."""
     base_cfg = get_workload_base_config(
         model_family_name="kimi",
         model_recipe_name="kimi_k2",
@@ -139,12 +163,13 @@ def kimi_k2_pretrain_config_b200(
         config_variant=config_variant,
     )
 
-    cfg = pretrain_config()
+    cfg = pretrain_config(optimizer_type=optimizer_type)
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
 
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     if base_cfg.pp_layout:
         cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
@@ -164,9 +189,12 @@ def kimi_k2_pretrain_config_b200(
 
 
 def kimi_k2_pretrain_config_h100(
-    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+    precision: str = "bf16",
+    mock: bool = True,
+    config_variant: str = "v1",
+    optimizer_type: str = "muon",
 ) -> ConfigContainer:
-    """H100, baseline config."""
+    """H100, baseline config. optimizer_type: 'adam' or 'muon' (default)."""
     base_cfg = get_workload_base_config(
         model_family_name="kimi",
         model_recipe_name="kimi_k2",
@@ -176,12 +204,13 @@ def kimi_k2_pretrain_config_h100(
         config_variant=config_variant,
     )
 
-    cfg = pretrain_config()
+    cfg = pretrain_config(optimizer_type=optimizer_type)
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
 
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     if base_cfg.pp_layout:
         cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
