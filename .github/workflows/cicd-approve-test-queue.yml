@@ -26,7 +26,7 @@ jobs:
     if: github.repository == 'NVIDIA-NeMo/Megatron-Bridge'
     strategy:
       matrix:
-        branch: [main, others]
+        branch: [main, others, workflow_dispatch]
         contributor_type: [internal, external]
     steps:
       - name: Checkout repository
@@ -56,7 +56,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }}
           MAX_CONCURRENCY: ${{ vars.MAX_CONCURRENCY || 1 }}
           MAX_CONCURRENCY_EXTERNAL: ${{ vars.MAX_CONCURRENCY_EXTERNAL || 3 }}
+          MAX_CONCURRENCY_WORKFLOW_DISPATCH: ${{ vars.MAX_CONCURRENCY_EXTERNAL || 1 }}
           CONTRIBUTOR_TYPE: ${{ matrix.contributor_type }}
+          MATRIX_BRANCH: ${{ matrix.branch }}
           SSO_USERS_FILE: users_sso.json
           PYTHONUNBUFFERED: 1
         shell: python
@@ -70,7 +72,10 @@ jobs:
           GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
           REPO = os.environ["GITHUB_REPOSITORY"]
           CONTRIBUTOR_TYPE = os.environ["CONTRIBUTOR_TYPE"]
-          if CONTRIBUTOR_TYPE == "external":
+          MATRIX_BRANCH = os.environ["MATRIX_BRANCH"]
+          if MATRIX_BRANCH == "workflow_dispatch":
+              MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_WORKFLOW_DISPATCH"])
+          elif CONTRIBUTOR_TYPE == "external":
               MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_EXTERNAL"])
           else:
               MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY"])
@@ -132,11 +137,36 @@ jobs:
               base_branch = pr_info.get("base", {}).get("ref")
               return base_branch, pr_info
 
+          def is_internal_actor(workflow_run):
+              """Return True if the actor who triggered the workflow run is an NVIDIA/NVIDIA-NeMo member."""
+              login = (workflow_run.get("triggering_actor") or workflow_run.get("actor") or {}).get("login", "")
+              org_roles = sso_users.get(login, {}).get("org_roles", [])
+              return any(role in ("NVIDIA:Member", "NVIDIA-NeMo:Member") for role in org_roles)
+
           def matches_queue(workflow_run, target_branch, contributor_type):
               """
               Return True if the workflow run belongs to this queue cell:
               matching target branch AND matching contributor type (internal/external).
+
+              workflow_dispatch runs are routed to the 'workflow_dispatch' queue only.
+              PR runs are routed to 'main' or 'others' queues only.
               """
+              event = workflow_run.get("event", "")
+
+              if target_branch == "workflow_dispatch":
+                  if event != "workflow_dispatch":
+                      return False
+                  internal = is_internal_actor(workflow_run)
+                  contributor_match = (contributor_type == "internal") == internal
+                  if contributor_match:
+                      actor = (workflow_run.get("triggering_actor") or workflow_run.get("actor") or {}).get("login", "unknown")
+                      print(f"workflow_dispatch run by {actor}, contributor_type={contributor_type} (internal={internal})")
+                  return contributor_match
+
+              # PR queue: skip workflow_dispatch events
+              if event == "workflow_dispatch":
+                  return False
+
               base_branch, pr_info = get_pr_base_branch(workflow_run)
               if base_branch is None:
                   return False
