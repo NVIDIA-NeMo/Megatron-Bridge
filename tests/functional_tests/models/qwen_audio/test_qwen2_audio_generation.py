@@ -27,6 +27,7 @@ Note: These tests use small proxy/toy models for fast generation testing.
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -149,7 +150,7 @@ class TestQwen2AudioGeneration:
             qwen2_audio_toy_model_path: Path to the toy Qwen2 Audio model (from fixture)
         """
         cmd = [
-            "python",
+            sys.executable,
             "-m",
             "torch.distributed.run",
             "--nproc_per_node=2",
