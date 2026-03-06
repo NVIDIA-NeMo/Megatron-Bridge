@@ -13,13 +13,16 @@ export WORKSPACE=/your/custom/path
 ```
 
 Directory structure:
+
 - `${WORKSPACE}/models/` - Converted checkpoints
 - `${WORKSPACE}/results/` - Training outputs and experiment results
 
 ## Checkpoint Conversion
 
 ### Import HF → Megatron
+
 To import the HF VL model to your desired Megatron path:
+
 ```bash
 python examples/conversion/convert_checkpoints.py import \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
@@ -27,6 +30,7 @@ python examples/conversion/convert_checkpoints.py import \
 ```
 
 ### Export Megatron → HF
+
 ```bash
 python examples/conversion/convert_checkpoints.py export \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
@@ -48,15 +52,18 @@ python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_meg
 ```
 
 Note:
+
 - `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward.
 - You can also use image URLs: `--image_path="https://example.com/image.jpg"`
 
 See the [inference.sh](inference.sh) script for commands to:
+
 - Run inference with Hugging Face checkpoints
 - Run inference with imported Megatron checkpoints
 - Run inference with exported Hugging Face checkpoints
 
 **Expected output:**
+
 ```
 ...
 Generation step 46
@@ -88,8 +95,9 @@ Here is a breakdown of the key specifications:
   - `qwen3_vl_8b_finetune_config`: Finetuning for 8B VL model with PEFT support
   - `qwen3_vl_30b_a3b_finetune_config`: Finetuning for 30B-A3B VL model with PEFT support
   - `qwen3_vl_235b_a22b_finetune_config`: Finetuning for 235B-A22B VL model with PEFT support
-    
+
 Before training, ensure the following environment variables are set:
+
 1. `HF_TOKEN`: to download models from HF Hub (if required)
 2. `HF_HOME`: (optional) to avoid re-downloading models and datasets
 3. `WANDB_API_KEY`: (optional) to enable WandB logging
@@ -125,7 +133,7 @@ Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/e
 __module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
 __class__: ChatMLWebdataset
 field_map:
-  imgs: jpg
+  imgs: jpgs
   conversation: json
 ```
 
