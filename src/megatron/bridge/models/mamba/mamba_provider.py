@@ -164,9 +164,10 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
                         f"Please correct num_layers or the pattern."
                     )
                 else:
-                    assert False, (
-                        "If hybrid_layer_pattern is specified, num_layers should not be specified. "
-                        "The number of layers is derived from the pattern."
+                    assert self.num_layers == num_layers_in_pattern, (
+                        f"num_layers ({self.num_layers}) does not match the number of layers "
+                        f"derived from hybrid_layer_pattern ({num_layers_in_pattern}). "
+                        f"Please correct num_layers or the pattern."
                     )
             self.num_layers = num_layers_in_pattern
 

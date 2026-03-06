@@ -209,20 +209,16 @@ class TestNemotronHConversion:
         test_output_dir = tmp_path / f"nemotronh_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        # Modify config.json to add | separator for hybrid_override_pattern to be able to run PP > 1
+        # Reset hybrid_override_pattern to the canonical form (no '|' separators).
+        # '|' is an MCore runtime concern for explicit PP stage boundaries; it must not
+        # appear in the HF config because HF validates len(hybrid_override_pattern) == num_hidden_layers.
+        # MCore handles even PP splits automatically at runtime without '|'.
         config_file = Path(nemotronh_toy_model_path) / "config.json"
         assert config_file.exists(), f"config.json not found at {config_file}"
         with open(config_file) as f:
             config_data = json.load(f)
 
-        if pp > 1:
-            config_data["hybrid_override_pattern"] = (
-                HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][:2]
-                + "|"
-                + HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][2:]
-            )
-        else:
-            config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
+        config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
 
         with open(config_file, "w") as f:
             json.dump(config_data, f, indent=2)
