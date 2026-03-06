@@ -224,7 +224,8 @@ class MiniMaxM2Bridge(MegatronModelBridge):
             )
         )
 
-        # MoE expert weights (per-expert w1/w2/w3 with block_sparse_moe prefix)
+        # MoE expert weights (per-expert w1/w2/w3 with block_sparse_moe prefix).
+        # Uses grouped-gemm layout (weight* suffix) since moe_grouped_gemm=True.
         mapping_list.extend(
             [
                 GatedMLPMapping(
@@ -234,15 +235,6 @@ class MiniMaxM2Bridge(MegatronModelBridge):
                 ),
                 AutoMapping(
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.block_sparse_moe.experts.*.w2.weight",
-                ),
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
-                    gate="model.layers.*.block_sparse_moe.experts.*.w1.weight",
-                    up="model.layers.*.block_sparse_moe.experts.*.w3.weight",
-                ),
-                AutoMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
                     hf_param="model.layers.*.block_sparse_moe.experts.*.w2.weight",
                 ),
             ]
