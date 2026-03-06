@@ -161,7 +161,11 @@ def merge_lora(
     model_provider.expert_tensor_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
     if args.cpu:
-        assert args.tp == args.pp == args.ep == 1, "TP, PP, and EP must be 1 when using CPU merge"
+        if args.tp != 1 or args.pp != 1 or args.ep != 1:
+            logger.warning("TP, PP, and EP must be 1 when using CPU merge. Setting to 1.")
+            args.tp = 1
+            args.pp = 1
+            args.ep = 1
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group("gloo")
     model_provider.initialize_model_parallel(seed=0)
@@ -281,14 +285,8 @@ def main() -> None:
             args=args,
         )
     except torch.cuda.OutOfMemoryError:
-        logger.error("Out of memory error during merge. Trying CPU merge...")
-        merge_lora(
-            base_dir=base_dir,
-            lora_dir=lora_dir,
-            out_dir=resolve_path(args.output),
-            hf_model_path=args.hf_model_path,
-            args=args,
-        )
+        logger.warning("CUDA out of memory during merge. Please rerun this script on CPU by adding the `--cpu` flag.")
+        raise SystemExit(1)
     finally:
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
