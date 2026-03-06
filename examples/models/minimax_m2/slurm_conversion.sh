@@ -14,45 +14,53 @@
 # limitations under the License.
 
 # ==============================================================================
-# MiniMax-M2 Checkpoint Conversion (Multi-Node via Slurm)
+# MiniMax-M2 Conversion Round-Trip Verification (Multi-Node via Slurm)
 #
 # MiniMax-M2 (MoE: 256 experts, top-8, ~230GB fp8)
-# Use this script when TP * EP * PP > 8 (requires more than one 8-GPU node).
-# For single-node (TP * EP * PP <= 8), use conversion.sh instead.
+# Sweeps multiple parallelism configs (TP,PP,EP) to verify HF <-> Megatron
+# round-trip conversion across different GPU layouts.
+#
+# Each config runs hf_megatron_roundtrip_multi_gpu.py sequentially.
+# All configs must use the same total GPU count (GPUS_PER_NODE * NODES).
 #
 # Usage:
 #   1. Modify the #SBATCH directives and CONFIGURATION section for your cluster
-#   2. Submit: sbatch slurm_conversion.sh
-#   3. Submit inference after conversion:
-#      sbatch --dependency=afterok:<job_id> slurm_inference.sh
+#   2. Set CONTAINER_IMAGE to your container path
+#   3. Adjust PARALLELISM_CONFIGS for desired TP,PP,EP combos
+#   4. Submit: sbatch slurm_conversion.sh
 # ==============================================================================
 
-#SBATCH --job-name=minimax-m2-convert
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=1
+#SBATCH --job-name=minimax-m2-roundtrip
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=4:00:00
 #SBATCH --account=<your-account>
-#SBATCH --output=logs/minimax_m2_convert_%j.out
-#SBATCH --error=logs/minimax_m2_convert_%j.err
+#SBATCH --output=logs/minimax_m2_roundtrip_%j.out
+#SBATCH --error=logs/minimax_m2_roundtrip_%j.err
 #SBATCH --exclusive
 
 # ==============================================================================
-# CONFIGURATION — edit these for your environment
+# CONFIGURATION
 # ==============================================================================
 
-WORKSPACE=${WORKSPACE:-/workspace}
-PROJECT_DIR=${PROJECT_DIR:-.}
 MODEL_NAME=MiniMax-M2
 HF_MODEL_ID=MiniMaxAI/$MODEL_NAME
 GPUS_PER_NODE=8
 
-TP=2
-EP=8
-PP=1
+# Parallelism configs: "TP,PP,EP" per entry (TP*PP*EP must equal total GPUs)
+# EP must divide 256 (number of experts).
+PARALLELISM_CONFIGS=("2,1,4" "1,2,4" "2,2,2")
 
-CONTAINER_IMAGE=${CONTAINER_IMAGE:?Set CONTAINER_IMAGE to your container path}
-CONTAINER_MOUNTS="/lustre:/lustre,${PROJECT_DIR}:/opt/Megatron-Bridge"
+# Container image (required)
+CONTAINER_IMAGE=""
+# CONTAINER_IMAGE="/path/to/container.sqsh"
+
+# Container mounts (optional; comma-separated for srun --container-mounts)
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+
+# Container working directory
 CONTAINER_WORKDIR=/opt/Megatron-Bridge
 
 # ==============================================================================
@@ -62,44 +70,83 @@ CONTAINER_WORKDIR=/opt/Megatron-Bridge
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
+# UV cache on shared filesystem (recommended for multi-node setups)
+# Pre-sync once before submitting: UV_CACHE_DIR=/path/to/cache uv sync
+# export UV_CACHE_DIR="/path/to/shared/uv_cache"
+
+# HuggingFace cache directory (recommended for shared filesystem)
+# export HF_HOME="/path/to/shared/HF_HOME"
+
+# Authentication tokens (set these for your environment)
+# export HF_TOKEN="hf_your_token_here"
+
 # ==============================================================================
 # Job Execution
 # ==============================================================================
 
-MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-MASTER_PORT=${MASTER_PORT:-29500}
-
 echo "======================================"
-echo "MiniMax-M2 Checkpoint Conversion"
+echo "MiniMax-M2 Round-Trip Conversion Sweep"
 echo "======================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $GPUS_PER_NODE"
-echo "Parallelism: TP=$TP, EP=$EP, PP=$PP"
-echo "Total GPUs: $((TP * EP * PP))"
-echo "Master: $MASTER_ADDR:$MASTER_PORT"
+echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
 echo "======================================"
 
 mkdir -p logs
 
-SRUN_CMD="srun --ntasks-per-node=1 --no-container-mount-home \
-    --container-image=$CONTAINER_IMAGE \
-    --container-mounts=$CONTAINER_MOUNTS"
-
-echo ""
-echo "Importing HF -> Megatron checkpoint ..."
-$SRUN_CMD bash -c "cd $CONTAINER_WORKDIR && \
-    if [ \$SLURM_LOCALID -eq 0 ]; then uv sync; else sleep 10; fi && \
-    uv run --no-sync python examples/conversion/convert_checkpoints.py import \
-    --hf-model $HF_MODEL_ID \
-    --megatron-path ${WORKSPACE}/models/$MODEL_NAME \
-    --trust-remote-code"
-IMPORT_EXIT=$?
-if [ $IMPORT_EXIT -ne 0 ]; then
-    echo "ERROR: Import failed (exit $IMPORT_EXIT)"
-    exit $IMPORT_EXIT
+if [ -z "$CONTAINER_IMAGE" ]; then
+    echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
+    exit 1
 fi
 
+SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
+if [ -n "$CONTAINER_MOUNTS" ]; then
+    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
+fi
+echo "SRUN base: $SRUN_CMD"
 echo "======================================"
-echo "Conversion completed successfully"
+
+CONFIG_INDEX=0
+for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
+    IFS=',' read -r TP PP EP <<< "$CONFIG"
+    CONFIG_INDEX=$((CONFIG_INDEX + 1))
+    NPROC=$((TP * PP * EP))
+
+    echo ""
+    echo "======================================"
+    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP (nproc=$NPROC)"
+    echo "======================================"
+
+    MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+    MASTER_PORT=${MASTER_PORT:-29500}
+
+    CMD="uv run --no-sync python -m torch.distributed.run \
+        --nnodes=$SLURM_JOB_NUM_NODES \
+        --nproc_per_node=$GPUS_PER_NODE \
+        --node_rank=\$SLURM_NODEID \
+        --master_addr=$MASTER_ADDR \
+        --master_port=$MASTER_PORT \
+        examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+        --hf-model-id $HF_MODEL_ID \
+        --tp $TP --pp $PP --ep $EP \
+        --trust-remote-code"
+
+    echo "Executing: $CMD"
+    echo "======================================"
+
+    $SRUN_CMD bash -c "cd $CONTAINER_WORKDIR && \
+        if [ \$SLURM_LOCALID -eq 0 ]; then uv sync; else sleep 10; fi && \
+        $CMD"
+    RUN_EXIT=$?
+    if [ $RUN_EXIT -ne 0 ]; then
+        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP failed with exit code $RUN_EXIT"
+        exit $RUN_EXIT
+    fi
+    echo "[OK] Config $CONFIG_INDEX: TP=$TP, PP=$PP, EP=$EP passed"
+done
+
+echo ""
+echo "======================================"
+echo "All ${#PARALLELISM_CONFIGS[@]} configs passed"
 echo "======================================"

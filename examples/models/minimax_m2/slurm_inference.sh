@@ -17,13 +17,13 @@
 # MiniMax-M2 Inference (Multi-Node via Slurm)
 #
 # MiniMax-M2 (MoE: 256 experts, top-8, ~230GB fp8)
-# Use this script when TP * EP * PP > 8 (requires more than one 8-GPU node).
-# For single-node (TP * EP * PP <= 8), use inference.sh instead.
+# The full model requires EP >= 32 to fit 256 experts in GPU memory.
+# Increasing TP does NOT reduce expert memory — increase EP instead.
 #
 # Usage:
 #   1. Modify the #SBATCH directives and CONFIGURATION section for your cluster
 #   2. Run conversion first: sbatch slurm_conversion.sh
-#   3. Submit with dependency: sbatch --dependency=afterok:<convert_job_id> slurm_inference.sh
+#   3. Submit: sbatch slurm_inference.sh
 # ==============================================================================
 
 #SBATCH --job-name=minimax-m2-inference
@@ -37,26 +37,28 @@
 #SBATCH --exclusive
 
 # ==============================================================================
-# CONFIGURATION — edit these for your environment
+# CONFIGURATION
 # ==============================================================================
 
 WORKSPACE=${WORKSPACE:-/workspace}
-PROJECT_DIR=${PROJECT_DIR:-.}
 MODEL_NAME=MiniMax-M2
 HF_MODEL_ID=MiniMaxAI/$MODEL_NAME
-MEGATRON_CKPT=${WORKSPACE}/models/${MODEL_NAME}/iter_0000000
 GPUS_PER_NODE=8
 PROMPT="What is artificial intelligence?"
 MAX_NEW_TOKENS=100
 
-# MiniMax-M2 needs EP=32 (8 nodes) to fit 256 experts in memory.
-# Increasing TP does NOT reduce expert memory — increase EP instead.
 TP=2
 EP=32
 PP=1
 
-CONTAINER_IMAGE=${CONTAINER_IMAGE:?Set CONTAINER_IMAGE to your container path}
-CONTAINER_MOUNTS="/lustre:/lustre,${PROJECT_DIR}:/opt/Megatron-Bridge"
+# Container image (required)
+CONTAINER_IMAGE=""
+# CONTAINER_IMAGE="/path/to/container.sqsh"
+
+# Container mounts (optional; comma-separated for srun --container-mounts)
+CONTAINER_MOUNTS=""
+# CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+
 CONTAINER_WORKDIR=/opt/Megatron-Bridge
 
 # ==============================================================================
@@ -86,9 +88,16 @@ echo "======================================"
 
 mkdir -p logs
 
+if [ -z "$CONTAINER_IMAGE" ]; then
+    echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
+    exit 1
+fi
+
 SRUN_CMD="srun --ntasks-per-node=1 --no-container-mount-home \
-    --container-image=$CONTAINER_IMAGE \
-    --container-mounts=$CONTAINER_MOUNTS"
+    --container-image=$CONTAINER_IMAGE"
+if [ -n "$CONTAINER_MOUNTS" ]; then
+    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
+fi
 
 echo ""
 echo "Running inference ..."
@@ -102,7 +111,6 @@ $SRUN_CMD bash -c "cd $CONTAINER_WORKDIR && \
     --master_port=$MASTER_PORT \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path $HF_MODEL_ID \
-    --megatron_model_path $MEGATRON_CKPT \
     --prompt '$PROMPT' \
     --max_new_tokens $MAX_NEW_TOKENS \
     --tp $TP --ep $EP \

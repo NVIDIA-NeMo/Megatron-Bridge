@@ -15,12 +15,34 @@
 
 # MiniMax-M2 (MoE: 256 experts, top-8, ~230GB fp8)
 #
-# Single-node (8 GPUs): use this script with TP*EP*PP <= 8.
-# Multi-node  (TP*EP*PP > 8): use slurm_inference.sh instead.
+# Single-node (8 GPUs): this script with TP*EP*PP <= 8.
+# Multi-node (TP*EP*PP > 8): use slurm_inference.sh instead.
 
+WORKSPACE=${WORKSPACE:-/workspace}
+
+# Inference with HuggingFace checkpoints
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path MiniMaxAI/MiniMax-M2 \
+    --prompt "What is artificial intelligence?" \
+    --max_new_tokens 100 \
+    --tp 2 --ep 4 \
+    --trust-remote-code
+
+# Inference with imported Megatron checkpoints
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+    examples/conversion/hf_to_megatron_generate_text.py \
+    --hf_model_path MiniMaxAI/MiniMax-M2 \
+    --megatron_model_path ${WORKSPACE}/models/MiniMax-M2/iter_0000000 \
+    --prompt "What is artificial intelligence?" \
+    --max_new_tokens 100 \
+    --tp 2 --ep 4 \
+    --trust-remote-code
+
+# Inference with exported HF checkpoints
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+    examples/conversion/hf_to_megatron_generate_text.py \
+    --hf_model_path ${WORKSPACE}/models/MiniMax-M2-hf-export \
     --prompt "What is artificial intelligence?" \
     --max_new_tokens 100 \
     --tp 2 --ep 4 \
