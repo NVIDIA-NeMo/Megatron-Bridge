@@ -143,18 +143,24 @@ jobs:
               org_roles = sso_users.get(login, {}).get("org_roles", [])
               return any(role in ("NVIDIA:Member", "NVIDIA-NeMo:Member") for role in org_roles)
 
+          def is_pr_run(workflow_run):
+              """Return True if this run was triggered by a PR (head_branch matches pull-request/<number>)."""
+              return bool(re.match(r"pull-request/\d+", workflow_run.get("head_branch", "")))
+
+          def is_workflow_dispatch_run(workflow_run):
+              """Return True if this run was manually triggered (head_branch starts with mcore-testing-)."""
+              return workflow_run.get("head_branch", "").startswith("mcore-testing-")
+
           def matches_queue(workflow_run, target_branch, contributor_type):
               """
               Return True if the workflow run belongs to this queue cell:
               matching target branch AND matching contributor type (internal/external).
 
-              workflow_dispatch runs are routed to the 'workflow_dispatch' queue only.
-              PR runs are routed to 'main' or 'others' queues only.
+              workflow_dispatch runs (head_branch: mcore-testing-*) are routed to the 'workflow_dispatch' queue only.
+              PR runs (head_branch: pull-request/<n>) are routed to 'main' or 'others' queues only.
               """
-              event = workflow_run.get("event", "")
-
               if target_branch == "workflow_dispatch":
-                  if event != "workflow_dispatch":
+                  if not is_workflow_dispatch_run(workflow_run):
                       return False
                   internal = is_internal_actor(workflow_run)
                   contributor_match = (contributor_type == "internal") == internal
@@ -163,8 +169,8 @@ jobs:
                       print(f"workflow_dispatch run by {actor}, contributor_type={contributor_type} (internal={internal})")
                   return contributor_match
 
-              # PR queue: skip workflow_dispatch events
-              if event == "workflow_dispatch":
+              # PR queue: skip non-PR runs
+              if not is_pr_run(workflow_run):
                   return False
 
               base_branch, pr_info = get_pr_base_branch(workflow_run)
