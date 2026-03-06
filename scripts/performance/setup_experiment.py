@@ -182,6 +182,7 @@ def main(
     compute_dtype: str,
     gpu: str,
     hf_token: str,
+    offline: bool,
     detach: bool,
     dryrun: bool,
     enable_vboost: bool,
@@ -235,6 +236,9 @@ def main(
     config_variant: str = "v1",
 ):
     """Sets up the experiment and runs it."""
+    if hf_token and offline:
+        raise ValueError("--hf_token and --offline cannot be used together.")
+
     if (
         model_family_name in ["qwen3"]
         and model_recipe_name
@@ -244,7 +248,10 @@ def main(
         ]
         and task == "pretrain"
     ):
-        assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
+        assert hf_token is not None or offline, (
+            "Qwen3 tokenizer requires --hf_token or --offline. If using --offline, pre-download the tokenizer into "
+            "the local HuggingFace cache. NullTokenizer to be used soon."
+        )
 
     if wandb_key is not None:
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
@@ -305,6 +312,7 @@ def main(
             custom_bash_cmds=custom_bash_cmds,
             gres=args.gres,
             hf_token=hf_token,
+            offline=offline,
             nemo_home=nemo_home,
             additional_slurm_params=additional_slurm_params,
             wandb_key=wandb_key,
@@ -541,6 +549,7 @@ if __name__ == "__main__":
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
         hf_token=args.hf_token,
+        offline=args.offline,
         detach=args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
