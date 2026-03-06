@@ -219,7 +219,10 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
             raise ValueError(f"No Parquet files found in directory: {path_str}. Files must end with .parquet or .pq")
         return paths
 
-    # Single file - verify it exists
+    # Single file - verify it has a parquet extension and exists
+    if not _is_parquet_file(path_str):
+        raise ValueError(f"Not a Parquet file (unsupported extension): {path_str}")
+
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
         exists = msc.Path(path_str).exists()
