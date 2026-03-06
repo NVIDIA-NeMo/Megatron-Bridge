@@ -94,19 +94,16 @@ cfg.dataset.path_to_cache = "/path/to/cache"
 
 Preprocess your data using the [DCLM data preprocessing tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm).
 
-W&B report coming soon.
-
 ### Supervised Fine-Tuning (SFT)
 
 See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequence packing by default.
-
-W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default.
 
-W&B report coming soon.
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/xs3rmk4t) for the expected loss curves and grad norms.
 
 ## Inference
 
