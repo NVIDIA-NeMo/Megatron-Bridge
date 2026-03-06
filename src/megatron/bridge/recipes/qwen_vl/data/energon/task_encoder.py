@@ -216,17 +216,30 @@ class videohandler:
         self.extensions_mapping = {"jpgs": "jpg", "mp4s": "jpg", "videos": "jpg"}
         self.image_handler = imagehandler(imagespec)
 
+    def _convert_to_tensor(self, data):
+        """Convert numpy array or bytes to tensor.
+        
+        The wds conversion script stores images as numpy arrays (HWC, uint8),
+        so we need to handle both numpy arrays and raw bytes.
+        """
+        if isinstance(data, np.ndarray):
+            # Data is already a numpy array (HWC, uint8) from pickle
+            # Convert to tensor (CHW, float32 in [0,1])
+            return torch.from_numpy(data).permute(2, 0, 1).float() / 255.0
+        else:
+            # Data is raw bytes, use imagehandler to decode
+            return self.image_handler("jpg", data)
+
     def __call__(self, key, data):
         """Perform nested image decoding."""
         extension = re.sub(r".*[.]", "", key)
         if extension.lower() not in self.extensions:
             return None
         data = pickle.loads(data)
-        key = self.extensions_mapping[extension]
         if extension.lower() == "jpgs":
-            data = [self.image_handler(key, d) for d in data]
+            data = [self._convert_to_tensor(d) for d in data]
         else:
-            data = [[self.image_handler(key, d) for d in video] for video in data]
+            data = [[self._convert_to_tensor(d) for d in video] for video in data]
         return data
 
 
