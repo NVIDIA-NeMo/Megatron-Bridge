@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for Ministral 3 recipe configurations."""
-
-from functools import partial
+"""Functional smoke tests for GLM-4.5V recipe configurations."""
 
 import pytest
 
 from megatron.bridge.recipes.glm_vl.glm_45v import (
-    glm_45v_finetune_config,
+    glm_45v_sft_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
@@ -27,8 +25,8 @@ from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 GLM_45V_FINETUNE_RECIPES = [
     # Small model, only use 2 layers for quick functional test
     (
-        partial(glm_45v_finetune_config, peft=None),
-        "glm_45v",
+        glm_45v_sft_config,
+        "glm_45v_sft",
         {
             "tensor_model_parallel_size": 1,
             "pipeline_model_parallel_size": 1,
@@ -46,8 +44,8 @@ GLM_45V_FINETUNE_RECIPES = [
 GLM_45V_FINETUNE_PACKED_RECIPES = [
     # Small model with packed sequences, only use 2 layers
     (
-        partial(glm_45v_finetune_config, peft=None),
-        "glm_45v_packed",
+        glm_45v_sft_config,
+        "glm_45v_sft_packed",
         {
             "tensor_model_parallel_size": 1,
             "pipeline_model_parallel_size": 1,
