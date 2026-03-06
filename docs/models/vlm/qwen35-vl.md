@@ -1,13 +1,13 @@
-# Qwen3.5-VL
+# Qwen 3.5
 
-[Alibaba Cloud's Qwen3.5-VL](https://huggingface.co/collections/Qwen/qwen35-vl) is a family of vision-language models supporting multimodal understanding across text, images, and videos. Qwen3.5-VL includes both dense models and Mixture-of-Experts (MoE) variants for improved efficiency at scale.
+[Alibaba Cloud's Qwen 3.5](https://huggingface.co/collections/Qwen/qwen35) is a family of vision-language models supporting multimodal understanding across text, images, and videos. Qwen 3.5 includes both dense models and Mixture-of-Experts (MoE) variants for improved efficiency at scale.
 
-Qwen3.5-VL models feature a hybrid architecture combining GDN (Gated DeltaNet) layers with standard attention layers, SwiGLU activations, and RMSNorm. MoE variants use top-k routing with shared experts for better quality.
+Qwen 3.5 models feature a hybrid architecture combining GDN (Gated DeltaNet) layers with standard attention layers, SwiGLU activations, and RMSNorm. MoE variants use top-k routing with shared experts for better quality.
 
-Qwen3.5-VL models are supported via Megatron Bridge with auto-detected configuration and weight mapping.
+Qwen 3.5 models are supported via Megatron Bridge with auto-detected configuration and weight mapping.
 
 ```{important}
-Please upgrade to `transformers` >= 5.2.0 in order to use the Qwen3.5-VL models.
+Please upgrade to `transformers` >= 5.2.0 in order to use the Qwen 3.5 models.
 ```
 
 ## Available Models
@@ -41,7 +41,7 @@ Please upgrade to `transformers` >= 5.2.0 in order to use the Qwen3.5-VL models.
 
 ## Examples
 
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Qwen3.5-VL Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/qwen35_vl/README.md).
+For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Qwen 3.5 Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/vlm/qwen35_vl/README.md).
 
 ## Hugging Face Model Cards
 
