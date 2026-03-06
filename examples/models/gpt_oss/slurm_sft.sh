@@ -21,18 +21,20 @@
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
-#   2. Set CONTAINER_IMAGE to your container path
-#   3. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
-#   4. Submit: sbatch slurm_sft.sh
+#   2. For Blackwell (GB200): set GPU_TYPE=gb200; use 4 GPUs/node (DGX-GB200). Adjust nodes for desired total GPUs.
+#   3. Set CONTAINER_IMAGE to your container path
+#   4. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
+#   5. Submit: sbatch slurm_sft.sh
 # ==============================================================================
 
 #SBATCH --job-name=gpt-oss-sft
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --time=24:00:00
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=4
+#SBATCH --time=04:00:00
 #SBATCH --partition=batch
-#SBATCH --account=my_account
+#SBATCH --qos=normal
+#SBATCH --account=coreai_dlalgo_llm
 #SBATCH --output=logs/gpt_oss_sft_%j.out
 #SBATCH --error=logs/gpt_oss_sft_%j.err
 #SBATCH --exclusive
@@ -41,11 +43,13 @@
 # CONFIGURATION
 # ==============================================================================
 
-# Workspace directory for checkpoints and results
-WORKSPACE=${WORKSPACE:-/workspace}
+# GPU type: set to "gb200" for Blackwell; leave empty or "default" for Hopper/other.
+# When gb200: use partition/constraint for GB200 nodes; DGX-GB200 has 4 GPUs/node.
+GPU_TYPE="${GPU_TYPE:-gb200}"
 
-# Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-}"
+# Workspace directory for checkpoints and results (align with slurm_pretrain.sh)
+export WORKSPACE="${WORKSPACE:-/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace}"
+export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
@@ -62,15 +66,28 @@ LR_WARMUP_ITERS=50
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
-# Parallelism configs: "TP,PP,EP,CP,SP" per entry (max(TP*CP, EP)*PP must be divisible by the total number of GPUs)
-PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
+# Optional: mixed precision recipe (leave empty for bf16_mixed).
+# --- Hopper (FP8 current scaling) ---
+# Uncomment the two lines below to use FP8 current scaling on Hopper with MoE router padding:
+# MIXED_PRECISION_RECIPE=bf16_with_fp8_current_scaling_mixed
+# MOE_ROUTER_PADDING_FOR_FP8=true
+# --- Blackwell (MXFP8) ---
+# For Blackwell GPUs, use bf16_with_mxfp8_mixed (MXFP8 is Blackwell-only in this codebase):
+MIXED_PRECISION_RECIPE=bf16_with_mxfp8_mixed
+MOE_ROUTER_PADDING_FOR_FP8=true
+# MIXED_PRECISION_RECIPE="${MIXED_PRECISION_RECIPE:-}"
+# MOE_ROUTER_PADDING_FOR_FP8="${MOE_ROUTER_PADDING_FOR_FP8:-false}"
 
-# Container image (required)
-CONTAINER_IMAGE=""
+# Parallelism configs: "TP,PP,EP,CP,SP" per entry (max(TP*CP, EP)*PP must be divisible by the total number of GPUs)
+# For 8 GPUs (2 nodes x 4): e.g. "2,2,4,1,True", "4,1,4,1,True", or "2,1,8,1,True" (EP=8).
+PARALLELISM_CONFIGS=("2,1,8,1,True" "2,2,4,1,True" "4,1,4,1,True")
+
+# Container image (required; align with slurm_pretrain.sh)
+CONTAINER_IMAGE="$WKDIR/sqsh/nemo_26.02.rc5.sqsh"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS=""
+CONTAINER_MOUNTS="/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm"
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
@@ -80,6 +97,13 @@ CONTAINER_MOUNTS=""
 # NCCL optimizations for large-scale training
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
+# Blackwell (GB200): same as scripts/performance (executors.py)
+if [ "${GPU_TYPE}" = "gb200" ]; then
+    export NCCL_NET_GDR_LEVEL=PHB   # For NCCL 2.25
+    export NCCL_NET_GDR_C2C=1       # For NCCL 2.26
+    export NCCL_NVLS_ENABLE=1
+    export NCCL_PROTO=simple
+fi
 
 # UV cache on shared filesystem (recommended for multi-node setups)
 # Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
@@ -102,6 +126,7 @@ echo "======================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $SLURM_GPUS_PER_NODE"
+echo "GPU type: ${GPU_TYPE:-default}"
 echo "Model: $MODEL_NAME"
 echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
 echo "======================================"
@@ -147,6 +172,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
+        logger.wandb_entity=nvidia-nemo-fw-public \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_finetune_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
@@ -161,15 +187,21 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH
     "
+    if [ -n "$MIXED_PRECISION_RECIPE" ]; then
+        CLI_OVERRIDES="$CLI_OVERRIDES mixed_precision=$MIXED_PRECISION_RECIPE"
+    fi
+    if [ "$MOE_ROUTER_PADDING_FOR_FP8" = "true" ]; then
+        CLI_OVERRIDES="$CLI_OVERRIDES model.moe_router_padding_for_fp8=true"
+    fi
 
-    CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
+    CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py"
     CMD="$CMD --mode finetune"
     CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
     CMD="$CMD --peft_scheme none"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
 
-    echo "Executing command..."
+    echo "Executing command (from /opt/Megatron-Bridge so mounted repo is used)..."
     echo $CMD
     echo "======================================"
 

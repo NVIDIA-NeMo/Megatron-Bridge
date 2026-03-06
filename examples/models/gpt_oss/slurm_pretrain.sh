@@ -21,18 +21,20 @@
 #
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
-#   2. Set CONTAINER_IMAGE to your container path
-#   3. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
-#   4. Submit: sbatch slurm_pretrain.sh
+#   2. For Blackwell (GB200): set GPU_TYPE=gb200 and use a partition/gres/constraint that requests GB200 (see comments above)
+#   3. Set CONTAINER_IMAGE to your container path
+#   4. Set PARALLELISM_CONFIGS (TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
+#   5. Submit: sbatch slurm_pretrain.sh
 # ==============================================================================
 
 #SBATCH --job-name=gpt-oss-pretrain
-#SBATCH --nodes=4
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --time=24:00:00
+#SBATCH --nodes=8
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=4
+#SBATCH --time=04:00:00
 #SBATCH --partition=batch
-#SBATCH --account=my_account
+#SBATCH --qos=normal
+#SBATCH --account=coreai_dlalgo_llm
 #SBATCH --output=logs/gpt_oss_pretrain_%j.out
 #SBATCH --error=logs/gpt_oss_pretrain_%j.err
 #SBATCH --exclusive
@@ -41,11 +43,17 @@
 # CONFIGURATION
 # ==============================================================================
 
+# GPU type: set to "gb200" for Blackwell (MXFP8); leave empty or "default" for Hopper/other.
+# When gb200: ensure partition/constraint/gres request GB200 nodes (see #SBATCH comments above).
+GPU_TYPE="${GPU_TYPE:-gb200}"
+
 # Workspace directory for checkpoints and results
-WORKSPACE=${WORKSPACE:-/workspace}
+# WORKSPACE=${WORKSPACE:-/workspace}
+export WORKSPACE="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace}"
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-}"
+# export WKDIR="${WKDIR:-}"
+export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
 
 # Model and training configurations
 MODEL_NAME=gpt_oss_20b
@@ -54,8 +62,8 @@ SEQ_LENGTH=4096
 
 # When DATASET_NAME=dclm, set DCLM_DATA_DIR and DCLM_CACHE so the recipe uses DCLM; leave unset for mock
 if [ "$DATASET_NAME" = "dclm" ]; then
-    # export DCLM_DATA_DIR="/path/to/dclm/preprocessed"
-    # export DCLM_CACHE="/path/to/cache"
+    export DCLM_DATA_DIR="/lustre/fsw/portfolios/coreai/users/weijiac/data/dclm/preprocessed"
+    export DCLM_CACHE="/lustre/fsw/portfolios/coreai/users/weijiac/.cache"
     :
 else
     unset DCLM_DATA_DIR
@@ -64,21 +72,33 @@ fi
 
 TRAIN_ITERS=1000
 GLOBAL_BATCH_SIZE=128
-MICRO_BATCH_SIZE=1
+MICRO_BATCH_SIZE=2
 EVAL_ITERS=10
 LR_WARMUP_ITERS=50
 LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
+# Optional: mixed precision recipe (leave empty for bf16_mixed).
+# --- Hopper (FP8 current scaling) ---
+# Uncomment the two lines below to use FP8 current scaling on Hopper with MoE router padding:
+# MIXED_PRECISION_RECIPE=bf16_with_fp8_current_scaling_mixed
+# MOE_ROUTER_PADDING_FOR_FP8=true
+# --- Blackwell (MXFP8) ---
+# For Blackwell GPUs, use bf16_with_mxfp8_mixed (MXFP8 is Blackwell-only in this codebase):
+MIXED_PRECISION_RECIPE=bf16_with_mxfp8_mixed
+MOE_ROUTER_PADDING_FOR_FP8=true
+# MIXED_PRECISION_RECIPE="${MIXED_PRECISION_RECIPE:-}"
+# MOE_ROUTER_PADDING_FOR_FP8="${MOE_ROUTER_PADDING_FOR_FP8:-false}"
+
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (max(TP*CP, EP)*PP must be divisible by the total number of GPUs)
-PARALLELISM_CONFIGS=("2,4,4,1,True" "4,2,4,1,True" "2,4,4,2,True")
+PARALLELISM_CONFIGS=("2,4,8,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE=""
+CONTAINER_IMAGE="$WKDIR/sqsh/nemo_26.02.rc5.sqsh"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS=""
+CONTAINER_MOUNTS="/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm"
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
@@ -88,6 +108,13 @@ CONTAINER_MOUNTS=""
 # NCCL optimizations for large-scale training
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
+# Blackwell (GB200): same as scripts/performance (executors.py)
+if [ "${GPU_TYPE}" = "gb200" ]; then
+    export NCCL_NET_GDR_LEVEL=PHB   # For NCCL 2.25
+    export NCCL_NET_GDR_C2C=1       # For NCCL 2.26
+    export NCCL_NVLS_ENABLE=1
+    export NCCL_PROTO=simple
+fi
 
 # UV cache on shared filesystem (recommended for multi-node setups)
 # Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
@@ -110,6 +137,7 @@ echo "======================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $SLURM_GPUS_PER_NODE"
+echo "GPU type: ${GPU_TYPE:-default}"
 echo "Model: $MODEL_NAME"
 echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
 echo "======================================"
@@ -177,6 +205,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
+        logger.wandb_entity=nvidia-nemo-fw-public \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
         dataset.sequence_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
@@ -188,12 +217,18 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     if [ -n "$DCLM_DATASET_OVERRIDES" ]; then
         CLI_OVERRIDES="$CLI_OVERRIDES $DCLM_DATASET_OVERRIDES"
     fi
+    if [ -n "$MIXED_PRECISION_RECIPE" ]; then
+        CLI_OVERRIDES="$CLI_OVERRIDES mixed_precision=$MIXED_PRECISION_RECIPE"
+    fi
+    if [ "$MOE_ROUTER_PADDING_FOR_FP8" = "true" ]; then
+        CLI_OVERRIDES="$CLI_OVERRIDES model.moe_router_padding_for_fp8=true"
+    fi
 
-    CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
+    CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
     CMD="$CMD $CLI_OVERRIDES"
 
-    echo "Executing command..."
+    echo "Executing command (from /opt/Megatron-Bridge so mounted repo is used)..."
     echo "$CMD"
     echo "======================================"
 
