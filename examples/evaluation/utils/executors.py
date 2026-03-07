@@ -131,20 +131,16 @@ def kuberay_executor(
         spec_kwargs={
             "schedulerName": "runai-scheduler",
             "image_pull_secrets": ["dockerregistry-dockerregistry-pagaray-ngc"],
-            "dnsConfig": {
-                "options": [{"name": "ndots", "value": "1"}, {"name": "single-request-reopen", "value": "1"}]
-            },
+            "dnsConfig": {"options": [{"name": "ndots", "value": "1"}, {"name": "single-request-reopen"}]},
         },  # e.g. Run:ai
         volume_mounts=[
             {"name": "workspace", "mountPath": dgxc_pvc_mount_path},
-            {"name": "nccl-env", "mountPath": "/etc/profile.d/nccl.sh", "subPath": "nccl.sh"},
         ],
         volumes=[
             {
                 "name": "workspace",
                 "persistentVolumeClaim": {"claimName": dgxc_pvc_claim_name},
             },
-            {"name": "nccl-env", "configMap": {"name": "nccl-env-override"}},
         ],
         env_vars=env_vars,
         container_kwargs={
