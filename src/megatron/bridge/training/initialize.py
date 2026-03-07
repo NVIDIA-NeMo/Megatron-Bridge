@@ -386,6 +386,7 @@ def _create_pg_collection(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    create_all_gather_group: bool = False,
 ) -> ProcessGroupCollection:
     """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
     world_size = torch.distributed.get_world_size()
@@ -499,6 +500,23 @@ def _create_pg_collection(
         # combine tp-ep-pp ranks across the intra-partial DP slice.
         intra_dist_opt_pg = expert_grid.create_pg(["tp", "ep", inner_dp_dim, "pp"])
 
+    # Create all-gather groups for AG/RS overlap if requested
+    dp_cp_ag_pg = None
+    expt_dp_ag_pg = None
+    if create_all_gather_group:
+        # Create regular DP all-gather group with same ranks as dp_cp_pg
+        # Use HyperCommGrid to enumerate ranks for dp-cp groups
+        dp_cp_rank_lists = grid._gen_rank_enum(["dp", "cp"])
+        if dp_cp_rank_lists:
+            dp_cp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(dp_cp_rank_lists, backend="nccl")
+        
+        # Create expert DP all-gather group if expert parallelism is enabled
+        if ep_size > 1:
+            # Use expert grid to enumerate ranks for expert dp groups
+            expt_dp_rank_lists = expert_grid._gen_rank_enum(dp_group_dims)
+            if expt_dp_rank_lists:
+                expt_dp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(expt_dp_rank_lists, backend="nccl")
+
     # Build ProcessGroupCollection with available groups.
     pg_collection = ProcessGroupCollection(
         tp=tp_pg,
@@ -522,6 +540,13 @@ def _create_pg_collection(
         inter_dist_opt=inter_dist_opt_pg,
         intra_dist_opt=intra_dist_opt_pg,
     )
+    
+    # Add AG groups to ProcessGroupCollection if created
+    if create_all_gather_group:
+        pg_collection.dp_cp_ag = dp_cp_ag_pg
+        if expt_dp_ag_pg is not None:
+            pg_collection.expt_dp_ag = expt_dp_ag_pg
+    
     return pg_collection
 
 
@@ -602,6 +627,7 @@ def _initialize_distributed(
             num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
             get_position_embedding_ranks=get_position_embedding_ranks,
+            create_all_gather_group=dist_config.create_all_gather_group,
         )
         if get_rank_safe() == 0:
             tp = int(model_config.tensor_model_parallel_size)
@@ -644,6 +670,24 @@ def _initialize_distributed(
                     f"> initialized pipeline model parallel with size "
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
+        
+        # Create AG groups if requested
+        if dist_config.create_all_gather_group:
+            for_expert_parallelism = (
+                getattr(model_config, "expert_model_parallel_size", 1) or 1
+            ) > 1
+            dp_cp_ag, expt_dp_ag = parallel_state.create_all_gather_groups(
+                for_expert_parallelism=for_expert_parallelism,
+                timeout=datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
+                nccl_comm_cfgs=None,  # Could use dist_config.nccl_communicator_config_path if needed
+            )
+            # Get ProcessGroupCollection and populate with AG groups
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+            pg_collection.dp_cp_ag = dp_cp_ag
+            if expt_dp_ag is not None:
+                pg_collection.expt_dp_ag = expt_dp_ag
+            return pg_collection
+        
         # Return a ProcessGroupCollection using mpu process groups
         return ProcessGroupCollection.use_mpu_process_groups()
 
