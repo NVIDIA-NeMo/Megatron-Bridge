@@ -102,6 +102,7 @@ def kuberay_executor(
         "NCCL_NET": "FasTrak",
         "NCCL_SOCKET_IFNAME": "eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8",
         "NCCL_FASTRAK_CTRL_DEV": "eth0",
+        "LD_LIBRARY_PATH": "/usr/local/nvidia/lib64:/usr/local/tensorrt/lib:/usr/lib/x86_64-linux-gnu",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
@@ -134,7 +135,10 @@ def kuberay_executor(
                 "options": [{"name": "ndots", "value": "1"}, {"name": "single-request-reopen", "value": "1"}]
             },
         },  # e.g. Run:ai
-        volume_mounts=[{"name": "workspace", "mountPath": dgxc_pvc_mount_path}],
+        volume_mounts=[
+            {"name": "workspace", "mountPath": dgxc_pvc_mount_path},
+            {"mountPath": "/usr/local/nvidia", "name": "nvtcpxo-libraries", "readOnly": "true"},
+        ],
         volumes=[
             {
                 "name": "workspace",
