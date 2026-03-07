@@ -150,6 +150,15 @@ def kuberay_executor(
                 "allowPrivilegeEscalation": False,
                 "runAsUser": 0,
             },
+            "command": ["/bin/bash", "-lc", "--"],
+            "args": [
+                "export NCCL_SOCKET_IFNAME=eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8 && "
+                "export NCCL_NET=tcpxo && "
+                "export NCCL_FASTRAK_CTRL_DEV=eth0 && "
+                "export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/lib/x86_64-linux-gnu && "
+                "ulimit -n 65536; "
+                "ray start $(printenv KUBERAY_GEN_RAY_START_CMD)"  # reuse KubeRay's generated cmd
+            ],
         },
     )
 
