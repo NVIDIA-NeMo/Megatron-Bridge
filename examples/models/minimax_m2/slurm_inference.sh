@@ -17,54 +17,47 @@
 # MiniMax-M2 Inference (Multi-Node via Slurm)
 #
 # MiniMax-M2 (MoE: 256 experts, top-8, ~230GB fp8)
-# The full model requires EP >= 32 to fit 256 experts in GPU memory.
+# The full model OOMs on a single 8-GPU node.
+# Minimum EP=16 (2 nodes) for inference; TP=2,EP=8 OOMs during forward pass.
 # Increasing TP does NOT reduce expert memory — increase EP instead.
 #
 # Usage:
-#   1. Modify the #SBATCH directives and CONFIGURATION section for your cluster
-#   2. Run conversion first: sbatch slurm_conversion.sh
-#   3. Submit: sbatch slurm_inference.sh
+#   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
+#   2. Submit: sbatch slurm_inference.sh
 # ==============================================================================
 
 #SBATCH --job-name=minimax-m2-inference
-#SBATCH --nodes=8
-#SBATCH --ntasks-per-node=1
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=4:00:00
 #SBATCH --account=<your-account>
-#SBATCH --output=logs/minimax_m2_inference_%j.out
-#SBATCH --error=logs/minimax_m2_inference_%j.err
+#SBATCH --partition=batch
+#SBATCH --output=logs/minimax_m2_inference_%j.log
 #SBATCH --exclusive
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
-
-WORKSPACE=${WORKSPACE:-/workspace}
-MODEL_NAME=MiniMax-M2
-HF_MODEL_ID=MiniMaxAI/$MODEL_NAME
-GPUS_PER_NODE=8
-PROMPT="What is artificial intelligence?"
-MAX_NEW_TOKENS=100
-
-TP=2
-EP=32
-PP=1
-
-# Container image (required)
+# ── Container ────────────────────────────────────────────────────────────
 CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
-
-# Container mounts (optional; comma-separated for srun --container-mounts)
 CONTAINER_MOUNTS=""
 # CONTAINER_MOUNTS="/lustre:/lustre,/path/to/project:/opt/Megatron-Bridge"
+WORKDIR="/opt/Megatron-Bridge"
 
-CONTAINER_WORKDIR=/opt/Megatron-Bridge
+# ── Tokens / Caches ──────────────────────────────────────────────────────
+# export HF_TOKEN="hf_your_token_here"
+# export HF_HOME="/path/to/shared/HF_HOME"
+# export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# ==============================================================================
-# Environment Setup
-# ==============================================================================
+# ── Model / Parallelism ──────────────────────────────────────────────────
+MODEL_NAME=MiniMax-M2
+HF_MODEL_ID=MiniMaxAI/$MODEL_NAME
+PROMPT="What is artificial intelligence?"
+MAX_NEW_TOKENS=100
+TP=1
+EP=16
+PP=1
 
+# ── Environment ───────────────────────────────────────────────────────────
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
@@ -72,49 +65,36 @@ export NCCL_NVLS_ENABLE=0
 # Job Execution
 # ==============================================================================
 
-MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-MASTER_PORT=${MASTER_PORT:-29500}
-
 echo "======================================"
 echo "MiniMax-M2 Inference"
-echo "======================================"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Nodes: $SLURM_JOB_NUM_NODES"
-echo "GPUs per node: $GPUS_PER_NODE"
-echo "Parallelism: TP=$TP, EP=$EP, PP=$PP"
-echo "Total GPUs: $((TP * EP * PP))"
-echo "Master: $MASTER_ADDR:$MASTER_PORT"
+echo "Job: $SLURM_JOB_ID | Nodes: $SLURM_JOB_NUM_NODES"
+echo "TP=$TP PP=$PP EP=$EP (Total GPUs: $((TP * EP * PP)))"
 echo "======================================"
 
 mkdir -p logs
 
 if [ -z "$CONTAINER_IMAGE" ]; then
-    echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
+    echo "ERROR: CONTAINER_IMAGE must be set."
     exit 1
 fi
 
-SRUN_CMD="srun --ntasks-per-node=1 --no-container-mount-home \
-    --container-image=$CONTAINER_IMAGE"
+SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
 if [ -n "$CONTAINER_MOUNTS" ]; then
     SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
 fi
 
-echo ""
-echo "Running inference ..."
-$SRUN_CMD bash -c "cd $CONTAINER_WORKDIR && \
-    if [ \$SLURM_LOCALID -eq 0 ]; then uv sync; else sleep 10; fi && \
-    uv run --no-sync python -m torch.distributed.run \
-    --nnodes=\$SLURM_JOB_NUM_NODES \
-    --nproc_per_node=$GPUS_PER_NODE \
-    --node_rank=\$SLURM_NODEID \
-    --master_addr=$MASTER_ADDR \
-    --master_port=$MASTER_PORT \
-    examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path $HF_MODEL_ID \
-    --prompt '$PROMPT' \
-    --max_new_tokens $MAX_NEW_TOKENS \
-    --tp $TP --ep $EP \
-    --trust-remote-code"
+# Sync dependencies once per node, then run inference
+CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
+CMD="${CMD}uv run --no-sync python examples/conversion/hf_to_megatron_generate_text.py"
+CMD="$CMD --hf_model_path $HF_MODEL_ID"
+CMD="$CMD --prompt '$PROMPT'"
+CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"
+CMD="$CMD --tp $TP --ep $EP"
+CMD="$CMD --trust-remote-code"
+
+echo "Executing: $CMD"
+
+$SRUN_CMD bash -c "cd $WORKDIR && $CMD"
 
 echo "======================================"
 echo "Inference completed"
