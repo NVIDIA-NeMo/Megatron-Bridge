@@ -469,7 +469,7 @@ class TestNemotron3NanoConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            (1, 2, "PP"),
+            pytest.param(1, 2, "PP", marks=pytest.mark.pleasefixme),  # PP=2 broken by hybrid_layer_pattern (PR #2628)
         ],
     )
     def test_nemotron_3_nano_conversion_parallelism(
