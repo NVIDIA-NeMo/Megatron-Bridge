@@ -156,7 +156,7 @@ def kuberay_executor(
                 export NCCL_SOCKET_IFNAME=eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8
                 export NCCL_NET=tcpxo
                 export NCCL_FASTRAK_CTRL_DEV=eth0
-                export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/lib/x86_64-linux-gnu
+                export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/tensorrt/lib:/usr/local/nvidia/lib64
                 ulimit -n 65536
                 eval "$KUBERAY_GEN_RAY_START_CMD"
                 """
