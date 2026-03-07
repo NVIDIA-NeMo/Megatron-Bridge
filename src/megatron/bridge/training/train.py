@@ -643,6 +643,8 @@ def train(
         wandb_writer = global_state.wandb_logger
         if wandb_writer:
             wandb_writer.finish()
+        if global_state._comet_logger:
+            global_state._comet_logger.end()
         fault_tolerance.shutdown(global_state)
         sys.exit(exit_code)
 
@@ -1307,6 +1309,9 @@ def _finish_train(global_state: GlobalState):
 
     if global_state.wandb_logger:
         global_state.wandb_logger.finish()
+
+    if global_state._comet_logger:
+        global_state._comet_logger.end()
 
     destroy_global_state()
 
