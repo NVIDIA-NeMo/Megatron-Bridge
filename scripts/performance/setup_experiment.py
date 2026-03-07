@@ -386,17 +386,17 @@ def main(
             )
         )
 
-    if use_recipes and dgxc_cluster is not None:
-        plugins.append(
-            FaultTolerancePlugin(
-                enable_ft_package=True,
-                calc_ft_timeouts=True,
-                num_in_job_restarts=10,
-                num_job_retries_on_failure=10,
-                initial_rank_heartbeat_timeout=1800,
-                rank_heartbeat_timeout=300,
-            )
-        )
+    # if use_recipes and dgxc_cluster is not None:
+    #     plugins.append(
+    #         FaultTolerancePlugin(
+    #             enable_ft_package=True,
+    #             calc_ft_timeouts=True,
+    #             num_in_job_restarts=10,
+    #             num_job_retries_on_failure=10,
+    #             initial_rank_heartbeat_timeout=1800,
+    #             rank_heartbeat_timeout=300,
+    #         )
+    #     )
 
     nemorun_script = run.Script(
         path=str(run_script_path),
