@@ -102,7 +102,6 @@ def kuberay_executor(
         "NCCL_NET": "tcpxo",
         "NCCL_SOCKET_IFNAME": "eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8",
         "NCCL_FASTRAK_CTRL_DEV": "eth0",
-        "LD_LIBRARY_PATH": "/usr/local/nvidia/lib64:/usr/local/tensorrt/lib:/usr/lib/x86_64-linux-gnu",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
