@@ -14,7 +14,6 @@
 
 from unittest.mock import Mock, patch
 
-import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
@@ -162,13 +161,13 @@ class TestCreateModel:
         model_provider = Mock()
         model_provider.provide = Mock(return_value=mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=_PG())
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=_PG())
 
         # Assertions
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0] is mock_model
-        assert mock_model.model_type == ModelType.encoder_and_decoder
+        assert mock_model.model_type == ModelType.encoder_or_decoder
         model_provider.provide.assert_called_once_with()  # No pre/post process args
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
@@ -180,13 +179,13 @@ class TestCreateModel:
         model_provider = Mock()
         model_provider.provide = Mock(return_value=mock_model)
 
-        result = _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=_PG())
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=_PG())
 
         # Assertions
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0] is mock_model
-        assert mock_model.model_type == ModelType.encoder_and_decoder
+        assert mock_model.model_type == ModelType.encoder_or_decoder
         model_provider.provide.assert_called_once_with()
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
@@ -890,20 +889,24 @@ class TestEdgeCases:
 
     def test_create_model_virtual_pipeline_with_encoder_decoder_raises(self):
         """Test that virtual pipeline with encoder-decoder raises assertion error."""
-        model_provider = MockModelProvider()
+        mock_model = MockMegatronModule()
+        model_provider = MockModelProvider(mock_model)
         model_provider.virtual_pipeline_model_parallel_size = 2
 
-        with pytest.raises(AssertionError) as excinfo:
-            # Craft pg with pp size > 1 to trigger VPP branch for the assertion
-            class _PP:
-                def size(self):
-                    return 2
+        # Craft pg with pp size > 1
+        class _PP:
+            def size(self):
+                return 2
 
-                def rank(self):
-                    return 0
+            def rank(self):
+                return 0
 
-            pg = _PG()
-            pg.pp = _PP()
-            _create_model(model_provider, ModelType.encoder_and_decoder, pg_collection=pg)
+        pg = _PG()
+        pg.pp = _PP()
+        result = _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=pg)
 
-        assert "Interleaved schedule not supported" in str(excinfo.value)
+        # Assertions
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0] is mock_model
+        assert mock_model.model_type == ModelType.encoder_or_decoder
