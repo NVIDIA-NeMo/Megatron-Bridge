@@ -137,31 +137,21 @@ def kuberay_executor(
         },  # e.g. Run:ai
         volume_mounts=[
             {"name": "workspace", "mountPath": dgxc_pvc_mount_path},
+            {"name": "nccl-env", "mountPath": "/etc/profile.d/nccl.sh", "subPath": "nccl.sh"},
         ],
         volumes=[
             {
                 "name": "workspace",
                 "persistentVolumeClaim": {"claimName": dgxc_pvc_claim_name},
             },
+            {"name": "nccl-env", "configMap": {"name": "nccl-env-override"}},
         ],
         env_vars=env_vars,
         container_kwargs={
             "securityContext": {
                 "allowPrivilegeEscalation": False,
                 "runAsUser": 0,
-            },
-            "command": ["/bin/bash", "-lc"],
-            "args": [
-                """
-                export NCCL_SOCKET_IFNAME=eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8
-                export NCCL_NET=tcpxo
-                export NCCL_FASTRAK_CTRL_DEV=eth0
-                export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/tensorrt/lib:/usr/lib/x86_64-linux-gnu
-                export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libnccl.so.2.29.7
-                ulimit -n 65536
-                eval "$KUBERAY_GEN_RAY_START_CMD"
-                """
-            ],
+            }
         },
     )
 
