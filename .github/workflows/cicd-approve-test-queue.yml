@@ -82,7 +82,7 @@ jobs:
                   MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY_EXTERNAL"])
               else:
                   MAX_CONCURRENCY = int(os.environ["MAX_CONCURRENCY"])
-              API_BASE = "https://api.github.com/repos/NVIDIA/Megatron-LM"
+              API_BASE = "https://api.github.com/repos/NVIDIA-NeMo/Megatron-Bridge"
               WORKFLOW_NAME = "CICD Megatron-LM"
 
           # Load SSO users for internal/external classification
