@@ -137,7 +137,6 @@ def kuberay_executor(
         },  # e.g. Run:ai
         volume_mounts=[
             {"name": "workspace", "mountPath": dgxc_pvc_mount_path},
-            {"mountPath": "/usr/local/nvidia", "name": "nvtcpxo-libraries", "readOnly": True},
         ],
         volumes=[
             {
