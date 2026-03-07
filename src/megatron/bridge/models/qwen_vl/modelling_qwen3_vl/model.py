@@ -453,6 +453,9 @@ class Qwen3VLModel(MegatronModule):
 
         if position_ids is None:
             # BSHD
+            # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
+            # For simplicity, we set hf_attention_mask to None.
+            hf_attention_mask = None
             position_ids, _ = get_rope_index(
                 self.config.spatial_merge_size,
                 self.image_token_id,
@@ -461,7 +464,7 @@ class Qwen3VLModel(MegatronModule):
                 input_ids,
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
-                attention_mask=attention_mask,
+                attention_mask=hf_attention_mask,
             )  #  [3*b*s]
             if packed_seq_params is not None:
                 # convert position_ids to THD format
