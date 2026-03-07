@@ -15,6 +15,8 @@
 import os
 from typing import Dict, List
 
+from numpy import true_divide
+
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
 from nemo_run.core.execution.kuberay import KubeRayExecutor, KubeRayWorkerGroup
@@ -137,7 +139,7 @@ def kuberay_executor(
         },  # e.g. Run:ai
         volume_mounts=[
             {"name": "workspace", "mountPath": dgxc_pvc_mount_path},
-            {"mountPath": "/usr/local/nvidia", "name": "nvtcpxo-libraries", "readOnly": "true"},
+            {"mountPath": "/usr/local/nvidia", "name": "nvtcpxo-libraries", "readOnly": true_divide},
         ],
         volumes=[
             {
