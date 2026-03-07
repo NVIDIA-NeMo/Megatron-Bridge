@@ -133,23 +133,12 @@ def kuberay_executor(
             "dnsConfig": {
                 "options": [{"name": "ndots", "value": "1"}, {"name": "single-request-reopen", "value": "1"}]
             },
-            "initContainers": [
-                {
-                    "name": "tcpxo-daemon",
-                    "image": "us-docker.pkg.dev/gce-ai-infra/gpudirect-tcpxo/tcpgpudmarxd-dev:v1.0.8",
-                    "volumeMounts": [{"name": "tcpxo-plugin", "mountPath": "/usr/local/nvidia/lib64"}],
-                }
-            ],
         },  # e.g. Run:ai
         volume_mounts=[{"name": "workspace", "mountPath": dgxc_pvc_mount_path}],
         volumes=[
             {
                 "name": "workspace",
                 "persistentVolumeClaim": {"claimName": dgxc_pvc_claim_name},
-            },
-            {
-                "name": "tcpxo-plugin",
-                "emptyDir": {},
             },
         ],
         env_vars=env_vars,
