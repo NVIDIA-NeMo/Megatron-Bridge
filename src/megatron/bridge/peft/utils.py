@@ -682,8 +682,6 @@ class ParallelLinearAdapter(nn.Module):
         # since adapter weights are not EP sharded and it assumes that it will
         # replicate along DP modulo EP (sharded by EP)
         if self.is_expert:
-            from megatron.core import parallel_state
-
             ep_rank = parallel_state.get_expert_model_parallel_rank()
             edp_rank = parallel_state.get_expert_data_parallel_rank()
             dp_size = parallel_state.get_data_parallel_world_size()
@@ -694,6 +692,20 @@ class ParallelLinearAdapter(nn.Module):
                     if hasattr(v, "replica_id"):
                         old_rid = v.replica_id
                         v.replica_id = (old_rid[0], rank, old_rid[2])
+        else:
+            # Dense adapters with TP > 1 also need replica_id adjustment.
+            # Without this fix, each TP rank generates a ShardedTensor with the same
+            # replica_id, causing incorrect deduplication during PEFT-filtered checkpoint
+            # save. This results in only TP rank 0's shard being saved.
+            # See: https://github.com/volcengine/verl/issues/4303 for related context.
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            if tp_size > 1:
+                tp_rank = parallel_state.get_tensor_model_parallel_rank()
+                for sd in [linear_in_sd, linear_out_sd]:
+                    for v in sd.values():
+                        if hasattr(v, "replica_id"):
+                            old_rid = v.replica_id
+                            v.replica_id = (old_rid[0], tp_rank, old_rid[2])
 
         if "linear_fc1" in self.base_linear_name:
             for k, v in linear_out_sd.items():

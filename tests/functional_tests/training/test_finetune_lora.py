@@ -483,3 +483,473 @@ class TestLoRAFinetune:
             os.makedirs(lora_tensorboard_dir, exist_ok=True)
 
         return pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir
+
+
+class TestLoRAFinetuneTP2:
+    """
+    Test LoRA finetuning with tensor parallelism (TP=2).
+
+    These tests verify that LoRA adapter checkpoints are correctly saved and loaded
+    when using tensor parallelism, specifically testing the fix for the issue where
+    dense LoRA adapters would lose TP shards during checkpoint save (only TP rank 0's
+    shard would be saved due to incorrect replica_id handling).
+    """
+
+    @pytest.mark.run_only_on("GPU")
+    def test_lora_save_and_resume_tp2(self, tmp_path):
+        """
+        Test LoRA finetuning save and resume with TP=2.
+
+        This test verifies that all TP shards of LoRA adapters are correctly saved
+        and loaded during checkpoint save/resume. Without the replica_id fix for
+        dense adapters, this test would fail because:
+        1. During save: only TP rank 0's adapter weights would be saved
+        2. During resume: other TP ranks would load zero/uninitialized weights
+        3. Result: significant loss discrepancy after resume
+
+        The test flow:
+        1. Pretrain a model with TP=2
+        2. Run LoRA finetuning with TP=2 for initial_iters, save checkpoint
+        3. Resume LoRA finetuning from checkpoint for remaining iters
+        4. Verify checkpoints exist and training completed successfully
+        """
+        initialize_distributed()
+
+        # This test requires at least 2 GPUs for TP=2
+        world_size = torch.distributed.get_world_size()
+        if world_size < 2:
+            pytest.skip("Test requires at least 2 GPUs for TP=2")
+
+        shared_base_dir = broadcast_path(tmp_path)
+        pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir = (
+            self._setup_directories(shared_base_dir, "_tp2")
+        )
+
+        torch.distributed.barrier()
+
+        try:
+            seq_length = 512
+            tensor_parallel_size = 2
+            pretrain_iters = 10
+            initial_lora_iters = 6
+            total_lora_iters = 12
+
+            # Phase 1: Pretrain with TP=2
+            pretrain_cfg = self._create_pretrain_config(
+                pretrain_iters,
+                pretrain_checkpoint_dir,
+                pretrain_tensorboard_dir,
+                seq_length,
+                tensor_parallel_size=tensor_parallel_size,
+            )
+            pretrain(pretrain_cfg, forward_step)
+            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+
+            # Phase 2: Initial LoRA finetuning with TP=2
+            lora_initial_cfg = self._create_lora_config(
+                initial_lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+                tensor_parallel_size=tensor_parallel_size,
+                scheduler_total_iters=total_lora_iters,
+            )
+            finetune(lora_initial_cfg, forward_step)
+            verify_checkpoint_files(lora_checkpoint_dir, initial_lora_iters)
+            verify_peft_checkpoint_smaller(
+                pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, initial_lora_iters
+            )
+
+            # Phase 3: Resume LoRA finetuning from checkpoint with TP=2
+            # This is the critical test - if the replica_id fix is not working,
+            # only TP rank 0's adapter weights would have been saved, and after
+            # resuming, other TP ranks would have incorrect (zero) adapter weights.
+            lora_resume_cfg = self._create_lora_config(
+                total_lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+                tensor_parallel_size=tensor_parallel_size,
+                load_checkpoint=lora_checkpoint_dir,
+                scheduler_total_iters=total_lora_iters,
+            )
+            lora_resume_cfg.checkpoint.save_interval = total_lora_iters - initial_lora_iters
+            lora_resume_cfg.scheduler.use_checkpoint_opt_param_scheduler = True
+
+            finetune(lora_resume_cfg, forward_step)
+            verify_checkpoint_files(lora_checkpoint_dir, total_lora_iters)
+            verify_peft_checkpoint_smaller(
+                pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, total_lora_iters
+            )
+
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_lora_weights_preserved_after_save_load_tp2(self, tmp_path):
+        """
+        Test that LoRA adapter weights are exactly preserved after save/load with TP=2.
+
+        This test explicitly verifies that the loaded adapter weights match the saved
+        weights across all TP ranks. Without the replica_id fix, non-rank-0 TP shards
+        would be zero after loading.
+
+        The test flow:
+        1. Pretrain a model with TP=2
+        2. Run LoRA finetuning with TP=2, capture adapter weights before save
+        3. Save checkpoint
+        4. Create a fresh model, load checkpoint
+        5. Compare loaded weights with saved weights - must be identical on all TP ranks
+        """
+        from megatron.bridge.training.state import GlobalState
+
+        initialize_distributed()
+
+        # This test requires at least 2 GPUs for TP=2
+        world_size = torch.distributed.get_world_size()
+        if world_size < 2:
+            pytest.skip("Test requires at least 2 GPUs for TP=2")
+
+        shared_base_dir = broadcast_path(tmp_path)
+        pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir = (
+            self._setup_directories(shared_base_dir, "_tp2_weights")
+        )
+
+        torch.distributed.barrier()
+
+        try:
+            seq_length = 512
+            tensor_parallel_size = 2
+            pretrain_iters = 5
+            lora_iters = 5
+
+            # Phase 1: Pretrain with TP=2
+            pretrain_cfg = self._create_pretrain_config(
+                pretrain_iters,
+                pretrain_checkpoint_dir,
+                pretrain_tensorboard_dir,
+                seq_length,
+                tensor_parallel_size=tensor_parallel_size,
+            )
+            pretrain(pretrain_cfg, forward_step)
+            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+
+            # Phase 2: LoRA finetuning with TP=2
+            lora_cfg = self._create_lora_config(
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+                tensor_parallel_size=tensor_parallel_size,
+            )
+            finetune(lora_cfg, forward_step)
+            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+
+            # Capture adapter weights from the trained model before it's destroyed
+            global_state = GlobalState()
+            model = global_state.model
+            saved_adapter_weights = {}
+            for chunk in model:
+                for name, param in chunk.named_parameters():
+                    if "adapter" in name.lower() or "lora" in name.lower():
+                        saved_adapter_weights[name] = param.data.clone().cpu()
+
+            # Clear global state to force fresh model creation
+            global_state.reset()
+            torch.distributed.barrier()
+
+            # Phase 3: Load checkpoint into fresh model
+            lora_load_cfg = self._create_lora_config(
+                lora_iters + 1,  # Dummy, we just want to load
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+                tensor_parallel_size=tensor_parallel_size,
+                load_checkpoint=lora_checkpoint_dir,
+            )
+            lora_load_cfg.train.train_iters = 0  # Don't train, just load
+            lora_load_cfg.train.eval_iters = 0
+
+            # Initialize model and load checkpoint
+            from megatron.bridge.training.finetune import _initialize_training
+
+            _initialize_training(lora_load_cfg, forward_step)
+
+            # Get loaded model and compare weights
+            loaded_model = global_state.model
+            loaded_adapter_weights = {}
+            for chunk in loaded_model:
+                for name, param in chunk.named_parameters():
+                    if "adapter" in name.lower() or "lora" in name.lower():
+                        loaded_adapter_weights[name] = param.data.clone().cpu()
+
+            # Verify all adapter weights match
+            tp_rank = torch.distributed.get_rank() % tensor_parallel_size
+            assert len(saved_adapter_weights) > 0, f"TP rank {tp_rank}: No adapter weights found in saved model"
+            assert len(loaded_adapter_weights) > 0, f"TP rank {tp_rank}: No adapter weights found in loaded model"
+            assert set(saved_adapter_weights.keys()) == set(loaded_adapter_weights.keys()), (
+                f"TP rank {tp_rank}: Adapter weight keys mismatch.\n"
+                f"Saved: {sorted(saved_adapter_weights.keys())}\n"
+                f"Loaded: {sorted(loaded_adapter_weights.keys())}"
+            )
+
+            for name in saved_adapter_weights:
+                saved_weight = saved_adapter_weights[name]
+                loaded_weight = loaded_adapter_weights[name]
+
+                # Check for zero weights (symptom of the bug we're fixing)
+                if torch.all(loaded_weight == 0) and not torch.all(saved_weight == 0):
+                    raise AssertionError(
+                        f"TP rank {tp_rank}: Loaded adapter weight '{name}' is all zeros but saved weight was not!\n"
+                        f"This indicates the TP shard was not saved correctly (replica_id bug).\n"
+                        f"Saved weight norm: {saved_weight.norm().item():.6f}"
+                    )
+
+                # Verify exact match
+                if not torch.allclose(saved_weight, loaded_weight, atol=1e-6):
+                    raise AssertionError(
+                        f"TP rank {tp_rank}: Adapter weight '{name}' mismatch after save/load!\n"
+                        f"Saved weight norm: {saved_weight.norm().item():.6f}\n"
+                        f"Loaded weight norm: {loaded_weight.norm().item():.6f}\n"
+                        f"Max diff: {(saved_weight - loaded_weight).abs().max().item():.6f}"
+                    )
+
+            # All ranks verify their weights matched
+            torch.distributed.barrier()
+
+        finally:
+            # Clean up global state
+            try:
+                GlobalState().reset()
+            except Exception:
+                pass
+            clear_directories(shared_base_dir)
+
+    def _create_model_provider(self, seq_length=512, tensor_parallel_size=1, pipeline_parallel_size=1):
+        """Create a model provider with specified configuration."""
+        return Llama3ModelProvider145M(
+            seq_length=seq_length,
+            tensor_model_parallel_size=tensor_parallel_size,
+            pipeline_model_parallel_size=pipeline_parallel_size,
+            sequence_parallel=(tensor_parallel_size > 1),
+        )
+
+    def _create_training_config(self, train_iters, global_batch_size=8, micro_batch_size=1):
+        """Create a training configuration."""
+        return TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=5,
+            eval_iters=0,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+        )
+
+    def _create_optimizer_config(self, lr=3e-3):
+        """Create an optimizer configuration."""
+        return OptimizerConfig(
+            optimizer="adam",
+            adam_beta1=0.9,
+            adam_beta2=0.95,
+            adam_eps=1e-8,
+            use_distributed_optimizer=True,
+            clip_grad=1.0,
+            lr=lr,
+            weight_decay=0.01,
+            min_lr=1e-6 if lr > 1e-4 else 1e-7,
+        )
+
+    def _create_scheduler_config(self, total_iters):
+        """Create a scheduler configuration."""
+        return SchedulerConfig(
+            start_weight_decay=0.033,
+            end_weight_decay=0.033,
+            weight_decay_incr_style="constant",
+            lr_decay_style="cosine",
+            lr_warmup_iters=2 if total_iters >= 10 else 1,
+            lr_warmup_init=0.0,
+            lr_decay_iters=total_iters,
+        )
+
+    def _create_ddp_config(self):
+        """Create a DDP configuration."""
+        return DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
+            use_distributed_optimizer=True,
+        )
+
+    def _create_mock_dataset_config(self, seq_length, seed=1234):
+        """Create a mock dataset configuration."""
+        return MockGPTDatasetConfig(
+            random_seed=seed,
+            reset_attention_mask=False,
+            reset_position_ids=False,
+            eod_mask_loss=False,
+            seq_length=seq_length,
+            num_dataset_builder_threads=1,
+            data_sharding=True,
+            dataloader_type="single",
+            num_workers=1,
+        )
+
+    def _create_squad_dataset_config(self, seq_length, seed=5678, packed_sequences=False, max_train_samples=None):
+        """Create a SQuAD dataset configuration."""
+        if packed_sequences:
+            dataset_kwargs = {"pad_to_max_length": True}
+            packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
+        else:
+            dataset_kwargs = {}
+            packed_sequence_specs = None
+
+        config = HFDatasetConfig(
+            dataset_name="squad",
+            process_example_fn=process_squad_example,
+            seq_length=seq_length,
+            seed=seed,
+            dataloader_type="cyclic" if packed_sequences else "single",
+            num_workers=1,
+            do_validation=False,
+            do_test=False,
+            val_proportion=None,
+            dataset_kwargs=dataset_kwargs,
+            packed_sequence_specs=packed_sequence_specs,
+            max_train_samples=max_train_samples,
+            rewrite=False,
+        )
+
+        return config
+
+    def _create_pretrain_tokenizer_config(self):
+        """Create a tokenizer configuration for pretraining."""
+        return TokenizerConfig(
+            tokenizer_type="NullTokenizer",
+            vocab_size=9999,
+        )
+
+    def _create_finetune_tokenizer_config(self):
+        """Create a tokenizer configuration for finetuning."""
+        return TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="gpt2",
+        )
+
+    def _create_logger_config(self, tensorboard_dir):
+        """Create a logger configuration."""
+        return LoggerConfig(
+            log_interval=5,
+            tensorboard_dir=tensorboard_dir,
+        )
+
+    def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None):
+        """Create a checkpoint configuration."""
+        return CheckpointConfig(
+            save_interval=save_interval,
+            save=save_dir,
+            pretrained_checkpoint=pretrained_checkpoint,
+            load=load_dir,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+            async_save=True,
+            dist_ckpt_optim_fully_reshardable=True,
+        )
+
+    def _create_rng_config(self, seed=1234):
+        """Create an RNG configuration."""
+        return RNGConfig(seed=seed)
+
+    def _create_lora_peft(self, dim=16, alpha=32, dropout=0.1):
+        """Create a LoRA PEFT configuration."""
+        return LoRA(
+            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+            dim=dim,
+            alpha=alpha,
+            dropout=dropout,
+        )
+
+    def _create_pretrain_config(
+        self,
+        train_iters,
+        checkpoint_dir,
+        tensorboard_dir,
+        seq_length=512,
+        tensor_parallel_size=1,
+        pipeline_parallel_size=1,
+    ):
+        """Create complete pretrain configuration with model."""
+        model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
+
+        return ConfigContainer(
+            model=model,
+            train=self._create_training_config(train_iters),
+            optimizer=self._create_optimizer_config(),
+            scheduler=self._create_scheduler_config(train_iters),
+            ddp=self._create_ddp_config(),
+            dataset=self._create_mock_dataset_config(seq_length),
+            logger=self._create_logger_config(tensorboard_dir),
+            tokenizer=self._create_pretrain_tokenizer_config(),
+            checkpoint=self._create_checkpoint_config(train_iters, checkpoint_dir),
+            rng=self._create_rng_config(),
+            mixed_precision="bf16_mixed",
+        )
+
+    def _create_lora_config(
+        self,
+        train_iters,
+        checkpoint_dir,
+        tensorboard_dir,
+        pretrained_checkpoint_dir,
+        seq_length=512,
+        tensor_parallel_size=1,
+        pipeline_parallel_size=1,
+        packed_sequences=False,
+        load_checkpoint=None,
+        scheduler_total_iters=None,
+        max_train_samples=None,
+    ):
+        """Create complete LoRA finetuning configuration with model and PEFT."""
+        model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
+        lora_peft = self._create_lora_peft()
+
+        # Use scheduler_total_iters if provided, otherwise use train_iters
+        scheduler_iters = scheduler_total_iters if scheduler_total_iters is not None else train_iters
+
+        return ConfigContainer(
+            model=model,
+            train=self._create_training_config(train_iters),
+            optimizer=self._create_optimizer_config(lr=1e-4),
+            scheduler=self._create_scheduler_config(scheduler_iters),
+            ddp=self._create_ddp_config(),
+            dataset=self._create_squad_dataset_config(
+                seq_length, packed_sequences=packed_sequences, max_train_samples=max_train_samples
+            ),
+            logger=self._create_logger_config(tensorboard_dir),
+            tokenizer=self._create_finetune_tokenizer_config(),
+            checkpoint=self._create_checkpoint_config(
+                train_iters, checkpoint_dir, pretrained_checkpoint_dir, load_checkpoint
+            ),
+            rng=self._create_rng_config(seed=5678),
+            peft=lora_peft,
+            mixed_precision="bf16_mixed",
+        )
+
+    def _setup_directories(self, base_dir, suffix=""):
+        """Setup test directories."""
+        pretrain_checkpoint_dir = os.path.join(base_dir, f"pretrain_checkpoints{suffix}")
+        pretrain_tensorboard_dir = os.path.join(base_dir, f"pretrain_tensorboard{suffix}")
+        lora_checkpoint_dir = os.path.join(base_dir, f"lora_checkpoints{suffix}")
+        lora_tensorboard_dir = os.path.join(base_dir, f"lora_tensorboard{suffix}")
+
+        if torch.distributed.get_rank() == 0:
+            os.makedirs(pretrain_checkpoint_dir, exist_ok=True)
+            os.makedirs(pretrain_tensorboard_dir, exist_ok=True)
+            os.makedirs(lora_checkpoint_dir, exist_ok=True)
+            os.makedirs(lora_tensorboard_dir, exist_ok=True)
+
+        return pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir
