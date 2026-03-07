@@ -105,38 +105,64 @@ def cyclic_iter(iter: Iterable) -> Iterator:
             yield x
 
 
-def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, int]:
+def get_train_valid_test_num_samples(cfg: ConfigContainer, current_step: int = 0) -> tuple[int, int, int]:
     """Calculate the number of samples for train, validation, and test sets.
 
     Determines sample counts based on training mode either specified iterations or samples,
     global batch size, and evaluation interval/iterations specified in the config.
 
+    For multi-phase pretraining with phase_transition_iterations, returns train samples
+    for the current phase only. This ensures the dataset is sized appropriately for each
+    phase when data mixtures change at phase boundaries.
+
     Args:
         cfg: The main configuration container.
+        current_step: Current training iteration, used for multi-phase training to
+            determine which phase we're in. Defaults to 0 for initial dataset building.
 
     Returns:
-        A tuple (train_samples, valid_samples, test_samples).
+        A tuple (train_samples_in_current_phase, valid_samples, test_samples).
     """
 
     # If train_samples is directly provided, use it
     if cfg.train.train_samples is not None:
-        train_samples = cfg.train.train_samples
+        total_train_samples = cfg.train.train_samples
     else:
         # Otherwise fallback to calculating samples based on iterations and global batch size
-        train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+        total_train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+
+    # For multi-phase pretraining, calculate samples in current phase only.
+    # This only applies to GPTDatasetConfig (pretraining), not finetuning or custom providers.
+    if cfg.train.phase_transition_iterations and isinstance(cfg.dataset, GPTDatasetConfig):
+        # Build list of sample boundaries: [0, phase1_end, phase2_end, ..., total_samples]
+        phase_transition_samples = (
+            [0]
+            + [t * cfg.train.global_batch_size for t in cfg.train.phase_transition_iterations]
+            + [total_train_samples]
+        )
+        current_sample = current_step * cfg.train.global_batch_size
+
+        # Find the phase boundaries for current position
+        last_transition_sample = max(s for s in phase_transition_samples if s <= current_sample)
+        next_transition_sample = min(s for s in phase_transition_samples if s > current_sample)
+        train_samples_in_current_phase = next_transition_sample - last_transition_sample
+    else:
+        train_samples_in_current_phase = total_train_samples
 
     eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
     test_iters = cfg.validation.eval_iters
 
     return (
-        train_samples,
+        train_samples_in_current_phase,
         eval_iters * cfg.train.global_batch_size,
         test_iters * cfg.train.global_batch_size,
     )
 
 
 def build_train_valid_test_datasets(
-    cfg: ConfigContainer, build_train_valid_test_datasets_provider: Callable
+    cfg: ConfigContainer,
+    build_train_valid_test_datasets_provider: Callable,
+    current_step: int = 0,
 ) -> tuple[Any, Any, Any]:
     """Build train, validation, and test datasets using a provider function.
 
@@ -144,11 +170,13 @@ def build_train_valid_test_datasets(
         cfg: The main configuration container.
         build_train_valid_test_datasets_provider: A function that takes
             train_val_test_num_samples and dataset_config and returns the datasets.
+        current_step: Current training iteration, used for multi-phase training to
+            determine which phase we're in. Defaults to 0 for initial dataset building.
 
     Returns:
         A tuple (train_dataset, valid_dataset, test_dataset).
     """
-    train_valid_test_num_samples = get_train_valid_test_num_samples(cfg)
+    train_valid_test_num_samples = get_train_valid_test_num_samples(cfg, current_step)
     print_rank_0(" > datasets target sizes (minimum size):")
     print_rank_0("    train:      {}".format(train_valid_test_num_samples[0]))
     print_rank_0("    validation: {}".format(train_valid_test_num_samples[1]))
@@ -161,16 +189,20 @@ def build_train_valid_test_data_loaders(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
-) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
+) -> tuple[DataLoader | None, DataLoader | None, DataLoader | None]:
     """Build train, validation, and test data loaders.
 
     First builds the datasets using the provided provider function, then constructs
     PyTorch DataLoaders with appropriate sampling and configuration.
 
+    For multi-phase pretraining with phase_transition_iterations, calculates consumed
+    samples within the current phase to properly resume training after phase transitions.
+
     Args:
         cfg: The main configuration container.
         train_state: The current training state.
         build_train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data parallel process group for distributed training.
 
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
@@ -180,9 +212,11 @@ def build_train_valid_test_data_loaders(
     print_rank_0("> building train, validation, and test datasets ...")
 
     # Construct the data pipeline
-    # Build datasets.
+    # Build datasets with current step for phase-aware sample calculation
     train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
-        cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
+        cfg=cfg,
+        build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
+        current_step=train_state.step,
     )
 
     exit_signal = cfg.train.exit_signal
@@ -196,10 +230,22 @@ def build_train_valid_test_data_loaders(
     dp_rank = torch.distributed.get_rank(group=dp_group)
     dp_size = torch.distributed.get_world_size(group=dp_group)
 
+    # Calculate consumed train samples for dataloader positioning.
+    # For multi-phase pretraining, we need samples consumed in current phase only,
+    # since each phase rebuilds the dataset from scratch.
+    if cfg.train.phase_transition_iterations and isinstance(cfg.dataset, GPTDatasetConfig):
+        # Find the last phase transition at or before current step
+        last_transition = max(
+            iteration for iteration in (0, *cfg.train.phase_transition_iterations) if iteration <= train_state.step
+        )
+        consumed_train_samples = (train_state.step - last_transition) * cfg.train.global_batch_size
+    else:
+        consumed_train_samples = train_state.consumed_train_samples
+
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
         train_ds,
-        train_state.consumed_train_samples,
+        consumed_train_samples,
         cfg.dataset.dataloader_type,
         cfg.train.micro_batch_size,
         cfg.dataset.num_workers,
