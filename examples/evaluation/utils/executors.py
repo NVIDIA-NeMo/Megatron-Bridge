@@ -99,11 +99,9 @@ def kuberay_executor(
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
         "RAY_enable_infeasible_task_early_exit": "true",
-        "NCCL_IB_DISABLE": "1",
-        "NCCL_IB_HCA": "^openib",  # Ignore OpenIB devices
-        "NCCL_NET": "Socket",
-        "NCCL_NET_GDR_LEVEL": "0",
-        "FI_PROVIDER": "tcp",
+        "NCCL_NET": "FasTrak",
+        "NCCL_SOCKET_IFNAME": "eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8",
+        "NCCL_FASTRAK_CTRL_DEV": "eth0",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
