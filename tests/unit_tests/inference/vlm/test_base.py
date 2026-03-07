@@ -247,6 +247,7 @@ class TestSetupInferenceWrapper:
         # Build the nested structure: model.module.language_model.decoder
         mock_language_model = MockObject()
         mock_language_model.decoder = mock_decoder
+        mock_language_model.vocab_size = 151936
 
         mock_module = MockObject()
         mock_module.language_model = mock_language_model

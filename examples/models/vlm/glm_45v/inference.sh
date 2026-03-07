@@ -17,7 +17,7 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # GLM-4.5V is a large MoE model (106B parameters)
-# Using TP=1, PP=4, EP=2 for inference (8 GPUs minimum)
+# Using TP=1, PP=2, EP=4 for inference (8 GPUs minimum)
 
 # Inference with Hugging Face checkpoints
 uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
@@ -26,8 +26,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf
     --prompt "Describe this image." \
     --max_new_tokens 50 \
     --tp 1 \
-    --pp 4 \
-    --ep 2 \
+    --pp 2 \
+    --ep 4 \
     --trust_remote_code
 
 # Inference with imported Megatron checkpoints

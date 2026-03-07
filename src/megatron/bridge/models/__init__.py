@@ -106,6 +106,7 @@ from megatron.bridge.models.llama_nemotron import (
     LlamaNemotronHeterogeneousProvider,
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -186,6 +187,10 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
     Qwen25VLModel,
     Qwen25VLModelProvider,
+    Qwen35VLBridge,
+    Qwen35VLModelProvider,
+    Qwen35VLMoEBridge,
+    Qwen35VLMoEModelProvider,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLBridge,
@@ -193,6 +198,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLModelProvider,
     Qwen3VLMoEBridge,
     Qwen3VLMoEModelProvider,
+)
+from megatron.bridge.models.sarvam import (
+    SarvamMLABridge,
+    SarvamMoEBridge,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
@@ -317,6 +326,7 @@ __all__ = [
     "NemotronNano12Bv2Provider",
     "Nemotron3NanoProvider",
     "MambaModelProvider",
+    "MimoBridge",
     # Nemotron Models
     "NemotronBridge",
     "NemotronModelProvider",
@@ -334,6 +344,10 @@ __all__ = [
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
+    "Qwen35VLBridge",
+    "Qwen35VLModelProvider",
+    "Qwen35VLMoEBridge",
+    "Qwen35VLMoEModelProvider",
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",
@@ -345,4 +359,6 @@ __all__ = [
     "Qwen3OmniMoeModel",
     "Qwen3OmniMoeBridge",
     "Qwen3OmniMoeModelProvider",
+    "SarvamMLABridge",
+    "SarvamMoEBridge",
 ]

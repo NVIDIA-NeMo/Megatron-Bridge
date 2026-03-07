@@ -21,7 +21,16 @@ from pathlib import Path
 
 import pytest
 import torch
+from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, dynamic_module_utils
+
+
+def _fix_tied_weights_keys(model: nn.Module):
+    """Convert _tied_weights_keys from list to dict for transformers 5.x compatibility."""
+    for module in model.modules():
+        tied = getattr(module, "_tied_weights_keys", None)
+        if isinstance(tied, list):
+            module._tied_weights_keys = {k: k for k in tied}
 
 
 # Overrides for 8B size
@@ -93,6 +102,8 @@ class TestNemotronHConversion:
         # Download and save tokenizer from a reference NemotronH model
         tokenizer = AutoTokenizer.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         tokenizer.save_pretrained(model_dir)
+
+        _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
         model.save_pretrained(model_dir, safe_serialization=True)
@@ -342,6 +353,8 @@ class TestNemotron3NanoConversion:
         # Download and save tokenizer from the reference Nemotron-3-Nano model
         tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
         tokenizer.save_pretrained(model_dir)
+
+        _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
         model.save_pretrained(model_dir, safe_serialization=True)

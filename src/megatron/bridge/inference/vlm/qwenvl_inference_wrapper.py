@@ -31,8 +31,8 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         model (Qwen2VLModel): The Qwen2VL model
     """
 
-    def __init__(self, model):
-        super().__init__(model)
+    def __init__(self, model, inference_context=None):
+        super().__init__(model, inference_context=inference_context)
 
     def prep_inference_input(
         self,

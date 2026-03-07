@@ -12,112 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 import torch
-from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider1B
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedDataParallelConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-    ValidationConfig,
-)
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
-
-
-class Gemma3CommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Gemma3 family recipe helpers."""
-
-    # Core identifiers
-    provider_class: type
-    hf_path: str | None
-    dir: str | None
-    name: str
-    # Dataset configuration
-    data_paths: list[str] | None
-    data_args_path: str | None
-    train_data_path: list[str] | None
-    valid_data_path: list[str] | None
-    test_data_path: list[str] | None
-    per_split_data_args_path: str | None
-    mock: bool
-    # Model configuration
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: torch.dtype | None
-    virtual_pipeline_model_parallel_size: int | None
-    context_parallel_size: int
-    sequence_parallel: bool
-    use_megatron_fsdp: bool
-    account_for_embedding_in_pipeline_split: bool
-    account_for_loss_in_pipeline_split: bool
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: int
-    micro_batch_size: int
-    seq_length: int
-    lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: int | None
-    eval_interval: int
-    save_interval: int
-    use_null_tokenizer: bool
-    # Precision / overlap configs
-    precision_config: MixedPrecisionConfig | str | None
-    comm_overlap_config: CommOverlapConfig | None
-
-
-class Gemma3FinetuneKwargs(TypedDict, total=False):
-    """Typed options accepted by Gemma3 finetuning recipe helper functions.
-
-    This is separate from Gemma3CommonKwargs to avoid confusion - finetuning
-    uses SQuAD dataset by default, not the data path fields.
-    """
-
-    # Core identifiers
-    dir: str | None
-    name: str
-
-    # Finetuning-specific
-    pretrained_checkpoint: str | None
-    peft: str | PEFT | None
-    packed_sequence: bool
-
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: int | None
-    micro_batch_size: int
-    seq_length: int | None
-    eval_interval: int
-    save_interval: int
-
-    # Optimizer
-    finetune_lr: float | None
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: int | None
-
-    # W&B logging
-    wandb_project: str | None
-    wandb_entity: str | None
-    wandb_exp_name: str | None
-
-    # Precision
-    precision_config: MixedPrecisionConfig | str | None
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 # Sequence length constants
@@ -220,127 +125,16 @@ def gemma3_1b_pretrain_config() -> ConfigContainer:
 
 
 # ============================================================================
-# Finetuning Configurations
+# SFT Configs
 # ============================================================================
 
 
-def gemma3_1b_finetune_config(**user_kwargs: Unpack[Gemma3FinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for Gemma3 1B.
+def _adjust_gemma3_vocab_size(model_cfg, hf_path: str):
+    """Adjust vocab size for Gemma3 (model vocab < tokenizer vocab).
 
-    Default configuration: 1 node, 8 GPUs, LoRA
-    - LoRA (default): TP=1, PP=1, LR=1e-4, dim=8, alpha=16
-    - DoRA: TP=1, PP=1, LR=1e-4, dim=8, alpha=16
-    - Full SFT (peft=None): TP=1, PP=1, LR=5e-6
-
-    Matches NeMo2 recipe at nemo/collections/llm/recipes/gemma3_1b.py
+    Note: This requires HuggingFace authentication for Gemma3 models.
+    If the tokenizer cannot be loaded, the vocab size adjustment is skipped.
     """
-    peft = user_kwargs.pop("peft", "lora")
-    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
-
-    # Auto-select LR if not specified
-    finetune_lr = user_kwargs.get("finetune_lr")
-    if finetune_lr is None:
-        finetune_lr = 5e-6 if is_full_sft else 1e-4
-        user_kwargs["finetune_lr"] = finetune_lr
-
-    # Build base config
-    config = _gemma3_finetune_common(hf_path="google/gemma-3-1b-pt", **user_kwargs)
-
-    # Model-specific parallelism settings
-    config.model.tensor_model_parallel_size = 1
-    config.model.pipeline_model_parallel_size = 1
-    config.model.context_parallel_size = 1
-    config.model.sequence_parallel = False
-
-    # PEFT or Full SFT specific settings
-    if is_full_sft:
-        config.peft = None
-    else:
-        # PEFT (LoRA, DoRA, or custom)
-        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
-            config.peft = default_peft_config(peft)
-            config.peft.dim = 8
-            config.peft.alpha = 16
-        else:
-            config.peft = peft
-        config.model.cross_entropy_loss_fusion = False
-        config.optimizer.use_distributed_optimizer = False
-
-    return config
-
-
-def _gemma3_finetune_common(
-    hf_path: str,
-    dir: str | None = None,
-    name: str = "default",
-    # Finetuning-specific
-    pretrained_checkpoint: str | None = None,
-    packed_sequence: bool = False,
-    # Training hyperparameters
-    train_iters: int = 100,
-    global_batch_size: int | None = None,
-    micro_batch_size: int = 1,
-    seq_length: int | None = None,
-    eval_interval: int = 50,
-    save_interval: int = 100,
-    # Optimizer
-    finetune_lr: float | None = None,
-    min_lr: float = 0.0,
-    lr_warmup_iters: int = 10,
-    lr_decay_iters: int | None = None,
-    # W&B logging
-    wandb_project: str | None = None,
-    wandb_entity: str | None = None,
-    wandb_exp_name: str | None = None,
-    # Precision
-    precision_config: MixedPrecisionConfig | str | None = None,
-) -> ConfigContainer:
-    """
-    Create a finetuning configuration for Gemma3 models.
-
-    Args:
-        hf_path (str): HuggingFace model path (e.g., "google/gemma-3-1b-pt").
-        dir (str | None): Base directory for saving logs and checkpoints.
-        name (str): Name of the finetuning run.
-        pretrained_checkpoint (str | None): Path to pretrained checkpoint to load.
-        packed_sequence (bool): Whether to use packed sequences for training efficiency.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int | None): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int | None): Sequence length for training data.
-        eval_interval (int): Evaluation interval.
-        save_interval (int): Checkpoint save interval.
-        finetune_lr (float | None): Learning rate for finetuning.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (int | None): Number of iterations over which to decay the LR.
-        wandb_project (str | None): Weights & Biases project name.
-        wandb_entity (str | None): Weights & Biases entity name.
-        wandb_exp_name (str | None): Weights & Biases experiment name.
-        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
-
-    Returns:
-        ConfigContainer: Configuration for finetuning.
-    """
-    # Default sequence length for finetuning
-    if seq_length is None:
-        seq_length = 4096 if packed_sequence else 2048
-
-    # Default global batch size
-    if global_batch_size is None:
-        global_batch_size = 32
-
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-
-    # Create model config using AutoBridge (like Qwen3)
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
-
-    # Adjust vocab size for Gemma3 (model vocab < tokenizer vocab)
-    # Gemma3 uses a smaller vocab size than the tokenizer, so we need to pad
     if hasattr(model_cfg, "vocab_size") and hf_path:
         from transformers import AutoTokenizer
 
@@ -348,81 +142,250 @@ def _gemma3_finetune_common(
         if len(tokenizer) > model_cfg.vocab_size:
             model_cfg.vocab_size = len(tokenizer)
 
-    model_cfg.seq_length = seq_length
 
-    # Precision configuration
-    if precision_config is None:
-        precision_config = bf16_mixed()
-    elif isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
+def gemma3_1b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Gemma3 1B.
 
-    # Optimizer and scheduler
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=finetune_lr if finetune_lr is not None else 1e-4,
-        min_lr=min_lr,
-    )
+    Default parallelism: TP=1, PP=1
 
-    pad_seq_to_mult = (
-        model_cfg.context_parallel_size * 2 if packed_sequence and model_cfg.context_parallel_size > 1 else 1
-    )
-    # Dataset configuration (SQuAD by default)
-    dataset_config = default_squad_config(
-        seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
-    )
+    Returns:
+        ConfigContainer with all settings pre-configured for Gemma3 1B SFT.
+    """
+    cfg = _sft_common()
 
-    # W&B logger configuration
-    logger_config = LoggerConfig(
-        log_interval=10,
-        tensorboard_dir=tensorboard_dir,
-        log_timers_to_tensorboard=True,
-        wandb_project=wandb_project,
-        wandb_entity=wandb_entity,
-        wandb_exp_name=wandb_exp_name,
-    )
+    # Model config from HuggingFace
+    hf_path = "google/gemma-3-1b-pt"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    _adjust_gemma3_vocab_size(cfg.model, hf_path)
 
-    # Config Container
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        validation=ValidationConfig(
-            eval_interval=eval_interval,
-            eval_iters=10,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,
-            use_distributed_optimizer=True,
-        ),
-        dataset=dataset_config,
-        logger=logger_config,
-        tokenizer=TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model=hf_path,
-        ),
-        checkpoint=CheckpointConfig(
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            pretrained_checkpoint=pretrained_checkpoint,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=5678),  # Different seed for finetuning
-        mixed_precision=precision_config,
-    )
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
+
+    # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
+    # With packed_sequence=True (default), seq_length is 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+
+    # Packed sequence settings
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # Parallelism settings
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # Mixed precision - use bf16_mixed config object
+    cfg.mixed_precision = bf16_mixed()
+
+    # Training config
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # Optimizer config
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Scheduler config
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.max_lr = 5e-6
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # Gemma3 uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _sft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = True
+
+    # RNG seed
+    cfg.rng.seed = 5678
+
+    return cfg
+
+
+# =============================================================================
+# PEFT Configs
+# =============================================================================
+
+
+def gemma3_1b_peft_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for Gemma3 1B.
+
+    Default parallelism: TP=1, PP=1
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+
+    Returns:
+        ConfigContainer with all settings pre-configured for Gemma3 1B PEFT.
+    """
+    cfg = _peft_common()
+
+    # Model config from HuggingFace
+    hf_path = "google/gemma-3-1b-pt"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    _adjust_gemma3_vocab_size(cfg.model, hf_path)
+
+    # Tokenizer
+    cfg.tokenizer.tokenizer_model = hf_path
+
+    # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
+    # With packed_sequence=True (default), seq_length is 4096
+    seq_length = 4096
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+
+    # PEFT config - Gemma3 uses dim=8, alpha=16 for LoRA/DoRA
+    peft_cfg = default_peft_config(peft_scheme)
+    cfg.peft = peft_cfg
+
+    # Set LoRA/DoRA specific settings
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        peft_cfg.dim = 8
+        peft_cfg.alpha = 16
+
+    # Packed sequence settings
+    if cfg.model.context_parallel_size > 1:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
+    # Parallelism settings
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # Mixed precision - use bf16_mixed config object
+    cfg.mixed_precision = bf16_mixed()
+
+    # Training config
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Logger config
+    cfg.logger.log_interval = 10
+
+    # Optimizer config - PEFT uses higher learning rate
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_distributed_optimizer = False  # PEFT disables distributed optimizer
+
+    # Scheduler config - PEFT uses higher learning rate
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.max_lr = 1e-4
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections - PEFT disables cross_entropy_loss_fusion
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = False  # PEFT disables this
+    cfg.model.cross_entropy_fusion_impl = "native"  # Gemma3 uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # FP8 & MXFP8 (mixed_precision settings)
+    # Note: mixed_precision="bf16_mixed" is set in _peft_common as default
+    # These are defaults for FP8, enable them if using FP8 - FP8 is not enabled by default
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"  # default, uncomment to enable
+    # cfg.mixed_precision.fp8 = None  # not enabled by default
+    # cfg.mixed_precision.fp8_param_gather = False  # default
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
+
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.checkpoint.fully_parallel_save = True
+    # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.average_in_collective = True
+
+    # RNG seed
+    cfg.rng.seed = 5678
 
     return cfg

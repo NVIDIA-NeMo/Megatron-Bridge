@@ -18,25 +18,16 @@ from typing import List
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
-from megatron.bridge.models import (
-    Qwen2ModelProvider,
-)
-
-from .modeling_qwen25_vl import Qwen25VLModel
-
-
-# =============================================================================
-# Qwen 2.5 VL Model Providers
-# =============================================================================
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 
 
 @dataclass
-class Qwen25VLModelProvider(Qwen2ModelProvider):
+class Qwen25VLModelProvider(GPTModelProvider):
     """
     Base model provider for Qwen 2.5 VL Models.
     """
 
-    # Language configuration inherited from Qwen25ModelProvider3B
     # VL models shouldn't scatter embeddings across sequence parallel regions because
     # the vision embeddings are going to be inserted into the language embeddings.
     scatter_embedding_sequence_parallel: bool = False
@@ -45,6 +36,7 @@ class Qwen25VLModelProvider(Qwen2ModelProvider):
 
     # Vision configuration
     vision_config: Qwen2_5_VLVisionConfig = field(default_factory=Qwen2_5_VLVisionConfig)
+    return_dict: bool = True
 
     # Token IDs
     bos_token_id: int = 151643
@@ -74,4 +66,4 @@ class Qwen25VLModelProvider(Qwen2ModelProvider):
         return model
 
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

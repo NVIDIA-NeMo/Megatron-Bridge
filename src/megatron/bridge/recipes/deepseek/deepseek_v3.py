@@ -101,9 +101,9 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     # MoE Token Dispatcher settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"  # Default from DeepSeekModelProvider
-    apply_flex_dispatcher_backend(cfg.model, None)
-    cfg.model.moe_flex_dispatcher_backend = "deepep"  # Options: None, deepep, hybridep
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16  # Number of SMs for hybridep backend
 
     # Training config (DIFFERENT from _pretrain_common)
@@ -168,6 +168,7 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = True  # Default from DeepSeekModelProvider
 
     # Checkpoint config (DIFFERENT from _pretrain_common: save_interval=2000 vs 500)
@@ -191,6 +192,8 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
 
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
 
@@ -248,9 +251,9 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     # MoE Token Dispatcher settings
+    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    apply_flex_dispatcher_backend(cfg.model, None)
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"  # Options: None, deepep, hybridep
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config
@@ -310,6 +313,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = True
 
     # Checkpoint config
@@ -330,5 +334,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
 
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
