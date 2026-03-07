@@ -55,7 +55,7 @@ class NemotronVLBridge(MegatronModelBridge):
         provider = NemotronNano12Bv2VLModelProvider(**provider_kwargs)
 
         # Nemotron VL-specific settings
-        # Note: Most defaults come from the provider class hierarchy (NemotronNano12Bv2Provider)
+        # Note: Most defaults come from the provider class hierarchy (NemotronNano12Bv2VLModelProvider)
         provider.scatter_embedding_sequence_parallel = False
         provider.attention_softmax_in_fp32 = True
 

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.gpt_oss.gpt_oss_bridge import GPTOSSBridge
+from megatron.bridge.models.minimax_m2.minimax_m2_bridge import MiniMaxM2Bridge  # noqa: F401
 
 
 __all__ = [
-    "GPTOSSBridge",
+    "MiniMaxM2Bridge",
 ]
