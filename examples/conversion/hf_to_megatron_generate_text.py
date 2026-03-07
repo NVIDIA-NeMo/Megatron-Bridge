@@ -167,9 +167,9 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    # TEMP FIX for inference failure when mtp_num_layers is not None
     for m in model:
-        m.config.mtp_num_layers = None
+        if hasattr(m, "mtp_process"):
+            m.mtp_process = False
 
     model = [m.cuda() for m in model]
     for m in model:

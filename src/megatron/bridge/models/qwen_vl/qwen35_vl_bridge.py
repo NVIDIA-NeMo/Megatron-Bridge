@@ -39,6 +39,8 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ConcatenatedQKVMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     GDNConv1dMapping,
     GDNLinearMappingSeparate,
@@ -48,11 +50,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import (
-    ExpertMLPDownProjMapping,
-    ExpertMLPGateUpProjMapping,
-    Qwen3VLMoEBridge,
-)
+from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import Qwen3VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
@@ -328,11 +326,11 @@ class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
                 # Language Model: MoE Expert MLPs (routed experts)
                 # Uses GatedMLPMapping for gate+up projection fusion
                 # =============================================================
-                ExpertMLPGateUpProjMapping(
+                FusedGatedExpertMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
                     hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
                 ),
-                ExpertMLPDownProjMapping(
+                FusedExpertMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="model.language_model.layers.*.mlp.experts.down_proj",
                 ),
