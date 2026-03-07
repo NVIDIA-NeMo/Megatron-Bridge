@@ -49,6 +49,8 @@ export WKDIR="${WKDIR:-}"
 
 # Model and training configurations
 MODEL_NAME=gpt_oss_20b
+# RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_pretrain_config}"
+RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"
 DATASET_NAME=dclm  # set to "mock" for mock data; "dclm" uses DCLM when DCLM_DATA_DIR/DCLM_CACHE are set below
 SEQ_LENGTH=4096
 
@@ -188,9 +190,8 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     if [ -n "$DCLM_DATASET_OVERRIDES" ]; then
         CLI_OVERRIDES="$CLI_OVERRIDES $DCLM_DATASET_OVERRIDES"
     fi
-
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_pretrain_config"
+    CMD="$CMD --recipe ${RECIPE_NAME}"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."
