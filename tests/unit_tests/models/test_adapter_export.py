@@ -153,6 +153,17 @@ class TestBuildAdapterConfigDict:
 
 
 class TestMergeSingleAdapterWeight:
+    """Tests for _merge_single_adapter_weight; patch parallel_state so merge runs as tp_size=1."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_tensor_parallel(self):
+        """Avoid 'tensor model parallel group is not initialized' in unit test (no dist init)."""
+        with patch(
+            "megatron.bridge.peft.lora.parallel_state.get_tensor_model_parallel_world_size",
+            return_value=1,
+        ):
+            yield
+
     def test_merge_in_float32(self):
         """Verify that LoRA merge happens in float32 and result cast back."""
         bridge = MegatronPeftBridge()
