@@ -99,11 +99,9 @@ def kuberay_executor(
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
         "RAY_enable_infeasible_task_early_exit": "true",
-        "NCCL_IB_DISABLE": "1",
-        "NCCL_IB_HCA": "^openib",  # Ignore OpenIB devices
-        "NCCL_NET": "Socket",
-        "NCCL_NET_GDR_LEVEL": "0",
-        "FI_PROVIDER": "tcp",
+        "NCCL_NET": "tcpxo",
+        "NCCL_SOCKET_IFNAME": "eth1,eth2,eth3,eth4,eth5,eth6,eth7,eth8",
+        "NCCL_FASTRAK_CTRL_DEV": "eth0",
     }
     if custom_env_vars:
         env_vars.update(custom_env_vars)
@@ -132,8 +130,11 @@ def kuberay_executor(
         spec_kwargs={
             "schedulerName": "runai-scheduler",
             "image_pull_secrets": ["dockerregistry-dockerregistry-pagaray-ngc"],
+            "dnsConfig": {"options": [{"name": "ndots", "value": "1"}, {"name": "single-request-reopen"}]},
         },  # e.g. Run:ai
-        volume_mounts=[{"name": "workspace", "mountPath": dgxc_pvc_mount_path}],
+        volume_mounts=[
+            {"name": "workspace", "mountPath": dgxc_pvc_mount_path},
+        ],
         volumes=[
             {
                 "name": "workspace",
@@ -145,7 +146,7 @@ def kuberay_executor(
             "securityContext": {
                 "allowPrivilegeEscalation": False,
                 "runAsUser": 0,
-            },
+            }
         },
     )
 
