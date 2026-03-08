@@ -203,8 +203,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         .. code-block:: python
 
-            def provider_bridge(self, hf_pretrained) -> LlamaModelProvider:
-                return LlamaModelProvider(
+            def provider_bridge(self, hf_pretrained) -> GPTModelProvider:
+                return GPTModelProvider(
                     num_layers=hf_pretrained.config.num_hidden_layers,
                     hidden_size=hf_pretrained.config.hidden_size,
                     ...
@@ -404,14 +404,14 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     if mla_params:
                         provider_kwargs["_mla_rope_params"] = mla_params
                 else:
-                    # GPT models: use yarn_ prefixed field names
-                    yarn_params = {"position_embedding_type": "yarn"}
+                    # GPT models: use yarn_ prefixed field names (dataclass fields on GPTModelProvider)
+                    provider_kwargs["position_embedding_type"] = "yarn"
                     for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
-                        yarn_params[megatron_key] = rope_scaling.get(hf_key)
+                        value = rope_scaling.get(hf_key)
+                        if value is not None:
+                            provider_kwargs[megatron_key] = value
                     if "truncate" in rope_scaling:
-                        yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
-                    if yarn_params:
-                        provider_kwargs["_yarn_params"] = yarn_params
+                        provider_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
         elif is_mla_provider:
             # MLA provider without rope_scaling in HF config:
             # Override rotary_scaling_factor to 1.0 (no scaling) instead of
@@ -464,17 +464,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Build base provider kwargs using CONFIG_MAPPING
         provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
 
-        yarn_params = provider_kwargs.pop("_yarn_params", None)
         mla_rope_params = provider_kwargs.pop("_mla_rope_params", None)
 
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
         provider = provider_class(**provider_kwargs)
-
-        # Apply YARN params via setattr (not all providers accept these in __init__)
-        if yarn_params:
-            for key, value in yarn_params.items():
-                setattr(provider, key, value)
 
         # Apply MLA rope params via setattr (for MLA models like DeepSeek, Kimi)
         if mla_rope_params:
@@ -528,9 +522,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             hf_config["rope_scaling"]["rope_type"] = "yarn"
 
             for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
-                has_value = hasattr(provider, megatron_key)
                 value = getattr(provider, megatron_key, None)
-                if has_value:
+                if value is not None:
                     hf_config["rope_scaling"][hf_key] = value
 
             yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)

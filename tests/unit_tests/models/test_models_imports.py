@@ -32,19 +32,6 @@ class TestModelsImports:
         # Should be the same class
         assert T5ModelProvider is DirectImport
 
-    def test_import_llama_providers(self):
-        """Test importing all Llama model providers."""
-        from megatron.bridge.models import (
-            Llama2ModelProvider7B,
-            Llama3ModelProvider8B,
-            LlamaModelProvider,
-        )
-
-        # Verify all imports are successful and are classes
-        assert isinstance(LlamaModelProvider, type)
-        assert isinstance(Llama2ModelProvider7B, type)
-        assert isinstance(Llama3ModelProvider8B, type)
-
     def test_models_package_all_exports(self):
         """Test that __all__ exports match available imports."""
         import megatron.bridge.models as models
@@ -71,21 +58,17 @@ class TestModelsImports:
 
     def test_model_provider(self):
         """Test that model providers inherit from ModelProviderMixin."""
-        from megatron.bridge.models import GPTModelProvider, LlamaModelProvider, T5ModelProvider
+        from megatron.bridge.models import GPTModelProvider, T5ModelProvider
         from megatron.bridge.models.model_provider import ModelProviderMixin
 
-        # All providers should inherit from ModelProviderMixin
         assert issubclass(GPTModelProvider, ModelProviderMixin)
         assert issubclass(T5ModelProvider, ModelProviderMixin)
-        assert issubclass(LlamaModelProvider, ModelProviderMixin)
 
     def test_transformer_config_inheritance(self):
         """Test that model providers inherit from TransformerConfig."""
         from megatron.core.transformer.transformer_config import TransformerConfig
 
-        from megatron.bridge.models import GPTModelProvider, LlamaModelProvider, T5ModelProvider
+        from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
-        # All providers should inherit from TransformerConfig
         assert issubclass(GPTModelProvider, TransformerConfig)
         assert issubclass(T5ModelProvider, TransformerConfig)
-        assert issubclass(LlamaModelProvider, TransformerConfig)
