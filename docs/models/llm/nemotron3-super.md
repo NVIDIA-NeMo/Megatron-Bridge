@@ -184,3 +184,64 @@ Notes:
 - By default, the target modules are linear layers `["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]` in the model
 - LoRA fine-tuning uses less memory and can work with smaller batch sizes
 - Consider using Context Parallel (CP) for longer sequences
+
+
+## Quantization (PTQ)
+
+Nemotron 3 Super supports four quantization configurations:
+
+| Config Name | Format | Description |
+|---|---|---|
+| `mamba_moe_fp8_aggressive` | FP8 | Aggressive FP8 quantization for Mamba-MoE |
+| `mamba_moe_fp8_conservative` | FP8 | Conservative FP8 quantization for Mamba-MoE |
+| `mamba_moe_nvfp4_aggressive` | NVFP4 | Aggressive NVFP4 quantization for Mamba-MoE |
+| `mamba_moe_nvfp4_conservative` | NVFP4 | Conservative NVFP4 quantization for Mamba-MoE |
+
+Pass the desired config name via `--export-quant-cfg` to `quantize.py`.
+
+### Quantize
+```bash
+export HF_MODEL=/path/to/hf/model
+export MEGATRON_SAVE_PATH=/path/to/quantized/megatron/ckpt
+
+torchrun --nproc_per_node=8 examples/quantization/quantize.py \
+    --hf-model-id $HF_MODEL \
+    --export-quant-cfg mamba_moe_nvfp4_conservative \
+    --megatron-save-path $MEGATRON_SAVE_PATH \
+    --pp 1 \
+    --tp 8 \
+    --ep 8 \
+    --trust-remote-code
+```
+
+### Verify with PTQ Generate
+```bash
+torchrun --nproc_per_node=8 examples/quantization/ptq_generate.py \
+    --hf-model-id $HF_MODEL \
+    --megatron-load-path $MEGATRON_SAVE_PATH \
+    --pp 1 \
+    --tp 8 \
+    --ep 8 \
+    --trust-remote-code
+```
+
+Notes:
+- For multi-node setups (e.g. 2 nodes with 8× H100), increase `--pp` accordingly (e.g. `--pp 2`) and use a job scheduler like SLURM to launch across nodes.
+
+### Export Quantized Megatron Checkpoint → HF
+
+After quantization, export the Megatron checkpoint back to Hugging Face format:
+
+```bash
+HF_MODEL=/path/to/hf/model
+MEGATRON_LOAD_PATH=/path/to/quantized/megatron/ckpt
+EXPORT_DIR=/path/to/output/hf/ckpt
+
+torchrun --nproc_per_node=8 examples/quantization/export.py \
+    --hf-model-id $HF_MODEL \
+    --megatron-load-path $MEGATRON_LOAD_PATH \
+    --export-dir $EXPORT_DIR \
+    --pp 8 \
+    --dtype bfloat16 \
+    --trust-remote-code
+```
