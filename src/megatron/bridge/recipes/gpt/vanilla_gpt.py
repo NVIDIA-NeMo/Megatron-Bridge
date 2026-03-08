@@ -19,8 +19,8 @@ and training knobs are left at their Megatron-Core / pretrain_gpt.py defaults
 so that the *only* source of difference between the two frameworks is what you
 explicitly override on the CLI.
 
-Example
--------
+Example::
+
     torchrun --nproc_per_node=1 scripts/training/run_recipe.py \\
         --recipe vanilla_gpt_pretrain_config \\
         model.num_layers=2 model.hidden_size=256 model.num_attention_heads=4 \\
