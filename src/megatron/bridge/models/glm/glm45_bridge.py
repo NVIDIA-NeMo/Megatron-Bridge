@@ -16,7 +16,6 @@ import logging
 from functools import partial
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Glm4MoeForCausalLM
@@ -34,7 +33,6 @@ from megatron.bridge.models.glm.glm_moe_mappings import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 try:
@@ -92,6 +90,7 @@ class GLM45Bridge(MegatronModelBridge):
         provider.bias_dropout_fusion = True
         provider.hidden_dropout = 0.0
         provider.autocast_dtype = torch.bfloat16
+        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", None)
         provider.mtp_loss_scaling_factor = 0.3
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
 
@@ -216,7 +215,7 @@ class GLM45Bridge(MegatronModelBridge):
         for mtp_layer in range(num_mtp_layers):
             for megatron_param, hf_param in layer_specific_mappings.items():
                 megatron_param = (
-                    megatron_param.replace(".*", ".*.transformer_layer")
+                    megatron_param.replace(".*", ".*.mtp_model_layer")
                     .replace("decoder", "mtp")
                     .replace(".*", f".{mtp_layer}")
                 )
@@ -248,24 +247,24 @@ class GLM45Bridge(MegatronModelBridge):
             mapping_list.extend(
                 [
                     QKVMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.transformer_layer.self_attention.linear_qkv.weight",
+                        megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.self_attention.linear_qkv.weight",
                         q=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.q_proj.weight",
                         k=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.k_proj.weight",
                         v=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.v_proj.weight",
                     ),
                     QKVMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.transformer_layer.self_attention.linear_qkv.bias",
+                        megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.self_attention.linear_qkv.bias",
                         q=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.q_proj.bias",
                         k=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.k_proj.bias",
                         v=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.v_proj.bias",
                     ),
                     GatedMLPMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.transformer_layer.mlp.linear_fc1.weight",
+                        megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.linear_fc1.weight",
                         gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.linear_fc1.gate.weight",
                         up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.linear_fc1.up.weight",
                     ),
                     GatedMLPMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.transformer_layer.mlp.shared_experts.linear_fc1.weight",
+                        megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
                         gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.gate_proj.weight",
                         up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.up_proj.weight",
                     ),
@@ -275,18 +274,14 @@ class GLM45Bridge(MegatronModelBridge):
                 mapping_list.extend(
                     [
                         GLMExpertGateUpProjMapping(
-                            megatron_param=(
-                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc1.weight*"
-                            ),
+                            megatron_param=(f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.experts.linear_fc1.weight*"),
                             hf_param=(
                                 f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.gate_up_proj"
                                 f"{gate_up_suffix}"
                             ),
                         ),
                         GLMExpertDownProjMapping(
-                            megatron_param=(
-                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc2.weight*"
-                            ),
+                            megatron_param=(f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.experts.linear_fc2.weight*"),
                             hf_param=(
                                 f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.down_proj{down_suffix}"
                             ),
@@ -297,16 +292,12 @@ class GLM45Bridge(MegatronModelBridge):
                 mapping_list.extend(
                     [
                         GatedMLPMapping(
-                            megatron_param=(
-                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc1.weight*"
-                            ),
+                            megatron_param=(f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.experts.linear_fc1.weight*"),
                             gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
                             up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
                         ),
                         AutoMapping(
-                            megatron_param=(
-                                f"mtp.layers.{mtp_layer}.transformer_layer.mlp.experts.linear_fc2.weight*"
-                            ),
+                            megatron_param=(f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.experts.linear_fc2.weight*"),
                             hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.down_proj.weight",
                         ),
                     ]
@@ -338,53 +329,3 @@ class GLM45Bridge(MegatronModelBridge):
             return ".weight"
 
         return ""
-
-    def maybe_modify_converted_hf_weight(
-        self,
-        task,
-        converted_weights_dict: dict[str, torch.Tensor],
-        hf_state_dict,
-    ) -> dict[str, torch.Tensor]:
-        if not isinstance(task.mapping, (GLMExpertGateUpProjMapping, GLMExpertDownProjMapping)):
-            return converted_weights_dict
-
-        if not converted_weights_dict:
-            return {}
-
-        num_experts = self._hf_config.n_routed_experts
-        ep_size = parallel_state.get_expert_model_parallel_world_size()
-        experts_per_rank = num_experts // ep_size
-
-        try:
-            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
-        except ValueError:
-            return converted_weights_dict
-
-        if not hasattr(self, "hf_weights_cache"):
-            self.hf_weights_cache = {}
-
-        for key, value in converted_weights_dict.items():
-            if key not in self.hf_weights_cache:
-                self.hf_weights_cache[key] = {}
-
-            if ep_size == 1:
-                self.hf_weights_cache[key][local_expert_number] = value
-            else:
-                if value.shape[0] != ep_size:
-                    raise ValueError(f"Expected EP dim {ep_size} for {key}, got {value.shape}.")
-                for i, exp_val in enumerate(value):
-                    global_expert_number = local_expert_number + (i * experts_per_rank)
-                    self.hf_weights_cache[key][global_expert_number] = exp_val
-
-            if len(self.hf_weights_cache[key]) == num_experts:
-                merged = torch.stack([self.hf_weights_cache[key][i] for i in range(num_experts)], dim=0)
-                if key in hf_state_dict:
-                    expected = hf_state_dict[key].shape
-                    if merged.shape != expected and merged.transpose(-1, -2).shape == expected:
-                        merged = merged.transpose(-1, -2).contiguous()
-                del self.hf_weights_cache[key]
-                return {key: merged}
-
-            return {}
-
-        return {}

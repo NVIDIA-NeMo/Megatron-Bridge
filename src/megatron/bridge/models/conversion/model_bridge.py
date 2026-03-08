@@ -203,8 +203,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         .. code-block:: python
 
-            def provider_bridge(self, hf_pretrained) -> LlamaModelProvider:
-                return LlamaModelProvider(
+            def provider_bridge(self, hf_pretrained) -> GPTModelProvider:
+                return GPTModelProvider(
                     num_layers=hf_pretrained.config.num_hidden_layers,
                     hidden_size=hf_pretrained.config.hidden_size,
                     ...
@@ -714,6 +714,62 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
         return converted_weights_dict
 
+    def _accumulate_grouped_export(
+        self,
+        task: "WeightConversionTask",
+        converted_weights_dict: Dict[str, torch.Tensor],
+        model_config,
+        grouped_buffers: Dict[str, Dict[int, torch.Tensor]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        """Accumulate per-expert weights for grouped export, return merged result when complete.
+
+        For fused-expert MoE models where one HF tensor contains all experts, this method
+        collects individual expert weights produced by per-expert ``megatron_to_hf`` calls
+        and returns the stacked result once all experts have been accumulated.
+
+        Returns:
+            Merged weights dict when the group is complete, ``None`` otherwise.
+        """
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        group_key = task.mapping.group_key
+        if group_key not in grouped_buffers:
+            grouped_buffers[group_key] = {}
+
+        ep_size = parallel_state.get_expert_model_parallel_world_size()
+        num_experts = model_config.num_moe_experts
+        experts_per_rank = num_experts // ep_size
+
+        try:
+            local_expert_number = extract_expert_number_from_param(task.param_name) % experts_per_rank
+        except ValueError:
+            return None
+
+        for _, value in converted_weights_dict.items():
+            if ep_size == 1:
+                grouped_buffers[group_key][local_expert_number] = value
+            else:
+                if value.ndim > 0 and value.shape[0] == ep_size:
+                    for i in range(ep_size):
+                        global_expert_number = local_expert_number + (i * experts_per_rank)
+                        grouped_buffers[group_key][global_expert_number] = value[i]
+                else:
+                    grouped_buffers[group_key][local_expert_number] = value
+
+        if len(grouped_buffers[group_key]) == num_experts:
+            merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
+
+            if group_key in hf_state_dict:
+                expected_shape = hf_state_dict[group_key].shape
+                if merged.shape != expected_shape and merged.transpose(-1, -2).shape == expected_shape:
+                    merged = merged.transpose(-1, -2).contiguous()
+
+            del grouped_buffers[group_key]
+            return {group_key: merged}
+
+        return None
+
     def load_weights_hf_to_megatron(
         self,
         hf_pretrained: HFPreTrained,
@@ -777,12 +833,20 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
+        _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
-            # 1) Fetch source tensor(s) from HF state dict
-            hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+            # 1) Fetch source tensor(s) from HF state dict, with caching for grouped mappings
+            hf_param_key = str(task.mapping.hf_param)
+            is_grouped = getattr(task.mapping, "is_grouped_export", False)
+            if is_grouped and hf_param_key in _hf_import_cache:
+                hf_weights = _hf_import_cache[hf_param_key]
+            else:
+                hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+                if is_grouped:
+                    _hf_import_cache[hf_param_key] = hf_weights
 
             # 2) Delegate conversion & distribution to the bridge
             converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
@@ -969,14 +1033,33 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
+        # Pre-compute expected expert counts for grouped export mappings
+        _grouped_task_counts: Dict[str, int] = {}
+        for task in megatron_to_hf_tasks:
+            if task is not None and getattr(task.mapping, "is_grouped_export", False):
+                gk = task.mapping.group_key
+                _grouped_task_counts[gk] = _grouped_task_counts.get(gk, 0) + 1
+        _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
+
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
+
+            # --- Grouped export path: accumulate per-expert weights, yield when complete ---
+            if getattr(task.mapping, "is_grouped_export", False):
+                merged_result = self._accumulate_grouped_export(
+                    task, converted_weights_dict, model_config, _grouped_buffers, hf_state_dict
+                )
+                if merged_result is not None:
+                    for hf_name, tensor in merged_result.items():
+                        yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
+                continue
+
+            # --- Standard export path ---
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,
                 hf_state_dict,
-            )  # dict will be none except for one expert;
-            # All ranks get the full tensor
+            )
 
             adapter_tasks = None
             if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
@@ -984,7 +1067,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 adapter_tasks = adapter_tasks_by_base.get(task_global_base_prefix)
             if merge_adapter_weights and adapter_tasks:
                 adapter_weights = self.materialize_adapter_weights(adapter_tasks)
-                # Merge LoRA adapter weights back into the base tensor for HF export
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
                     converted_weights_dict,
@@ -1000,21 +1082,17 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
                 if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
-                    # Yield the embedding weight
                     yield HFWeightTuple(hf_name, final_tensor)
 
-                    # Also yield as lm_head.weight if it's expected
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
                             yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
-                    # This should not happen when embeddings are tied - assert error
                     raise ValueError(
                         "Encountered lm_head.weight when embeddings are tied. This indicates a mapping error."
                     )
                 else:
-                    # Regular case - yield the tensor normally
                     yield HFWeightTuple(hf_name, final_tensor)
 
     def dtype_from_hf(self, config, default=None):

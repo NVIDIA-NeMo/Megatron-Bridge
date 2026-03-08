@@ -218,7 +218,7 @@ class PreTrainedBase(ABC):
                         src_file = sys.modules[model_class.__module__].__file__
                         src_path = Path(src_file).parent
                         source_paths.append(src_path)
-                    except OSError:  # ignore if model_name_or_path does not contain the modeling file
+                    except (OSError, ImportError):
                         pass
 
             if hasattr(self, "model_name_or_path") and self.model_name_or_path:

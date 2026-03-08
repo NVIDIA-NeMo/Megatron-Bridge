@@ -81,9 +81,10 @@ def main(
     strict: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
-    if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
+    if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is None:
+        console.print("This script must be launched with torchrun or srun. Please run:")
+        console.print(f"  torchrun --nproc_per_node <gpus> {sys.argv[0]}")
+        console.print(f"  srun --ntasks-per-node=8 ... python {sys.argv[0]}")
         sys.exit(1)
 
     model_name = hf_model_id.split("/")[-1]
@@ -165,14 +166,12 @@ def main(
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
-            # Cast to float32 for params with known dtype mismatches between Megatron and HF
-            # (e.g. Megatron keeps expert_bias in float32 while HF may use bfloat16)
-            if any(p in name for p in IGNORE_PRECISION_PARAMS):
+            # Cast to float32 when dtypes differ (e.g. fp8 HF weights vs bf16 Megatron,
+            # or Megatron keeping expert_bias in float32 while HF uses bfloat16)
+            if compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-            match = torch.allclose(
-                compare_param, compare_original.to(compare_param.device), atol=1e-1
-            )  # Increased tolerance for bfloat16
+            match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
             all_match = all_match and match
             table.add_row(
                 name,
