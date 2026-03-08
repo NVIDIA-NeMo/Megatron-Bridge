@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 import time
 from typing import Any, Callable, Optional, Union
 
@@ -99,14 +100,16 @@ def evaluate(
     total_loss_dict = {}
 
     # make validation batch size independent from training batch size
-    eval_batch_size = state.cfg.train.global_batch_size
-    eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
+    val_mbs = state.cfg.validation.val_micro_batch_size or state.cfg.train.micro_batch_size
+    val_gbs = state.cfg.validation.val_global_batch_size or state.cfg.train.global_batch_size
+    eval_batch_size = val_gbs
+    eval_num_microbatches = eval_batch_size // (val_mbs * state.cfg.data_parallel_size)
 
     if not state.cfg.dist.use_decentralized_pg:
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
             seq_length=state.cfg.model.seq_length,
-            micro_batch_size=state.cfg.train.micro_batch_size,
+            micro_batch_size=val_mbs,
             decoder_seq_length=state.cfg.model.seq_length,
         )
     else:
@@ -181,7 +184,7 @@ def evaluate(
                 model=model,
                 num_microbatches=eval_num_microbatches,
                 seq_length=seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=val_mbs,
                 forward_only=True,
                 adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
                 p2p_communicator=p2p_communicator,
@@ -272,7 +275,7 @@ def evaluate(
                 model=model,
                 num_microbatches=get_num_microbatches(),
                 seq_length=non_loss_seq_length,
-                micro_batch_size=state.cfg.train.micro_batch_size,
+                micro_batch_size=val_mbs,
                 forward_only=True,
                 collect_non_loss_data=True,
                 p2p_communicator=p2p_communicator,
@@ -326,7 +329,6 @@ def evaluate_and_print_results(
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
     """
-    # Determine callback event names based on whether this is test or eval
     start_event = "on_test_start" if is_test else "on_eval_start"
     end_event = "on_test_end" if is_test else "on_eval_end"
 
@@ -347,52 +349,74 @@ def evaluate_and_print_results(
             ),
         )
 
-    total_loss_dict, collected_non_loss_data, timelimit = evaluate(
-        state,
-        forward_step_func,
-        data_iterator,
-        model,
-        process_non_loss_data_func,
-        config,
-        verbose,
-        non_loss_data_func,
-        callback_manager=callback_manager,
-        is_test=is_test,
-    )
+    if (
+        hasattr(state.cfg.dataset, "multiple_validation_sets")
+        and state.cfg.dataset.multiple_validation_sets
+        and isinstance(data_iterator, list)
+    ):
+        _evaluate_multiple_datasets(
+            state=state,
+            prefix=prefix,
+            forward_step_func=forward_step_func,
+            data_iterators=data_iterator,
+            model=model,
+            config=config,
+            verbose=verbose,
+            writer=writer,
+            wandb_writer=wandb_writer,
+            process_non_loss_data_func=process_non_loss_data_func,
+            non_loss_data_func=non_loss_data_func,
+            callback_manager=callback_manager,
+            is_test=is_test,
+        )
+        total_loss_dict = None
+    else:
+        total_loss_dict, collected_non_loss_data, timelimit = evaluate(
+            state,
+            forward_step_func,
+            data_iterator,
+            model,
+            process_non_loss_data_func,
+            config,
+            verbose,
+            non_loss_data_func,
+            callback_manager=callback_manager,
+            is_test=is_test,
+        )
 
-    # Timelimit hit during evaluation
-    if timelimit:
-        return
-    string = f" validation loss at {prefix} | "
-    for key in total_loss_dict:
-        string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
-        ppl = math.exp(min(20, total_loss_dict[key].item()))
-        string += "{} PPL: {:.6E} | ".format(key, ppl)
-        if writer:
-            writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
-            writer.add_scalar(
-                "{} validation vs samples".format(key),
-                total_loss_dict[key].item(),
-                state.train_state.consumed_train_samples,
-            )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.step)
+        if timelimit:
+            return
+
+        string = f" validation loss at {prefix} | "
+        for key in total_loss_dict:
+            string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
+            ppl = math.exp(min(20, total_loss_dict[key].item()))
+            string += "{} PPL: {:.6E} | ".format(key, ppl)
+            if writer:
+                writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
                 writer.add_scalar(
-                    "{} validation ppl vs samples".format(key), ppl, state.train_state.consumed_train_samples
+                    "{} validation vs samples".format(key),
+                    total_loss_dict[key].item(),
+                    state.train_state.consumed_train_samples,
                 )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.step)
+                    writer.add_scalar(
+                        "{} validation ppl vs samples".format(key), ppl, state.train_state.consumed_train_samples
+                    )
 
-        if wandb_writer and is_last_rank():
-            wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+            if wandb_writer and is_last_rank():
+                wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
 
-    if process_non_loss_data_func is not None and writer and is_last_rank():
-        process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
+        if process_non_loss_data_func is not None and writer and is_last_rank():
+            process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
 
-    length = len(string) + 1
-    print_rank_last("-" * length)
-    print_rank_last(string)
-    print_rank_last("-" * length)
+        length = len(string) + 1
+        print_rank_last("-" * length)
+        print_rank_last(string)
+        print_rank_last("-" * length)
 
     if should_fire(callback_manager, end_event):
         callback_manager.fire(
@@ -404,3 +428,134 @@ def evaluate_and_print_results(
                 total_loss_dict=total_loss_dict,
             ),
         )
+
+
+def _evaluate_multiple_datasets(
+    state: GlobalState,
+    prefix: str,
+    forward_step_func: ForwardStepCallable,
+    data_iterators: list,
+    model: list[MegatronModule],
+    config: ConfigContainer,
+    verbose: bool,
+    writer,
+    wandb_writer,
+    process_non_loss_data_func: Optional[Callable],
+    non_loss_data_func: Optional[Callable],
+    callback_manager: CallbackManager | None,
+    is_test: bool,
+) -> None:
+    """Evaluate across multiple validation datasets, logging per-dataset and aggregated metrics."""
+    timers = state.timers
+    timers("evaluate-all-datasets", log_level=0).start(barrier=True)
+
+    validation_results = {}
+    aggregated_loss_dict = {}
+    total_datasets = len([dl for dl in data_iterators if dl is not None])
+
+    for i, valid_data_iter in enumerate(data_iterators):
+        if valid_data_iter is None:
+            continue
+
+        dataset_path = f"val_dataset_{i}"
+        if (
+            hasattr(state.cfg.dataset, "blend_per_split")
+            and state.cfg.dataset.blend_per_split is not None
+            and len(state.cfg.dataset.blend_per_split) > 1
+            and state.cfg.dataset.blend_per_split[1] is not None
+        ):
+            val_blend = state.cfg.dataset.blend_per_split[1]
+            if isinstance(val_blend, tuple) and len(val_blend) >= 2:
+                val_prefixes = val_blend[0]
+                if i < len(val_prefixes):
+                    dataset_path = val_prefixes[i]
+
+        total_loss_dict, collected_non_loss_data, timelimit = evaluate(
+            state,
+            forward_step_func,
+            valid_data_iter,
+            model,
+            process_non_loss_data_func,
+            config,
+            verbose,
+            non_loss_data_func,
+            callback_manager=callback_manager,
+            is_test=is_test,
+        )
+
+        if timelimit:
+            timers("evaluate-all-datasets").stop()
+            return
+
+        validation_results[dataset_path] = (total_loss_dict, collected_non_loss_data)
+
+        dataset_name = (
+            os.path.basename(dataset_path)
+            if state.cfg.logger.multiple_validation_sets_use_dataset_name
+            else dataset_path
+        )
+        for key in total_loss_dict:
+            ppl = math.exp(min(20, total_loss_dict[key].item()))
+            if writer:
+                writer.add_scalar(
+                    f"{key} validation {dataset_name}", total_loss_dict[key].item(), state.train_state.step
+                )
+                writer.add_scalar(
+                    f"{key} validation {dataset_name} vs samples",
+                    total_loss_dict[key].item(),
+                    state.train_state.consumed_train_samples,
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    writer.add_scalar(f"{key} validation {dataset_name} ppl", ppl, state.train_state.step)
+
+            if wandb_writer and is_last_rank():
+                wandb_writer.log(
+                    {f"{key} validation {dataset_name}": total_loss_dict[key].item()}, state.train_state.step
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    wandb_writer.log({f"{key} validation {dataset_name} ppl": ppl}, state.train_state.step)
+
+        for key in total_loss_dict:
+            if key not in aggregated_loss_dict:
+                aggregated_loss_dict[key] = 0.0
+            aggregated_loss_dict[key] += total_loss_dict[key].item()
+
+    timers("evaluate-all-datasets").stop()
+
+    if total_datasets > 0:
+        for key in aggregated_loss_dict:
+            aggregated_loss_dict[key] /= total_datasets
+
+    for key in aggregated_loss_dict:
+        ppl = math.exp(min(20, aggregated_loss_dict[key]))
+        if writer:
+            writer.add_scalar(f"{key} validation (aggregated)", aggregated_loss_dict[key], state.train_state.step)
+            writer.add_scalar(
+                f"{key} validation (aggregated) vs samples",
+                aggregated_loss_dict[key],
+                state.train_state.consumed_train_samples,
+            )
+            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                writer.add_scalar(f"{key} validation (aggregated) ppl", ppl, state.train_state.step)
+
+        if wandb_writer and is_last_rank():
+            wandb_writer.log({f"{key} validation (aggregated)": aggregated_loss_dict[key]}, state.train_state.step)
+            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                wandb_writer.log({f"{key} validation (aggregated) ppl": ppl}, state.train_state.step)
+
+    string = f" validation loss at {prefix} (aggregated across {total_datasets} datasets) | "
+    for key in aggregated_loss_dict:
+        string += "{} value: {:.6E} | ".format(key, aggregated_loss_dict[key])
+        ppl = math.exp(min(20, aggregated_loss_dict[key]))
+        string += "{} PPL: {:.6E} | ".format(key, ppl)
+
+    if process_non_loss_data_func is not None and writer and is_last_rank() and validation_results:
+        first_result = next(iter(validation_results.values()))
+        process_non_loss_data_func(first_result[1], state.train_state.step, writer)
+
+    length = len(string) + 1
+    print_rank_last("-" * length)
+    print_rank_last(string)
+    print_rank_last("-" * length)
+
+    timers.log(["evaluate-all-datasets"])
