@@ -48,6 +48,19 @@ def _safe_asdict(obj, skip_keys: set[str]) -> dict:
     return obj
 
 
+def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
+    """Resolve string-valued fields to their runtime types.
+
+    Currently handles ``activation_func``: if it was set to a string
+    (e.g. via a CLI override like ``model.activation_func=silu``), it is
+    resolved to the corresponding callable before MCore post-init runs.
+    """
+    if isinstance(config.activation_func, str):
+        from megatron.bridge.utils.activation_map import str_to_callable
+
+        config.activation_func = str_to_callable(config.activation_func)
+
+
 @dataclass
 class TransformerConfig(MCoreTransformerConfig):
     """Megatron Core TransformerConfig with deferred post-init.
@@ -87,8 +100,11 @@ class TransformerConfig(MCoreTransformerConfig):
         to compute derived fields based on the current field values. It can be
         called multiple times safely.
         """
+        _resolve_string_fields(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreTransformerConfig.__post_init__(self)
 
     def __deepcopy__(self, memo):
@@ -152,8 +168,11 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         to compute derived fields based on the current field values. It can be
         called multiple times safely.
         """
+        _resolve_string_fields(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreMLATransformerConfig.__post_init__(self)
 
 
@@ -201,6 +220,9 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         to compute derived fields and parse the heterogeneous block configurations.
         It can be called multiple times safely.
         """
+        _resolve_string_fields(self)
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
 
     def get_config_for_layer(self, layer_number: int) -> MCoreTransformerConfig:
