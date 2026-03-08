@@ -179,7 +179,7 @@ def build_train_valid_test_data_loaders(
     from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
     from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 
-    if isinstance(cfg.model, MimoModelProvider):
+    if isinstance(cfg.model, MimoModelProvider) and cfg.model.mimo_parallelism_config is not None:
         if not isinstance(cfg.dataset, MimoDatasetProvider):
             raise ValueError(
                 "MIMO models require cfg.dataset to be a MimoDatasetProvider. "
