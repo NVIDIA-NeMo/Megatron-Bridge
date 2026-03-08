@@ -3,6 +3,7 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import torch
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.mimo import (
@@ -65,10 +66,16 @@ class TestMimoModelProvider:
         assert hasattr(provider, "use_cpu_initialization")
         assert hasattr(provider, "init_model_with_meta_device")
 
+        # Check stack-compatibility fields
+        assert hasattr(provider, "vocab_size")
+        assert hasattr(provider, "seq_length")
+
         # Check defaults
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.use_cpu_initialization is False
+        assert provider.vocab_size is None
+        assert provider.seq_length == 1024
 
     @patch("megatron.bridge.models.mimo.mimo_provider.MimoModel")
     @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
@@ -386,33 +393,71 @@ class TestMimoModelProvider:
         # Should return model directly
         assert model == mock_model_instance
 
-    def test_initialize_model_parallel_raises(self):
-        """Test that initialize_model_parallel() raises NotImplementedError for MIMO."""
+    def test_initialize_model_parallel_raises_heterogeneous(self):
+        """Test that initialize_model_parallel() raises NotImplementedError in heterogeneous mode."""
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
-        provider = MimoModelProvider(language_model_spec=language_spec)
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
+            },
+        )
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mimo_parallelism_config,
+        )
 
         import pytest
 
-        with pytest.raises(NotImplementedError, match="MIMO does not use global model parallelism"):
+        with pytest.raises(NotImplementedError, match="Heterogeneous MIMO does not use global"):
             provider.initialize_model_parallel(seed=42)
-        with pytest.raises(NotImplementedError, match="MIMO does not use global model parallelism"):
-            provider.initialize_model_parallel()
+
+    @patch("megatron.bridge.models.model_provider.ModelProviderMixin.initialize_model_parallel")
+    def test_initialize_model_parallel_delegates_homogeneous(self, mock_parent_init):
+        """Test that initialize_model_parallel() delegates to parent in homogeneous mode."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+            tensor_model_parallel_size=2,
+        )
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=None,
+        )
+
+        provider.initialize_model_parallel(seed=42)
+        mock_parent_init.assert_called_once_with(seed=42, seed_kwargs=None)
 
     @patch("megatron.core.transformer.module.Float16Module")
     @patch("megatron.bridge.models.mimo.mimo_provider.get_model_config")
     @patch("megatron.bridge.models.mimo.mimo_provider.MimoModel")
-    @patch("megatron.bridge.models.mimo.mimo_provider.build_hypercomm_grids")
-    @patch("torch.distributed.is_initialized")
+    @patch.object(MimoModelProvider, "build_infra")
+    @patch.object(MimoModelProvider, "finalize")
     def test_provide_distributed_model_sets_variable_seq_lengths(
-        self, mock_is_init, mock_build_grids, mock_mimo_model, mock_get_config, mock_float16
+        self, mock_finalize, mock_build_infra, mock_mimo_model, mock_get_config, mock_float16
     ):
-        """Test that provide_distributed_model sets variable_seq_lengths=True."""
-        mock_is_init.return_value = False
+        """Test that provide_distributed_model sets variable_seq_lengths=True (heterogeneous path)."""
+        mock_build_infra.return_value = MimoModelInfra(
+            module_to_grid_map={},
+            topology={"llm": []},
+            pg_collections={},
+            participating_modules=[],
+        )
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=1),
+            },
+        )
 
         provider = MimoModelProvider(
             language_model_spec=language_spec,
-            bf16=False,  # Disable to simplify test
+            mimo_parallelism_config=mimo_parallelism_config,
+            bf16=False,
             fp16=False,
         )
 
@@ -421,14 +466,162 @@ class TestMimoModelProvider:
         mock_mimo_model.return_value = mock_model_instance
 
         mock_config = MagicMock()
-        mock_config.variable_seq_lengths = False  # Initial value
+        mock_config.variable_seq_lengths = False
         mock_get_config.return_value = mock_config
 
-        # No parallelism config means no DDP wrapping needed
         provider.provide_distributed_model(wrap_with_ddp=False)
 
-        # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True
+
+    def test_getattr_proxies_in_homogeneous_mode(self):
+        """Test __getattr__ proxies reads to nested TransformerConfig in homogeneous mode."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=2,
+        )
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=None,
+        )
+
+        assert provider.tensor_model_parallel_size == 4
+        assert provider.pipeline_model_parallel_size == 1
+        assert provider.context_parallel_size == 2
+        assert provider.num_layers == 2
+        assert provider.hidden_size == 64
+
+    def test_getattr_blocks_in_heterogeneous_mode(self):
+        """Test __getattr__ raises AttributeError with actionable message in heterogeneous mode."""
+        language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
+            },
+        )
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mimo_parallelism_config,
+        )
+
+        import pytest
+
+        with pytest.raises(AttributeError, match="pretrain_mimo"):
+            _ = provider.tensor_model_parallel_size
+
+    def test_setattr_syncs_to_nested_config_in_homogeneous_mode(self):
+        """Test __setattr__ syncs writes to nested TransformerConfig in homogeneous mode."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+        )
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=None,
+        )
+
+        provider.fp16 = True
+        assert config.fp16 is True
+
+        provider.bf16 = False
+        assert config.bf16 is False
+
+    def test_setattr_does_not_sync_in_heterogeneous_mode(self):
+        """Test __setattr__ does not sync to nested config in heterogeneous mode."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+        )
+        original_fp16 = config.fp16
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        mimo_parallelism_config = MimoParallelismConfig(
+            module_parallelisms={
+                "llm": ModuleParallelismConfig(tensor_model_parallel_size=2),
+            },
+        )
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=mimo_parallelism_config,
+        )
+
+        provider.fp16 = True
+        # Provider gets the value, but nested config should be untouched
+        assert provider.fp16 is True
+        assert config.fp16 == original_fp16
+
+    def test_finalize_enforces_pp1_homogeneous(self):
+        """Test finalize() raises ValueError when PP > 1 in homogeneous mode."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+            pipeline_model_parallel_size=2,
+            pipeline_dtype=torch.bfloat16,
+        )
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=None,
+        )
+
+        import pytest
+
+        with pytest.raises(ValueError, match="pipeline_model_parallel_size=1"):
+            provider.finalize()
+
+    def test_finalize_pp1_passes_homogeneous(self):
+        """Test finalize() succeeds when PP == 1 in homogeneous mode."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+            pipeline_model_parallel_size=1,
+        )
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=None,
+        )
+
+        # Should not raise
+        provider.finalize()
+
+    def test_getattr_raises_for_nonexistent_attr_homogeneous(self):
+        """Test __getattr__ raises AttributeError for truly missing attributes."""
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+        )
+        language_spec = ModuleSpec(module=Mock, params={"config": config})
+        provider = MimoModelProvider(
+            language_model_spec=language_spec,
+            mimo_parallelism_config=None,
+        )
+
+        import pytest
+
+        with pytest.raises(AttributeError, match="has no attribute 'totally_fake_attr'"):
+            _ = provider.totally_fake_attr
 
 
 class TestMimoModelInfra:

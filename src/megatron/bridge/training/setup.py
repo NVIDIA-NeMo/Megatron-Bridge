@@ -28,6 +28,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -227,7 +228,7 @@ def setup(
         pg_collection=pg_collection,
     )
 
-    cfg.model.timers = timers
+    get_model_config(model[0]).timers = timers
     cfg.optimizer.timers = timers
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
@@ -276,7 +277,7 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model,
+        get_model_config(model[0]),
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,

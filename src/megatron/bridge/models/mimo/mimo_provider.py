@@ -22,7 +22,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
@@ -39,6 +39,37 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
+
+_SENTINEL = object()
+
+
+class _MimoConfigProxy:
+    """Proxy that wraps TransformerConfig and falls back to MimoModelProvider.
+
+    In homogeneous mode, ``get_model_config(model[0])`` returns the raw
+    TransformerConfig, but the training stack also accesses provider-level
+    attributes (``seq_length``, ``make_vocab_size_divisible_by``, …) on it.
+    This proxy transparently resolves those by trying the TransformerConfig
+    first and falling back to the provider.
+    """
+
+    def __init__(self, transformer_config, provider):
+        object.__setattr__(self, "_tc", transformer_config)
+        object.__setattr__(self, "_provider", provider)
+
+    def __getattr__(self, name):
+        tc = object.__getattribute__(self, "_tc")
+        try:
+            return getattr(tc, name)
+        except AttributeError:
+            return getattr(object.__getattribute__(self, "_provider"), name)
+
+    def __setattr__(self, name, value):
+        setattr(object.__getattribute__(self, "_tc"), name, value)
+
+    def __repr__(self):
+        tc = object.__getattribute__(self, "_tc")
+        return f"_MimoConfigProxy({tc!r})"
 
 
 @dataclass
@@ -125,6 +156,41 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
     bf16: bool = True
     use_cpu_initialization: bool = False
     init_model_with_meta_device: bool = False
+
+    # Stack-compatibility fields (not on TransformerConfig, so __getattr__ can't proxy them)
+    vocab_size: Optional[int] = None
+    seq_length: int = 1024
+    make_vocab_size_divisible_by: int = 128
+    should_pad_vocab: bool = False
+    share_embeddings_and_output_weights: bool = True
+
+    def __getattr__(self, name: str):
+        d = self.__dict__
+        mimo_cfg = d.get("mimo_parallelism_config", _SENTINEL)
+
+        if mimo_cfg is not _SENTINEL and mimo_cfg is not None:
+            raise AttributeError(
+                f"'{type(self).__name__}' has no attribute '{name}'. "
+                f"Heterogeneous MIMO (mimo_parallelism_config is set) must use "
+                f"pretrain_mimo(), not pretrain()."
+            )
+
+        lang_spec = d.get("language_model_spec")
+        if lang_spec is not None and hasattr(lang_spec, "params") and lang_spec.params:
+            config = lang_spec.params.get("config")
+            if config is not None and hasattr(config, name):
+                return getattr(config, name)
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value):
+        object.__setattr__(self, name, value)
+        d = self.__dict__
+        if "mimo_parallelism_config" in d and d.get("mimo_parallelism_config") is None and not name.startswith("_"):
+            lang_spec = d.get("language_model_spec")
+            if lang_spec is not None and hasattr(lang_spec, "params") and lang_spec.params:
+                config = lang_spec.params.get("config")
+                if config is not None and hasattr(config, name):
+                    setattr(config, name, value)
 
     def build_infra(self) -> MimoModelInfra:
         """Build MIMO parallelism infrastructure.
@@ -286,11 +352,18 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             llm_pg = infra.pg_collections.get("llm")
             if llm_pg is not None:
                 language_spec = self._inject_pg_collection_into_language_spec(language_spec, llm_pg)
+        elif hasattr(self, "_pg_collection") and self._pg_collection is not None:
+            language_spec = self._inject_pg_collection_into_language_spec(language_spec, self._pg_collection)
 
         # Inject pg_collection into modality specs
         modality_specs: Dict[str, ModuleSpec] = {}
         for module_name, spec in self.modality_submodules_spec.items():
-            module_pg = infra.pg_collections.get(module_name) if infra.pg_collections else None
+            if self.mimo_parallelism_config:
+                module_pg = infra.pg_collections.get(module_name) if infra.pg_collections else None
+            elif hasattr(self, "_pg_collection") and self._pg_collection is not None:
+                module_pg = self._pg_collection
+            else:
+                module_pg = None
             if module_pg is not None:
                 spec = self._inject_pg_collection_into_modality_spec(spec, module_pg)
             modality_specs[module_name] = spec
@@ -306,7 +379,9 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
 
         mimo_model = MimoModel(mimo_model_config)
 
-        # Apply freezing
+        if self.mimo_parallelism_config is None:
+            mimo_model.config = _MimoConfigProxy(mimo_model.config, self)
+
         self._apply_freezing(mimo_model)
 
         return mimo_model
@@ -331,24 +406,16 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             ]
         ] = None,
         post_wrap_hook: Optional[Callable[[List[MegatronModule]], List[MegatronModule]]] = None,
+        mixed_precision_wrapper=Float16Module,
+        pg_collection: Optional[ProcessGroupCollection] = None,
     ) -> List[MegatronModule]:
-        """Build MIMO model with heterogeneous parallelism and DDP wrapping.
+        """Build MIMO model with distributed wrapping.
 
-        This overrides the standard ModelProviderMixin implementation because MIMO:
-        - Uses per-module HyperCommGrids instead of global mpu
-        - Has different pg_collections per module
-        - May have ranks that don't participate in all modules
-        - Requires per-submodule DDP wrapping for correct gradient sync
+        In **homogeneous** mode (mimo_parallelism_config is None), delegates to
+        the parent ModelProviderMixin which uses standard Float16Module + DDP.
 
-        The method:
-        1. Calls finalize() to validate parallelism config
-        2. Calls build_infra() to create grids and pg_collections
-        3. Calls provide() to build the model
-        4. Applies pre-wrap hooks
-        5. Moves to device
-        6. Wraps each submodule with DDP using its own pg_collection
-        7. Casts to fp16/bf16 (direct casting, not Float16Module)
-        8. Applies post-wrap hooks
+        In **heterogeneous** mode, uses per-module HyperCommGrids, per-submodule
+        DDP wrapping, and direct dtype casting (not Float16Module).
 
         Args:
             ddp_config: Configuration for distributed data parallel.
@@ -364,6 +431,8 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: Callable(s) to modify model before wrapping.
             post_wrap_hook: Callable to modify model after wrapping.
+            mixed_precision_wrapper: Wrapper for fp16/bf16 (used in homogeneous mode).
+            pg_collection: Pre-initialized ProcessGroupCollection (homogeneous mode).
 
         Returns:
             List containing the wrapped MimoModel.
@@ -372,6 +441,28 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             ValueError: If this rank doesn't participate in any module
                 (indicates invalid parallelism configuration).
         """
+        # Homogeneous mode: delegate to standard ModelProviderMixin path
+        if self.mimo_parallelism_config is None:
+            self.finalize()
+            return super().provide_distributed_model(
+                ddp_config=ddp_config,
+                model_type=model_type,
+                overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
+                fp16=fp16,
+                bf16=bf16,
+                use_megatron_fsdp=use_megatron_fsdp,
+                use_torch_fsdp2=use_torch_fsdp2,
+                wrap_with_ddp=wrap_with_ddp,
+                data_parallel_random_init=data_parallel_random_init,
+                use_cpu_initialization=use_cpu_initialization,
+                init_model_with_meta_device=init_model_with_meta_device,
+                pre_wrap_hook=pre_wrap_hook,
+                post_wrap_hook=post_wrap_hook,
+                mixed_precision_wrapper=mixed_precision_wrapper,
+                pg_collection=pg_collection,
+            )
+
+        # --- Heterogeneous mode (existing logic) ---
         if wrap_with_ddp and ddp_config is None:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
@@ -416,7 +507,6 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 m.cuda(torch.cuda.current_device())
 
         # Set variable_seq_lengths=True for multimodule pipeline support (required by PR 3212)
-        # This must be set before the model is used in the training loop
         for m in model_list:
             model_config = get_model_config(m)
             model_config.variable_seq_lengths = True
@@ -480,16 +570,20 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         seed_kwargs: Optional[dict] = None,
         **model_parallel_kwargs,
     ) -> None:
-        """MIMO uses per-module HyperCommGrids, not global MPU state.
+        """Initialize model parallelism.
 
-        Raises NotImplementedError to prevent accidental global MPU initialization,
-        which would corrupt process groups for heterogeneous parallelism.
-        Use finalize() + build_infra() instead.
+        In homogeneous mode (mimo_parallelism_config is None), delegates to the
+        parent which reads TP/PP/CP sizes via __getattr__ proxy.
+
+        In heterogeneous mode, raises NotImplementedError to prevent accidental
+        global MPU initialization (use finalize() + build_infra() instead).
         """
-        raise NotImplementedError(
-            "MIMO does not use global model parallelism initialization. "
-            "Use finalize() to validate config and build_infra() to create HyperCommGrids."
-        )
+        if self.mimo_parallelism_config is not None:
+            raise NotImplementedError(
+                "Heterogeneous MIMO does not use global model parallelism initialization. "
+                "Use finalize() to validate config and build_infra() to create HyperCommGrids."
+            )
+        super().initialize_model_parallel(seed=seed, seed_kwargs=seed_kwargs, **model_parallel_kwargs)
 
     def _apply_freezing(self, model: MimoModel) -> None:
         """Apply freezing based on configuration."""
@@ -519,10 +613,12 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
         build_infra() or provide(). It is called automatically by
         provide_distributed_model().
 
+        In homogeneous mode, enforces pipeline_model_parallel_size == 1 (PP is
+        incompatible because encoders are fully replicated, not pipelined).
+
         Raises:
-            ValueError: If any rank doesn't participate in at least one module.
-                This indicates the parallelism configuration doesn't cover all
-                ranks in the world (validated by MimoParallelismConfig.finalize()).
+            ValueError: If any rank doesn't participate in at least one module,
+                or if homogeneous mode has PP > 1.
         """
         if self.mimo_parallelism_config is not None:
             if not dist.is_initialized():
@@ -531,3 +627,15 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                     "Call torch.distributed.init_process_group() first."
                 )
             self.mimo_parallelism_config.finalize(dist.get_world_size())
+        else:
+            lang_spec = self.language_model_spec
+            if lang_spec is not None and hasattr(lang_spec, "params") and lang_spec.params:
+                config = lang_spec.params.get("config")
+                if config is not None:
+                    pp_size = getattr(config, "pipeline_model_parallel_size", 1)
+                    if pp_size != 1:
+                        raise ValueError(
+                            f"Homogeneous MIMO requires pipeline_model_parallel_size=1, "
+                            f"got {pp_size}. Pipeline parallelism is incompatible with "
+                            f"homogeneous mode because encoders are fully replicated."
+                        )
