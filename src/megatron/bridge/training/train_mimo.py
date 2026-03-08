@@ -126,9 +126,11 @@ def train_step_mimo(
     timers("optimizer").stop()
 
     # Step learning rate schedulers
-    for module_name, scheduler in schedulers.items():
-        if scheduler is not None and update_successful:
-            scheduler.step()
+    if update_successful:
+        increment = num_microbatches * micro_batch_size * global_state.cfg.data_parallel_size
+        for module_name, scheduler in schedulers.items():
+            if scheduler is not None:
+                scheduler.step(increment=increment)
 
     loss_dict = {}
     if losses_reduced:
