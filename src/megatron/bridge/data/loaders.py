@@ -175,6 +175,28 @@ def build_train_valid_test_data_loaders(
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
     """
+    # Check for MIMO path
+    from megatron.bridge.data.mimo.base_provider import MimoDatasetProvider
+    from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
+
+    if isinstance(cfg.model, MimoModelProvider):
+        if not isinstance(cfg.dataset, MimoDatasetProvider):
+            raise ValueError(
+                "MIMO models require cfg.dataset to be a MimoDatasetProvider. "
+                "Use HFMimoDatasetProvider, MockMimoProvider, or a subclass of MimoDatasetProvider."
+            )
+        from megatron.bridge.data.mimo.loaders import build_mimo_data_loaders
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
+        return build_mimo_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            mimo_provider=cfg.dataset,
+            train_samples=train_samples,
+            valid_samples=valid_samples,
+            test_samples=test_samples,
+        )
+
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
