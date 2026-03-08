@@ -165,8 +165,7 @@ class TestChatPreprocess:
 
         result = _chat_preprocess(source, mock_tokenizer)
 
-        assert result["input_ids"][-1].item() == 888
-        assert len(result["input_ids"]) == 4
+        assert result["input_ids"].tolist() == [1, 10, 20, 888]
 
     def test_chat_preprocess_with_tool_schemas(self):
         """Test chat preprocessing with tool schemas."""
