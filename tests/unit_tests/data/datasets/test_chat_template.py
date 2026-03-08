@@ -148,8 +148,8 @@ class TestChatPreprocess:
         # Should default to all 1s for loss mask
         assert result["loss_mask"].tolist() == [1, 1, 1, 1, 1]
 
-    def test_chat_preprocess_adds_eos_if_missing(self):
-        """Test that EOS token is added if missing."""
+    def test_chat_preprocess_trusts_template_eos(self):
+        """Test that _chat_preprocess does not append eos_id when template uses a different end token."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
         mock_tokenizer = mock_hf_tokenizer
@@ -158,16 +158,15 @@ class TestChatPreprocess:
 
         mock_hf_tokenizer.chat_template = "{{ messages }}"
         mock_hf_tokenizer.apply_chat_template.return_value = {
-            "input_ids": [1, 10, 20],  # No EOS
+            "input_ids": [1, 10, 20, 888],  # Ends with 888, not eos_id 999
         }
 
         source = {"conversations": [{"from": "User", "value": "Test"}]}
 
         result = _chat_preprocess(source, mock_tokenizer)
 
-        # EOS should be added
-        assert result["input_ids"][-1].item() == 999
-        assert len(result["input_ids"]) == 4  # Original 3 + EOS
+        assert result["input_ids"][-1].item() == 888
+        assert len(result["input_ids"]) == 4
 
     def test_chat_preprocess_with_tool_schemas(self):
         """Test chat preprocessing with tool schemas."""
