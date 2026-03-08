@@ -92,10 +92,21 @@ def setup_mimo(
     Returns:
         MimoSetupOutput containing all components for training.
 
+    Raises:
+        ValueError: If mimo_parallelism_config is None (homogeneous mode).
+            Use pretrain() for homogeneous MIMO instead.
+
     Reuses from setup.py:
         - Logging setup (via global_state)
         - Timer infrastructure (via global_state)
     """
+    if mimo_provider.mimo_parallelism_config is None:
+        raise ValueError(
+            "setup_mimo() requires mimo_parallelism_config to be set "
+            "(heterogeneous mode). For homogeneous MIMO "
+            "(mimo_parallelism_config=None), use pretrain() instead."
+        )
+
     # Create GlobalState if not provided
     if global_state is None:
         from megatron.core.timers import Timers
@@ -204,7 +215,7 @@ def pretrain_mimo(
     schedulers: Optional[Dict[str, "OptimizerParamScheduler"]] = None,
     global_state: Optional[GlobalState] = None,
 ) -> None:
-    """Entry point for MIMO pretraining.
+    """Entry point for MIMO pretraining (heterogeneous mode only).
 
     Steps:
     1. Call setup_mimo() to get model, infra, communicators
@@ -221,9 +232,20 @@ def pretrain_mimo(
         opt_config: OptimizerConfig for creating MimoOptimizer.
         schedulers: Per-module learning rate schedulers {module_name: scheduler}.
         global_state: Optional GlobalState. If not provided, creates a new one.
+
+    Raises:
+        ValueError: If mimo_parallelism_config is None (homogeneous mode).
+            Use pretrain() for homogeneous MIMO instead.
     """
     if schedulers is None:
         schedulers = {}
+
+    if mimo_provider.mimo_parallelism_config is None:
+        raise ValueError(
+            "pretrain_mimo() requires mimo_parallelism_config to be set "
+            "(heterogeneous mode). For homogeneous MIMO "
+            "(mimo_parallelism_config=None), use pretrain() instead."
+        )
 
     logger.info("Starting MIMO pretraining")
 
