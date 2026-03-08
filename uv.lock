@@ -21,7 +21,6 @@ prerelease-mode = "allow"
 overrides = [
     { name = "cryptography", specifier = ">=43.0.0,<47" },
     { name = "mlflow", specifier = ">=3.5.0" },
-    { name = "nemo-run", git = "https://github.com/NVIDIA/NeMo-Run.git?rev=ebf34079777f977158ce2c098838c2d26ccb8fd8" },
     { name = "nvidia-modelopt", specifier = ">=0.42.0a0", index = "https://pypi.nvidia.com/" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
@@ -3229,7 +3228,7 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.5.0" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
     { name = "nvdlfw-inspect", marker = "extra == 'tensor-inspect'", specifier = "==0.2.1" },
-    { name = "nvidia-resiliency-ext", specifier = "~=0.4.1" },
+    { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "open-clip-torch", specifier = ">=3.2.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -4001,8 +4000,8 @@ wheels = [
 
 [[package]]
 name = "nemo-run"
-version = "0.9.0rc0.dev0"
-source = { git = "https://github.com/NVIDIA/NeMo-Run.git?rev=ebf34079777f977158ce2c098838c2d26ccb8fd8#ebf34079777f977158ce2c098838c2d26ccb8fd8" }
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "catalogue" },
     { name = "cryptography" },
@@ -4019,6 +4018,10 @@ dependencies = [
     { name = "toml" },
     { name = "torchx" },
     { name = "typer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/5d/ec53d87a698ef9a9d294d0e779c4c9fc0ee373882ee000200d755d02d473/nemo_run-0.7.0.tar.gz", hash = "sha256:7176cde88194eb699483191af66536843e016227c40bf49384556057a4fe8bfd", size = 2294069, upload-time = "2025-12-03T23:54:17.697Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/e9/65352abfd75df6f77a6b16617a3cae102cbe62b74778ffe50edbabe36547/nemo_run-0.7.0-py3-none-any.whl", hash = "sha256:f1b86a5675178c6207f2f32fdf2de879801daa8d3e1cf867aa5180a787d3771a", size = 243281, upload-time = "2025-12-03T23:54:16.603Z" },
 ]
 
 [[package]]
@@ -4240,7 +4243,7 @@ wheels = [
 [[package]]
 name = "nvidia-resiliency-ext"
 version = "0.4.1"
-source = { registry = "https://pypi.nvidia.com/" }
+source = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1#54f85fe422d296cf04ea524130014bd3a2c3add1" }
 dependencies = [
     { name = "defusedxml" },
     { name = "nvidia-ml-py" },
@@ -4249,14 +4252,6 @@ dependencies = [
     { name = "pynvml" },
     { name = "pyyaml" },
     { name = "torch", marker = "sys_platform == 'never'" },
-]
-wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp310-cp310-manylinux_2_31_aarch64.whl", hash = "sha256:cf80599411018ebbf03da64769527dee6b37746b72b8606f919b7999633770b8" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:0c23e621d598ba436549db83deeb3569c19df0194b89fe6169d62b6ead711be3" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp311-cp311-manylinux_2_31_aarch64.whl", hash = "sha256:d8ca454a8b8abef72e0ff0e33914686c263414e8891471c02a9f6af9d2d6b925" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:dde6034f29350ac6326cdd861ceec641bdd93be0eddbf034739f4cd9452a4dd9" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp312-cp312-manylinux_2_31_aarch64.whl", hash = "sha256:b3bd5f01535574b16d0f38bca6e39afe3806c4a2896eee1b321cd944e00025a7" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:ca9f8de465af345952bedbea53c90c0e2323d88cfd830ded0e806fad91845c0e" },
 ]
 
 [[package]]
