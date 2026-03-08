@@ -180,6 +180,13 @@ def create_sft_dataset(
             **gpt_sft_dataset_kwargs,
             **kwargs,
         )
+    elif path.suffix == '.mmap':
+        return GPTSFTMMapPackedDataset(
+            pack_metadata_file_path=pack_metadata_file_path,
+            pad_cu_seqlens=pad_cu_seqlens,
+            **gpt_sft_dataset_kwargs,
+            **kwargs,
+        )
     elif chat:
         return GPTSFTChatDataset(
             **gpt_sft_dataset_kwargs,
@@ -1012,6 +1019,16 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
         return processed_batch
 
+class GPTSFTMMapPackedDataset(GPTSFTPackedDataset):
+    def _load_dataset(self):
+        try:
+            self.indexed_dataset = MemmapPackedDataset(self.file_path)
+        except Exception as e:
+            logger.error(
+                f"Failed to load packed dataset. The dataset should be a pair of `.idx.npy` and '.bin' files. "
+                f"Please check if the packed dataset was prepared correctly. The original error was:\n {e}",
+            )
+            exit(1)
 
 class GPTSFTChatDataset(GPTSFTDataset):
     """Dataset class for chat-based fine-tuning with optional HuggingFace chat template support.
@@ -1228,3 +1245,48 @@ class GPTSFTChatDataset(GPTSFTDataset):
             processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
+
+class MemmapPackedDataset:
+    """Zero-copy dataset using numpy memmap"""
+
+    def __init__(self, path_prefix):
+        self.path_prefix = path_prefix
+        if False and MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            self.mmap = msc.numpy.memmap(self.path_prefix + '.bin', dtype=np.int32, mode='r')
+            idx_data = msc.numpy.load(self.path_prefix + '.idx.npy', allow_pickle=True).item()
+        else:
+            self.mmap = np.memmap(self.path_prefix + '.bin', dtype=np.int32, mode='r')
+            idx_data = np.load(self.path_prefix + '.idx.npy', allow_pickle=True).item()
+
+        # Load index
+        self.offsets = idx_data['offsets']
+        self.input_lens = idx_data['input_lens']
+        self.loss_lens = idx_data['loss_lens']
+        self.seq_lens = idx_data['seq_lens']
+        self.length = len(self.offsets)
+        self.num_tokens = np.sum(self.input_lens)
+
+    def __getitem__(self, idx):
+        offset = self.offsets[idx] // 4  # byte offset -> int32 offset
+        inp_len = self.input_lens[idx]
+        loss_len = self.loss_lens[idx]
+        seq_len = self.seq_lens[idx]
+
+        inp_end = offset + inp_len
+        loss_end = inp_end + loss_len
+        seq_end = loss_end + seq_len
+
+        ret = {
+            "input_ids": self.mmap[offset:inp_end].tolist(),
+            "loss_mask": self.mmap[inp_end:loss_end].astype(bool).tolist(),
+            "seq_start_id": self.mmap[loss_end:seq_end].tolist()
+        }
+        return ret
+
+    def __len__(self):
+        return self.length
+
+    def __del__(self):
+        if hasattr(self, 'mmap') and self.mmap is not None:
+            del self.mmap
