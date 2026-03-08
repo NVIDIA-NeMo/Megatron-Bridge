@@ -358,5 +358,9 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             )
         else:
             raise ValueError("Expected `dataset_name` to be str, got " + str(type(self.dataset_name)))
+        # If a specific split was requested, load_dataset returns a Dataset, not DatasetDict.
+        # We need to wrap it in a DatasetDict for downstream processing.
+        if isinstance(dataset, Dataset):
+            dataset = DatasetDict({"train": dataset})
 
         return dataset
