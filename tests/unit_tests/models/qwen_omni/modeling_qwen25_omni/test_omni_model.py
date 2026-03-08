@@ -168,7 +168,7 @@ class TestQwen25OmniModel:
             in_channels=thinker_config.vision_config.in_channels,
             spatial_merge_size=thinker_config.vision_config.spatial_merge_size,
             # RoPE settings
-            rotary_base=thinker_config.text_config.rope_theta,
+            rotary_base=getattr(thinker_config.text_config, "rope_theta", 1000000),
             rotary_percent=1.0,
             mrope_section=mrope_section,
             # Training settings
