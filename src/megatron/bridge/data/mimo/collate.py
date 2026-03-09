@@ -59,6 +59,7 @@ def mimo_collate_fn(
     labels = torch.stack([item["labels"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
     position_ids = torch.stack([item["position_ids"] for item in batch])
+    loss_mask = torch.stack([item["loss_mask"] for item in batch])
     
     # Collate modality inputs
     modality_inputs: Dict[str, Dict[str, Any]] = {}
@@ -116,6 +117,7 @@ def mimo_collate_fn(
     return {
         "input_ids": input_ids,
         "labels": labels,
+        "loss_mask": loss_mask,
         "attention_mask": attention_mask,
         "position_ids": position_ids,
         "modality_inputs": modality_inputs,
