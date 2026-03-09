@@ -188,6 +188,7 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
     """
     # Check for Megatron Core distributed checkpoint first
     if dist_checkpointing.check_is_distributed_checkpoint(checkpoint_path):
+        print_rank_0(f" Auto-detected checkpoint format as 'torch_dist' from {checkpoint_path}.")
         return "torch_dist"
 
     # Check for PyTorch DCP format (.metadata file exists)
@@ -2229,9 +2230,15 @@ def _load_base_checkpoint(
 
         return None, "", False, None
 
-    # Determine the checkpoint format
+    # Determine the checkpoint format from config, warn if it differs from auto-detected.
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)
-    ckpt_format = _get_checkpoint_format(checkpoint_path)
+    inferred_ckpt_format = _get_checkpoint_format(checkpoint_path)
+    ckpt_format = ckpt_cfg.ckpt_format
+    if ckpt_format != inferred_ckpt_format:
+        print_rank_0(
+            f" Checkpoint format '{ckpt_format}' from config differs from inferred format "
+            f"'{inferred_ckpt_format}' for {checkpoint_path}. Using '{ckpt_format}'."
+        )
 
     if not rank0:
         dist_infix = "distributed " if ckpt_format == "torch_dist" else ""
