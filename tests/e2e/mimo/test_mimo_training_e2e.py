@@ -239,27 +239,37 @@ def _build_config(
     mimo_provider: MimoModelProvider,
     mock_data_provider: MockMimoProvider,
     opt_config: BridgeOptimizerConfig,
+    log_interval: int = 1,
+    wandb_project: str | None = None,
+    wandb_exp_name: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_save_dir: str | None = None,
 ) -> ConfigContainer:
     train_cfg = TrainingConfig(
         micro_batch_size=1,
-        global_batch_size=1,
-        train_iters=2,
+        global_batch_size=32,
+        train_iters=500,
     )
     train_cfg.num_microbatches = 1
     train_cfg.grad_reduce_in_fp32 = False
     train_cfg.overlap_grad_reduce = False
     train_cfg.use_distributed_optimizer = True
     train_cfg.check_for_nan_in_grad = False
-    train_cfg.log_interval = 1
+    train_cfg.log_interval = log_interval
 
     logger_cfg = LoggerConfig()
-    logger_cfg.log_interval = 1
+    logger_cfg.log_interval = log_interval
+    logger_cfg.wandb_project = wandb_project
+    logger_cfg.wandb_exp_name = wandb_exp_name
+    logger_cfg.wandb_entity = wandb_entity
+    logger_cfg.wandb_save_dir = wandb_save_dir
+    logger_cfg.tensorboard_dir = os.path.join(wandb_save_dir or "/tmp/tb_logs", "tb_logs") if wandb_project else None
 
     cfg = ConfigContainer(
         train=train_cfg,
         model=mimo_provider,
         optimizer=opt_config,
-        scheduler=SchedulerConfig(),
+        scheduler=SchedulerConfig(start_weight_decay=0.0, end_weight_decay=0.0),
         dataset=mock_data_provider,
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
@@ -334,6 +344,7 @@ def main():
     mcore_opt_config = MCoreOptimizerConfig(
         optimizer="adam",
         lr=1e-4,
+        min_lr=0.0,
         weight_decay=0.01,
         clip_grad=1.0,
         bf16=True,
@@ -342,7 +353,15 @@ def main():
     bridge_opt_config = BridgeOptimizerConfig(lr=1e-4)
 
     _log("building config")
-    cfg = _build_config(mimo_provider, mock_data_provider, bridge_opt_config)
+    cfg = _build_config(
+        mimo_provider,
+        mock_data_provider,
+        bridge_opt_config,
+        wandb_project=os.environ.get("WANDB_PROJECT", "Megatron-Bridge-MIMO"),
+        wandb_exp_name=os.environ.get("WANDB_EXP_NAME", "mimo-e2e-test"),
+        wandb_entity=os.environ.get("WANDB_ENTITY"),
+        wandb_save_dir=os.environ.get("WANDB_SAVE_DIR", "/tmp/wandb"),
+    )
 
     _log("launching pretrain_mimo")
     pretrain_mimo(

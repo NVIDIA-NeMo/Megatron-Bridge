@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tupl
 
 import torch
 import torch.distributed as dist
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 from megatron.core.utils import get_model_config
 
@@ -94,7 +95,7 @@ def train_step_mimo(
         micro_batch_size: Micro batch size.
 
     Returns:
-        Tuple of (loss_dict, grad_norm, num_zeros_in_grad).
+        Tuple of (loss_dict, skipped_iter, grad_norm, num_zeros_in_grad).
     """
     timers = global_state.timers
 
@@ -131,6 +132,9 @@ def train_step_mimo(
         for module_name, scheduler in schedulers.items():
             if scheduler is not None:
                 scheduler.step(increment=increment)
+        skipped_iter = 0
+    else:
+        skipped_iter = 1
 
     loss_dict = {}
     if losses_reduced:
@@ -156,7 +160,49 @@ def train_step_mimo(
                 else:
                     raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
 
-    return loss_dict, grad_norm, num_zeros_in_grad
+    # Send loss_dict to the last rank (where wandb/tensorboard loggers live).
+    # Use a lightweight all_reduce to find the source, then P2P send/recv only
+    # between the source and the logging rank — avoids full broadcast overhead.
+    last_rank = dist.get_world_size() - 1
+    my_rank = dist.get_rank()
+
+    # All ranks participate in finding who has the loss (pick highest rank with loss).
+    has_loss = 1 if loss_dict else 0
+    source_tensor = torch.tensor([my_rank if has_loss else -1], dtype=torch.int32, device="cuda")
+    torch.distributed.all_reduce(source_tensor, op=torch.distributed.ReduceOp.MAX)
+    source_rank = source_tensor.item()
+
+    # Only do P2P if the source and logging rank differ and a source exists.
+    if source_rank >= 0 and source_rank != last_rank:
+        if my_rank == source_rank:
+            keys = list(loss_dict.keys())
+            vals = torch.stack([loss_dict[k].detach().float().view(1) for k in keys]).cuda()
+            # Send count + values as tensors, then key names via pickle over CPU tensor
+            torch.distributed.send(torch.tensor([len(keys)], dtype=torch.int32, device="cuda"), dst=last_rank)
+            torch.distributed.send(vals, dst=last_rank)
+            import pickle
+
+            key_bytes = pickle.dumps(keys)
+            key_tensor = torch.tensor(list(key_bytes), dtype=torch.uint8, device="cuda")
+            torch.distributed.send(torch.tensor([len(key_bytes)], dtype=torch.int64, device="cuda"), dst=last_rank)
+            torch.distributed.send(key_tensor, dst=last_rank)
+        elif my_rank == last_rank:
+            import pickle
+
+            num_keys = torch.tensor([0], dtype=torch.int32, device="cuda")
+            torch.distributed.recv(num_keys, src=source_rank)
+            n = num_keys.item()
+            vals = torch.zeros(n, 1, device="cuda")
+            torch.distributed.recv(vals, src=source_rank)
+            key_len = torch.tensor([0], dtype=torch.int64, device="cuda")
+            torch.distributed.recv(key_len, src=source_rank)
+            key_tensor = torch.zeros(key_len.item(), dtype=torch.uint8, device="cuda")
+            torch.distributed.recv(key_tensor, src=source_rank)
+            keys = pickle.loads(bytes(key_tensor.cpu().tolist()))
+            for i, k in enumerate(keys):
+                loss_dict[k] = vals[i].squeeze()
+
+    return loss_dict, skipped_iter, grad_norm, num_zeros_in_grad
 
 
 def train_mimo(
@@ -204,7 +250,7 @@ def train_mimo(
 
     # Get training config
     train_config = cfg.train
-    num_microbatches = train_config.num_microbatches
+    num_microbatches = get_num_microbatches()
     seq_length = cfg.dataset.seq_length
     micro_batch_size = train_config.micro_batch_size
 
@@ -296,7 +342,7 @@ def train_mimo(
         timers("iteration-time", log_level=0).start(barrier=False)
 
         # Run single training step
-        loss_dict, grad_norm, num_zeros_in_grad = train_step_mimo(
+        loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = train_step_mimo(
             forward_step_func=wrapped_forward_step_func,
             data_iterator=train_data_iterator,
             model=model,
@@ -326,31 +372,46 @@ def train_mimo(
         if schedulers:
             sched = next(iter(schedulers.values()))
             if sched is not None:
-                learning_rate = sched.get_lr()
-
-        # Get loss scale from MimoOptimizer
-        loss_scale = 1.0
-        if optimizer is not None:
-            loss_scale = optimizer.get_loss_scale()
+                learning_rate = sched.get_lr(sched.optimizer.param_groups[0])
 
         # Log training metrics
-        report_memory_flag = training_log(
-            loss_dict=loss_dict,
-            total_loss_dict=total_loss_dict,
-            learning_rate=learning_rate,
-            decoupled_learning_rate=None,
-            loss_scale=loss_scale,
-            report_memory_flag=report_memory_flag,
-            skipped_iter=0,
-            grad_norm=grad_norm,
-            params_norm=None,
-            num_zeros_in_grad=num_zeros_in_grad,
-            config=cfg,
-            global_state=global_state,
-            history_wct=history_wct,
-            model=[model],
-            pg_collection=local_pg_collection,
-        )
+        if not cfg.logger.skip_train_metrics_log:
+            # Get loss scale from MimoOptimizer
+            if optimizer is not None and hasattr(optimizer, "get_loss_scale"):
+                loss_scale = optimizer.get_loss_scale()
+                if hasattr(loss_scale, "item"):
+                    loss_scale = loss_scale.item()
+            else:
+                loss_scale = 1.0
+
+            report_memory_flag = training_log(
+                loss_dict=loss_dict,
+                total_loss_dict=total_loss_dict,
+                learning_rate=learning_rate,
+                decoupled_learning_rate=None,
+                loss_scale=loss_scale,
+                report_memory_flag=report_memory_flag,
+                skipped_iter=skipped_iter,
+                grad_norm=grad_norm,
+                params_norm=None,
+                num_zeros_in_grad=num_zeros_in_grad,
+                config=cfg,
+                global_state=global_state,
+                history_wct=history_wct,
+                model=[model],
+                pg_collection=local_pg_collection,
+            )
+
+            # Log iteration-time directly for MIMO models.
+            # training_log only logs this inside a hasattr(config.model, "kv_channels")
+            # block which MIMO models don't satisfy, so we log it here as a workaround.
+            if cfg.logger.log_timers_to_tensorboard and train_state.step % cfg.logger.log_interval == 0:
+                writer = global_state.tensorboard_logger
+                if writer:
+                    writer.add_scalar("iteration-time", iteration_time, train_state.step)
+                wandb_writer = global_state.wandb_logger
+                if wandb_writer:
+                    wandb_writer.log({"iteration-time": iteration_time}, train_state.step)
 
         # Evaluation at specified intervals
         if (
