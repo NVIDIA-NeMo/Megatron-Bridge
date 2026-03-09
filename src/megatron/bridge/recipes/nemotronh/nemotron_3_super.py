@@ -44,8 +44,7 @@ class Nemotron3SuperCommonKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron 3 Super recipe helper functions."""
 
     # Core identifiers
-    # TODO(liding): init model directly from HF - see gpt_oss recipes
-    model_provider: Nemotron3SuperDebugProvider
+    model_provider: Nemotron3SuperProvider
     dir: Optional[str]
     name: str
     # Dataset configuration
@@ -107,7 +106,7 @@ def nemotron_3_super_pretrain_config(**user_kwargs: Unpack[Nemotron3SuperCommonK
 
 
 def _nemotron_3_super_common(
-    model_provider: type[Nemotron3SuperDebugProvider],
+    model_provider: type[Nemotron3SuperProvider],
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -204,11 +203,10 @@ def _nemotron_3_super_common(
         expert_tensor_parallel_size=expert_tensor_parallelism,
         expert_model_parallel_size=expert_model_parallelism,
         apply_rope_fusion=False,
-        attention_backend="flash",
+        attention_backend="fused",
         gradient_accumulation_fusion=True,
         init_method_std=0.014,
         use_fused_weighted_squared_relu=True,
-        keep_mamba_stack_attention_linear_in_bf16=True,
         keep_mtp_spec_in_bf16=True,
         calculate_per_token_loss=True,
         mtp_loss_scaling_factor=0.3,
@@ -234,7 +232,6 @@ def _nemotron_3_super_common(
         lr_decay_style="WSD",
     )
 
-    # TODO(liding): update tokenizer name
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -299,11 +296,6 @@ def _nemotron_3_super_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_bootstrap_backend="nccl",
-            tp_comm_overlap=True,
-        )
 
     return cfg
 
@@ -376,7 +368,7 @@ def nemotron_3_super_finetune_config(**user_kwargs: Unpack[Nemotron3SuperFinetun
 
 
 def _nemotron_3_super_finetune_common(
-    model_provider: type[Nemotron3SuperDebugProvider],
+    model_provider: type[Nemotron3SuperProvider],
     dir: Optional[str] = None,
     name: str = "default",
     # Model configuration
@@ -431,11 +423,10 @@ def _nemotron_3_super_finetune_common(
         expert_tensor_parallel_size=expert_tensor_parallelism,
         expert_model_parallel_size=expert_model_parallelism,
         apply_rope_fusion=False,
-        attention_backend="flash",
+        attention_backend="fused",
         gradient_accumulation_fusion=True,
         init_method_std=0.014,
         use_fused_weighted_squared_relu=True,
-        keep_mamba_stack_attention_linear_in_bf16=True,
         keep_mtp_spec_in_bf16=True,
         calculate_per_token_loss=True,
         mtp_loss_scaling_factor=0.3,
@@ -468,15 +459,13 @@ def _nemotron_3_super_finetune_common(
 
     # Logger
     logger_cfg = LoggerConfig(
-        # TODO(liding): change to 10
-        log_interval=1,
+        log_interval=10,
         tensorboard_dir=tensorboard_dir,
         wandb_project=wandb_project,
         wandb_entity=wandb_entity,
         wandb_exp_name=wandb_exp_name,
     )
 
-    # TODO(liding): update tokenizer to actual Super tokenizer model
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
     )
@@ -519,10 +508,5 @@ def _nemotron_3_super_finetune_common(
         mixed_precision=precision_config,
     )
 
-    # if cfg.comm_overlap is None:
-    #     cfg.comm_overlap = CommOverlapConfig(
-    #         tp_comm_bootstrap_backend="nccl",
-    #         tp_comm_overlap=True,
-    #     )
 
     return cfg

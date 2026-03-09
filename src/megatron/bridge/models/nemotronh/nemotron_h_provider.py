@@ -199,9 +199,7 @@ class Nemotron3SuperProvider(NemotronHModelProvider):
     moe_shared_expert_overlap: bool = False
     mtp_num_layers: int = 2
     mtp_hybrid_override_pattern: str = "*E"
-    # TODO(liding): can we remove them?
     mtp_use_repeated_layer: bool = False
-    keep_mamba_stack_attention_linear_in_bf16: bool = False
 
 
 # TODO(liding): remove debug provider

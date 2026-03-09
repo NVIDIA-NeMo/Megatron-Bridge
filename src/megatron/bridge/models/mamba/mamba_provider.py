@@ -137,9 +137,6 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     enable_cuda_graph: bool = False
     cuda_graph_impl: str = "none"
     cuda_graph_scope: list[str] = field(default_factory=list)
-    # TODO(liding): does not exist in MLM training branch. added here
-    embedding_init_method_std: Optional[float] = None
-    overlap_moe_expert_parallel_comm: bool = False
 
     """Optional HuggingFace model identifier associated with this provider."""
 
