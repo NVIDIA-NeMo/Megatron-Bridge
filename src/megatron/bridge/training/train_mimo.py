@@ -177,7 +177,10 @@ def train_step_mimo(
         obj = [loss_dict if my_rank == source_rank else None]
         torch.distributed.broadcast_object_list(obj, src=source_rank)
         if my_rank == last_rank:
-            loss_dict = obj[0] or {}
+            received = obj[0] or {}
+            # Tensors inside the received dict carry the source rank's CUDA device;
+            # move them to this rank's device so training_log arithmetic works.
+            loss_dict = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in received.items()}
 
     return loss_dict, skipped_iter, grad_norm, num_zeros_in_grad
 
