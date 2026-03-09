@@ -49,8 +49,8 @@ export WKDIR="${WKDIR:-}"
 
 # Model and training configurations
 MODEL_NAME=gpt_oss_20b
-# RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_pretrain_config}"
-RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_pretrain_config}"
+# RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"
 DATASET_NAME=dclm  # set to "mock" for mock data; "dclm" uses DCLM when DCLM_DATA_DIR/DCLM_CACHE are set below
 SEQ_LENGTH=4096
 
