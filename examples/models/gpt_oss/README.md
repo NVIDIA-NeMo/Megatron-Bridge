@@ -84,18 +84,11 @@ All training scripts use SLURM for containerized multi-node training.
 
 ### FP8 Training (Hopper GPUs)
 
-The FP8 current scaling recipes enable mixed-precision training with FP8 on Hopper (H100) GPUs. To use an FP8 recipe, set the `RECIPE_NAME` environment variable before launching the SLURM script:
+The FP8 current scaling recipes enable mixed-precision training with FP8 on Hopper GPUs. To use an FP8 recipe, uncomment the FP8 `RECIPE_NAME` line in the corresponding SLURM script:
 
-```bash
-# Pretrain with FP8
-RECIPE_NAME=gpt_oss_20b_pretrain_fp8_current_scaling_config bash slurm_pretrain.sh
-
-# SFT with FP8
-RECIPE_NAME=gpt_oss_20b_sft_fp8_current_scaling_config bash slurm_sft.sh
-
-# PEFT with FP8
-RECIPE_NAME=gpt_oss_20b_peft_fp8_current_scaling_config bash slurm_peft.sh
-```
+- [slurm_pretrain.sh](slurm_pretrain.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"`
+- [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"`
+- [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"`
 
 ### Pretrain
 
