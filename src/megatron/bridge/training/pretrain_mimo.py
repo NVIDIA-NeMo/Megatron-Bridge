@@ -92,10 +92,21 @@ def setup_mimo(
     Returns:
         MimoSetupOutput containing all components for training.
 
+    Raises:
+        ValueError: If mimo_parallelism_config is None (homogeneous mode).
+            Use pretrain() for homogeneous MIMO instead.
+
     Reuses from setup.py:
         - Logging setup (via global_state)
         - Timer infrastructure (via global_state)
     """
+    if mimo_provider.mimo_parallelism_config is None:
+        raise ValueError(
+            "setup_mimo() requires mimo_parallelism_config to be set "
+            "(heterogeneous mode). For homogeneous MIMO "
+            "(mimo_parallelism_config=None), use pretrain() instead."
+        )
+
     # Create GlobalState if not provided
     if global_state is None:
         from megatron.core.timers import Timers
@@ -201,10 +212,10 @@ def pretrain_mimo(
     forward_step_func: Callable,
     build_data_iterators_fn: Callable,
     opt_config: "OptimizerConfig",
-    schedulers: Dict[str, "OptimizerParamScheduler"],
+    schedulers: Optional[Dict[str, "OptimizerParamScheduler"]] = None,
     global_state: Optional[GlobalState] = None,
 ) -> None:
-    """Entry point for MIMO pretraining.
+    """Entry point for MIMO pretraining (heterogeneous mode only).
 
     Steps:
     1. Call setup_mimo() to get model, infra, communicators
@@ -221,7 +232,21 @@ def pretrain_mimo(
         opt_config: OptimizerConfig for creating MimoOptimizer.
         schedulers: Per-module learning rate schedulers {module_name: scheduler}.
         global_state: Optional GlobalState. If not provided, creates a new one.
+
+    Raises:
+        ValueError: If mimo_parallelism_config is None (homogeneous mode).
+            Use pretrain() for homogeneous MIMO instead.
     """
+    if schedulers is None:
+        schedulers = {}
+
+    if mimo_provider.mimo_parallelism_config is None:
+        raise ValueError(
+            "pretrain_mimo() requires mimo_parallelism_config to be set "
+            "(heterogeneous mode). For homogeneous MIMO "
+            "(mimo_parallelism_config=None), use pretrain() instead."
+        )
+
     logger.info("Starting MIMO pretraining")
 
     # Ensure optimizer config computes derived fields expected by core optimizers.
@@ -270,6 +295,34 @@ def pretrain_mimo(
     from megatron.core.models.mimo.optimizer import get_mimo_optimizer
 
     optimizer = get_mimo_optimizer(unwrapped_model, opt_config)
+
+    # Auto-create per-module LR schedulers when none are provided
+    if not schedulers:
+        cfg._calculate_scheduler_steps()
+
+        from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+
+        schedulers = {}
+        for name, info in optimizer.module_infos.items():
+            if info.is_active and info.optimizer is not None:
+                schedulers[name] = OptimizerParamScheduler(
+                    info.optimizer,
+                    init_lr=cfg.scheduler.lr_warmup_init,
+                    max_lr=opt_config.lr,
+                    min_lr=opt_config.min_lr,
+                    lr_warmup_steps=cfg.scheduler.lr_warmup_steps,
+                    lr_decay_steps=cfg.scheduler.lr_decay_steps,
+                    lr_decay_style=cfg.scheduler.lr_decay_style,
+                    start_wd=cfg.scheduler.start_weight_decay,
+                    end_wd=cfg.scheduler.end_weight_decay,
+                    wd_incr_steps=cfg.scheduler.wd_incr_steps,
+                    wd_incr_style=cfg.scheduler.weight_decay_incr_style,
+                    use_checkpoint_opt_param_scheduler=cfg.scheduler.use_checkpoint_opt_param_scheduler,
+                    override_opt_param_scheduler=cfg.scheduler.override_opt_param_scheduler,
+                    wsd_decay_steps=cfg.scheduler.wsd_decay_steps,
+                    lr_wsd_decay_style=cfg.scheduler.lr_wsd_decay_style,
+                )
+        logger.info(f"Rank {dist.get_rank()}: Auto-created schedulers for modules: {list(schedulers.keys())}")
 
     logger.info(f"Rank {dist.get_rank()}: Starting training loop")
 

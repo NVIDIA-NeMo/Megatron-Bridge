@@ -74,7 +74,9 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
     valid_split: str = "validation"
     test_split: str = "test"
     trust_remote_code: Optional[bool] = None
-    
+    hf_data_files: Optional[Union[str, List[str]]] = None
+    preprocess_fn: Optional[Callable] = None
+
     # Cached processors and tokenizer (loaded once)
     _processors: Optional[Dict[str, Any]] = field(default=None, repr=False)
     _tokenizer: Optional[Any] = field(default=None, repr=False)
@@ -125,6 +127,7 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
             dataset = load_dataset(
                 self.hf_dataset_path,
                 name=self.hf_dataset_name,
+                data_files=self.hf_data_files,
                 split=split,
                 trust_remote_code=is_safe_repo(
                     trust_remote_code=self.trust_remote_code,
@@ -161,6 +164,7 @@ class HFMimoDatasetProvider(MimoDatasetProvider):
             modality_columns=self.modality_columns,
             text_column=self.text_column,
             max_samples=target_samples,
+            preprocess_fn=self.preprocess_fn,
         )
     
     def build_datasets(
