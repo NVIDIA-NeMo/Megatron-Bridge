@@ -36,13 +36,13 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
 
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, MLP, and MoE layers."""
-        if hasattr(cfg.model, "hybrid_override_pattern") and cfg.model.hybrid_override_pattern:
+        if hasattr(cfg.model, "hybrid_layer_pattern") and cfg.model.hybrid_layer_pattern:
             counts = {"M": 0, "*": 0, "-": 0, "E": 0}
             try:
                 parse_hybrid_pattern = importlib.import_module(
                     "megatron.core.ssm.mamba_hybrid_layer_allocation"
                 ).parse_hybrid_pattern
-                parsed = parse_hybrid_pattern(cfg.model.hybrid_override_pattern)
+                parsed = parse_hybrid_pattern(cfg.model.hybrid_layer_pattern)
                 if parsed.main_pattern:
                     for layer_type in parsed.main_pattern:
                         if layer_type in counts:
@@ -52,7 +52,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                         if layer_type in counts:
                             counts[layer_type] += parsed.mtp_num_depths
             except (ImportError, ModuleNotFoundError):
-                for layer_type in cfg.model.hybrid_override_pattern:
+                for layer_type in cfg.model.hybrid_layer_pattern:
                     if layer_type in counts:
                         counts[layer_type] += 1
             return counts["*"], counts["M"], counts["-"], counts["E"]
@@ -431,7 +431,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
         if mtp_num_layers is None:
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
-            hybrid_pattern = getattr(cfg.model, "hybrid_override_pattern", None)
+            hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
             if hybrid_pattern:
                 try:
                     parse_hybrid_pattern = importlib.import_module(
