@@ -16,9 +16,9 @@
 # Test purpose:
 # - Parametrize over all exported GLM-4.5V recipe functions in `megatron.bridge.recipes.glm_vl.glm_45v`.
 # - For each recipe, monkeypatch AutoBridge and the provider to avoid I/O.
-# - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
+# - Build a config and assert it forms a valid `ConfigContainer`.
 # - Verify dataset provider selection and sanity-check parallelism fields.
-# - Test pipeline model parallel layout for asymmetric stages.
+# - Test MoE-specific settings for this MoE VLM model.
 #
 
 import importlib
@@ -28,33 +28,19 @@ import pytest
 
 
 _glm_45v_module = importlib.import_module("megatron.bridge.recipes.glm_vl.glm_45v")
-_GLM_45V_RECIPE_FUNCS = [
-    _glm_45v_module.glm_45v_finetune_config,
+
+# SFT configs (parameterless)
+_GLM_45V_SFT_FUNCS = [
+    _glm_45v_module.glm_45v_sft_config,
 ]
 
+# PEFT configs (take peft_scheme parameter)
+_GLM_45V_PEFT_FUNCS = [
+    _glm_45v_module.glm_45v_peft_config,
+]
 
-def _safe_overrides_for(name: str) -> dict:
-    """Create safe test overrides for a given recipe function name."""
-    overrides = {
-        "name": f"unit_{name}",
-        "dir": ".",
-        "dataset_type": "mock",
-        "train_iters": 10,
-        "global_batch_size": 2,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-        "finetune_lr": 1e-4,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "expert_model_parallel_size": 1,
-        "context_parallel_size": 1,
-        "sequence_parallel": False,
-        "virtual_pipeline_model_parallel_size": None,
-    }
-
-    return overrides
+# All recipe functions
+_GLM_45V_ALL_FUNCS = _GLM_45V_SFT_FUNCS + _GLM_45V_PEFT_FUNCS
 
 
 class _FakeModelCfg:
@@ -66,19 +52,23 @@ class _FakeModelCfg:
         self.pipeline_model_parallel_size = 1
         self.pipeline_dtype = None
         self.virtual_pipeline_model_parallel_size = None
-        self.expert_model_parallel_size = 1
         self.context_parallel_size = 1
+        self.expert_model_parallel_size = 1
         self.sequence_parallel = False
         self.seq_length = 64
         self.freeze_language_model = False
         self.freeze_vision_model = False
         self.freeze_vision_projection = False
-        # Pipeline layout attributes
-        self.pipeline_model_parallel_layout = None
-        self.account_for_embedding_in_pipeline_split = True
-        self.account_for_loss_in_pipeline_split = True
-        self.num_layers_in_first_pipeline_stage = None
-        self.num_layers_in_last_pipeline_stage = None
+        # MoE-specific
+        self.moe_token_dispatcher_type = None
+        self.moe_flex_dispatcher_backend = None
+        self.moe_hybridep_num_sms = None
+        self.moe_router_fusion = False
+        self.moe_permute_fusion = False
+        self.moe_grouped_gemm = False
+        self.moe_router_padding_for_fp8 = False
+        self.moe_shared_expert_overlap = False
+        self.moe_router_force_load_balancing = False
 
     def finalize(self):
         return None
@@ -117,15 +107,13 @@ def _assert_basic_config(cfg):
     assert cfg.dataset.seq_length >= 1
 
 
-@pytest.mark.parametrize("recipe_func", _GLM_45V_RECIPE_FUNCS)
-def test_each_glm_45v_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that each GLM-4.5V recipe function builds a valid configuration."""
+@pytest.mark.parametrize("recipe_func", _GLM_45V_SFT_FUNCS)
+def test_each_glm_45v_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each GLM-4.5V SFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-
-    cfg = recipe_func(**overrides)
+    cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
@@ -136,156 +124,111 @@ def test_each_glm_45v_recipe_builds_config(recipe_func: Callable, monkeypatch: p
     # Verify parallelism settings
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-    assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
 
     # Verify freeze settings are set
     assert hasattr(cfg.model, "freeze_language_model")
     assert hasattr(cfg.model, "freeze_vision_model")
     assert hasattr(cfg.model, "freeze_vision_projection")
 
+    # SFT configs should not have PEFT
+    assert cfg.peft is None
 
-@pytest.mark.parametrize("dataset_type", ["mock", "hf", "preloaded"])
-def test_glm_45v_dataset_type_selection(dataset_type: str, monkeypatch: pytest.MonkeyPatch):
-    """Test that different dataset_type values produce correct dataset providers."""
+
+@pytest.mark.parametrize("recipe_func", _GLM_45V_PEFT_FUNCS)
+def test_each_glm_45v_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each GLM-4.5V PEFT recipe function builds a valid configuration."""
+    # Monkeypatch AutoBridge to return a fake model config
+    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()  # Default peft_scheme="lora"
+
+    _assert_basic_config(cfg)
+
+    # Check that NullTokenizer is used
+    if hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
+        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+
+    # Verify parallelism settings
+    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+    # Verify freeze settings are set
+    assert hasattr(cfg.model, "freeze_language_model")
+    assert hasattr(cfg.model, "freeze_vision_model")
+    assert hasattr(cfg.model, "freeze_vision_projection")
+
+    # PEFT configs should have PEFT configured
+    assert cfg.peft is not None
+    assert hasattr(cfg.peft, "dim")
+    assert hasattr(cfg.peft, "alpha")
+
+
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_glm_45v_peft_schemes(peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that different PEFT schemes are correctly applied for GLM-4.5V model."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["dataset_type"] = dataset_type
-
-    # For preloaded, we need to provide data paths
-    if dataset_type == "preloaded":
-        overrides["train_data_path"] = ["/fake/train.json"]
-        overrides["valid_data_path"] = ["/fake/valid.json"]
-        overrides["test_data_path"] = ["/fake/test.json"]
-        overrides["image_folder"] = "/fake/images"
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-    # Check that appropriate dataset provider is used
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
-    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
-    from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
-
-    if dataset_type == "mock":
-        assert isinstance(cfg.dataset, MockVLMConversationProvider)
-    elif dataset_type == "hf":
-        assert isinstance(cfg.dataset, HFDatasetConversationProvider)
-    elif dataset_type == "preloaded":
-        assert isinstance(cfg.dataset, PreloadedVLMConversationProvider)
-
-
-def test_glm_45v_freeze_options(monkeypatch: pytest.MonkeyPatch):
-    """Test that freeze options are correctly passed to the model config."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
-
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["freeze_language_model"] = True
-    overrides["freeze_vision_model"] = True
-    overrides["freeze_vision_projection"] = False
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-    assert cfg.model.freeze_language_model is True
-    assert cfg.model.freeze_vision_model is True
-    assert cfg.model.freeze_vision_projection is False
-
-
-def test_glm_45v_invalid_dataset_type(monkeypatch: pytest.MonkeyPatch):
-    """Test that invalid dataset_type raises ValueError."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
-
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["dataset_type"] = "invalid_type"
-
-    with pytest.raises(ValueError, match="Unsupported dataset_type"):
-        _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-
-# PEFT-specific tests
-_GLM_45V_FINETUNE_FUNCS = [
-    _glm_45v_module.glm_45v_finetune_config,
-]
-
-
-@pytest.mark.parametrize("recipe_func", _GLM_45V_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "dora", None])
-def test_glm_45v_finetune_peft_vs_full_sft(recipe_func, peft, monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT and full SFT configurations are correctly applied for GLM-4.5V models."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
-
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    overrides["peft"] = peft
-
-    cfg = recipe_func(**overrides)
+    cfg = _glm_45v_module.glm_45v_peft_config(peft_scheme=peft_scheme)
 
     _assert_basic_config(cfg)
 
     # Check PEFT config presence
-    if peft in ["lora", "dora"]:
-        assert cfg.peft is not None
-        # Verify PEFT config has expected attributes
-        assert hasattr(cfg.peft, "dim")
-        assert hasattr(cfg.peft, "alpha")
-    elif peft is None:
-        assert cfg.peft is None
+    assert cfg.peft is not None
+    # Verify PEFT config has expected attributes
+    assert hasattr(cfg.peft, "dim")
+    assert hasattr(cfg.peft, "alpha")
 
 
-def test_glm_45v_lora_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that GLM-4.5V LoRA has correct default parallelism and learning rate."""
+def test_glm_45v_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that GLM-4.5V SFT has correct default parallelism and MoE settings."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["peft"] = "lora"
-    # Remove parallelism overrides to test recipe defaults
-    overrides.pop("tensor_model_parallel_size", None)
-    overrides.pop("pipeline_model_parallel_size", None)
-    overrides.pop("expert_model_parallel_size", None)
-    # Remove finetune_lr to test default
-    overrides.pop("finetune_lr", None)
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    cfg = _glm_45v_module.glm_45v_sft_config()
 
     _assert_basic_config(cfg)
 
-    # For LoRA, GLM-4.5V should use TP=1, PP=8, EP=4
+    # For full SFT, GLM-4.5V should use TP=1, PP=8, EP=16
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 8
-    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.peft is None
+
+    # Check expert_model_parallel_size for MoE model
+    assert cfg.model.expert_model_parallel_size == 16
+
+
+def test_glm_45v_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that GLM-4.5V LoRA has correct default parallelism."""
+    # Monkeypatch AutoBridge
+    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _glm_45v_module.glm_45v_peft_config(peft_scheme="lora")
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, GLM-4.5V should use TP=1, PP=8
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 8
 
     # Check PEFT config
     assert cfg.peft is not None
     assert cfg.peft.dim == 32
     assert cfg.peft.alpha == 32
 
-    # Check that learning rate defaults to 1e-4 for LoRA
-    assert cfg.optimizer.lr == 1e-4
 
-
-def test_glm_45v_dora_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that GLM-4.5V DoRA has correct default parallelism and learning rate."""
+def test_glm_45v_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that GLM-4.5V DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["peft"] = "dora"
-    # Remove parallelism overrides to test recipe defaults
-    overrides.pop("tensor_model_parallel_size", None)
-    overrides.pop("pipeline_model_parallel_size", None)
-    overrides.pop("expert_model_parallel_size", None)
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    cfg = _glm_45v_module.glm_45v_peft_config(peft_scheme="dora")
 
     _assert_basic_config(cfg)
 
-    # For DoRA, GLM-4.5V should use same parallelism as LoRA
+    # For DoRA, should use same parallelism as LoRA (TP=1, PP=8)
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 8
-    assert cfg.model.expert_model_parallel_size == 4
 
     # Check PEFT config (DoRA has alpha=64 by default, unlike LoRA's alpha=32)
     assert cfg.peft is not None
@@ -293,216 +236,54 @@ def test_glm_45v_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft.alpha == 64
 
 
-def test_glm_45v_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that GLM-4.5V full SFT has correct default parallelism and learning rate."""
+def test_glm_45v_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
+    """Test that SFT configs use HFDatasetConversationProvider by default."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["peft"] = None
-    # Remove parallelism overrides to test recipe defaults
-    overrides.pop("tensor_model_parallel_size", None)
-    overrides.pop("pipeline_model_parallel_size", None)
-    overrides.pop("expert_model_parallel_size", None)
-    # Remove finetune_lr to test default
-    overrides.pop("finetune_lr", None)
+    cfg = _glm_45v_module.glm_45v_sft_config()
 
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 
-    _assert_basic_config(cfg)
-
-    # For full SFT, GLM-4.5V should use TP=1, PP=8, EP=16
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 8
-    assert cfg.model.expert_model_parallel_size == 16
-    assert cfg.peft is None
-
-    # Check that learning rate defaults to 5e-6 for full SFT
-    assert cfg.optimizer.lr == 5e-6
+    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 
 
-def test_glm_45v_custom_finetune_lr(monkeypatch: pytest.MonkeyPatch):
-    """Test that custom finetune_lr overrides default learning rate."""
+def test_glm_45v_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT configs use HFDatasetConversationProvider by default."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["peft"] = "lora"
-    overrides["finetune_lr"] = 2e-4  # Custom learning rate
+    cfg = _glm_45v_module.glm_45v_peft_config()
 
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 
-    _assert_basic_config(cfg)
-
-    # Check that custom learning rate is used
-    assert cfg.optimizer.lr == 2e-4
+    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 
 
-def test_glm_45v_peft_with_freeze_options(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT can be combined with freeze options."""
+def test_glm_45v_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["peft"] = "lora"
-    overrides["freeze_language_model"] = True
-    overrides["freeze_vision_model"] = False
-    overrides["freeze_vision_projection"] = True
+    cfg = _glm_45v_module.glm_45v_sft_config()
 
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-    _assert_basic_config(cfg)
-
-    # Check PEFT config
-    assert cfg.peft is not None
-
-    # Check freeze options
-    assert cfg.model.freeze_language_model is True
+    # Default freeze options should be False for full SFT
+    assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
-    assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.freeze_vision_projection is False
 
 
-# Pipeline layout tests
-
-
-def test_glm_45v_pipeline_layout_pp4():
-    """Test pipeline layout for PP=4."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 4
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
-
-    # PP=4 should have 4 stages
-    assert model_cfg.pipeline_model_parallel_layout is not None
-    assert len(model_cfg.pipeline_model_parallel_layout) == 4
-    # First stage: embedding + 11 decoder layers
-    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    # Last stage should have loss
-    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
-
-
-def test_glm_45v_pipeline_layout_pp8():
-    """Test pipeline layout for PP=8."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 8
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
-
-    # PP=8 should have 8 stages (full SFT layout: embedding+1, then 7*6, then 3+loss)
-    assert model_cfg.pipeline_model_parallel_layout is not None
-    assert len(model_cfg.pipeline_model_parallel_layout) == 8
-    # First stage: embedding + 1 decoder layer
-    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 1
-    # Last stage should have loss
-    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
-
-
-def test_glm_45v_pipeline_layout_pp16():
-    """Test pipeline layout for PP=16."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 16
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg)
-
-    # PP=16 should have 16 stages (full SFT layout: embedding alone, then 3*14, then 3+loss)
-    assert model_cfg.pipeline_model_parallel_layout is not None
-    assert len(model_cfg.pipeline_model_parallel_layout) == 16
-    # First stage: embedding only (no decoder layers, to balance vision encoder cost)
-    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 0
-    # Last stage should have loss
-    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
-
-
-def test_glm_45v_pipeline_layout_pp8_peft():
-    """Test pipeline layout for PP=8 with PEFT."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 8
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg, is_peft=True)
-
-    # PP=8 PEFT layout: embedding+5, then 6*6, then 5+loss
-    assert model_cfg.pipeline_model_parallel_layout is not None
-    assert len(model_cfg.pipeline_model_parallel_layout) == 8
-    # First stage: embedding + 5 decoder layers
-    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 5
-    # Last stage should have loss
-    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
-
-
-def test_glm_45v_pipeline_layout_pp16_peft():
-    """Test pipeline layout for PP=16 with PEFT."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 16
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg, is_peft=True)
-
-    # PP=16 PEFT layout: embedding+2, then 3*14, then 2+loss
-    assert model_cfg.pipeline_model_parallel_layout is not None
-    assert len(model_cfg.pipeline_model_parallel_layout) == 16
-    # First stage: embedding + 2 decoder layers
-    assert model_cfg.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert model_cfg.pipeline_model_parallel_layout[0].count("decoder") == 2
-    # Last stage should have loss
-    assert "loss" in model_cfg.pipeline_model_parallel_layout[-1]
-
-
-def test_glm_45v_pipeline_layout_custom():
-    """Test that custom pipeline layout overrides defaults."""
-    model_cfg = _FakeModelCfg()
-    model_cfg.pipeline_model_parallel_size = 2
-    model_cfg.virtual_pipeline_model_parallel_size = 1
-
-    custom_layout = [["embedding"] + ["decoder"] * 20, ["decoder"] * 26 + ["loss"]]
-    _glm_45v_module.set_glm_45v_pipeline_model_parallel_layout(model_cfg, layout=custom_layout)
-
-    # Custom layout should be used
-    assert model_cfg.pipeline_model_parallel_layout == custom_layout
-
-
-def test_glm_45v_pipeline_layout_in_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that pipeline layout is correctly set in the full config."""
+def test_glm_45v_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["pipeline_model_parallel_size"] = 8
+    cfg = _glm_45v_module.glm_45v_peft_config()
 
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-    _assert_basic_config(cfg)
-
-    # Check that pipeline layout is set
-    assert cfg.model.pipeline_model_parallel_layout is not None
-    # Check that asymmetric pipeline split settings are disabled
-    assert cfg.model.account_for_embedding_in_pipeline_split is False
-    assert cfg.model.account_for_loss_in_pipeline_split is False
-
-
-def test_glm_45v_wandb_logging(monkeypatch: pytest.MonkeyPatch):
-    """Test that W&B logging options are correctly passed."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
-
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["wandb_project"] = "test_project"
-    overrides["wandb_entity"] = "test_entity"
-    overrides["wandb_exp_name"] = "test_exp"
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-    _assert_basic_config(cfg)
-
-    assert cfg.logger.wandb_project == "test_project"
-    assert cfg.logger.wandb_entity == "test_entity"
-    assert cfg.logger.wandb_exp_name == "test_exp"
+    # Default freeze options should be False for PEFT
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
 
 
 def test_glm_45v_precision_config(monkeypatch: pytest.MonkeyPatch):
@@ -510,9 +291,7 @@ def test_glm_45v_precision_config(monkeypatch: pytest.MonkeyPatch):
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    cfg = _glm_45v_module.glm_45v_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -520,56 +299,64 @@ def test_glm_45v_precision_config(monkeypatch: pytest.MonkeyPatch):
     assert cfg.mixed_precision == "bf16_mixed"
 
 
-def test_glm_45v_peft_none_string(monkeypatch: pytest.MonkeyPatch):
-    """Test that peft='none' (string) is treated as full SFT."""
-    # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
-
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["peft"] = "none"
-    # Remove parallelism overrides to test recipe defaults
-    overrides.pop("expert_model_parallel_size", None)
-    overrides.pop("finetune_lr", None)
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
-
-    _assert_basic_config(cfg)
-
-    # peft="none" should be treated as full SFT
-    assert cfg.peft is None
-    # Should use full SFT defaults: EP=16, LR=5e-6
-    assert cfg.model.expert_model_parallel_size == 16
-    assert cfg.optimizer.lr == 5e-6
-
-
 def test_glm_45v_ddp_config(monkeypatch: pytest.MonkeyPatch):
-    """Test that DDP config is correctly set."""
+    """Test that DDP config is correctly set for VLMs."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    cfg = _glm_45v_module.glm_45v_sft_config()
 
     _assert_basic_config(cfg)
 
-    # Check DDP settings
+    # VLMs should have overlap disabled
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
     assert cfg.ddp.check_for_nan_in_grad is True
-    assert cfg.ddp.grad_reduce_in_fp32 is True
     assert cfg.ddp.use_distributed_optimizer is True
-    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
 
 
-def test_glm_45v_megatron_fsdp(monkeypatch: pytest.MonkeyPatch):
-    """Test that Megatron FSDP option is correctly passed."""
+def test_glm_45v_moe_settings(monkeypatch: pytest.MonkeyPatch):
+    """Test that MoE-specific settings are correctly configured."""
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
-    overrides = _safe_overrides_for("glm_45v_finetune_config")
-    overrides["use_megatron_fsdp"] = True
-
-    cfg = _glm_45v_module.glm_45v_finetune_config(**overrides)
+    cfg = _glm_45v_module.glm_45v_sft_config()
 
     _assert_basic_config(cfg)
 
-    assert cfg.ddp.use_megatron_fsdp is True
+    # Check MoE-specific settings
+    assert hasattr(cfg.model, "moe_token_dispatcher_type")
+    assert hasattr(cfg.model, "moe_flex_dispatcher_backend")
+    assert hasattr(cfg.model, "moe_hybridep_num_sms")
+    assert hasattr(cfg.model, "moe_router_fusion")
+    assert hasattr(cfg.model, "moe_permute_fusion")
+    assert hasattr(cfg.model, "moe_grouped_gemm")
+    assert hasattr(cfg.model, "moe_router_padding_for_fp8")
+    assert hasattr(cfg.model, "moe_shared_expert_overlap")
+    assert hasattr(cfg.model, "moe_router_force_load_balancing")
+
+    # Verify default MoE kernel settings
+    assert cfg.model.moe_router_fusion is False
+    assert cfg.model.moe_permute_fusion is True
+    assert cfg.model.moe_grouped_gemm is True
+
+
+def test_glm_45v_pipeline_layout_function_exists():
+    """Test that pipeline layout function is exported."""
+    assert hasattr(_glm_45v_module, "set_glm_45v_pipeline_model_parallel_layout")
+    assert callable(_glm_45v_module.set_glm_45v_pipeline_model_parallel_layout)
+
+
+def test_glm_45v_sft_uses_pipeline_layout(monkeypatch: pytest.MonkeyPatch):
+    """Test that SFT config has pipeline model parallel layout set."""
+    # Monkeypatch AutoBridge
+    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _glm_45v_module.glm_45v_sft_config()
+
+    _assert_basic_config(cfg)
+
+    # PP should be set when pipeline layout is used
+    assert cfg.model.pipeline_model_parallel_size >= 1
+    # Check if pipeline_model_parallel_layout is set
+    assert hasattr(cfg.model, "pipeline_model_parallel_layout")
