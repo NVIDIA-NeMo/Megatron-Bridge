@@ -336,7 +336,12 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
-            recipe.dataset = create_mock_dataset_config(seq_length=args.seq_length or recipe.model.seq_length)
+            recipe.dataset = create_mock_dataset_config(
+                seq_length=args.seq_length or recipe.model.seq_length,
+                num_workers=recipe.dataset.num_workers,
+                pin_memory=recipe.dataset.pin_memory,
+                persistent_workers=recipe.dataset.persistent_workers,
+            )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
@@ -344,6 +349,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             dataset_paths=args.dataset_paths,
             seq_length=recipe.dataset.sequence_length,
             index_mapping_dir=args.index_mapping_dir,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
     elif args.data == "squad":
         if not args.dataset_root:
@@ -355,6 +363,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=False,
             pad_seq_to_mult=pad_seq_to_mult,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
@@ -366,6 +377,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             seq_length=args.seq_length or recipe.model.seq_length,
             packed=True,
             pad_seq_to_mult=pad_seq_to_mult,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
         )
         if recipe.model.cuda_graph_impl != "none":
             recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
