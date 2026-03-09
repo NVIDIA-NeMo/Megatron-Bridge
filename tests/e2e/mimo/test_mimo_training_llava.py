@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
 
 from __future__ import annotations
@@ -462,7 +462,7 @@ def main():
     torch.cuda.manual_seed_all(seed)
 
     # Open per-rank log file
-    log_dir = "/tmp/claude-0/mimo_rank_logs"
+    log_dir = os.environ.get("MIMO_LOG_DIR", "/tmp/mimo_llava_logs")
     os.makedirs(log_dir, exist_ok=True)
     _rank_log_file = open(f"{log_dir}/rank_{rank}.log", "w")
 

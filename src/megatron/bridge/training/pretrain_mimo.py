@@ -13,7 +13,6 @@ Key components:
 from __future__ import annotations
 
 import logging
-import types
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional
 
@@ -101,19 +100,12 @@ def setup_mimo(
     if global_state is None:
         from megatron.core.timers import Timers
 
-        from megatron.bridge.training.state import (
-            GlobalState,
-            TrainState,
-            _timers_write_to_mlflow,
-            _timers_write_to_wandb,
-        )
+        from megatron.bridge.training.state import GlobalState, TrainState
 
         timers = Timers(
             log_level=cfg.logger.timing_log_level,
             log_option=cfg.logger.timing_log_option,
         )
-        timers.write_to_wandb = types.MethodType(_timers_write_to_wandb, timers)
-        timers.write_to_mlflow = types.MethodType(_timers_write_to_mlflow, timers)
         train_state = TrainState()
         global_state = GlobalState()
         global_state.cfg = cfg

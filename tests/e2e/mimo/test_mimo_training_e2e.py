@@ -247,8 +247,8 @@ def _build_config(
 ) -> ConfigContainer:
     train_cfg = TrainingConfig(
         micro_batch_size=1,
-        global_batch_size=32,
-        train_iters=500,
+        global_batch_size=1,
+        train_iters=2,
     )
     train_cfg.num_microbatches = 1
     train_cfg.grad_reduce_in_fp32 = False

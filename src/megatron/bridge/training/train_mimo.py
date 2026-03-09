@@ -160,47 +160,24 @@ def train_step_mimo(
                 else:
                     raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
 
-    # Send loss_dict to the last rank (where wandb/tensorboard loggers live).
-    # Use a lightweight all_reduce to find the source, then P2P send/recv only
-    # between the source and the logging rank — avoids full broadcast overhead.
+    # Broadcast loss_dict to all ranks (the last rank is the logging rank for
+    # W&B/TensorBoard). Use broadcast_object_list from the source rank so every
+    # rank ends up with the same dict — no fragile P2P or GPU-side pickle needed.
     last_rank = dist.get_world_size() - 1
     my_rank = dist.get_rank()
 
-    # All ranks participate in finding who has the loss (pick highest rank with loss).
+    # All ranks agree on which rank holds the loss (pick highest rank with data).
     has_loss = 1 if loss_dict else 0
     source_tensor = torch.tensor([my_rank if has_loss else -1], dtype=torch.int32, device="cuda")
     torch.distributed.all_reduce(source_tensor, op=torch.distributed.ReduceOp.MAX)
-    source_rank = source_tensor.item()
+    source_rank = int(source_tensor.item())
 
-    # Only do P2P if the source and logging rank differ and a source exists.
+    # Only broadcast if the source and logging rank differ and a valid source exists.
     if source_rank >= 0 and source_rank != last_rank:
-        if my_rank == source_rank:
-            keys = list(loss_dict.keys())
-            vals = torch.stack([loss_dict[k].detach().float().view(1) for k in keys]).cuda()
-            # Send count + values as tensors, then key names via pickle over CPU tensor
-            torch.distributed.send(torch.tensor([len(keys)], dtype=torch.int32, device="cuda"), dst=last_rank)
-            torch.distributed.send(vals, dst=last_rank)
-            import pickle
-
-            key_bytes = pickle.dumps(keys)
-            key_tensor = torch.tensor(list(key_bytes), dtype=torch.uint8, device="cuda")
-            torch.distributed.send(torch.tensor([len(key_bytes)], dtype=torch.int64, device="cuda"), dst=last_rank)
-            torch.distributed.send(key_tensor, dst=last_rank)
-        elif my_rank == last_rank:
-            import pickle
-
-            num_keys = torch.tensor([0], dtype=torch.int32, device="cuda")
-            torch.distributed.recv(num_keys, src=source_rank)
-            n = num_keys.item()
-            vals = torch.zeros(n, 1, device="cuda")
-            torch.distributed.recv(vals, src=source_rank)
-            key_len = torch.tensor([0], dtype=torch.int64, device="cuda")
-            torch.distributed.recv(key_len, src=source_rank)
-            key_tensor = torch.zeros(key_len.item(), dtype=torch.uint8, device="cuda")
-            torch.distributed.recv(key_tensor, src=source_rank)
-            keys = pickle.loads(bytes(key_tensor.cpu().tolist()))
-            for i, k in enumerate(keys):
-                loss_dict[k] = vals[i].squeeze()
+        obj = [loss_dict if my_rank == source_rank else None]
+        torch.distributed.broadcast_object_list(obj, src=source_rank)
+        if my_rank == last_rank:
+            loss_dict = obj[0] or {}
 
     return loss_dict, skipped_iter, grad_norm, num_zeros_in_grad
 
