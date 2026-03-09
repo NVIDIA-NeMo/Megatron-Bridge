@@ -196,6 +196,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
         language_transformer_config = self
         hf_vision_config = self.vision_config
 
@@ -212,6 +214,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
+            mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
+            vp_stage=vp_stage,
         )
 
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
@@ -346,9 +350,6 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     # Heterogeneous dist checkpoint (needed for hybrid architecture)
     hetereogenous_dist_checkpoint: bool = True
 
-    # TODO: MTP (Multi-Token Prediction) support for VL context.
-    # Qwen3.5 model card states "MTP: trained with multi-steps" but it's unclear
-    # how MTP interacts with the vision encoder in VL mode.
     mtp_num_layers: Optional[int] = None
 
     def __post_init__(self):
@@ -389,6 +390,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         in Qwen3VLModel.__init__ by calling MegatronModule.__init__ directly
         and constructing the internals ourselves.
         """
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
         language_transformer_config = self
         hf_vision_config = self.vision_config
 
@@ -404,13 +407,6 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         # with Qwen3VLSelfAttention for mRoPE support. GDN layers are left as-is.
         _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
 
-        # Qwen3VLModel expects a single ModuleSpec and does a uniform patch on
-        # line 87. We pass the block spec instead – GPTModel/TransformerBlock
-        # already handles TransformerBlockSubmodules natively. The uniform patch
-        # line will fail on a TransformerBlockSubmodules, so we bypass it by
-        # passing the spec through and letting the model ignore the single-spec
-        # assumption. We pass the block_spec as the layer spec; Qwen3VLGPTModel
-        # forwards it to TransformerBlock which handles both types.
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=block_spec,
@@ -418,6 +414,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
+            mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
+            vp_stage=vp_stage,
         )
 
         # Apply freeze options if any are enabled for fine-tuning

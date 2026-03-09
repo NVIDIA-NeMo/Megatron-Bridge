@@ -65,6 +65,11 @@ def qwen35_vl_800m_sft_config(hf_path: str = "Qwen/Qwen3.5-0.8B") -> ConfigConta
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -163,6 +168,11 @@ def qwen35_vl_2b_sft_config(hf_path: str = "Qwen/Qwen3.5-2B") -> ConfigContainer
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -263,6 +273,11 @@ def qwen35_vl_4b_sft_config(hf_path: str = "Qwen/Qwen3.5-4B") -> ConfigContainer
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -362,6 +377,11 @@ def qwen35_vl_9b_sft_config(hf_path: str = "Qwen/Qwen3.5-9B") -> ConfigContainer
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -458,6 +478,11 @@ def qwen35_vl_27b_sft_config(hf_path: str = "Qwen/Qwen3.5-27B") -> ConfigContain
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -557,6 +582,11 @@ def qwen35_vl_35b_a3b_sft_config(hf_path: str = "Qwen/Qwen3.5-35B-A3B") -> Confi
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -673,6 +703,11 @@ def qwen35_vl_122b_a10b_sft_config(hf_path: str = "Qwen/Qwen3.5-122B-A10B") -> C
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -791,6 +826,11 @@ def qwen35_vl_397b_a17b_sft_config(hf_path: str = "Qwen/Qwen3.5-397B-A17B") -> C
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -917,6 +957,11 @@ def qwen35_vl_800m_peft_config(
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -1020,6 +1065,11 @@ def qwen35_vl_2b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Q
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -1125,6 +1175,11 @@ def qwen35_vl_4b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Q
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -1229,6 +1284,11 @@ def qwen35_vl_9b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "Q
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -1332,6 +1392,11 @@ def qwen35_vl_27b_peft_config(peft_scheme: str | PEFT = "lora", hf_path: str = "
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -1439,6 +1504,11 @@ def qwen35_vl_35b_a3b_peft_config(
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
@@ -1565,6 +1635,11 @@ def qwen35_vl_122b_a10b_peft_config(
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
 
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
+
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -1689,6 +1764,11 @@ def qwen35_vl_397b_a17b_peft_config(
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+
+    # MTP (Multi-Token Prediction) - auto-detected from HF config (mtp_num_hidden_layers=1).
+    # Set to None to finetune without MTP loss.
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # TE / Transformer implementation
     cfg.model.transformer_impl = "transformer_engine"
