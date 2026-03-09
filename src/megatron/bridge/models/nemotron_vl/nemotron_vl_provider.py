@@ -55,7 +55,7 @@ class NemotronNano12Bv2VLModelProvider(MambaModelProvider):
     moe_shared_expert_overlap: bool = True
 
     # NemotronNano12Bv2 specifics
-    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
+    hybrid_layer_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
     num_layers: int = 62
     hidden_size: int = 5120
     mamba_num_heads: int = 128
