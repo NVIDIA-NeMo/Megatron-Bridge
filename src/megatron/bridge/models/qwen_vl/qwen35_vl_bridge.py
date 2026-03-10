@@ -118,6 +118,9 @@ class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
 
         provider = Qwen35VLMoEModelProvider(**provider_kwargs)
 
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
+
         # --- Common Qwen3 LLM settings ---
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
@@ -437,6 +440,10 @@ class Qwen35VLBridge(MegatronModelBridge):
         vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
 
         provider = Qwen35VLModelProvider(**provider_kwargs)
+
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        # text_config inherits PretrainedConfig's default of True which is wrong for 9B/27B.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
 
         # --- Common Qwen3 LLM settings ---
         provider.normalization = "RMSNorm"
