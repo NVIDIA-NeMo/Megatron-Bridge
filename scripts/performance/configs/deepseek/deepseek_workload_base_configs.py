@@ -228,6 +228,8 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V1,
     global_batch_size=1024,
+    virtual_pipeline_model_parallel_size=2,
+    pp_layout=None,
 )
 
 

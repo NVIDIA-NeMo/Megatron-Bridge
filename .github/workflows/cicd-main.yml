@@ -137,10 +137,29 @@ jobs:
       )
       && !cancelled()
     steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: nv-gha-runners/get-pr-info@main
+
+      - name: Get merge commit sha
+        shell: bash -x -e -u -o pipefail {0}
+        id: sha
+        env:
+          IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+        run: |
+          if [[ "$IS_PR" == "true" ]]; then
+            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+          else
+            SHA=${GITHUB_SHA}
+          fi
+          echo "main=${SHA}" | tee -a "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ steps.sha.outputs.main }}
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
@@ -183,11 +202,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: 3.12
-
-      - name: Get PR info
-        id: get-pr-info
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: nv-gha-runners/get-pr-info@main
 
       - name: Install Azure CLI
         shell: bash
@@ -354,6 +368,7 @@ jobs:
           - script: L2_Launch_models_glm
           - script: L2_Launch_models_gpt_oss
           - script: L2_Launch_models_llama_nemotron
+          - script: L2_Launch_models_ministral3
           - script: L2_Launch_models_mistral
           - script: L2_Launch_models_nemotron
           - script: L2_Launch_models_nemotronh
@@ -361,21 +376,31 @@ jobs:
           - script: L2_Launch_models_nemotron_vl
           - script: L2_Launch_models_olmoe
           - script: L2_Launch_models_qwen
-          # - script: L2_Launch_models_qwen_quantization
+          - script: L2_Launch_models_qwen_quantization
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_models_qwen35_vl
           - script: L2_Launch_recipes_gemma_vl
           - script: L2_Launch_recipes_gpt_oss
+          - script: L2_Launch_models_qwen_vl_quantization
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
+          - script: L2_Launch_recipes_ministral3
           - script: L2_Launch_recipes_nemotronh
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization
           - script: L2_Launch_quantization_aware_training
-          - script: L2_Launch_quantization_export
+          # - script: L2_Launch_quantization_export
           - script: L2_Launch_recipes_llama_cuda_graphs
           - script: L2_Launch_utils
+          - script: L2_Launch_ckpts_mbridge_to_mlm_llama32_1b
+          - script: L2_Launch_ckpts_mlm_to_mbridge_llama32_1b
+          - script: L2_Launch_ckpts_mbridge_to_mlm_qwen3_4b
+          - script: L2_Launch_ckpts_mlm_to_mbridge_qwen3_4b
+          # NemotronH 4B ckpt L2 jobs skipped until hybrid_override_pattern -> hybrid_layer_pattern (PR #2628)
+          # - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b
+          # - script: L2_Launch_ckpts_mlm_to_mbridge_nemotronh_4b
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |

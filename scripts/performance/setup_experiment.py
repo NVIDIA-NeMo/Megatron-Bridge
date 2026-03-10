@@ -28,12 +28,12 @@ from nemo_run.config import get_nemorun_home
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import dgxc_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import dgxc_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
@@ -59,14 +59,23 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
-def check_training_finished(log_file_path: str) -> bool:
+def check_training_finished(log_file_paths: List[str]) -> bool:
     """Check if training is finished."""
-    with open(log_file_path, "r") as f:
-        log_lines = f.readlines()
-    log = "\n".join(log_lines)
-    return "StopIteration" in log or "after training is done" in log or "exiting program at iteration" in log
+    all_lines = []
+    for log_path in log_file_paths:
+        with open(log_path, "r", errors="replace") as f:
+            for line in f:
+                all_lines.append(
+                    (
+                        "StopIteration" in line
+                        or "after training is done" in line
+                        or "exiting program at iteration" in line
+                    )
+                )
+    return any(all_lines)
 
 
 def check_slurm_timeout(log_file_path: str) -> bool:
@@ -134,9 +143,9 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
 
 def ensure_logs_where_written(log_file_paths: List[str]):
     """Ensure logs were written to disk."""
-    if len(log_file_paths) != 1:
+    if len(log_file_paths) == 0:
         raise FileNotFoundError(
-            f"Unexpected number of log files found: {log_file_paths}. Expected 1, got {len(log_file_paths)}"
+            f"Unexpected number of log files found: {log_file_paths}. Expected at least 1, got {len(log_file_paths)}"
         )
 
 
@@ -443,11 +452,11 @@ def main(
                 is_testing_passed = True
                 break
 
-            log_file_paths = list(Path(f"{job_dir}").glob("log-*_0.out"))
+            log_file_paths = list(Path(f"{job_dir}").glob("log*.out"))
             ensure_logs_where_written(log_file_paths)
 
             is_finished_experiment = (
-                check_training_finished(log_file_paths[-1]) if is_long_convergence_run else (job_status == "SUCCEEDED")
+                check_training_finished(log_file_paths) if is_long_convergence_run else (job_status == "SUCCEEDED")
             )
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
@@ -466,17 +475,27 @@ def main(
 
         if is_finished_experiment is True and detach is False:
             log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log-*_0.out"))
+                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
             )
 
-            if not is_long_convergence_run:
-                log_paths = [log_paths[-1]]
-
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
+
             wandb_run = None
+            # Bug 2 fix: wandb online mode redirects fd 2 at the OS level via os.dup2(),
+            # making all stderr writes invisible. Grab a private copy of fd 2 *before*
+            # wandb.init() so our StreamHandler bypasses wandb's capture pipe.
+            _dup_file = os.fdopen(os.dup(2), "w", buffering=1)
+            _dup_handler = logging.StreamHandler(_dup_file)
+            _dup_handler.setLevel(logging.DEBUG)
+            _dup_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+            logger.addHandler(_dup_handler)
+
             if HAVE_WANDB and wandb_key:
                 wandb_run = wandb.init(
-                    project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
+                    project=wandb_project_name,
+                    entity=wandb_entity_name,
+                    id=wandb_run_id,
+                    resume="allow",
                 )
 
             logger.info("Waiting 10 seconds for I/O to settle")
@@ -496,11 +515,15 @@ def main(
                 performance_config=performance_params,
                 memory_config=memory_params,
                 wandb_run=wandb_run,
+                _logger=logger,
             )
 
             if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
+
+            logger.removeHandler(_dup_handler)
+            _dup_file.close()
 
             if not is_long_convergence_run:
                 n_attempts = max_retries + 1
@@ -523,6 +546,15 @@ def main(
 if __name__ == "__main__":
     parser = parse_cli_args()
     args, unknown_args = parser.parse_known_args()
+
+    gpus_per_node = args.gpus_per_node
+    if gpus_per_node is None:
+        if args.gpu in NUM_GPUS_PER_NODE_MAP:
+            gpus_per_node = NUM_GPUS_PER_NODE_MAP[args.gpu]
+        else:
+            raise ValueError(
+                f"Invalid GPU type: {args.gpu}. Please use one of the following: {NUM_GPUS_PER_NODE_MAP.keys()}"
+            )
 
     assert not (args.enable_nsys and args.pytorch_profiler), (
         "Both NSys and PyTorch profiler cannot be enabled at the same time"
@@ -581,7 +613,7 @@ if __name__ == "__main__":
         account=args.account,
         partition=args.partition,
         log_dir=args.log_dir,
-        gpus_per_node=args.gpus_per_node,
+        gpus_per_node=gpus_per_node,
         time_limit=args.time_limit,
         container_image=args.container_image,
         custom_mounts=args.custom_mounts,

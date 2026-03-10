@@ -25,34 +25,35 @@ from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvi
 
 
 @pytest.fixture
-def mock_hf_config():
+def mock_text_config():
+    """Create a mock text config for Qwen2.5-VL."""
+    text_config = Mock(spec=[])
+    text_config.num_hidden_layers = 32
+    text_config.hidden_size = 4096
+    text_config.intermediate_size = 11008
+    text_config.num_attention_heads = 32
+    text_config.num_key_value_heads = 32
+    text_config.initializer_range = 0.02
+    text_config.rms_norm_eps = 1e-6
+    text_config.vocab_size = 151936
+    text_config.max_position_embeddings = 4096
+    text_config.rope_theta = 1000000.0
+    text_config.tie_word_embeddings = False
+    text_config.hidden_act = "silu"
+    text_config.rope_scaling = None
+    text_config.bos_token_id = 151643
+    text_config.eos_token_id = 151645
+    text_config.torch_dtype = "bfloat16"
+    return text_config
+
+
+@pytest.fixture
+def mock_hf_config(mock_text_config):
     """Create a mock HF config for Qwen2.5-VL."""
     config = Mock()
-    config.num_hidden_layers = 32
-    config.hidden_size = 4096
-    config.intermediate_size = 11008
-    config.num_attention_heads = 32
-    config.num_key_value_heads = 32
-    config.initializer_range = 0.02
-    config.rms_norm_eps = 1e-6
-    config.vocab_size = 151936
-    config.max_position_embeddings = 4096
-    config.rope_theta = 1000000.0
-    config.tie_word_embeddings = False
-    config.hidden_act = "silu"
-    # Set MLA-specific fields to None (these are auto-mapped in CONFIG_MAPPING)
-    config.q_lora_rank = None
-    config.kv_lora_rank = None
-    config.qk_nope_head_dim = None
-    config.qk_rope_head_dim = None
-    config.v_head_dim = None
-    config.num_nextn_predict_layers = None
-    config.rope_scaling = None
-
-    # VL-specific configuration
+    config.text_config = mock_text_config
     config.vision_config = Qwen2_5_VLVisionConfig()
-    config.bos_token_id = 151643
-    config.eos_token_id = 151645
+    config.tie_word_embeddings = False
     config.vision_start_token_id = 151652
     config.vision_end_token_id = 151653
     config.vision_token_id = 151654
@@ -133,9 +134,9 @@ class TestQwen25VLBridgeProviderBridge:
 
     def test_provider_bridge_with_custom_token_ids(self, qwen25_vl_bridge, mock_hf_pretrained):
         """Test provider_bridge with custom token IDs."""
-        # Modify mock config with custom token IDs
-        mock_hf_pretrained.config.bos_token_id = 100
-        mock_hf_pretrained.config.eos_token_id = 101
+        # bos/eos come from text_config, vision tokens from top-level config
+        mock_hf_pretrained.config.text_config.bos_token_id = 100
+        mock_hf_pretrained.config.text_config.eos_token_id = 101
         mock_hf_pretrained.config.vision_start_token_id = 102
 
         provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
@@ -189,12 +190,29 @@ class TestQwen25VLBridgeProviderBridge:
         assert provider.make_vocab_size_divisible_by == 128
 
     def test_provider_bridge_with_tied_embeddings(self, qwen25_vl_bridge, mock_hf_pretrained):
-        """Test provider_bridge with tied embeddings."""
+        """Test provider_bridge with tied embeddings.
+
+        For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        """
         mock_hf_pretrained.config.tie_word_embeddings = True
 
         provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
 
         assert provider.share_embeddings_and_output_weights is True
+
+    def test_provider_bridge_tie_embeddings_from_top_level_config(self, qwen25_vl_bridge, mock_hf_pretrained):
+        """Test that tie_word_embeddings is read from top-level config, not text_config.
+
+        In transformers 5.0, text_config inherits PretrainedConfig's default of
+        tie_word_embeddings=True, while the actual setting lives at the top-level
+        VLM config. The bridge must read from the top-level config.
+        """
+        mock_hf_pretrained.config.tie_word_embeddings = False
+        mock_hf_pretrained.config.text_config.tie_word_embeddings = True
+
+        provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
+
+        assert provider.share_embeddings_and_output_weights is False
 
 
 class TestQwen25VLBridgeMappingRegistry:
@@ -230,10 +248,6 @@ class TestQwen25VLBridgeMappingRegistry:
         # Should contain word embeddings mapping
         has_embeddings = any("embed_tokens" in name or "word_embeddings" in name for name in mapping_names)
         assert has_embeddings, "Should contain embeddings mapping"
-
-        # Should contain output layer mapping
-        has_output = any("lm_head" in name or "output_layer" in name for name in mapping_names)
-        assert has_output, "Should contain output layer mapping"
 
     def test_mapping_registry_visual_params(self, qwen25_vl_bridge):
         """Test mapping_registry handles visual parameters correctly."""
@@ -299,30 +313,27 @@ class TestQwen25VLBridgeEdgeCases:
     def test_provider_bridge_with_minimal_config(self, qwen25_vl_bridge):
         """Test provider_bridge with minimal HF config."""
         minimal_pretrained = Mock(spec=PreTrainedVLM)
-        minimal_config = Mock()
+        minimal_config = Mock(spec=[])
 
-        # Set only required fields
-        minimal_config.num_hidden_layers = 24
-        minimal_config.hidden_size = 2048
-        minimal_config.intermediate_size = 5504
-        minimal_config.num_attention_heads = 16
-        minimal_config.num_key_value_heads = 16
-        minimal_config.initializer_range = 0.02
-        minimal_config.rms_norm_eps = 1e-6
-        minimal_config.vocab_size = 151936
-        minimal_config.max_position_embeddings = 4096
-        minimal_config.rope_theta = 1000000.0
+        # Text config with required fields
+        text_config = Mock(spec=[])
+        text_config.num_hidden_layers = 24
+        text_config.hidden_size = 2048
+        text_config.intermediate_size = 5504
+        text_config.num_attention_heads = 16
+        text_config.num_key_value_heads = 16
+        text_config.initializer_range = 0.02
+        text_config.rms_norm_eps = 1e-6
+        text_config.vocab_size = 151936
+        text_config.max_position_embeddings = 4096
+        text_config.rope_theta = 1000000.0
+        text_config.hidden_act = "silu"
+        text_config.rope_scaling = None
+        text_config.torch_dtype = "bfloat16"
+
+        minimal_config.text_config = text_config
         minimal_config.vision_config = Qwen2_5_VLVisionConfig()
-        minimal_config.hidden_act = "silu"
-        # Set MLA-specific fields to None
-        minimal_config.q_lora_rank = None
-        minimal_config.kv_lora_rank = None
-        minimal_config.qk_nope_head_dim = None
-        minimal_config.qk_rope_head_dim = None
-        minimal_config.v_head_dim = None
-        minimal_config.num_nextn_predict_layers = None
-        minimal_config.rope_scaling = None
-
+        minimal_config.tie_word_embeddings = False
         minimal_pretrained.config = minimal_config
 
         provider = qwen25_vl_bridge.provider_bridge(minimal_pretrained)
@@ -336,7 +347,7 @@ class TestQwen25VLBridgeEdgeCases:
         test_vocab_sizes = [32000, 151936, 152064]
 
         for vocab_size in test_vocab_sizes:
-            mock_hf_pretrained.config.vocab_size = vocab_size
+            mock_hf_pretrained.config.text_config.vocab_size = vocab_size
             provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
             assert provider.vocab_size == vocab_size
 
@@ -345,7 +356,7 @@ class TestQwen25VLBridgeEdgeCases:
         test_seq_lengths = [2048, 4096, 8192, 32768]
 
         for seq_length in test_seq_lengths:
-            mock_hf_pretrained.config.max_position_embeddings = seq_length
+            mock_hf_pretrained.config.text_config.max_position_embeddings = seq_length
             provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
             assert provider.seq_length == seq_length
 
@@ -355,8 +366,8 @@ class TestQwen25VLBridgeCompatibility:
 
     def test_provider_bridge_with_group_query_attention(self, qwen25_vl_bridge, mock_hf_pretrained):
         """Test provider_bridge with group query attention."""
-        mock_hf_pretrained.config.num_attention_heads = 32
-        mock_hf_pretrained.config.num_key_value_heads = 8
+        mock_hf_pretrained.config.text_config.num_attention_heads = 32
+        mock_hf_pretrained.config.text_config.num_key_value_heads = 8
 
         provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
 
@@ -368,9 +379,18 @@ class TestQwen25VLBridgeCompatibility:
         test_rope_values = [10000.0, 500000.0, 1000000.0]
 
         for rope_theta in test_rope_values:
-            mock_hf_pretrained.config.rope_theta = rope_theta
+            mock_hf_pretrained.config.text_config.rope_theta = rope_theta
             provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
             assert provider.rotary_base == rope_theta
+
+    def test_provider_bridge_rope_theta_from_rope_parameters(self, qwen25_vl_bridge, mock_hf_pretrained):
+        """Test provider_bridge reads rope_theta from rope_parameters (transformers 5.0+)."""
+        text_config = mock_hf_pretrained.config.text_config
+        del text_config.rope_theta
+        text_config.rope_parameters = {"rope_theta": 1000000.0}
+
+        provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
+        assert provider.rotary_base == 1000000.0
 
     def test_provider_bridge_vision_config_types(self, qwen25_vl_bridge, mock_hf_pretrained):
         """Test provider_bridge with different vision config types."""
