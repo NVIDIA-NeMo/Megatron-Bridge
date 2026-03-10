@@ -37,7 +37,7 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     # Model config - Nemotron Nano 9B v2
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron Nano 9B v2)
-        hybrid_override_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
         num_layers=56,
         hidden_size=4480,
         mamba_num_heads=128,
@@ -172,7 +172,7 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     # Model config - Nemotron Nano 12B v2
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron Nano 12B v2)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
         num_layers=62,
         hidden_size=5120,
         mamba_num_heads=128,
@@ -309,7 +309,7 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     # Model config - Nemotron Nano 9B v2
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron Nano 9B v2)
-        hybrid_override_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
         num_layers=56,
         hidden_size=4480,
         mamba_num_heads=128,
@@ -435,7 +435,7 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     # Model config - Nemotron Nano 12B v2
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron Nano 12B v2)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
         num_layers=62,
         hidden_size=5120,
         mamba_num_heads=128,
@@ -570,7 +570,7 @@ def nemotron_nano_9b_v2_peft_config(
     # Model config - PEFT uses TP=1, SP=False
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron Nano 9B v2)
-        hybrid_override_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
         num_layers=56,
         hidden_size=4480,
         mamba_num_heads=128,
@@ -717,7 +717,7 @@ def nemotron_nano_12b_v2_peft_config(
     # Model config - PEFT uses TP=1, SP=False
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron Nano 12B v2)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
         num_layers=62,
         hidden_size=5120,
         mamba_num_heads=128,

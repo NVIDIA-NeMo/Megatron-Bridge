@@ -17,11 +17,13 @@
 import gc
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 import pytest
 import torch
+import torch.nn.functional as F
 
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.callbacks import Callback, CallbackContext
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -46,9 +48,26 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(Llama3ModelProvider):
+class Llama3ModelProvider145M(GPTModelProvider):
     """Minimal Llama-3 config for fast functional tests (single GPU)."""
 
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_activation_fusion: bool = True
+    masked_softmax_fusion: bool = True
+    persist_layer_norm: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-05
+    rotary_percent: float = 1.0
     rotary_base: int = 500_000
     seq_length: int = 1024
     num_layers: int = 1
