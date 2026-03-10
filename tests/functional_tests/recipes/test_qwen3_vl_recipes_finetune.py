@@ -22,7 +22,7 @@ This test ensures that:
 This catches regressions like missing parameters in the forward pass signature.
 
 Run with:
-    uv run torchrun --nproc_per_node=2 -m pytest tests/functional_tests/recipes/test_qwen3_vl_recipes_peft.py -v
+    uv run torchrun --nproc_per_node=2 -m pytest tests/functional_tests/recipes/test_qwen3_vl_recipes_finetune.py -v
 """
 
 import pytest

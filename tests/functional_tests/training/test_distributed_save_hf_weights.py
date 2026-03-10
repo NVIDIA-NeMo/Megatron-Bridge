@@ -18,7 +18,7 @@ functional tests for distributed_save.
 
 Run with: uv run torchrun --nproc_per_node=8 --master_port=29501 -m pytest -vs tests/functional_tests/training/test_distributed_save_hf_weights.py
 
-Or for single GPU: pytest -vs tests/functional_tests/training/test_distributed_save_hf_weights.py
+Or for single GPU: uv run pytest -vs tests/functional_tests/training/test_distributed_save_hf_weights.py
 """
 
 import datetime
