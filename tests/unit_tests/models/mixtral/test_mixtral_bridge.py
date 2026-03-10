@@ -290,7 +290,9 @@ class TestMixtralBridge:
 
         assert result.generation_config == mock_pretrained_mixtral_8x7b.generation_config
 
-    def test_provider_bridge_init_method_std(self, mock_pretrained_mixtral_8x7b: Mock, mixtral_8x7b_config: Mock) -> None:
+    def test_provider_bridge_init_method_std(
+        self, mock_pretrained_mixtral_8x7b: Mock, mixtral_8x7b_config: Mock
+    ) -> None:
         """Test initializer range configuration."""
         bridge = MixtralBridge()
 
