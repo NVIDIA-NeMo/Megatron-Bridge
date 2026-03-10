@@ -23,9 +23,6 @@ WORKDIR /opt
 ##
 ##############################################################################
 
-ARG INSTALL_RESIL
-ARG INSTALL_MODELOPT
-
 # Clone FW repositories
 RUN git clone --depth 1 https://github.com/NVIDIA-NeMo/NeMo.git && \
     git clone --depth 1 https://github.com/NVIDIA-NeMo/Export-Deploy.git && \
@@ -33,13 +30,9 @@ RUN git clone --depth 1 https://github.com/NVIDIA-NeMo/NeMo.git && \
     git clone --depth 1 https://github.com/NVIDIA-NeMo/Run
 
 ARG NEMO_COMMIT
-ARG NEMO_VERSION
 ARG NEMO_EXPORT_DEPLOY_COMMIT
-ARG NEMO_EXPORT_DEPLOY_VERSION
 ARG NEMO_EVAL_COMMIT
-ARG NEMO_EVAL_VERSION
-ARG RESIL_COMMIT
-ARG MODELOPT_VERSION
+ARG NEMO_RUN_COMMIT
 
 # Update FW repository commit
 RUN pushd /opt/NeMo && \
