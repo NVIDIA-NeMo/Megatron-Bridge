@@ -14,9 +14,8 @@
 
 """Tests for megatron.bridge.utils.activation_map."""
 
-import torch.nn.functional as F
-
 import pytest
+import torch.nn.functional as F
 from megatron.core.activations import fast_gelu, squared_relu
 
 from megatron.bridge.utils.activation_map import (

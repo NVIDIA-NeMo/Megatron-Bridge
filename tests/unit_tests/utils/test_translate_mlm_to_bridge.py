@@ -15,8 +15,6 @@
 """Tests for scripts/translate_mlm_to_bridge.py."""
 
 import importlib.util
-import sys
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
