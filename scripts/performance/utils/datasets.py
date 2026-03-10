@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-def create_mock_dataset_config(seq_length):
+def create_mock_dataset_config(seq_length, num_workers=8, pin_memory=False, persistent_workers=False):
     """Create mock dataset configuration for Megatron-Bridge."""
     from megatron.bridge.training.config import MockGPTDatasetConfig
 
@@ -27,11 +27,15 @@ def create_mock_dataset_config(seq_length):
         # Dataloader config parameters
         data_sharding=True,
         dataloader_type="single",
-        num_workers=8,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
 
 
-def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None):
+def create_rp2_dataset_config(
+    dataset_paths, seq_length, index_mapping_dir=None, num_workers=1, pin_memory=False, persistent_workers=True
+):
     """Create RedPajama2 dataset configuration for Megatron-Bridge."""
     from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
     from megatron.bridge.training.config import GPTDatasetConfig
@@ -53,12 +57,15 @@ def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None)
         # Dataloader config parameters
         data_sharding=True,
         dataloader_type="single",
-        num_workers=1,
-        persistent_workers=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
     )
 
 
-def create_squad_dataset_config(dataset_root, seq_length, packed=False, pad_seq_to_mult=1):
+def create_squad_dataset_config(
+    dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
+):
     """Create SQuAD dataset configuration for Megatron-Bridge using HF dataset."""
     from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
     from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -78,10 +85,10 @@ def create_squad_dataset_config(dataset_root, seq_length, packed=False, pad_seq_
         memmap_workers=1,
         # Dataloader config parameters
         dataloader_type="single",
-        num_workers=2,
+        num_workers=num_workers,
         data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
         packed_sequence_specs=packed_sequence_specs,
         rewrite=False,  # Rewrite existing processed files
         delete_raw=False,  # Keep raw HF dataset cache
