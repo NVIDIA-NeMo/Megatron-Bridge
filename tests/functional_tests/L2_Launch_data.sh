@@ -15,6 +15,10 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+# Clean up stale artifacts from previous runs (CI uses fresh containers, cluster does not)
+rm -rf nemo_experiments 2>/dev/null || true
+rm -f .coverage* 2>/dev/null || true
+
 CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
     -o log_cli=true \
     -o log_cli_level=INFO \

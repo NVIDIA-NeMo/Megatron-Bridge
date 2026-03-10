@@ -19,6 +19,9 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 pip install -q datasets
 
 export CUDA_VISIBLE_DEVICES="0,1"
+# Clean up stale artifacts from previous runs (CI uses fresh containers, cluster does not)
+rm -rf nemo_experiments 2>/dev/null || true
+rm -f .coverage* 2>/dev/null || true
 
 uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \

@@ -16,6 +16,9 @@
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
+# Clean up stale artifacts from previous runs (CI uses fresh containers, cluster does not)
+rm -rf nemo_experiments 2>/dev/null || true
+rm -f .coverage* 2>/dev/null || true
 
 # Run Qwen VL recipe functional tests on 2 GPUs
 # This script tests Qwen2.5-VL and Qwen3-VL recipe configurations with their default
