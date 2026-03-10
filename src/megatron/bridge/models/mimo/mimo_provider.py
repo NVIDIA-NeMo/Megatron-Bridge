@@ -21,6 +21,7 @@ import torch.distributed as dist
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -29,8 +30,6 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.models.mimo.mimo_builder import (
     _default_topology,
     build_hypercomm_grids,
-    is_pp_first_stage,
-    is_pp_last_stage,
     populate_embedding_and_position_groups,
 )
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
@@ -197,6 +196,14 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
             # Check if current rank is in this grid's range
             if grid.rank_offset <= current_rank < (grid.rank_offset + grid.size):
                 pp_group = grid.get_pg(["pp"])
+
+                assert (
+                    self.virtual_pipeline_model_parallel_size is None or self.virtual_pipeline_model_parallel_size <= 1
+                ), (
+                    f"VPP (virtual_pipeline_model_parallel_size={self.virtual_pipeline_model_parallel_size}) "
+                    f"is not supported with MIMO embedding groups. pp_ranks[0]/pp_ranks[-1] do not "
+                    f"reliably identify embedding stages under VPP."
+                )
 
                 # Create embedding groups for PP > 1 (collective operation on all PP ranks)
                 pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)

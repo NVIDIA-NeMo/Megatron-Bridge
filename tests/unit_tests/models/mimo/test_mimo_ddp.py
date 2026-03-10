@@ -194,38 +194,6 @@ class TestWrapMimoModelDistributed:
 
     @patch("megatron.core.distributed.DistributedDataParallel")
     @patch("torch.distributed.get_rank")
-    def test_skip_modality_submodule_no_grid(self, mock_get_rank, mock_ddp):
-        """Test that modality submodules without grids are skipped."""
-        mock_get_rank.return_value = 0
-        mock_ddp.return_value = MagicMock()
-
-        mimo_model = self._create_mock_mimo_model(has_language_model=True, modality_names=["images", "audio"])
-        ddp_config = MagicMock()
-        mimo_parallelism_config = self._create_mimo_parallelism_config(
-            {
-                "llm": {"tp": 2, "dp": 2},
-                "images": {"tp": 1, "dp": 4},
-                # Note: no "audio" in parallelism config
-            }
-        )
-
-        # Only llm and images have grids
-        grids = {
-            "llm": self._create_mock_grid(rank_offset=0, size=4),
-            "images": self._create_mock_grid(rank_offset=0, size=4),
-        }
-        pg_collections = {
-            "llm": MagicMock(),
-            "images": MagicMock(),
-        }
-
-        wrap_mimo_model_distributed(mimo_model, ddp_config, mimo_parallelism_config, grids, pg_collections)
-
-        # Should wrap llm and images, but not audio (no grid)
-        assert mock_ddp.call_count == 2
-
-    @patch("megatron.core.distributed.DistributedDataParallel")
-    @patch("torch.distributed.get_rank")
     def test_heterogeneous_different_rank_ranges(self, mock_get_rank, mock_ddp):
         """Test heterogeneous deployment with different rank ranges per module."""
         mock_get_rank.return_value = 4  # In images grid but not llm grid

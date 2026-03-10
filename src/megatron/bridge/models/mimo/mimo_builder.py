@@ -13,10 +13,6 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
-if TYPE_CHECKING:
-    from megatron.core.process_groups_config import HyperCommGrid
-
-
 def build_hypercomm_grids(
     mimo_parallelism_config: MimoParallelismConfig,
 ) -> Dict[str, HyperCommGrid]:
@@ -76,6 +72,10 @@ def populate_embedding_and_position_groups(
     IMPORTANT: This calls dist.new_group which is a collective operation.
     Must be called on all ranks that could participate.
 
+    Note: VPP (virtual_pipeline_model_parallel_size > 1) is not supported.
+    With VPP, pp_ranks[0]/pp_ranks[-1] do not reliably identify the stages
+    that own embeddings. The caller is responsible for asserting VPP is disabled.
+
     Args:
         pp_group: The pipeline parallel process group.
 
@@ -98,22 +98,6 @@ def populate_embedding_and_position_groups(
     embd_pg = dist.new_group(ranks=embd_ranks)
 
     return pos_embd_pg, embd_pg
-
-
-def is_pp_first_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
-    """Check if current rank is first stage in pipeline."""
-    if pp_group is None:
-        return True
-    pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
-    return dist.get_rank() == pp_ranks[0]
-
-
-def is_pp_last_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:
-    """Check if current rank is last stage in pipeline."""
-    if pp_group is None:
-        return True
-    pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
-    return dist.get_rank() == pp_ranks[-1]
 
 
 def is_current_rank_in_grid(grid: "HyperCommGrid") -> bool:
