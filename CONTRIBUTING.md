@@ -216,7 +216,9 @@ Use at most one state label from this set at a time:
 | Label | Meaning |
 | --- | --- |
 | `needs-triage` | New item needs classification and ownership |
+| `needs-review` | PR is ready for code review and waiting on a reviewer |
 | `needs-author` | Author action is required before review or merge can continue |
+| `needs-follow-up` | Issue or PR has finished initial triage/review and needs further follow-up |
 | `blocked` | Work cannot move forward until an external dependency is cleared |
 | `ready-to-merge` | PR is approved, current, and only waiting for CI to pass before merge |
 
@@ -228,6 +230,7 @@ Apply only when risk affects review or merge behavior:
 | --- | --- |
 | `breaking-change` | Public behavior or API compatibility changes |
 | `high-complexity` | Harder to merge: prone to conflicts and needs additional test coverage |
+| `needs-more-tests` | Requires additional test coverage; triggers both L0 and L1 CI test tiers |
 
 ### Area Labels
 
@@ -250,7 +253,7 @@ Use one primary area label after triage:
 This taxonomy does not replace every existing label:
 
 - Keep release labels such as `r0.3.0` as independent scheduling signals.
-- Keep community-related labels as independent intake signals.
+- Keep `community-request` and other community-related labels as independent intake signals.
 - Use `needs-follow-up` when an issue or PR should stay explicitly visible to the oncaller across handoffs.
 - Avoid creating new status synonyms when an existing label in this taxonomy already fits.
 
@@ -258,6 +261,8 @@ This taxonomy does not replace every existing label:
 
 - New issues should start with `needs-triage`.
 - Issues should leave triage with one `type` label and one `area` label.
+- An issue keeps `needs-triage` until a maintainer has responded or assigned it. Adding type and area labels is classification; the issue leaves `needs-triage` only when a maintainer engages (responds, assigns, or explicitly routes it).
+- After a maintainer engages, transition to `needs-follow-up` (deferred work oncall should track), `needs-author` (waiting on reporter for more info), `blocked` (external dependency), or no state label (actively being worked on).
 - PRs should not use `needs-triage`. Use `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
 - `high-complexity` starts as a manual maintainer label, not an automated heuristic.
 - `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
