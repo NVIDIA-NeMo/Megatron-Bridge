@@ -34,7 +34,6 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
-    ValidationConfig,
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -119,8 +118,9 @@ def _make_config(
             global_batch_size=8,
             micro_batch_size=1,
             exit_signal_handler=True,
+            eval_interval=1000,
+            eval_iters=2,
         ),
-        validation=ValidationConfig(eval_interval=1000, eval_iters=2),
         optimizer=OptimizerConfig(
             optimizer="adam",
             bf16=True,
