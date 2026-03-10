@@ -15,7 +15,6 @@
 
 import torch
 from megatron.core.activations import squared_relu
-from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
@@ -452,7 +451,6 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
         mamba_num_heads=256,
         ffn_hidden_size=32768,
         num_attention_heads=64,
-        attention_backend=AttnBackend.auto,
         # NemotronH base
         seq_length=8192,
         mamba_num_groups=8,
@@ -979,7 +977,6 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
         mamba_num_heads=256,
         ffn_hidden_size=32768,
         num_attention_heads=64,
-        attention_backend=AttnBackend.auto,
         # NemotronH base
         seq_length=8192,
         mamba_num_groups=8,
@@ -1560,7 +1557,6 @@ def nemotronh_56b_peft_config(
         mamba_num_heads=256,
         ffn_hidden_size=32768,
         num_attention_heads=64,
-        attention_backend=AttnBackend.auto,
         # NemotronH base
         seq_length=8192,
         mamba_num_groups=8,
