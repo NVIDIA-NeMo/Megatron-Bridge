@@ -194,6 +194,14 @@ jobs:
             sleep 30
           done
 
+      - name: Revert submodule bump for dev branch
+        if: ${{ inputs.mcore-branch == 'dev' }}
+        run: |
+          git checkout 3rdparty/Megatron-LM
+          git checkout .main.commit
+          git commit -m "Revert submodule bump for dev branch"
+          git push origin ${{ env.SOURCE_BRANCH }}
+
       - name: Merge PR
         env:
           title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}) (${{ needs.pre-flight.outputs.date }})"
