@@ -68,6 +68,9 @@ python -m torch.distributed.run --nproc_per_node=8 \
   - `gpt_oss_20b_sft_fp8_current_scaling_config`: Full SFT configuration for 20B with Hopper FP8 current scaling
   - `gpt_oss_20b_peft_config`: LoRA PEFT configuration for 20B
   - `gpt_oss_20b_peft_fp8_current_scaling_config`: LoRA PEFT configuration for 20B with Hopper FP8 current scaling
+  - `gpt_oss_20b_pretrain_mxfp8_config`: Pretraining configuration for 20B with Blackwell MXFP8
+  - `gpt_oss_20b_sft_mxfp8_config`: Full SFT configuration for 20B with Blackwell MXFP8
+  - `gpt_oss_20b_peft_mxfp8_config`: LoRA PEFT configuration for 20B with Blackwell MXFP8
   - `gpt_oss_120b_pretrain_config`: Pretraining configuration for 120B
   - `gpt_oss_120b_sft_config`: Full SFT configuration for 120B
   - `gpt_oss_120b_peft_config`: LoRA PEFT configuration for 120B
@@ -89,6 +92,14 @@ The FP8 current scaling recipes enable mixed-precision training with FP8 on Hopp
 - [slurm_pretrain.sh](slurm_pretrain.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"`
 - [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"`
 - [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"`
+
+### MXFP8 Training (Blackwell GPUs)
+
+MXFP8 (`bf16_with_mxfp8_mixed`) enables mixed-precision training on Blackwell GPUs. To use an MXFP8 recipe, uncomment the MXFP8 `RECIPE_NAME` line in the corresponding SLURM script:
+
+- [slurm_pretrain.sh](slurm_pretrain.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_pretrain_mxfp8_config"`
+- [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"`
+- [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"`
 
 ### Pretrain
 

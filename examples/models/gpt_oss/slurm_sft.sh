@@ -42,17 +42,18 @@
 # ==============================================================================
 
 # Workspace directory for checkpoints and results
-WORKSPACE=${WORKSPACE:-/workspace}
+export WORKSPACE="${WORKSPACE:-/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace}"
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-}"
+export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
 RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_config}"
-# RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"
+# RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"  # Hopper FP8 current scaling
+# RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"               # Blackwell MXFP8
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
@@ -68,11 +69,11 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE=""
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-$WKDIR/sqsh/nemo_26.02.rc5.sqsh}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS=""
+CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm}"
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================

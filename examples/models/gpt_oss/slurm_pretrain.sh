@@ -42,22 +42,23 @@
 # ==============================================================================
 
 # Workspace directory for checkpoints and results
-WORKSPACE=${WORKSPACE:-/workspace}
+export WORKSPACE="${WORKSPACE:-/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace}"
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-}"
+export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
 
 # Model and training configurations
 MODEL_NAME=gpt_oss_20b
 RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_pretrain_config}"
-# RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"
+# RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"  # Hopper FP8 current scaling
+# RECIPE_NAME="${MODEL_NAME}_pretrain_mxfp8_config"               # Blackwell MXFP8
 DATASET_NAME=dclm  # set to "mock" for mock data; "dclm" uses DCLM when DCLM_DATA_DIR/DCLM_CACHE are set below
 SEQ_LENGTH=4096
 
 # When DATASET_NAME=dclm, set DCLM_DATA_DIR and DCLM_CACHE so the recipe uses DCLM; leave unset for mock
 if [ "$DATASET_NAME" = "dclm" ]; then
-    # export DCLM_DATA_DIR="/path/to/dclm/preprocessed"
-    # export DCLM_CACHE="/path/to/cache"
+    export DCLM_DATA_DIR="${DCLM_DATA_DIR:-/lustre/fsw/portfolios/coreai/users/weijiac/data/dclm/preprocessed}"
+    export DCLM_CACHE="${DCLM_CACHE:-/lustre/fsw/portfolios/coreai/users/weijiac/.cache}"
     :
 else
     unset DCLM_DATA_DIR
@@ -76,11 +77,11 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 PARALLELISM_CONFIGS=("2,4,4,1,True" "4,2,4,1,True" "2,4,4,2,True")
 
 # Container image (required)
-CONTAINER_IMAGE=""
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-$WKDIR/sqsh/nemo_26.02.rc5.sqsh}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS=""
+CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm}"
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
