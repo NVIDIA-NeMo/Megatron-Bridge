@@ -38,7 +38,7 @@ ACTIVATION_FUNC_MAP: dict[str, Callable] = {
     "silu": F.silu,
     "sigmoid": F.sigmoid,
     "tanh": torch.tanh,
-    "relu2": squared_relu,          # alias; canonical is squared_relu (below)
+    "relu2": squared_relu,  # alias; canonical is squared_relu (below)
     "squared_relu": squared_relu,
     "gelu_pytorch_tanh": fast_gelu,  # alias; canonical is fast_gelu (below)
     "fast_gelu": fast_gelu,
