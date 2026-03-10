@@ -574,63 +574,59 @@ class TestEmbeddingGroupHelpers:
         assert pos_embd_pg is None
         assert embd_pg is None
 
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_first_stage_true(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_first_stage returns True for first stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_first_stage
+    def test_is_pp_first_stage_true(self):
+        """Test is_pp_first_stage returns True when group rank is 0."""
+        from megatron.core.pipeline_parallel.utils import is_pp_first_stage
 
         mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 0
+        mock_pp_group.rank.return_value = 0
+        mock_pp_group.size.return_value = 4
 
-        assert is_pp_first_stage(mock_pp_group) is True
+        with patch("torch.distributed.is_initialized", return_value=True):
+            assert is_pp_first_stage(mock_pp_group) is True
 
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_first_stage_false(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_first_stage returns False for non-first stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_first_stage
+    def test_is_pp_first_stage_false(self):
+        """Test is_pp_first_stage returns False when group rank is not 0."""
+        from megatron.core.pipeline_parallel.utils import is_pp_first_stage
 
         mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 4
+        mock_pp_group.rank.return_value = 1
+        mock_pp_group.size.return_value = 4
 
-        assert is_pp_first_stage(mock_pp_group) is False
+        with patch("torch.distributed.is_initialized", return_value=True):
+            assert is_pp_first_stage(mock_pp_group) is False
 
     def test_is_pp_first_stage_none_group(self):
-        """Test is_pp_first_stage returns True for None group (no PP)."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_first_stage
+        """Test is_pp_first_stage returns True for None group (treated as rank 0, no PP)."""
+        from megatron.core.pipeline_parallel.utils import is_pp_first_stage
 
         assert is_pp_first_stage(None) is True
 
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_last_stage_true(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_last_stage returns True for last stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_last_stage
+    def test_is_pp_last_stage_true(self):
+        """Test is_pp_last_stage returns True when group rank is last."""
+        from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 
         mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 12
+        mock_pp_group.rank.return_value = 3
+        mock_pp_group.size.return_value = 4
 
-        assert is_pp_last_stage(mock_pp_group) is True
+        with patch("torch.distributed.is_initialized", return_value=True):
+            assert is_pp_last_stage(mock_pp_group) is True
 
-    @patch("torch.distributed.get_process_group_ranks")
-    @patch("torch.distributed.get_rank")
-    def test_is_pp_last_stage_false(self, mock_get_rank, mock_get_ranks):
-        """Test is_pp_last_stage returns False for non-last stage."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_last_stage
+    def test_is_pp_last_stage_false(self):
+        """Test is_pp_last_stage returns False when group rank is not last."""
+        from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 
         mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]
-        mock_get_rank.return_value = 4
+        mock_pp_group.rank.return_value = 1
+        mock_pp_group.size.return_value = 4
 
-        assert is_pp_last_stage(mock_pp_group) is False
+        with patch("torch.distributed.is_initialized", return_value=True):
+            assert is_pp_last_stage(mock_pp_group) is False
 
     def test_is_pp_last_stage_none_group(self):
-        """Test is_pp_last_stage returns True for None group (no PP)."""
-        from megatron.bridge.models.mimo.mimo_builder import is_pp_last_stage
+        """Test is_pp_last_stage returns True for None group (treated as rank 0 == size-1 == 0, no PP)."""
+        from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 
         assert is_pp_last_stage(None) is True
 
