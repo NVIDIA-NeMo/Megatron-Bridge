@@ -1,8 +1,14 @@
 # Nemotron 3 Super
+[Nemotron 3 Super](https://huggingface.co/collections/nvidia/nvidia-nemotron-v3)is a large language model (LLM) trained by NVIDIA, designed to deliver strong agentic, reasoning, and conversational capabilities. It is employs a hybrid **Latent Mixture-of-Experts (LatentMoE)** architecture, utilizing interleaved Mamba-2 and MoE layers, along with select Attention layers. Distinct from the Nano model, the Super model incorporates **Multi-Token Prediction (MTP)** layers for faster text generation and improved quality, and it is trained using **NVFP4** quantization to maximize compute efficiency. The model has **12B active parameters** and **120B parameters in total**.
 
-```{note}
-⚠️ **Work In Progress** - This documentation is under active development and may be incomplete or subject to change.
+NeMo Megatron Bridge supports pretraining, full parameters finetuning, and LoRA finetuning this model. The finetuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
+
+```{important}
+Please use the custom container `nvcr.io/nvidia/nemo:26.02.nemotron_3_super` when working with this model.
+
+Run all commands from `/opt/Megatron-Bridge` (e.g. `docker run -w /opt/Megatron-Bridge ...`)
 ```
+
 ## Conversion with 🤗 Hugging Face
 
 ### Import HF → Megatron
@@ -89,16 +95,16 @@ train.train_iters=1280 \
 scheduler.lr_warmup_iters=128 \
 scheduler.lr_decay_iters=1152 \
 scheduler.lr_wsd_decay_iters=1152 \
-model.tensor_model_parallel_size=8 \
+model.tensor_model_parallel_size=4 \
 model.context_parallel_size=1 \
-model.expert_model_parallel_size=8 \
+model.expert_model_parallel_size=64 \
 model.sequence_parallel=True
 ```
 
 Notes:
 - **GPU Requirements**: Requires B200 GPUs for NVFP4 support. Minimum of 8 nodes (64 GPUs) required
-- The default parallelism settings are TP=8, EP=8, PP=1, CP=1 with sequence parallel enabled
-- Expert parallelism (EP) is set to 8 for the MoE architecture
+- The default parallelism settings are TP=4, EP=64, PP=1, CP=1 with sequence parallel enabled
+- Expert parallelism (EP) is set to 64 for the MoE architecture
 - Adjust batch sizes and iteration counts based on your training requirements
 - Make sure to set up WandB credentials if using WandB logging
 
