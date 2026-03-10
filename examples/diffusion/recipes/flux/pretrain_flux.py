@@ -25,24 +25,24 @@ Forward Step Options:
 
 Examples:
     Basic usage with default configuration (uses automodel pipeline):
-        $ torchrun --nproc_per_node=8 pretrain_flux.py --mock
+        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --mock
 
     Using original FluxForwardStep:
-        $ torchrun --nproc_per_node=8 pretrain_flux.py --mock --use-original-step
+        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --mock --use-original-step
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 pretrain_flux.py --config-file my_custom_config.yaml
+        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --config-file my_custom_config.yaml
 
     Using CLI overrides only:
-        $ torchrun --nproc_per_node=8 pretrain_flux.py model.tensor_model_parallel_size=4 train.train_iters=100000
+        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py model.tensor_model_parallel_size=4 train.train_iters=100000
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 pretrain_flux.py --config-file conf/my_config.yaml \
+        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --config-file conf/my_config.yaml \
         model.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
 
     Using automodel pipeline with custom parameters (automodel is default):
-        $ torchrun --nproc_per_node=8 pretrain_flux.py --mock \
+        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --mock \
         --flow-shift=1.0 --use-loss-weighting
 
 Configuration Precedence:

@@ -160,7 +160,7 @@ class TestWanFlowMatchingPipeline:
 
         with (
             patch(
-                "dfm.src.automodel.flow_matching.flow_matching_pipeline.FlowMatchingPipeline.compute_loss"
+                "megatron.bridge.diffusion.common.flow_matching.flow_matching_pipeline.FlowMatchingPipeline.compute_loss"
             ) as mock_super_loss,
             patch(
                 "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state"
@@ -189,7 +189,7 @@ class TestWanFlowMatchingPipeline:
 
         with (
             patch(
-                "dfm.src.automodel.flow_matching.flow_matching_pipeline.FlowMatchingPipeline.compute_loss"
+                "megatron.bridge.diffusion.common.flow_matching.flow_matching_pipeline.FlowMatchingPipeline.compute_loss"
             ) as mock_super_loss,
             patch(
                 "megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan.parallel_state"
