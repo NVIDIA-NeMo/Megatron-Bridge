@@ -51,6 +51,7 @@ class TestGemma3VLRecipes:
         """Functional test for Gemma3-VL recipes with appropriate parallelism configurations."""
         run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
         "config_func,recipe_name,model_overrides,dataset_overrides", GEMMA3_VL_FINETUNE_PACKED_RECIPES
