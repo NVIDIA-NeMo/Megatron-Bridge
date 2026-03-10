@@ -18,7 +18,9 @@ These are thin aliases around the shared FusedExpertMapping / FusedGatedExpertMa
 classes in param_mapping.py.  Kept for backwards compatibility with existing imports.
 """
 
-from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
-    FusedExpertMapping as GLMExpertDownProjMapping,
-    FusedGatedExpertMapping as GLMExpertGateUpProjMapping,
+from megatron.bridge.models.conversion.param_mapping import (
+    FusedExpertMapping as GLMExpertDownProjMapping,  # noqa: F401
+)
+from megatron.bridge.models.conversion.param_mapping import (
+    FusedGatedExpertMapping as GLMExpertGateUpProjMapping,  # noqa: F401
 )
