@@ -30,6 +30,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
     RowParallelMapping,
+    _split_gdn_grouped_to_separate,
+    split_gdn_linear_weights,
     split_qkv_weights,
 )
 from megatron.bridge.models.conversion.utils import (
@@ -66,6 +68,8 @@ MEGATRON_TO_HF_LORA_SUFFIX = {
     ".linear_out.weight": ".lora_B.weight",
 }
 
+GDN_IN_PROJ_KEYS = ("in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a")
+
 
 @dataclass(frozen=True)
 class AdapterWeightConversionTask:
@@ -96,7 +100,7 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
 
     hf_param = base_mapping.hf_param
     if isinstance(hf_param, str):
-        return hf_param if hf_param.endswith(expected_suffix) else None
+        return hf_param if hf_param.endswith(expected_suffix) or expected_suffix == ".weight" else None
 
     if isinstance(hf_param, dict):
         if adapter_key:
@@ -108,7 +112,7 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
 
         # For fused qkv/gate_up case, we just need a placeholder here
         value = next(iter(hf_param.values()))
-        return value if value.endswith(expected_suffix) else None
+        return value if value.endswith(expected_suffix) or expected_suffix == ".weight" else None
 
     return None
 
@@ -168,10 +172,16 @@ class MegatronPeftBridge:
         # Strip expert layers numbering
         base_suffix = base_suffix.rstrip(digits)
         hf_base_name = _select_hf_base_param_name(base_mapping, adapter_key, base_suffix)
-        if hf_base_name is None or not hf_base_name.endswith(base_suffix):
+        if hf_base_name is None:
             return None
 
-        return hf_base_name[: -len(base_suffix)] + hf_suffix
+        if hf_base_name.endswith(base_suffix):
+            return hf_base_name[: -len(base_suffix)] + hf_suffix
+
+        # Some HF base names (e.g., Qwen3.5 MoE expert gate_up_proj / down_proj)
+        # don't include a trailing ".weight". Allow LoRA suffix to be appended directly.
+        if base_suffix == ".weight":
+            return hf_base_name + hf_suffix
 
     def _get_base_hf_param_names_for_adapter(
         self,
@@ -202,14 +212,15 @@ class MegatronPeftBridge:
     def _make_lora_param_name(self, base_name: str, megatron_adapter_suffix: str) -> Optional[str]:
         """Translate a base HF weight name into its LoRA-specific counterpart."""
 
-        if not base_name.endswith(".weight"):
-            return None
-
         hf_suffix = MEGATRON_TO_HF_LORA_SUFFIX.get(megatron_adapter_suffix)
         if hf_suffix is None:
             return None
 
-        return base_name[: -len(".weight")] + hf_suffix
+        if base_name.endswith(".weight"):
+            return base_name[: -len(".weight")] + hf_suffix
+
+        # Some HF base names (e.g., Qwen3.5 MoE expert gate_up_proj) omit ".weight".
+        return base_name + hf_suffix
 
     def _is_fused_qkv(self, hf_weight_names: Iterable[str]) -> bool:
         """Check whether the provided HF names correspond to a fused QKV weight."""
@@ -221,6 +232,16 @@ class MegatronPeftBridge:
         required = {"q_proj", "k_proj", "v_proj"}
         discovered = {token for name in names for token in required if token in name}
         return discovered == required
+
+    def _is_gdn_in_proj_split(self, hf_weight_names: Iterable[str]) -> bool:
+        """Check whether the provided HF names correspond to split GDN in_proj weights."""
+
+        names = list(hf_weight_names)
+        if len(names) != 4:
+            return False
+        required = set(GDN_IN_PROJ_KEYS)
+        discovered = {token for name in names for token in required if token in name}
+        return discovered == required and all("linear_attn" in name for name in names)
 
     def _is_fused_fc1_gate_up(
         self,
@@ -260,6 +281,14 @@ class MegatronPeftBridge:
             return "v_proj"
         return None
 
+    def _infer_gdn_in_proj_projection_from_name(self, hf_name: str) -> Optional[str]:
+        """Return in_proj_qkv/z/b/a identifier based on the HF name."""
+
+        for projection_key in GDN_IN_PROJ_KEYS:
+            if projection_key in hf_name:
+                return projection_key
+        return None
+
     def _infer_hf_expert_idx(self, hf_name: str) -> Optional[int]:
         """Return the expert index embedded in an HF MoE weight name."""
 
@@ -278,6 +307,120 @@ class MegatronPeftBridge:
         model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
         q_out, k_out, v_out = split_qkv_weights(model.config, linear_out_weight)
         return {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
+
+    def _split_gdn_in_proj_linear_out_weight(
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        linear_out_weight: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        """Split a fused LoRA linear_out tensor for GDN in_proj adapters."""
+
+        model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
+        feature_dim = linear_out_weight.shape[1]
+        qkvz, ba = split_gdn_linear_weights(
+            model.config,
+            linear_out_weight,
+            tp_size=tp_size,
+            feature_dim=feature_dim,
+        )
+        qkv, z, b, a = _split_gdn_grouped_to_separate(model.config, qkvz, ba, feature_dim=feature_dim)
+        return {"in_proj_qkv": qkv, "in_proj_z": z, "in_proj_b": b, "in_proj_a": a}
+
+    def _build_lora_hf_names(self, base_hf_weight_names: List[str]) -> tuple[List[str], List[str]]:
+        """Build LoRA A/B names for a list of HF base parameter names."""
+
+        linear_in_hf_names = [
+            self._make_lora_param_name(base_name, ".linear_in.weight") for base_name in base_hf_weight_names
+        ]
+        linear_out_hf_names = [
+            self._make_lora_param_name(base_name, ".linear_out.weight") for base_name in base_hf_weight_names
+        ]
+        return linear_in_hf_names, linear_out_hf_names
+
+    def _collect_packed_expert_adapter_tensors(
+        self,
+        linear_in_tensor: torch.Tensor,
+        linear_out_tensor: torch.Tensor,
+        expert_linear_in_gathered: Optional[List[torch.Tensor]],
+        expert_linear_out_gathered: Optional[List[torch.Tensor]],
+        num_moe_experts: int,
+    ) -> tuple[List[torch.Tensor], List[torch.Tensor]]:
+        """Collect one LoRA A/B tensor per expert for grouped expert exports."""
+
+        per_expert_linear_in: List[torch.Tensor] = []
+        per_expert_linear_out: List[torch.Tensor] = []
+        if linear_in_tensor.ndim > 2 or linear_out_tensor.ndim > 2:
+            # Already carries local expert dim; concatenate across EP ranks if needed.
+            linear_in_all = (
+                torch.cat(expert_linear_in_gathered, dim=0)
+                if expert_linear_in_gathered is not None
+                else linear_in_tensor
+            )
+            linear_out_all = (
+                torch.cat(expert_linear_out_gathered, dim=0)
+                if expert_linear_out_gathered is not None
+                else linear_out_tensor
+            )
+            per_expert_linear_in = list(linear_in_all)
+            per_expert_linear_out = list(linear_out_all)
+            return per_expert_linear_in, per_expert_linear_out
+
+        for expert_idx in range(num_moe_experts):
+            per_expert_linear_in.append(
+                self._select_expert_adapter_weight(
+                    linear_in_tensor,
+                    expert_linear_in_gathered,
+                    expert_idx,
+                    num_moe_experts,
+                )
+            )
+            per_expert_linear_out.append(
+                self._select_expert_adapter_weight(
+                    linear_out_tensor,
+                    expert_linear_out_gathered,
+                    expert_idx,
+                    num_moe_experts,
+                )
+            )
+        return per_expert_linear_in, per_expert_linear_out
+
+    def _build_packed_expert_linear_out_by_base(
+        self,
+        megatron_model: List[MegatronModel],
+        base_hf_weight_names: List[str],
+        per_expert_linear_out: List[torch.Tensor],
+        is_expert: bool,
+    ) -> Dict[str, torch.Tensor]:
+        """Build per-base stacked LoRA-B tensors for packed grouped-expert export."""
+
+        if not per_expert_linear_out:
+            return {}
+
+        # Handle fused adapters (qkv/gate_up/gdn in_proj) by splitting per-expert then stacking.
+        per_base_linear_out = self._get_fused_adapter_linear_out_slices(
+            megatron_model,
+            base_hf_weight_names,
+            per_expert_linear_out[0],
+            is_expert=is_expert,
+        )
+        if per_base_linear_out is None:
+            stacked = torch.stack(per_expert_linear_out, dim=0)
+            return {base_name: stacked for base_name in base_hf_weight_names}
+
+        per_base_stacks: Dict[str, List[torch.Tensor]] = {name: [] for name in base_hf_weight_names}
+        for expert_out in per_expert_linear_out:
+            per_base = self._get_fused_adapter_linear_out_slices(
+                megatron_model,
+                base_hf_weight_names,
+                expert_out,
+                is_expert=is_expert,
+            )
+            assert per_base is not None, "Expected fused adapter split for expert LoRA"
+            for base_name in base_hf_weight_names:
+                per_base_stacks[base_name].append(per_base[base_name])
+
+        return {base_name: torch.stack(parts, dim=0) for base_name, parts in per_base_stacks.items()}
 
     def _split_fused_fc1_linear_out_weight(
         self,
@@ -639,6 +782,61 @@ class MegatronPeftBridge:
             if is_grouped_expert:
                 base_suffixes = [f".weight{expert_num}" for expert_num in range(num_moe_experts)]
 
+            # If the HF base names don't include experts.N, emit packed expert weights
+            # (stacked along dim 0) once per HF name instead of duplicating per expert.
+            packed_expert = False
+            base_hf_weight_names: List[str] = []
+            if is_grouped_expert and base_suffixes:
+                base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
+                    mapping_registry,
+                    adapter_task.global_base_prefix,
+                    adapter_task.adapter_key,
+                    base_suffixes[0],
+                )
+                if base_hf_weight_names and not any(
+                    re.search(r"experts\.(\d+)", name) for name in base_hf_weight_names
+                ):
+                    packed_expert = True
+
+            if packed_expert:
+                linear_in_hf_names, linear_out_hf_names = self._build_lora_hf_names(base_hf_weight_names)
+                per_expert_linear_in, per_expert_linear_out = self._collect_packed_expert_adapter_tensors(
+                    linear_in_tensor,
+                    linear_out_tensor,
+                    expert_linear_in_gathered,
+                    expert_linear_out_gathered,
+                    num_moe_experts,
+                )
+
+                if not per_expert_linear_in or not per_expert_linear_out:
+                    raise ValueError(
+                        f"Expected to find per-expert adapter weights for grouped expert "
+                        f"linear layer but none found, global_base_prefix={adapter_task.global_base_prefix}"
+                    )
+                linear_in_stacked = torch.stack(per_expert_linear_in, dim=0)
+                if cpu:
+                    linear_in_stacked = linear_in_stacked.cpu()
+
+                if adapter_task.adapter_key is None:
+                    linear_out_by_base = self._build_packed_expert_linear_out_by_base(
+                        megatron_model,
+                        base_hf_weight_names,
+                        per_expert_linear_out,
+                        is_expert=is_expert_linear(adapter_task.global_base_prefix),
+                    )
+                else:
+                    shared_linear_out = torch.stack(per_expert_linear_out, dim=0)
+                    linear_out_by_base = {base_name: shared_linear_out for base_name in base_hf_weight_names}
+
+                for index, base_name in enumerate(base_hf_weight_names):
+                    linear_out_stacked = linear_out_by_base[base_name]
+                    if cpu:
+                        linear_out_stacked = linear_out_stacked.cpu()
+                    yield HFWeightTuple(linear_in_hf_names[index], linear_in_stacked)
+                    yield HFWeightTuple(linear_out_hf_names[index], linear_out_stacked)
+
+                continue
+
             for base_suffix in base_suffixes:
                 current_linear_in_tensor = linear_in_tensor
                 current_linear_out_tensor = linear_out_tensor
@@ -667,11 +865,7 @@ class MegatronPeftBridge:
                     adapter_task.adapter_key,
                     base_suffix,
                 )
-                linear_in_hf_names = []
-                linear_out_hf_names = []
-                for base_name in base_hf_weight_names:
-                    linear_in_hf_names.append(self._make_lora_param_name(base_name, ".linear_in.weight"))
-                    linear_out_hf_names.append(self._make_lora_param_name(base_name, ".linear_out.weight"))
+                linear_in_hf_names, linear_out_hf_names = self._build_lora_hf_names(base_hf_weight_names)
                 if adapter_task.adapter_key is None:
                     # Handle fused adapters (e.g., gate/up or q/k/v) by splitting the fused tensor
                     # into per-base slices keyed by the HF weight names.
@@ -718,6 +912,16 @@ class MegatronPeftBridge:
                 per_base[base_name] = qkv_linear_out_weights[projection_key]
             return per_base
 
+        if self._is_gdn_in_proj_split(base_hf_weight_names):
+            gdn_linear_out_weights = self._split_gdn_in_proj_linear_out_weight(megatron_model, linear_out_tensor)
+            per_base = {}
+            for base_name in base_hf_weight_names:
+                projection_key = self._infer_gdn_in_proj_projection_from_name(base_name)
+                if projection_key is None:
+                    raise ValueError(f"Unknown GDN in_proj base weight name: {base_name}")
+                per_base[base_name] = gdn_linear_out_weights[projection_key]
+            return per_base
+
         is_fused_fc1 = self._is_fused_fc1_gate_up(base_hf_weight_names, linear_out_tensor)
         if is_fused_fc1:
             gate_weight, up_weight = self._split_fused_fc1_linear_out_weight(
@@ -744,6 +948,10 @@ class MegatronPeftBridge:
     ) -> Dict[str, torch.Tensor]:
         """Merge LoRA adapter weights back into the base tensor for HF export."""
 
+        if not converted_weights_dict:
+            # Nothing to merge on this rank (e.g., non-owning PP rank or filtered mapping).
+            return converted_weights_dict
+
         if len(adapter_weights) > 1 and all(
             w.adapter_key in ADAPTER_NAME_MAP.values() for w in adapter_weights if w.adapter_key
         ):
@@ -764,8 +972,41 @@ class MegatronPeftBridge:
             expert_linear_in_gathered = self._gather_expert_adapter_weight(linear_in_weight)
             expert_linear_out_gathered = self._gather_expert_adapter_weight(linear_out_weight)
 
-        base_weight_shape = next(iter(converted_weights_dict.values())).shape
+        base_weight = next(iter(converted_weights_dict.values()))
+        base_weight_shape = base_weight.shape
         weight_names = converted_weights_dict.keys()
+        if self._is_gdn_in_proj_split(weight_names):
+            # GDN in_proj LoRA is defined on the fused Megatron tensor; split it into
+            # the four HF tensors (qkv/z/b/a) before merging.
+            config = unwrap_model(megatron_model)[0].config
+            hidden_size = config.hidden_size
+            qk_dim = config.linear_key_head_dim * config.linear_num_key_heads
+            v_dim = config.linear_value_head_dim * config.linear_num_value_heads
+            num_v_heads = config.linear_num_value_heads
+            fused_dim0 = 2 * qk_dim + 2 * v_dim + 2 * num_v_heads
+
+            base_device = base_weight.device
+            linear_out_on_base = (
+                linear_out_weight if linear_out_weight.device == base_device else linear_out_weight.to(base_device)
+            )
+            linear_in_on_base = (
+                linear_in_weight if linear_in_weight.device == base_device else linear_in_weight.to(base_device)
+            )
+            dummy_base = torch.zeros((fused_dim0, hidden_size), device=base_device, dtype=base_weight.dtype)
+            lora_weight = LoRAMerge().merge(dummy_base, linear_out_on_base, linear_in_on_base, alpha, dim)
+
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            qkvz, ba = split_gdn_linear_weights(config, lora_weight, tp_size=tp_size)
+            qkv, z, b, a = _split_gdn_grouped_to_separate(config, qkvz, ba)
+            gdn_slices = {"in_proj_qkv": qkv, "in_proj_z": z, "in_proj_b": b, "in_proj_a": a}
+
+            for hf_name, base_tensor in list(converted_weights_dict.items()):
+                projection_key = self._infer_gdn_in_proj_projection_from_name(hf_name)
+                if projection_key is None:
+                    raise ValueError(f"Unknown GDN in_proj weight name: {hf_name}")
+                converted_weights_dict[hf_name] = base_tensor + gdn_slices[projection_key]
+
+            return converted_weights_dict
         is_fused_fc1 = self._is_fused_fc1_gate_up(weight_names, linear_out_weight, base_weight_shape)
         is_fused_qkv = self._is_fused_qkv(weight_names) and not is_expert
         qkv_linear_out_weights = (
@@ -783,18 +1024,19 @@ class MegatronPeftBridge:
             current_linear_out_weight = linear_out_weight
             if is_grouped_expert:
                 expert_idx = self._infer_hf_expert_idx(hf_name)
-                current_linear_in_weight = self._select_expert_adapter_weight(
-                    linear_in_weight,
-                    expert_linear_in_gathered,
-                    expert_idx,
-                    num_moe_experts,
-                )
-                current_linear_out_weight = self._select_expert_adapter_weight(
-                    linear_out_weight,
-                    expert_linear_out_gathered,
-                    expert_idx,
-                    num_moe_experts,
-                )
+                if expert_idx is not None:
+                    current_linear_in_weight = self._select_expert_adapter_weight(
+                        linear_in_weight,
+                        expert_linear_in_gathered,
+                        expert_idx,
+                        num_moe_experts,
+                    )
+                    current_linear_out_weight = self._select_expert_adapter_weight(
+                        linear_out_weight,
+                        expert_linear_out_gathered,
+                        expert_idx,
+                        num_moe_experts,
+                    )
             if is_fused_fc1:
                 if is_expert:
                     fc1_gate_weight, fc1_up_weight = self._split_fused_fc1_linear_out_weight(
@@ -886,18 +1128,19 @@ class MegatronPeftBridge:
             linear_out_weight = target_adapter.linear_out_weight.weight
             if is_grouped_expert:
                 expert_idx = self._infer_hf_expert_idx(hf_name)
-                linear_in_weight = self._select_expert_adapter_weight(
-                    linear_in_weight,
-                    expert_linear_in_gathered.get(target_adapter_key),
-                    expert_idx,
-                    num_moe_experts,
-                )
-                linear_out_weight = self._select_expert_adapter_weight(
-                    linear_out_weight,
-                    expert_linear_out_gathered.get(target_adapter_key),
-                    expert_idx,
-                    num_moe_experts,
-                )
+                if expert_idx is not None:
+                    linear_in_weight = self._select_expert_adapter_weight(
+                        linear_in_weight,
+                        expert_linear_in_gathered.get(target_adapter_key),
+                        expert_idx,
+                        num_moe_experts,
+                    )
+                    linear_out_weight = self._select_expert_adapter_weight(
+                        linear_out_weight,
+                        expert_linear_out_gathered.get(target_adapter_key),
+                        expert_idx,
+                        num_moe_experts,
+                    )
 
             merged_weight = self._merge_single_adapter_weight(
                 base_weight,
