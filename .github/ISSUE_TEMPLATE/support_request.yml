@@ -42,6 +42,8 @@ body:
         - area:training
         - area:data
         - area:ckpt
+        - area:peft
+        - area:perf
         - area:ci
         - area:docs
         - area:build

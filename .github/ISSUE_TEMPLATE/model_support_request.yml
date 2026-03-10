@@ -24,10 +24,11 @@ body:
       label: Architecture family
       description: Pick the closest fit for the requested model.
       options:
-        - Decoder-only LLM
-        - Encoder-decoder
-        - VLM / multimodal
-        - MoE
+        - Dense decoder-only (e.g. Llama, Qwen, Gemma, Mistral, Nemotron)
+        - MoE decoder-only (e.g. DeepSeek V2/V3, OLMoE, Qwen3-MoE, MiniMax-M2)
+        - VLM / multimodal (e.g. Qwen-VL, Gemma-VL, Nemotron-VL)
+        - SSM / hybrid (e.g. Mamba, Nemotron-H)
+        - Encoder-decoder (e.g. T5)
         - Other / unsure
     validations:
       required: true

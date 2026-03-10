@@ -155,22 +155,21 @@ If you have write access to the repository (NVIDIA contributors):
 Format your commit messages and PR titles as:
 
 ```text
-[{modules}] {type}: {description}
+[{areas}] {type}: {description}
 ```
 
-**Modules** (use the most relevant ones, separate multiple with `,`):
-- `model` - Model implementations and bridges
-- `recipe` - Training recipes
-- `training` - Training loop and utilities
-- `data` - Data loading and processing
-- `ckpt` - Checkpoint conversion and saving
-- `peft` - Parameter-efficient fine-tuning (LoRA, etc.)
-- `perf` - Performance optimizations
-- `ci` - CI/CD configuration
-- `doc` - Documentation
-- `test` - Tests
-- `build` - Build system and dependencies
-- `misc` - Other changes
+**Areas** (use the most relevant ones, separate multiple with `,`):
+- `model` - Model implementations and HF bridge logic
+- `recipe` - Training recipes and launch configs
+- `training` - Training loop, callbacks, and runtime integration
+- `data` - Dataset builders, preprocessing, and samplers
+- `ckpt` - Checkpoint conversion, loading, export, and save paths
+- `peft` - PEFT methods (LoRA, adapters) and adapter export
+- `perf` - Performance optimizations and throughput improvements
+- `ci` - CI, automation, and workflow infrastructure
+- `docs` - Documentation, examples, and contributor guidance
+- `build` - Dependencies, packaging, and environment setup
+- `misc` - Cross-cutting utilities and other changes
 
 **Types**:
 - `feat` - New feature
@@ -184,7 +183,7 @@ Format your commit messages and PR titles as:
 **Examples**:
 ```text
 [model] feat: Add Qwen3 model bridge
-[recipe, doc] feat: Add Llama 3.1 70B recipe with documentation
+[recipe, docs] feat: Add Llama 3.1 70B recipe with documentation
 [ckpt] fix: Handle missing keys in HF checkpoint conversion
 [BREAKING][training] refactor: Change optimizer config structure
 [ci, build] chore: Update ruff version
@@ -228,7 +227,7 @@ Apply only when risk affects review or merge behavior:
 | Label | Meaning |
 | --- | --- |
 | `breaking-change` | Public behavior or API compatibility changes |
-| `high-conflict-risk` | Likely to go stale or conflict if left open |
+| `high-complexity` | Harder to merge: prone to conflicts and needs additional test coverage |
 
 ### Area Labels
 
@@ -241,6 +240,8 @@ Use one primary area label after triage:
 | `area:training` | Training loop, callbacks, and runtime integration |
 | `area:data` | Dataset builders, preprocessing, and samplers |
 | `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
+| `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
+| `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
 | `area:ci` | GitHub Actions, CI launchers, queueing, and automation |
 | `area:docs` | Documentation, examples, and contributor guidance |
 | `area:build` | Dependencies, packaging, images, and environment setup |
@@ -260,7 +261,7 @@ This taxonomy does not replace every existing label:
 - New issues should start with `needs-triage`.
 - Issues should leave triage with one `type` label and one `area` label.
 - PRs should not use `needs-triage`. Use `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
-- `high-conflict-risk` starts as a manual maintainer label, not an automated heuristic.
+- `high-complexity` starts as a manual maintainer label, not an automated heuristic.
 - `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
 - `needs-follow-up` is the visibility label for deferred work that should stay on the oncall radar.
 - `needs-follow-up` can be combined with `blocked` when the oncaller should keep watching a blocked item.
@@ -288,11 +289,11 @@ These four views are the core daily queues maintainers and oncall should watch.
 - Goal: make blockers and deferred work visible across handoffs
 - Suggested query: `is:open (label:"blocked" OR label:"needs-follow-up") sort:updated-asc`
 
-#### High Conflict Risk
+#### High Complexity
 
-- Scope: open PRs labeled `high-conflict-risk`
-- Goal: proactively review or rebase work before conflicts waste CI and reviewer time
-- Suggested query: `is:pr is:open label:"high-conflict-risk" sort:updated-asc`
+- Scope: open PRs labeled `high-complexity`
+- Goal: proactively review, rebase, and ensure adequate test coverage before conflicts waste CI and reviewer time
+- Suggested query: `is:pr is:open label:"high-complexity" sort:updated-asc`
 
 #### Recommended Columns
 
