@@ -1197,7 +1197,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
         if self.pad_to_max_length:
             max_length = self.max_seq_length
         else:
-            max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 16))
+            max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, self.pad_seq_length_to_mult))
         assert max_length <= self.max_seq_length
 
         position_ids = [list(range(max_length)) for _ in batch]
