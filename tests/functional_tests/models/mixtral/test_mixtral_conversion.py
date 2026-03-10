@@ -50,15 +50,16 @@ HF_MIXTRAL_TOY_MODEL_CONFIG = {
 
 
 @pytest.mark.integration
+@pytest.mark.run_only_on("GPU")
 class TestMixtralConversion:
     """
     Test Mixtral model conversion from local HuggingFace model with different parallelism configurations.
 
-    Requires: 2 GPUs for the conversion test (nproc_per_node=2).
+    Requires GPU(s) to run.
     """
 
     @pytest.fixture(scope="class")
-    def mixtral_toy_model_path(self, tmp_path_factory):
+    def mixtral_toy_model_path(self, tmp_path_factory: pytest.TempPathFactory) -> str:
         """
         Create and save a HuggingFace Mixtral toy model from config to a temporary directory.
 
@@ -111,7 +112,7 @@ class TestMixtralConversion:
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, mixtral_toy_model_path):
+    def test_toy_model_creation(self, mixtral_toy_model_path: str) -> None:
         """
         Test that the toy model is created correctly and can be loaded.
 
@@ -174,7 +175,6 @@ class TestMixtralConversion:
         print(f"SUCCESS: Toy model created and validated at {mixtral_toy_model_path}")
         print("Model weights are correctly in bfloat16 format")
 
-    @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
         "tp,pp,test_name",
         [
@@ -182,7 +182,9 @@ class TestMixtralConversion:
             (1, 2, "PP"),
         ],
     )
-    def test_mixtral_conversion_parallelism(self, mixtral_toy_model_path, tmp_path, tp, pp, test_name):
+    def test_mixtral_conversion_parallelism(
+        self, mixtral_toy_model_path: str, tmp_path: Path, tp: int, pp: int, test_name: str
+    ) -> None:
         """
         Test Mixtral model conversion with different parallelism configurations.
 

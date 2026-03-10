@@ -50,6 +50,7 @@ class MixtralBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MixtralModelProvider:
         """Convert HuggingFace config to Megatron provider."""
         hf_config = hf_pretrained.config
+        dtype = self.dtype_from_hf(hf_config, default=torch.float32)
 
         provider = MixtralModelProvider(
             add_qkv_bias=getattr(hf_config, "attention_bias", False),
@@ -69,9 +70,9 @@ class MixtralBridge(MegatronModelBridge):
             moe_aux_loss_coeff=hf_config.router_aux_loss_coef,
             vocab_size=hf_config.vocab_size,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
+            fp16=(dtype == torch.float16),
+            bf16=(dtype == torch.bfloat16),
+            params_dtype=dtype,
             generation_config=hf_pretrained.generation_config,
         )
 

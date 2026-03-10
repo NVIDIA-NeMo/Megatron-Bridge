@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.mixtral.mixtral_provider import MixtralModelProvider
 
 
+@pytest.mark.unit
 class TestMixtralModelProvider:
     """Test cases for MixtralModelProvider class."""
 
-    def test_mixtral_model_provider_initialization(self):
+    def test_mixtral_model_provider_initialization(self) -> None:
         """Test MixtralModelProvider can be initialized with default values."""
         provider = MixtralModelProvider()
 
@@ -64,7 +66,7 @@ class TestMixtralModelProvider:
         assert provider.moe_token_dispatcher_type == "alltoall"
         assert provider.moe_permute_fusion is True
 
-    def test_mixtral_model_provider_custom_initialization(self):
+    def test_mixtral_model_provider_custom_initialization(self) -> None:
         """Test MixtralModelProvider can be initialized with custom values."""
         provider = MixtralModelProvider(
             num_layers=64,
@@ -80,20 +82,20 @@ class TestMixtralModelProvider:
         assert provider.num_moe_experts == 16
         assert provider.moe_router_topk == 4
 
-    def test_mixtral_model_provider_inheritance(self):
+    def test_mixtral_model_provider_inheritance(self) -> None:
         """Test that MixtralModelProvider properly inherits from GPTModelProvider."""
         from megatron.bridge.models.gpt_provider import GPTModelProvider
 
         provider = MixtralModelProvider()
         assert isinstance(provider, GPTModelProvider)
 
-    def test_mixtral_model_provider_has_provide_method(self):
+    def test_mixtral_model_provider_has_provide_method(self) -> None:
         """Test that MixtralModelProvider has the provide method."""
         provider = MixtralModelProvider()
         assert hasattr(provider, "provide")
-        assert callable(getattr(provider, "provide"))
+        assert callable(provider.provide)
 
-    def test_mixtral_model_provider_moe_parameters(self):
+    def test_mixtral_model_provider_moe_parameters(self) -> None:
         """Test that MixtralModelProvider MoE parameters are correctly set."""
         provider = MixtralModelProvider(
             num_moe_experts=16,
@@ -107,7 +109,7 @@ class TestMixtralModelProvider:
         assert provider.moe_token_dispatcher_type == "alltoall"
         assert provider.moe_router_load_balancing_type == "none"
 
-    def test_mixtral_model_provider_dtype_configuration(self):
+    def test_mixtral_model_provider_dtype_configuration(self) -> None:
         """Test that MixtralModelProvider dtype parameters are correctly configured."""
         provider = MixtralModelProvider()
 
@@ -125,7 +127,7 @@ class TestMixtralModelProvider:
         assert provider_fp16.fp16 is True
         assert provider_fp16.bf16 is False
 
-    def test_mixtral_model_provider_with_custom_rope(self):
+    def test_mixtral_model_provider_with_custom_rope(self) -> None:
         """Test MixtralModelProvider with custom RoPE configuration."""
         provider = MixtralModelProvider(
             rotary_base=10000000.0,
@@ -135,19 +137,19 @@ class TestMixtralModelProvider:
         assert provider.rotary_base == 10000000.0
         assert provider.rotary_percent == 0.5
 
-    def test_mixtral_model_provider_custom_vocab_size(self):
+    def test_mixtral_model_provider_custom_vocab_size(self) -> None:
         """Test MixtralModelProvider with custom vocabulary size."""
         provider = MixtralModelProvider(vocab_size=64000)
 
         assert provider.vocab_size == 64000
 
-    def test_mixtral_model_provider_custom_sequence_length(self):
+    def test_mixtral_model_provider_custom_sequence_length(self) -> None:
         """Test MixtralModelProvider with custom sequence length."""
         provider = MixtralModelProvider(seq_length=65536)
 
         assert provider.seq_length == 65536
 
-    def test_mixtral_8x7b_configuration(self):
+    def test_mixtral_8x7b_configuration(self) -> None:
         """Test MixtralModelProvider with Mixtral 8x7B configuration."""
         provider = MixtralModelProvider(
             num_layers=32,
@@ -166,7 +168,7 @@ class TestMixtralModelProvider:
         assert provider.moe_router_topk == 2
         assert provider.vocab_size == 32000
 
-    def test_mixtral_8x22b_configuration(self):
+    def test_mixtral_8x22b_configuration(self) -> None:
         """Test MixtralModelProvider with Mixtral 8x22B configuration."""
         provider = MixtralModelProvider(
             num_layers=56,
@@ -185,7 +187,7 @@ class TestMixtralModelProvider:
         assert provider.num_moe_experts == 8
         assert provider.moe_router_topk == 2
 
-    def test_mixtral_model_provider_moe_routing_configuration(self):
+    def test_mixtral_model_provider_moe_routing_configuration(self) -> None:
         """Test MixtralModelProvider MoE routing configuration."""
         provider = MixtralModelProvider(
             moe_router_load_balancing_type="aux_loss",
@@ -197,7 +199,7 @@ class TestMixtralModelProvider:
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_router_pre_softmax is False
 
-    def test_mixtral_model_provider_expert_parallelism(self):
+    def test_mixtral_model_provider_expert_parallelism(self) -> None:
         """Test MixtralModelProvider with expert parallelism configuration."""
         provider = MixtralModelProvider(
             expert_model_parallel_size=4,
@@ -208,10 +210,11 @@ class TestMixtralModelProvider:
         assert provider.expert_tensor_parallel_size == 2
 
 
+@pytest.mark.integration
 class TestMixtralProviderIntegration:
     """Integration tests for Mixtral model provider."""
 
-    def test_mixtral_provider_creates_valid_config(self):
+    def test_mixtral_provider_creates_valid_config(self) -> None:
         """Test that MixtralModelProvider creates a valid configuration."""
         provider = MixtralModelProvider(
             num_layers=32,
@@ -233,7 +236,7 @@ class TestMixtralProviderIntegration:
         assert provider.num_attention_heads == 32
         assert provider.num_query_groups == 8
 
-    def test_mixtral_provider_with_different_expert_configurations(self):
+    def test_mixtral_provider_with_different_expert_configurations(self) -> None:
         """Test MixtralModelProvider with different expert configurations."""
         configs = [
             {"num_moe_experts": 4, "moe_router_topk": 1},
@@ -246,23 +249,23 @@ class TestMixtralProviderIntegration:
             assert provider.num_moe_experts == config["num_moe_experts"]
             assert provider.moe_router_topk == config["moe_router_topk"]
 
-    def test_mixtral_provider_uses_rmsnorm(self):
+    def test_mixtral_provider_uses_rmsnorm(self) -> None:
         """Test that MixtralModelProvider uses RMSNorm normalization."""
         provider = MixtralModelProvider()
         assert provider.normalization == "RMSNorm"
 
-    def test_mixtral_provider_uses_silu_activation(self):
+    def test_mixtral_provider_uses_silu_activation(self) -> None:
         """Test that MixtralModelProvider uses SiLU activation."""
         provider = MixtralModelProvider()
         assert provider.activation_func is F.silu
 
-    def test_mixtral_provider_uses_rope_embeddings(self):
+    def test_mixtral_provider_uses_rope_embeddings(self) -> None:
         """Test that MixtralModelProvider uses RoPE position embeddings."""
         provider = MixtralModelProvider()
         assert provider.position_embedding_type == "rope"
         assert provider.rotary_base == 1000000.0
 
-    def test_mixtral_provider_moe_optimizations(self):
+    def test_mixtral_provider_moe_optimizations(self) -> None:
         """Test that MixtralModelProvider has MoE optimizations enabled."""
         provider = MixtralModelProvider()
         assert provider.moe_grouped_gemm is True
@@ -270,10 +273,11 @@ class TestMixtralProviderIntegration:
         assert provider.moe_token_dispatcher_type == "alltoall"
 
 
+@pytest.mark.unit
 class TestMixtralProviderEdgeCases:
     """Test edge cases and error conditions."""
 
-    def test_valid_num_query_groups(self):
+    def test_valid_num_query_groups(self) -> None:
         """Test that valid num_query_groups configuration works."""
         # num_attention_heads must be divisible by num_query_groups
         provider = MixtralModelProvider(
@@ -282,7 +286,7 @@ class TestMixtralProviderEdgeCases:
         )
         assert provider.num_query_groups == 8
 
-    def test_vocabulary_size_divisibility(self):
+    def test_vocabulary_size_divisibility(self) -> None:
         """Test vocabulary size divisibility configuration."""
         provider = MixtralModelProvider(
             vocab_size=32768,
@@ -291,7 +295,7 @@ class TestMixtralProviderEdgeCases:
 
         assert provider.make_vocab_size_divisible_by == 128
 
-    def test_seq_length_override(self):
+    def test_seq_length_override(self) -> None:
         """Test sequence length configuration."""
         provider = MixtralModelProvider(
             seq_length=131072,  # Very long context
@@ -299,7 +303,7 @@ class TestMixtralProviderEdgeCases:
 
         assert provider.seq_length == 131072
 
-    def test_rotary_base_configuration(self):
+    def test_rotary_base_configuration(self) -> None:
         """Test rotary base configuration for long context."""
         provider = MixtralModelProvider(
             rotary_base=1000000.0,  # Extended RoPE base
@@ -307,7 +311,7 @@ class TestMixtralProviderEdgeCases:
 
         assert provider.rotary_base == 1000000.0
 
-    def test_layernorm_epsilon_override(self):
+    def test_layernorm_epsilon_override(self) -> None:
         """Test layernorm epsilon configuration."""
         provider = MixtralModelProvider(
             layernorm_epsilon=1e-6,

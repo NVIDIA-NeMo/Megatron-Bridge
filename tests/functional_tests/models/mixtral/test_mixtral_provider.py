@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from typing import Type
 
 import pytest
 
@@ -32,7 +33,9 @@ class TestMixtralModelProviderMapping:
     """Test that bridge provider configs are equivalent to predefined provider configs."""
 
     @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()))
-    def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
+    def test_bridge_vs_predefined_provider_config_equivalence(
+        self, hf_model_id: str, provider_class: Type[MixtralModelProvider]
+    ) -> None:
         """Test that bridge converted provider config matches predefined provider config."""
         if not os.getenv("RUN_LARGE_MODEL_TESTS"):
             pytest.skip("Set RUN_LARGE_MODEL_TESTS=1 to run tests that download large model checkpoints.")
