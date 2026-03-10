@@ -186,7 +186,7 @@ Notes:
 - Consider using Context Parallel (CP) for longer sequences
 
 
-## Quantization (PTQ)
+## Quantization (PTQ and QAT)
 
 Nemotron 3 Super supports four quantization configurations:
 
@@ -244,4 +244,29 @@ torchrun --nproc_per_node=8 examples/quantization/export.py \
     --pp 8 \
     --dtype bfloat16 \
     --trust-remote-code
+```
+
+### Quantization-Aware Training (QAT)
+
+After quantization, further improve model quality with QAT by continuing training from a quantized Megatron checkpoint.
+
+```bash
+MEGATRON_PATH=/path/to/quantized/megatron/ckpt
+CHECKPOINT_DIR=/path/to/qat/checkpoints
+
+torchrun --nproc-per-node=8 examples/models/nemotron_3/qat_nemotron_3_super.py \
+--megatron-load-path=${MEGATRON_PATH} \
+--seq-length=8192 \
+--packed-sequence \
+logger.wandb_project=your_project \
+logger.wandb_entity=nvidia \
+logger.log_interval=5 \
+checkpoint.load=${CHECKPOINT_DIR} \
+checkpoint.save=${CHECKPOINT_DIR} \
+checkpoint.save_interval=50 \
+train.global_batch_size=16 \
+train.train_iters=200 \
+scheduler.lr_warmup_iters=10 \
+model.tensor_model_parallel_size=4 \
+model.sequence_parallel=True
 ```
