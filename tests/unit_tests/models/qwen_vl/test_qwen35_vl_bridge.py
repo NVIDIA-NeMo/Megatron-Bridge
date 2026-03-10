@@ -209,7 +209,7 @@ class TestQwen35VLBridgeProviderBridge:
     def test_provider_bridge_tied_embeddings(self, bridge):
         text_config = _make_dense_text_config()
         text_config.tie_word_embeddings = True
-        pretrained = _make_mock_pretrained(text_config, _make_vision_config())
+        pretrained = _make_mock_pretrained(text_config, _make_vision_config(), tie_word_embeddings=True)
         provider = bridge.provider_bridge(pretrained)
         assert provider.share_embeddings_and_output_weights is True
 

@@ -302,7 +302,7 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
             # local attention, (q, k)
-            config.window_size = (config.window_size, 0)
+            config.window_size = (config.window_size - 1, 0)
         else:
             # global attention
             config.window_size = None
