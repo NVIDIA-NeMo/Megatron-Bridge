@@ -237,8 +237,14 @@ class TestQwen3NextBridge:
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
         for null_attr in (
-            "q_lora_rank", "kv_lora_rank", "qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim",
-            "n_routed_experts", "num_local_experts", "num_nextn_predict_layers",
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_nope_head_dim",
+            "qk_rope_head_dim",
+            "v_head_dim",
+            "n_routed_experts",
+            "num_local_experts",
+            "num_nextn_predict_layers",
         ):
             setattr(config, null_attr, None)
         config.torch_dtype = "bfloat16"
@@ -306,8 +312,14 @@ class TestQwen3NextBridge:
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
         for null_attr in (
-            "q_lora_rank", "kv_lora_rank", "qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim",
-            "n_routed_experts", "num_local_experts", "num_nextn_predict_layers",
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_nope_head_dim",
+            "qk_rope_head_dim",
+            "v_head_dim",
+            "n_routed_experts",
+            "num_local_experts",
+            "num_nextn_predict_layers",
         ):
             setattr(config, null_attr, None)
 
