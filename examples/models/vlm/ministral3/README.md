@@ -101,13 +101,13 @@ Pretraining is not verified for this model.
 
 ### Supervised Fine-Tuning (SFT)
 
-See the [sft.sh](sft.sh) script for full parameter fine-tuning with configurable model parallelisms.
+See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms.
 
 W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [peft.sh](peft.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
+See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
 
 W&B report coming soon.
 

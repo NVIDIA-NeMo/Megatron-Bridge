@@ -129,7 +129,7 @@ field_map:
   conversation: json
 ```
 
-Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [sft_energon.sh](sft_energon.sh) and run the script.
+Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
 
 ## Evaluation
 
