@@ -365,7 +365,7 @@ jobs:
           - script: L0_Launch_converter
           - script: L0_Launch_data
           - script: L0_Launch_models_deepseek
-          - script: L0_Launch_models_qwen
+          - script: L0_Launch_models_qwen3
           - script: L0_Launch_recipes_llama_1b
           - script: L0_Launch_utils
     needs: [pre-flight, cicd-unit-tests]
@@ -436,7 +436,9 @@ jobs:
       max-parallel: 16
       matrix:
         include:
-          - script: L1_Launch_models_gemma
+          - script: L1_Launch_models_gemma1
+          - script: L1_Launch_models_gemma2
+          - script: L1_Launch_models_gemma3
           - script: L1_Launch_models_glm
           - script: L1_Launch_models_gpt_oss
           - script: L1_Launch_models_ministral3
@@ -444,8 +446,10 @@ jobs:
           - script: L1_Launch_models_nemotron
           - script: L1_Launch_models_nemotronh
           - script: L1_Launch_models_olmoe
+          - script: L1_Launch_models_qwen2
+          - script: L1_Launch_models_qwen25_vl
           - script: L1_Launch_models_qwen35_vl
-          - script: L1_Launch_models_qwen_vl
+          - script: L1_Launch_models_qwen3_vl
           - script: L1_Launch_post_training_quantization
           - script: L1_Launch_quantization_export
           - script: L1_Launch_recipes_gpt_oss
