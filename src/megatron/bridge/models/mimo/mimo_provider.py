@@ -30,7 +30,7 @@ from megatron.core.utils import get_model_config
 from megatron.bridge.models.mimo.mimo_builder import (
     _default_topology,
     build_hypercomm_grids,
-    populate_embedding_and_position_groups,
+    create_embedding_and_position_groups,
 )
 from megatron.bridge.models.mimo.mimo_config import MimoParallelismConfig
 from megatron.bridge.models.mimo.mimo_ddp import wrap_mimo_model_distributed
@@ -206,7 +206,7 @@ class MimoModelProvider(ModelProviderMixin[MimoModel]):
                 )
 
                 # Create embedding groups for PP > 1 (collective operation on all PP ranks)
-                pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
+                pos_embd_pg, embd_pg = create_embedding_and_position_groups(pp_group)
 
                 # Only assign embedding groups to ranks that should have them
                 first_stage = is_pp_first_stage(pp_group)

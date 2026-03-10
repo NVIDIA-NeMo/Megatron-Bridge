@@ -525,14 +525,14 @@ class TestEmbeddingGroupHelpers:
     def test_populate_embedding_groups_single_pp_rank(self, mock_get_ranks, mock_new_group):
         """Test embedding groups with single PP rank (PP=1)."""
         from megatron.bridge.models.mimo.mimo_builder import (
-            populate_embedding_and_position_groups,
+            create_embedding_and_position_groups,
         )
 
         mock_pp_group = MagicMock()
         mock_get_ranks.return_value = [0]  # Single PP rank
         mock_new_group.return_value = MagicMock()
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        create_embedding_and_position_groups(mock_pp_group)
 
         # Should create groups for both position and word embeddings
         assert mock_new_group.call_count == 2
@@ -546,14 +546,14 @@ class TestEmbeddingGroupHelpers:
     def test_populate_embedding_groups_multiple_pp_ranks(self, mock_get_ranks, mock_new_group):
         """Test embedding groups with multiple PP ranks (PP>1)."""
         from megatron.bridge.models.mimo.mimo_builder import (
-            populate_embedding_and_position_groups,
+            create_embedding_and_position_groups,
         )
 
         mock_pp_group = MagicMock()
         mock_get_ranks.return_value = [0, 4, 8, 12]  # PP=4
         mock_new_group.return_value = MagicMock()
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        create_embedding_and_position_groups(mock_pp_group)
 
         # Should create two groups
         assert mock_new_group.call_count == 2
@@ -566,10 +566,10 @@ class TestEmbeddingGroupHelpers:
     def test_populate_embedding_groups_none_pp_group(self):
         """Test embedding groups with None PP group."""
         from megatron.bridge.models.mimo.mimo_builder import (
-            populate_embedding_and_position_groups,
+            create_embedding_and_position_groups,
         )
 
-        pos_embd_pg, embd_pg = populate_embedding_and_position_groups(None)
+        pos_embd_pg, embd_pg = create_embedding_and_position_groups(None)
 
         assert pos_embd_pg is None
         assert embd_pg is None
@@ -640,7 +640,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
 
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_first_stage")
-    @patch("megatron.bridge.models.mimo.mimo_provider.populate_embedding_and_position_groups")
+    @patch("megatron.bridge.models.mimo.mimo_provider.create_embedding_and_position_groups")
     @patch("torch.distributed.get_rank")
     def test_pg_collection_includes_embedding_groups_first_stage(
         self, mock_get_rank, mock_populate, mock_is_first, mock_is_last
@@ -679,7 +679,7 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
 
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.mimo.mimo_provider.is_pp_first_stage")
-    @patch("megatron.bridge.models.mimo.mimo_provider.populate_embedding_and_position_groups")
+    @patch("megatron.bridge.models.mimo.mimo_provider.create_embedding_and_position_groups")
     @patch("torch.distributed.get_rank")
     def test_pg_collection_middle_stage_no_embedding_groups(
         self, mock_get_rank, mock_populate, mock_is_first, mock_is_last

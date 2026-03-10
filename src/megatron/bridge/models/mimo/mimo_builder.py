@@ -60,7 +60,7 @@ def _default_topology(mimo_parallelism_config: MimoParallelismConfig) -> Dict[st
     return {name: ["llm"] for name in mimo_parallelism_config.module_names if name != "llm"} | {"llm": []}
 
 
-def populate_embedding_and_position_groups(
+def create_embedding_and_position_groups(
     pp_group: dist.ProcessGroup,
 ) -> Tuple[Optional[dist.ProcessGroup], Optional[dist.ProcessGroup]]:
     """Create embedding-related process groups from PP group ranks.
