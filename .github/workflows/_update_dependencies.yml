@@ -75,9 +75,9 @@ jobs:
           TARGET_BRANCH: ${{ inputs.mcore-branch }}
         run: |
           pushd 3rdparty/Megatron-LM
-          git fetch origin ${{ inputs.mcore-branch }}
-          git checkout FETCH_HEAD
-          MLM_COMMIT=$(git rev-parse HEAD)
+            git fetch origin ${{ inputs.mcore-branch }}
+            git checkout FETCH_HEAD
+            MLM_COMMIT=$(git rev-parse HEAD)
           popd
 
           if [[ "$TARGET_BRANCH" == "main" ]]; then
