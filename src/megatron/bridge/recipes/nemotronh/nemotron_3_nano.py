@@ -40,7 +40,7 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     # Model Configuration (MoE)
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_override_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
+        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
         num_layers=52,
         hidden_size=2688,
         mamba_num_heads=64,
@@ -211,7 +211,7 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
     # Model config - Nemotron 3 Nano
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_override_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
+        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
         num_layers=52,
         hidden_size=2688,
         mamba_num_heads=64,
@@ -401,7 +401,7 @@ def nemotron_3_nano_peft_config(
     # Model config - PEFT uses same parallelism as SFT
     cfg.model = MambaModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_override_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
+        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
         num_layers=52,
         hidden_size=2688,
         mamba_num_heads=64,
