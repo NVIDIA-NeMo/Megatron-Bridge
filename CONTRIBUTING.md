@@ -242,8 +242,6 @@ Use one primary area label after triage:
 | `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
 | `area:peft` | PEFT methods (LoRA, adapters) and adapter export |
 | `area:perf` | Performance optimizations, kernel integration, and throughput improvements |
-| `area:ci` | GitHub Actions, CI launchers, queueing, and automation |
-| `area:docs` | Documentation, examples, and contributor guidance |
 | `area:build` | Dependencies, packaging, images, and environment setup |
 | `area:misc` | Cross-cutting utilities, logging, helpers, and other changes that do not fit a primary domain |
 

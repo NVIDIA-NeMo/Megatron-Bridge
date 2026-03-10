@@ -44,8 +44,6 @@ body:
         - area:ckpt
         - area:peft
         - area:perf
-        - area:ci
-        - area:docs
         - area:build
         - area:misc
         - unsure
