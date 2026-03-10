@@ -986,6 +986,7 @@ class TestTimersWriteToMlflow:
             _timers_write_to_mlflow(mock_timers, names=["forward"], logger=mock_mlflow, iteration=100, normalizer=-1.0)
 
 
+@pytest.mark.unit
 class TestCometLoggerProperty:
     """Tests for the comet_logger property on GlobalState."""
 
@@ -1072,6 +1073,7 @@ class TestCometLoggerProperty:
         assert state._comet_logger is None
 
 
+@pytest.mark.unit
 class TestTimersWriteToComet:
     """Test suite for _timers_write_to_comet function."""
 
