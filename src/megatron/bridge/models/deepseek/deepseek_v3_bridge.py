@@ -89,13 +89,19 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
 
-        # TODO: mtp
-        provider.mtp_num_layers = None
+        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
 
         return provider
 
+    def build_conversion_tasks(self, hf_pretrained, megatron_model):
+        """Override to store config before mapping_registry is called."""
+        # Store config on instance for use in mapping_registry
+        self._hf_config = hf_pretrained.config
+        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = get_common_mapping_list()
+        hf_config = getattr(self, "_hf_config", None)
+        mapping_list = get_common_mapping_list(hf_config=hf_config)
         mapping_list.append(
             AutoMapping(
                 megatron_param="decoder.layers.*.mlp.router.expert_bias",
