@@ -20,4 +20,5 @@ classes in param_mapping.py.  Kept for backwards compatibility with existing imp
 
 from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     FusedExpertMapping as GLMExpertDownProjMapping,
+    FusedGatedExpertMapping as GLMExpertGateUpProjMapping,
 )
