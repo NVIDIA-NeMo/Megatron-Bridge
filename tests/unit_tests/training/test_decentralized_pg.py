@@ -59,6 +59,7 @@ class TestCreatePgCollectionFunction:
         config.context_parallel_size = 1
         config.expert_tensor_parallel_size = None
         config.expert_model_parallel_size = 1
+        config.hierarchical_context_parallel_sizes = None
         return config
 
     @patch("megatron.bridge.training.initialize.HyperCommGrid")
@@ -692,6 +693,7 @@ class TestCreatePgCollectionWithContextParallelism:
         mock_model_config.context_parallel_size = 2  # CP=2
         mock_model_config.expert_tensor_parallel_size = None
         mock_model_config.expert_model_parallel_size = 1
+        mock_model_config.hierarchical_context_parallel_sizes = None
 
         # Setup mock
         mock_grid_instance = MagicMock()
@@ -726,6 +728,7 @@ class TestCreatePgCollectionWithContextParallelism:
         mock_model_config.context_parallel_size = 2
         mock_model_config.expert_tensor_parallel_size = None
         mock_model_config.expert_model_parallel_size = 1
+        mock_model_config.hierarchical_context_parallel_sizes = None
 
         # Setup mock
         mock_grid_instance = MagicMock()
@@ -757,6 +760,7 @@ class TestCreatePgCollectionWithDistributedOptimizerInstances:
         config.context_parallel_size = 1
         config.expert_tensor_parallel_size = None
         config.expert_model_parallel_size = 1
+        config.hierarchical_context_parallel_sizes = None
         return config
 
     @patch("megatron.bridge.training.initialize.HyperCommGrid")
