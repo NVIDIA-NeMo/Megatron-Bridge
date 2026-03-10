@@ -15,7 +15,7 @@
 """
 Unit tests for Qwen3VL Model implementation.
 
-Run with: torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
+Run with: uv run torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
 Or for single GPU: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
 """
 
