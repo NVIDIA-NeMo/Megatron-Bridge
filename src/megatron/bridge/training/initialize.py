@@ -509,7 +509,7 @@ def _create_pg_collection(
         dp_cp_rank_lists = grid._gen_rank_enum(["dp", "cp"])
         if dp_cp_rank_lists:
             dp_cp_ag_pg, _ = torch.distributed.new_subgroups_by_enumeration(dp_cp_rank_lists, backend="nccl")
-        
+
         # Create expert DP all-gather group if expert parallelism is enabled
         if ep_size > 1:
             # Use expert grid to enumerate ranks for expert dp groups
@@ -540,13 +540,13 @@ def _create_pg_collection(
         inter_dist_opt=inter_dist_opt_pg,
         intra_dist_opt=intra_dist_opt_pg,
     )
-    
+
     # Add AG groups to ProcessGroupCollection if created
     if create_all_gather_group:
         pg_collection.dp_cp_ag = dp_cp_ag_pg
         if expt_dp_ag_pg is not None:
             pg_collection.expt_dp_ag = expt_dp_ag_pg
-    
+
     return pg_collection
 
 
@@ -670,12 +670,10 @@ def _initialize_distributed(
                     f"> initialized pipeline model parallel with size "
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
-        
+
         # Create AG groups if requested
         if dist_config.create_all_gather_group:
-            for_expert_parallelism = (
-                getattr(model_config, "expert_model_parallel_size", 1) or 1
-            ) > 1
+            for_expert_parallelism = (getattr(model_config, "expert_model_parallel_size", 1) or 1) > 1
             dp_cp_ag, expt_dp_ag = parallel_state.create_all_gather_groups(
                 for_expert_parallelism=for_expert_parallelism,
                 timeout=datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
@@ -687,7 +685,7 @@ def _initialize_distributed(
             if expt_dp_ag is not None:
                 pg_collection.expt_dp_ag = expt_dp_ag
             return pg_collection
-        
+
         # Return a ProcessGroupCollection using mpu process groups
         return ProcessGroupCollection.use_mpu_process_groups()
 
