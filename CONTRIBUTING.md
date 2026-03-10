@@ -190,6 +190,122 @@ Format your commit messages and PR titles as:
 [ci, build] chore: Update ruff version
 ```
 
+## 🏷️ Repository Labels and Triage
+
+Megatron Bridge uses a small governance taxonomy so maintainers, oncall, and automation can reason about issues and PRs consistently:
+
+- New issues should start with `needs-triage` and leave triage with one `type` label plus one `area` label.
+- PRs should use one primary `area:*` value in the PR template. State labels such as `needs-author`, `blocked`, and `ready-to-merge` are for routing active work, not for replacing review status or CI details.
+- Release labels such as `r0.3.0`, community labels, and `needs-follow-up` are still valid, but they are orthogonal to the main governance taxonomy.
+
+### Type Labels
+
+Use exactly one type label per issue or PR after triage:
+
+| Label | Use for |
+| --- | --- |
+| `bug` | Incorrect behavior, regressions, or broken workflows |
+| `feature` | New capabilities, enhancements, or enablement work |
+| `support` | Questions, help requests, or user guidance gaps |
+| `docs` | Documentation-only updates or documentation debt |
+| `ci` | CI, automation, test queue, or workflow infrastructure work |
+
+### State Labels
+
+Use at most one state label from this set at a time:
+
+| Label | Meaning |
+| --- | --- |
+| `needs-triage` | New item needs classification and ownership |
+| `needs-author` | Author action is required before review or merge can continue |
+| `blocked` | Work cannot move forward until an external dependency is cleared |
+| `ready-to-merge` | PR is approved, current, and only waiting for CI to pass before merge |
+
+### Risk Labels
+
+Apply only when risk affects review or merge behavior:
+
+| Label | Meaning |
+| --- | --- |
+| `breaking-change` | Public behavior or API compatibility changes |
+| `high-conflict-risk` | Likely to go stale or conflict if left open |
+
+### Area Labels
+
+Use one primary area label after triage:
+
+| Label | Scope |
+| --- | --- |
+| `area:model` | Model implementations and HF bridge logic |
+| `area:recipe` | Training recipes and launch configs |
+| `area:training` | Training loop, callbacks, and runtime integration |
+| `area:data` | Dataset builders, preprocessing, and samplers |
+| `area:ckpt` | Checkpoint conversion, loading, export, and save paths |
+| `area:ci` | GitHub Actions, CI launchers, queueing, and automation |
+| `area:docs` | Documentation, examples, and contributor guidance |
+| `area:build` | Dependencies, packaging, images, and environment setup |
+| `area:misc` | Cross-cutting utilities, logging, helpers, and other changes that do not fit a primary domain |
+
+### Orthogonal Labels
+
+This taxonomy does not replace every existing label:
+
+- Keep release labels such as `r0.3.0` as independent scheduling signals.
+- Keep community-related labels as independent intake signals.
+- Use `needs-follow-up` when an issue or PR should stay explicitly visible to the oncaller across handoffs.
+- Avoid creating new status synonyms when an existing label in this taxonomy already fits.
+
+### Label Application Rules
+
+- New issues should start with `needs-triage`.
+- Issues should leave triage with one `type` label and one `area` label.
+- PRs should not use `needs-triage`. Use `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
+- `high-conflict-risk` starts as a manual maintainer label, not an automated heuristic.
+- `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
+- `needs-follow-up` is the visibility label for deferred work that should stay on the oncall radar.
+- `needs-follow-up` can be combined with `blocked` when the oncaller should keep watching a blocked item.
+- If a PR is marked `breaking-change`, do not treat it as auto-mergeable even if CI is green.
+
+### Daily Views
+
+These four views are the core daily queues maintainers and oncall should watch.
+
+#### Needs Triage
+
+- Scope: open issues labeled `needs-triage`
+- Goal: assign one `type` and one `area`
+- Suggested query: `is:issue is:open label:"needs-triage" sort:updated-asc`
+
+#### Ready To Merge
+
+- Scope: open PRs labeled `ready-to-merge`
+- Goal: surface PRs that should merge without rereading every CI detail
+- Suggested query: `is:pr is:open label:"ready-to-merge" draft:false sort:updated-asc`
+
+#### Blocked Or Needs Follow-Up
+
+- Scope: open issues and PRs labeled `blocked` or `needs-follow-up`
+- Goal: make blockers and deferred work visible across handoffs
+- Suggested query: `is:open (label:"blocked" OR label:"needs-follow-up") sort:updated-asc`
+
+#### High Conflict Risk
+
+- Scope: open PRs labeled `high-conflict-risk`
+- Goal: proactively review or rebase work before conflicts waste CI and reviewer time
+- Suggested query: `is:pr is:open label:"high-conflict-risk" sort:updated-asc`
+
+#### Recommended Columns
+
+If you mirror these queues into a GitHub Project, keep the columns and sort keys small:
+
+- item title
+- primary area
+- owner or assignee
+- age
+- last updated time
+- release label
+- current state
+
 ## 📝 Writing Tests
 
 We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and functional tests.
