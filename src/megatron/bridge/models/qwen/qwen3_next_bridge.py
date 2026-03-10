@@ -21,7 +21,7 @@ from transformers import Qwen3NextForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import (
+from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     AutoMapping,
     GatedMLPMapping,
     GDNConv1dMapping,
@@ -30,10 +30,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
+from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
 class Qwen3NextBridge(MegatronModelBridge):
+    PROVIDER_CLASS = Qwen3NextModelProvider
     """
     Megatron Bridge for Qwen3-Next Causal LM.
 

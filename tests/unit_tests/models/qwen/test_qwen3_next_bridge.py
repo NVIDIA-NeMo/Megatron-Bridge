@@ -80,6 +80,22 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        # Explicitly set to None so hf_config_to_provider_kwargs skips them.
+        # Qwen3-Next is not an MLA model and not a DeepSeek-style MoE / MTP model.
+        for null_attr in (
+            # MLA attrs
+            "q_lora_rank",
+            "kv_lora_rank",
+            "qk_nope_head_dim",
+            "qk_rope_head_dim",
+            "v_head_dim",
+            # Alternative MoE expert count attrs (would overwrite num_experts=512)
+            "n_routed_experts",
+            "num_local_experts",
+            # MTP attr (not used by Qwen3-Next, but truthy in Mock)
+            "num_nextn_predict_layers",
+        ):
+            setattr(config, null_attr, None)
         return config
 
     @pytest.fixture
@@ -220,6 +236,11 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        for null_attr in (
+            "q_lora_rank", "kv_lora_rank", "qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim",
+            "n_routed_experts", "num_local_experts", "num_nextn_predict_layers",
+        ):
+            setattr(config, null_attr, None)
         config.torch_dtype = "bfloat16"
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
@@ -284,6 +305,11 @@ class TestQwen3NextBridge:
         config = Mock()
         for key, value in qwen3_next_80b_a3b_config_dict.items():
             setattr(config, key, value)
+        for null_attr in (
+            "q_lora_rank", "kv_lora_rank", "qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim",
+            "n_routed_experts", "num_local_experts", "num_nextn_predict_layers",
+        ):
+            setattr(config, null_attr, None)
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
