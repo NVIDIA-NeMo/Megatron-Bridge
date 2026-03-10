@@ -179,14 +179,17 @@ class Qwen35VLModelProvider(GPTModelProvider):
         _check_qwen3_5_available()
         if self.vision_config is None:
             self.vision_config = Qwen3_5VisionConfig()
-        self.validate_parallelism()
         super().__post_init__()
+
+    def finalize(self) -> None:
+        self.validate_parallelism()
+        super().finalize()
 
     def validate_parallelism(self):
         """Validate that parallelism settings are compatible with this model's architecture.
 
         Call this after mutating parallelism attributes (e.g. tensor_model_parallel_size)
-        on an already-constructed provider, since __post_init__ only runs at construction time.
+        on an already-constructed provider, since finalize() only runs once before provide().
         """
         if self.num_query_groups < self.tensor_model_parallel_size:
             raise ValueError(
@@ -356,14 +359,17 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         _check_qwen3_5_moe_available()
         if self.vision_config is None:
             self.vision_config = Qwen3_5MoeVisionConfig()
-        self.validate_parallelism()
         super().__post_init__()
+
+    def finalize(self) -> None:
+        self.validate_parallelism()
+        super().finalize()
 
     def validate_parallelism(self):
         """Validate that parallelism settings are compatible with this model's architecture.
 
         Call this after mutating parallelism attributes (e.g. tensor_model_parallel_size)
-        on an already-constructed provider, since __post_init__ only runs at construction time.
+        on an already-constructed provider, since finalize() only runs once before provide().
         """
         if self.num_query_groups < self.tensor_model_parallel_size:
             raise ValueError(
