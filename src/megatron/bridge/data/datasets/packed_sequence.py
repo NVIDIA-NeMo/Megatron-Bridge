@@ -13,14 +13,14 @@
 # limitations under the License.
 import json
 import logging
-from dataclasses import dataclass
-from pathlib import Path
-from multiprocessing import Pool
 import multiprocessing as mp
-from tqdm import tqdm
-from typing import Literal, List
+from dataclasses import dataclass
+from multiprocessing import Pool
+from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
+
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy

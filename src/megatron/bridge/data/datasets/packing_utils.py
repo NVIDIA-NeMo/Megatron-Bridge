@@ -39,7 +39,7 @@ def find_first_bin_that_fits(bin_sums: List[int], s: int, bin_size: int) -> int:
     """
     for i,cur_sum in enumerate(bin_sums):
         if cur_sum + s <= bin_size:
-             return i
+            return i
     return -1
 
 
