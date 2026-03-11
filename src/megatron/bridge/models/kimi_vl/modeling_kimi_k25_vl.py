@@ -87,6 +87,14 @@ class KimiK25VLModel(MegatronModule):
                 "modeling_kimi_k25.MoonViT3dPretrainedModel",
                 config.hf_model_path,
             )
+            # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
+            import importlib
+            _vit_module = importlib.import_module(MoonViT3dPretrainedModel.__module__)
+            _OrigEncoderInit = _vit_module.MoonViT3dEncoder.__init__
+            def _patched_encoder_init(self, *args, **kwargs):
+                self.use_deterministic_attn = False
+                _OrigEncoderInit(self, *args, **kwargs)
+            _vit_module.MoonViT3dEncoder.__init__ = _patched_encoder_init
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
                 config.hf_model_path,
