@@ -17,12 +17,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+import yaml
 
 from megatron.bridge.models.conversion.peft_bridge import (
     MegatronPeftBridge,
@@ -306,3 +309,205 @@ class TestSaveHfAdapter:
         with open(output_dir / "adapter_config.json") as f:
             cfg = json.load(f)
         assert cfg["base_model_name_or_path"] == "inferred/model-id"
+
+
+# ---------------------------------------------------------------------------
+# AutoBridge.export_adapter_ckpt  (orchestrator method)
+# ---------------------------------------------------------------------------
+
+
+class TestExportAdapterCkpt:
+    """Tests for the export_adapter_ckpt orchestrator.
+
+    Heavy infrastructure (dist_checkpointing, distributed context, model
+    materialisation) is mocked out so that these tests exercise the
+    config-parsing logic and the wiring between components.
+    """
+
+    @pytest.fixture()
+    def bridge(self):
+        """Return a minimal AutoBridge-like mock with the real export_adapter_ckpt bound."""
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        mock = MagicMock(spec=AutoBridge)
+        mock.export_adapter_ckpt = AutoBridge.export_adapter_ckpt.__get__(mock, AutoBridge)
+        mock.hf_pretrained = SimpleNamespace(model_name_or_path="test-org/test-model")
+
+        fake_provider = MagicMock()
+        fake_provider.provide_distributed_model.return_value = [MagicMock()]
+        mock.to_megatron_provider.return_value = fake_provider
+        return mock
+
+    @pytest.fixture()
+    def ckpt_dir(self, tmp_path):
+        """Create a fake PEFT checkpoint directory with a run_config.yaml."""
+        ckpt = tmp_path / "peft_ckpt"
+        ckpt.mkdir()
+        run_cfg = {
+            "peft": {
+                "_target_": "megatron.bridge.peft.lora.LoRA",
+                "dim": 16,
+                "alpha": 32,
+                "dropout": 0.05,
+                "extra_ignored_key": "should_be_filtered",
+            }
+        }
+        (ckpt / "run_config.yaml").write_text(yaml.dump(run_cfg))
+        return ckpt
+
+    @pytest.fixture(autouse=True)
+    def _patch_heavy_deps(self):
+        """Mock out dist_checkpointing, distributed context, and checkpoint helpers."""
+        fake_sd = {"model": {}}
+        with (
+            patch(
+                "megatron.core.dist_checkpointing.load",
+                return_value=fake_sd,
+            ) as self.mock_dist_load,
+            patch(
+                "megatron.bridge.training.checkpointing._generate_model_state_dict",
+                return_value={"model": {}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict",
+                side_effect=lambda sd, _lora: sd,
+            ),
+            patch(
+                "megatron.bridge.training.model_load_save.temporary_distributed_context",
+                return_value=nullcontext(),
+            ),
+        ):
+            yield
+
+    def test_basic_export_calls_save_hf_adapter(self, bridge, ckpt_dir, tmp_path):
+        """Happy path: run_config.yaml is found, LoRA constructed, save_hf_adapter called."""
+        output = tmp_path / "out"
+        bridge.export_adapter_ckpt(str(ckpt_dir), output, show_progress=False)
+
+        bridge.save_hf_adapter.assert_called_once()
+        kw = bridge.save_hf_adapter.call_args
+        assert Path(kw.kwargs.get("path", kw.args[1] if len(kw.args) > 1 else None)) == output
+        assert kw.kwargs.get("base_model_name_or_path") == "test-org/test-model"
+        assert kw.kwargs.get("show_progress") is False
+
+    def test_lora_config_parsed_from_run_config(self, bridge, ckpt_dir, tmp_path):
+        """LoRA dim/alpha/dropout read from run_config.yaml; extra keys filtered out."""
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        assert peft_config.dim == 16
+        assert peft_config.alpha == 32
+        assert peft_config.dropout == 0.05
+        assert not hasattr(peft_config, "extra_ignored_key")
+
+    def test_vlmlora_selected_when_target_matches(self, bridge, tmp_path):
+        """VLMLoRA is instantiated when _target_ contains 'VLMLoRA'."""
+        from megatron.bridge.peft.lora import VLMLoRA
+
+        ckpt = tmp_path / "vlm_ckpt"
+        ckpt.mkdir()
+        run_cfg = {
+            "peft": {
+                "_target_": "megatron.bridge.peft.lora.VLMLoRA",
+                "dim": 8,
+                "alpha": 16,
+            }
+        }
+        (ckpt / "run_config.yaml").write_text(yaml.dump(run_cfg))
+
+        bridge.export_adapter_ckpt(str(ckpt), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        assert isinstance(peft_config, VLMLoRA)
+
+    def test_missing_checkpoint_raises(self, bridge, tmp_path):
+        with pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"):
+            bridge.export_adapter_ckpt(str(tmp_path / "nonexistent"), tmp_path / "out")
+
+    def test_missing_run_config_uses_defaults(self, bridge, tmp_path):
+        """When run_config.yaml is absent, default LoRA settings are used."""
+        from megatron.bridge.peft.lora import LoRA
+
+        ckpt = tmp_path / "bare_ckpt"
+        ckpt.mkdir()
+
+        bridge.export_adapter_ckpt(str(ckpt), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        default_lora = LoRA()
+        assert isinstance(peft_config, LoRA)
+        assert peft_config.dim == default_lora.dim
+        assert peft_config.alpha == default_lora.alpha
+
+    def test_run_config_in_parent_dir(self, bridge, tmp_path):
+        """run_config.yaml in the parent directory is found (iter_* sub-dir pattern)."""
+        parent = tmp_path / "run_dir"
+        parent.mkdir()
+        iter_dir = parent / "iter_0001000"
+        iter_dir.mkdir()
+        run_cfg = {"peft": {"_target_": "LoRA", "dim": 4, "alpha": 8}}
+        (parent / "run_config.yaml").write_text(yaml.dump(run_cfg))
+
+        bridge.export_adapter_ckpt(str(iter_dir), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        assert peft_config.dim == 4
+        assert peft_config.alpha == 8
+
+    def test_corrupt_run_config_falls_back_to_defaults(self, bridge, tmp_path):
+        """A run_config.yaml that fails to parse falls back to default LoRA."""
+        from megatron.bridge.peft.lora import LoRA
+
+        ckpt = tmp_path / "corrupt_ckpt"
+        ckpt.mkdir()
+        (ckpt / "run_config.yaml").write_text("not: valid: yaml: [[[")
+
+        with patch(
+            "megatron.bridge.training.utils.checkpoint_utils.read_run_config",
+            side_effect=Exception("parse error"),
+        ):
+            bridge.export_adapter_ckpt(str(ckpt), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        assert isinstance(peft_config, LoRA)
+        assert peft_config.dim == LoRA().dim
+
+    def test_provider_set_to_float32(self, bridge, ckpt_dir, tmp_path):
+        """Provider dtypes must be forced to float32 for full-precision adapter export."""
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        provider = bridge.to_megatron_provider.return_value
+        assert provider.pipeline_dtype == torch.float32
+        assert provider.params_dtype == torch.float32
+        provider.finalize.assert_called_once()
+
+    def test_dist_checkpointing_called_with_ckpt_path(self, bridge, ckpt_dir, tmp_path):
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        self.mock_dist_load.assert_called_once()
+        load_path = self.mock_dist_load.call_args.args[1]
+        assert load_path == str(ckpt_dir.resolve())
+
+    def test_base_model_name_from_name_or_path_fallback(self, bridge, ckpt_dir, tmp_path):
+        """Falls back to hf_pretrained.name_or_path when model_name_or_path is empty."""
+        bridge.hf_pretrained = SimpleNamespace(model_name_or_path="", name_or_path="fallback/model")
+
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        base_name = bridge.save_hf_adapter.call_args.kwargs.get("base_model_name_or_path")
+        assert base_name == "fallback/model"
