@@ -81,9 +81,9 @@ class TestNemotronHBridge:
             "use_conv_bias": True,
             "use_mamba_kernels": True,
             "vocab_size": 131072,
-            # Explicitly set to 0 to disable MoE; Mock objects return Mock for any attr access,
-            # so hasattr() always returns True - we need a real value for the `> 0` comparison.
-            "n_routed_experts": 0,
+            # Explicitly set to None to disable MoE; Mock objects return Mock for any attr access,
+            # so hasattr() always returns True.
+            "n_routed_experts": None,
         }
 
     @pytest.fixture
@@ -116,12 +116,14 @@ class TestNemotronHBridge:
 
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
+        result.finalize()
 
         # Check that it returns a MambaModelProvider instance
         assert isinstance(result, MambaModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_nemotronh_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == mock_nemotronh_config.hybrid_override_pattern
         assert result.hidden_size == mock_nemotronh_config.hidden_size
         assert result.add_bias_linear == mock_nemotronh_config.use_bias
         assert result.num_attention_heads == mock_nemotronh_config.num_attention_heads
@@ -158,7 +160,7 @@ class TestNemotronHBridge:
         assert result.mamba_head_dim == mock_nemotronh_config.mamba_head_dim
         assert result.mamba_num_heads == mock_nemotronh_config.mamba_num_heads
         assert result.mamba_num_groups == mock_nemotronh_config.n_groups
-        assert result.hybrid_override_pattern == mock_nemotronh_config.hybrid_override_pattern
+        assert result.hybrid_layer_pattern == mock_nemotronh_config.hybrid_override_pattern
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_nemotronh, mock_nemotronh_config):
         """Test MLP configuration mapping."""

@@ -14,12 +14,10 @@
 
 """Functional smoke tests for Ministral 3 recipe configurations."""
 
-from functools import partial
-
 import pytest
 
 from megatron.bridge.recipes.ministral3.ministral3 import (
-    ministral3_3b_finetune_config,
+    ministral3_3b_sft_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
@@ -27,8 +25,8 @@ from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 MINISTRAL3_FINETUNE_RECIPES = [
     # Small model, only use 2 layers for quick functional test
     (
-        partial(ministral3_3b_finetune_config, peft=None),
-        "ministral3_3b",
+        ministral3_3b_sft_config,
+        "ministral3_3b_sft",
         {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1, "num_layers": 2},
     ),
 ]
@@ -36,8 +34,8 @@ MINISTRAL3_FINETUNE_RECIPES = [
 MINISTRAL3_FINETUNE_PACKED_RECIPES = [
     # Small model with packed sequences, only use 2 layers
     (
-        partial(ministral3_3b_finetune_config, peft=None),
-        "ministral3_3b_packed",
+        ministral3_3b_sft_config,
+        "ministral3_3b_sft_packed",
         {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1, "num_layers": 2},
         {"pack_sequences_in_batch": True},
     ),
