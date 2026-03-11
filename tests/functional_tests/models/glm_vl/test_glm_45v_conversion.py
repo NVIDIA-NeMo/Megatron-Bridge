@@ -51,6 +51,7 @@ HF_GLM_45V_TOY_MODEL_CONFIG = {
         "n_group": 1,
         "n_routed_experts": 8,
         "n_shared_experts": 1,
+        "num_local_experts": 8,
         "norm_topk_prob": True,
         "num_attention_heads": 16,
         "num_experts_per_tok": 4,

@@ -71,8 +71,8 @@ def run_pretrain_recipe_test(
         config.logger.tensorboard_dir = str(tensorboard_dir)
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
@@ -89,7 +89,7 @@ def run_pretrain_recipe_test(
             config.dataset.persistent_workers = False
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 100  # Minimal test samples
 
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
@@ -119,7 +119,12 @@ def run_pretrain_recipe_test(
         pretrain(config, forward_step)
 
         # Basic verification that training completed successfully
-        verify_checkpoint_files(config.checkpoint.save, 10)
+        verify_checkpoint_files(
+            config.checkpoint.save,
+            10,
+            ckpt_format=config.checkpoint.ckpt_format,
+            storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+        )
 
     finally:
         clear_directories(tmp_path)
@@ -149,8 +154,8 @@ def run_pretrain_recipe_perf_test(
     config: ConfigContainer = config_func()
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
-    config.train.eval_interval = 5
-    config.train.eval_iters = 0  # Skip evaluation. TODO: Fix this.
+    config.validation.eval_interval = 5
+    config.validation.eval_iters = 0  # Skip evaluation. TODO: Fix this.
 
     # Standardize batch sizes for functional tests
     config.train.micro_batch_size = 1
@@ -198,6 +203,7 @@ def run_pretrain_vl_recipe_test(
     tensor_model_parallel_size: Optional[int] = None,
     pipeline_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
+    dataset_overrides: Optional[dict] = None,
     forward_step_func: Optional[Callable] = None,
 ):
     """
@@ -207,13 +213,17 @@ def run_pretrain_vl_recipe_test(
     megatron.bridge.training.vlm_step.forward_step.
 
     Args:
-        config_func: The recipe's pretrain_config function
+        config_func: The recipe's config function (parameterless API for SFT,
+                     or takes peft_scheme parameter for PEFT)
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
         tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
         pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
+        dataset_overrides: Optional mapping of dataset attribute overrides to apply
     """
+    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+
     if forward_step_func is None:
         # Import locally to avoid loading VLM stack for non-VL tests
         from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -221,58 +231,73 @@ def run_pretrain_vl_recipe_test(
         vlm_forward_step = forward_step_func
 
     initialize_distributed()
-    shared_base_dir = broadcast_path(tmp_path)
+    shared_base_dir = Path(broadcast_path(tmp_path))
 
     try:
-        # Note: qwen_vl recipe config functions do not support 'mock' kwarg
-        config: ConfigContainer = config_func(
-            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", dataset_type="mock"
-        )
+        # VLM recipe configs use parameterless API - call without arguments
+        config: ConfigContainer = config_func()
+
+        # Set up output directories after instantiation
+        run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
+        checkpoint_dir = run_output_dir / "checkpoints"
+        tensorboard_dir = run_output_dir / "tb_logs"
+        config.checkpoint.save = str(checkpoint_dir)
+        config.checkpoint.load = str(checkpoint_dir)
+        config.logger.tensorboard_dir = str(tensorboard_dir)
+
         # Keep runs short and consistent across tests
         config.train.train_iters = 10
-        config.train.eval_interval = 5
-        config.train.eval_iters = 2
+        config.validation.eval_interval = 5
+        config.validation.eval_iters = 2
         # Standardize batch sizes for functional tests
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 1
         test_seq_length = 1024
         config.model.seq_length = test_seq_length
-        config.dataset.seq_length = test_seq_length
 
-        # Disable pin-memory and worker persistence in tests to avoid
-        # pin-memory device mismatches under torchrun+pytest environments.
-        config.dataset.pin_memory = False
-        config.dataset.num_workers = 0
-        config.dataset.persistent_workers = False
+        # Get the HF processor path from the original dataset config before replacing
+        hf_processor_path = getattr(config.dataset, "hf_processor_path", None)
+        pack_sequences_in_batch = getattr(config.dataset, "pack_sequences_in_batch", False)
 
-        train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
-        test_samples_needed = 8
-
-        total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
-
-        # Set dataset split ratios for minimal dataset
-        train_split = train_samples_needed / total_samples
-        valid_split = eval_samples_needed / total_samples
-        test_split = test_samples_needed / total_samples
-
-        config.dataset.split = [train_split, valid_split, test_split]
+        # Replace the real dataset with a mock dataset provider for tests
+        # MockVLMConversationProvider generates synthetic data and doesn't need a split attribute
+        # since the DatasetBuildContext calculates sample counts from training configuration
+        config.dataset = MockVLMConversationProvider(
+            seq_length=test_seq_length,
+            hf_processor_path=hf_processor_path,
+            pack_sequences_in_batch=pack_sequences_in_batch,
+        )
 
         if tensor_model_parallel_size is not None:
-            config.model.tensor_model_parallel_size = tensor_model_parallel_size
+            if hasattr(config.model, "tensor_model_parallel_size"):
+                config.model.tensor_model_parallel_size = tensor_model_parallel_size
         if pipeline_model_parallel_size is not None:
-            config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+            if hasattr(config.model, "pipeline_model_parallel_size"):
+                config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
                 setattr(config.model, attribute_name, attribute_value)
 
+        # Apply any dataset-specific overrides provided by the caller
+        if dataset_overrides:
+            for attribute_name, attribute_value in dataset_overrides.items():
+                setattr(config.dataset, attribute_name, attribute_value)
+
+        if hasattr(config.dataset, "pack_sequences_in_batch") and config.dataset.pack_sequences_in_batch:
+            config.train.micro_batch_size = 2
+
         pretrain(config, vlm_forward_step)
 
         # Basic verification that training completed successfully
-        verify_checkpoint_files(config.checkpoint.save, config.train.train_iters)
+        verify_checkpoint_files(
+            config.checkpoint.save,
+            config.train.train_iters,
+            ckpt_format=config.checkpoint.ckpt_format,
+            storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+        )
 
     finally:
         clear_directories(tmp_path)

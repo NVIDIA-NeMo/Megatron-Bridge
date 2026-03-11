@@ -69,7 +69,6 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.async_tensor_model_parallel_allreduce = True
         provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0

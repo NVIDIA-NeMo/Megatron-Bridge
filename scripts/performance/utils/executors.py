@@ -64,7 +64,7 @@ def slurm_executor(
     nemo_home: str = DEFAULT_NEMO_HOME,
     wandb_key: str = None,
     network: str = None,
-    custom_bash_cmds: List[str] = None,
+    custom_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
 ) -> run.SlurmExecutor:
@@ -79,7 +79,7 @@ def slurm_executor(
                 #SBATCH --nodelist=node001,node002
                 #SBATCH --constraint=gpu
     """
-    custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
+    custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
@@ -148,7 +148,7 @@ def slurm_executor(
         time=time_limit,
         mem="0",
         exclusive=True,
-        packager=run.GitArchivePackager(),
+        packager=run.GitArchivePackager(include_submodules=False),
         segment=segment,
         network=network,
         launcher=launcher,

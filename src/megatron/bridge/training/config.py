@@ -15,6 +15,7 @@
 import logging
 import os
 import signal
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
@@ -28,6 +29,7 @@ from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
 )
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import AttnBackend, CudaGraphScope
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
@@ -36,6 +38,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_provider import MimoModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -238,7 +241,7 @@ class DataloaderConfig:
     """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
     'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
-    num_workers: int = 8
+    num_workers: int = 2
     """Dataloader number of workers."""
 
     data_sharding: bool = True
@@ -247,11 +250,17 @@ class DataloaderConfig:
     pin_memory: bool = True
     """Whether to pin memory during data loading for faster GPU training."""
 
-    persistent_workers: bool = False
-    """Whether to keep data loading workers persistent across epochs."""
+    persistent_workers: bool = True
+    """Whether to keep data loading workers persistent across epochs.
+    Automatically set to False when num_workers is 0."""
 
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
+
+    def finalize(self):
+        """Finalize dataloader config field constraints."""
+        if self.num_workers == 0 and self.persistent_workers:
+            self.persistent_workers = False
 
 
 @dataclass(frozen=True)
@@ -266,12 +275,14 @@ class DatasetBuildContext:
         valid_samples: Number of samples for validation dataset
         test_samples: Number of samples for test dataset
         tokenizer: Optional tokenizer instance for text processing
+        pg_collection: Optional process group collection for distributed training
     """
 
     train_samples: int
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+    pg_collection: Optional[ProcessGroupCollection] = None
 
 
 @dataclass(frozen=True)
@@ -458,6 +469,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
         assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
+
+        DataloaderConfig.finalize(self)
 
 
 @dataclass
@@ -683,6 +696,12 @@ class TrainingConfig:
     check_weight_hash_across_dp_replicas_interval: Optional[int] = None
     """Interval to check weight hashes are same across DP replicas. If not specified, weight hashes not checked."""
 
+    check_optimizer_step_success: bool = True
+    """Checks optimizer.step() succeeded at each training step ."""
+
+    skip_sync_grad_norm_across_mp: bool = False
+    """Skips syncing the grad norm across the model parallel group."""
+
     train_sync_interval: Optional[int] = None
     """Training CPU-GPU synchronization interval, to ensure that CPU is not running too far ahead of GPU."""
 
@@ -731,14 +750,14 @@ class TrainingConfig:
 
     # ---------------- Validation config. ----------------
 
-    eval_iters: int = 100
-    """Number of iterations to run for evaluation validation/test for."""
+    eval_iters: int | None = None
+    """Number of iterations to run for evaluation validation/test for. Deprecated in favor of ValidationConfig."""
 
-    eval_interval: Optional[int] = 1000
-    """Interval between running evaluation on validation set."""
+    eval_interval: int | None = None
+    """Interval between running evaluation on validation set. Deprecated in favor of ValidationConfig."""
 
-    skip_train: bool = False
-    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
+    skip_train: bool | None = None
+    """If set, bypass the training loop, optionally do evaluation for validation/test, and exit. Deprecated in favor of ValidationConfig."""
 
     def finalize(self) -> None:
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
@@ -754,6 +773,23 @@ class TrainingConfig:
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
+
+
+@dataclass(kw_only=True)
+class ValidationConfig:
+    """Configuration settings related to validation during or after model training."""
+
+    eval_iters: int | None = 100
+    """Number of iterations to run for evaluation. Used for both validation and test. If not set,
+    evaluation will not run."""
+
+    eval_interval: int | None = None
+    """Interval between running evaluation on validation set. If not set, evaluation will not run
+    during training.
+    """
+
+    skip_train: bool = False
+    """If set, bypass the training loop, perform evaluation for validation/test, and exit."""
 
 
 @dataclass(kw_only=True)
@@ -816,13 +852,26 @@ class CheckpointConfig:
     Assumed when loading a release checkpoint."""
 
     pretrained_checkpoint: Optional[str] = None
-    """Directory containing a pretrained model checkpoint for finetuning."""
+    """Directory containing a pretrained model checkpoint for finetuning.
+
+    This can be either:
+      - A parent checkpoint directory (e.g. ``/checkpoints/my_model/``) that
+        contains tracker files (``latest_train_state.pt``) and ``iter_*``
+        subdirectories.
+      - A specific iteration directory (e.g.
+        ``/checkpoints/my_model/iter_0001000/``) that directly contains the
+        checkpoint payload (``run_config.yaml``, weight shards, etc.).
+    """
 
     ckpt_step: Optional[int] = None
     """Checkpoint step to load model from."""
 
     use_checkpoint_args: bool = False
     """Override any command line arguments with arguments from the checkpoint"""
+
+    storage_writers_per_rank: int = 1
+    """Number of storage writers per rank for torch_dist checkpoint format.
+    Affects the number of checkpoint files: saving_ranks * storage_writers_per_rank."""
 
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
@@ -897,6 +946,13 @@ class CheckpointConfig:
 
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
+        if self.pretrained_checkpoint is not None:
+            from megatron.bridge.training.utils.checkpoint_utils import file_exists
+
+            assert file_exists(self.pretrained_checkpoint), (
+                f"Pretrained checkpoint {self.pretrained_checkpoint} does not exist"
+            )
+
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
 
@@ -924,6 +980,9 @@ class LoggerConfig:
 
     # ---------------- Logging config. ----------------
 
+    skip_train_metrics_log: bool = False
+    """Skips logging of training metrics to all logging backends and to the console as well."""
+
     log_interval: int = 100
     """Report loss and timing interval."""
 
@@ -944,8 +1003,9 @@ class LoggerConfig:
     to progress.txt file in checkpoint directory.
     """
 
-    timing_log_level: Literal[0, 1, 2] = 0
+    timing_log_level: Literal[-1, 0, 1, 2] = 0
     """Granularity level to measure and report timing.
+    -1: To disable timing logging as the timer start from 0 and above.
     0: report only iteration time and make sure timing does not introduce extra overhead.
     1: report timing for operations that are executed very limited times (basically once) during each iteration
         (such as gradient all-reduce)
@@ -1088,7 +1148,16 @@ class ProfilingConfig:
     use_pytorch_profiler: bool = False
     """Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard."""
 
-    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    pytorch_profiler_collect_shapes: bool = False
+    """Collect tensor shape in pytorch profiler."""
+
+    pytorch_profiler_collect_callstack: bool = False
+    """Collect callstack in pytorch profiler."""
+
+    pytorch_profiler_collect_chakra: bool = False
+    """Collect chakra trace in pytorch profiler."""
+
+    profile_ranks: list[int] = field(default_factory=lambda: [])
     """Global ranks to profile."""
 
     record_memory_history: bool = False
@@ -1323,12 +1392,13 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaModelProvider
+    model: GPTModelProvider | T5ModelProvider | MambaModelProvider | MimoModelProvider
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
         default_factory=OptimizerConfigOverrideProvider
     )
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
     dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
     logger: LoggerConfig
@@ -1405,7 +1475,7 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
-        if isinstance(self.dataset, GPTDatasetConfig):
+        if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):
             self.ddp.finalize()
@@ -1457,6 +1527,8 @@ class ConfigContainer(Container):
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
+        if self.model.cuda_graph_impl == "none":
+            self.model.cuda_graph_scope = []
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
@@ -1578,6 +1650,13 @@ class ConfigContainer(Container):
                 f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
             )
 
+        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+            raise ValueError(
+                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+                "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
+                "are required per micro-batch."
+            )
+
         if self.peft is not None:
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
@@ -1599,6 +1678,15 @@ class ConfigContainer(Container):
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
         validate_flex_dispatcher_backend(self.model)
+
+        for f in fields(ValidationConfig):
+            train_val = getattr(self.train, f.name)
+            if train_val is not None:
+                warnings.warn(
+                    f"TrainingConfig.{f.name} is deprecated and will be removed in a future release. Use ValidationConfig.{f.name} instead.",
+                    stacklevel=2,
+                )
+                setattr(self.validation, f.name, train_val)
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""
@@ -1684,7 +1772,9 @@ class ConfigContainer(Container):
         # Non-Mcore configs - log all values
         non_mcore_configs = [
             ("train", self.train),
+            ("validation", self.validation),
             ("scheduler", self.scheduler),
+            ("dataset", self.dataset),
             ("checkpoint", self.checkpoint),
             ("logger", self.logger),
             ("tokenizer", self.tokenizer),

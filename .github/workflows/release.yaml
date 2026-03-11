@@ -30,20 +30,44 @@ on:
         required: true
         default: true
         type: boolean
+      generate-changelog:
+        description: Generate changelog
+        required: false
+        default: true
+        type: boolean
+      publish-docs:
+        description: Publish docs
+        required: false
+        default: true
+        type: boolean
       version-bump-branch:
         description: Branch for version bump
         required: true
         type: string
-  schedule:
-    - cron: "0 6 * * 1"
+      gh-release-from-tag:
+        description: Tag of previous release for changelog builder
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write # To read repository content
   pull-requests: write # To create PRs
 
 jobs:
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.73.2
+    with:
+      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+      non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+    secrets:
+      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
+
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.54.3
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.77.0
+    needs: [pre-flight]
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
       python-package: megatron.bridge
@@ -55,15 +79,29 @@ jobs:
       has-src-dir: true
       skip-test-wheel: true
       custom-container: nvcr.io/nvidia/pytorch:25.05-py3
-      runner: linux-amd64-cpu16
+      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2-container
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}
+      gh-release-use-changelog-builder: ${{ inputs.generate-changelog }}
+      publish-docs: ${{ inputs.publish-docs }}
+      docs-target-path: nemo/megatron-bridge
+      submodules: recursive
+      container-options: "--gpus all --runtime=nvidia"
+      gh-release-from-tag: ${{ inputs.gh-release-from-tag }}
     secrets:
-      TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
+      TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
-      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
+      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
       PAT: ${{ secrets.PAT }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
       SSH_PWD: ${{ secrets.SSH_PWD }}
       BOT_KEY: ${{ secrets.BOT_KEY }}
+      AWS_ASSUME_ROLE_ARN: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AKAMAI_HOST: ${{ secrets.AKAMAI_HOST }}
+      AKAMAI_CLIENT_TOKEN: ${{ secrets.AKAMAI_CLIENT_TOKEN }}
+      AKAMAI_CLIENT_SECRET: ${{ secrets.AKAMAI_CLIENT_SECRET }}
+      AKAMAI_ACCESS_TOKEN: ${{ secrets.AKAMAI_ACCESS_TOKEN }}
+      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}

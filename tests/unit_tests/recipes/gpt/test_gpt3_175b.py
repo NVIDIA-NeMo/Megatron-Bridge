@@ -58,8 +58,8 @@ class TestPretrainConfig:
         assert config.train.train_iters == 1_168_251
         assert config.train.global_batch_size == 2048
         assert config.train.micro_batch_size == 2
-        assert config.train.eval_interval == 2000
-        assert config.train.eval_iters == 32
+        assert config.validation.eval_interval == 2000
+        assert config.validation.eval_iters == 32
         assert config.train.manual_gc is True
         assert config.train.manual_gc_interval == 100
         assert config.train.manual_gc_eval == 100

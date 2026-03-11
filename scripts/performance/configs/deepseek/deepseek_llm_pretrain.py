@@ -77,11 +77,6 @@ def deepseek_v3_pretrain_config_gb300(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
-
     return cfg
 
 
@@ -116,11 +111,6 @@ def deepseek_v3_pretrain_config_gb200(
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
-
-    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
-    # we are debugging this and might change this in the future.
-    cfg.dataset.num_workers = 0
-    cfg.dataset.pin_memory = False
 
     return cfg
 
@@ -210,7 +200,11 @@ def deepseek_v3_pretrain_config_h100(
     cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
     cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
-    cfg.model.pipeline_model_parallel_layout = "Et|(tt|)*30mL"
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)

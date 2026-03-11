@@ -163,8 +163,8 @@ class TestQATWorkflow:
             f"checkpoint.save={checkpoint_save_dir}",
             f"checkpoint.save_interval={save_interval}",
             f"train.train_iters={train_iters}",
-            "train.eval_interval=5",
-            "train.eval_iters=2",
+            "validation.eval_interval=5",
+            "validation.eval_iters=2",
             "train.global_batch_size=8",
             "scheduler.lr_warmup_iters=2",
             f"scheduler.lr_decay_iters={train_iters}",
@@ -299,11 +299,12 @@ class TestQATWorkflow:
             cp = context_parallel_size or 2
             world_size = tp * pp * cp
 
-            # For torch_dist format, expect 2 * world_size .distcp files
+            # For torch_dist format, expect world_size .distcp files
             # (one for model state, one for optimizer state per rank)
-            expected_distcp_files = 2 * world_size
+            # this is dictated by the checkpoint config's default value for storage_writers_per_rank
+            expected_distcp_files = world_size
             assert len(distcp_files) == expected_distcp_files, (
-                f"Expected {expected_distcp_files} .distcp files (2 * {world_size} world_size), "
+                f"Expected {expected_distcp_files} .distcp files with {world_size} world_size), "
                 f"found {len(distcp_files)}: {distcp_files}"
             )
             print(

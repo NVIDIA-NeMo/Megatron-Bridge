@@ -36,7 +36,7 @@ class TestDataUtils:
     def test_pretrain_train_valid_test_datasets_provider(self, ensure_test_data):
         # Build tokenizer
         tokenizer = build_tokenizer(
-            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
+            config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
         )
@@ -73,7 +73,7 @@ class TestDataUtils:
 
         # Build tokenizer
         tokenizer = build_tokenizer(
-            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
+            config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
         )

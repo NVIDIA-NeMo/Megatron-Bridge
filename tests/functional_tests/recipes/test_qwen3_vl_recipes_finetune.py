@@ -27,7 +27,7 @@ Run with:
 
 import pytest
 
-from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_8b_finetune_config
+from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_8b_sft_config
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
 
@@ -36,10 +36,52 @@ QWEN3_VL_FINETUNE_RECIPES = [
     # Qwen3-VL 8B finetune - uses TP=2 for 2-GPU CI
     # Note: deepstack_visual_indexes must have len <= num_layers
     (
-        qwen3_vl_8b_finetune_config,
-        "qwen3_vl_8b_finetune",
+        qwen3_vl_8b_sft_config,
+        "qwen3_vl_8b_sft",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
+    ),
+    (
+        qwen3_vl_8b_sft_config,
+        "qwen3_vl_8b_sft",
+        {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 1,
+        },
+        {
+            "freeze_language_model": False,
+            "freeze_vision_model": False,
+            "freeze_vision_projection": False,
+            "num_layers": 4,
+            "deepstack_visual_indexes": [0, 1, 2],
+            "recompute_granularity": "full",
+            "recompute_method": "uniform",
+            "recompute_num_layers": 1,
+        },
+    ),
+    (
+        qwen3_vl_8b_sft_config,
+        "qwen3_vl_8b_sft",
+        {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 1,
+        },
+        {
+            "num_layers": 4,
+            "deepstack_visual_indexes": [0, 1, 2],
+        },
+    ),
+]
+
+QWEN3_VL_FINETUNE_PACKED_RECIPES = [
+    # (config_func, recipe_name, parallelism_overrides, model_overrides, dataset_overrides)
+    # Qwen3-VL 8B finetune with packed sequences
+    (
+        qwen3_vl_8b_sft_config,
+        "qwen3_vl_8b_sft_packed",
+        {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
+        {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
+        {"pack_sequences_in_batch": True},
     ),
 ]
 
@@ -73,5 +115,29 @@ class TestQwen3VLFinetuneRecipes:
             recipe_name,
             tmp_path,
             model_overrides=model_overrides,
+            **parallelism_overrides,
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "config_func,recipe_name,parallelism_overrides,model_overrides,dataset_overrides",
+        QWEN3_VL_FINETUNE_PACKED_RECIPES,
+    )
+    def test_qwen3_vl_finetune_packed_recipes(
+        self,
+        config_func,
+        recipe_name,
+        parallelism_overrides,
+        model_overrides,
+        dataset_overrides,
+        tmp_path,
+    ):
+        """Functional test for Qwen3-VL finetune recipes with packed sequences enabled."""
+        run_pretrain_vl_recipe_test(
+            config_func,
+            recipe_name,
+            tmp_path,
+            model_overrides=model_overrides,
+            dataset_overrides=dataset_overrides,
             **parallelism_overrides,
         )

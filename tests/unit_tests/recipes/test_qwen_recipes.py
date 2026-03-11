@@ -17,7 +17,7 @@
 # - Parametrize over all exported Qwen recipe functions in `megatron.bridge.recipes.qwen`.
 # - For each recipe, monkeypatch `AutoBridge` with a lightweight fake to avoid I/O.
 # - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
-# - Verify tokenizer selection: pretrain recipes honor `use_null_tokenizer`, finetune recipes always use HF tokenizer.
+# - Verify tokenizer selection: pretrain recipes honor `use_null_tokenizer`, sft/peft recipes always use HF tokenizer.
 # - Sanity-check parallelism fields and finetuning-specific requirements.
 #
 
@@ -38,32 +38,11 @@ _QWEN_RECIPE_FUNCS = [
 def _safe_overrides_for(name: str) -> dict:
     """Return overrides for recipe functions.
 
-    Pretrain configs use the new parameterless API (return empty dict).
-    Finetune configs still accept parameters.
+    All configs (pretrain, sft, peft) use the new parameterless API.
+    For peft configs, only peft_scheme can be passed as a parameter.
     """
-    is_finetune = "finetune" in name.lower()
-
-    if is_finetune:
-        # Finetuning-specific overrides - finetune configs still accept parameters
-        overrides = {
-            "name": f"unit_{name}",
-            "dir": ".",  # keep paths local
-            "train_iters": 10,
-            "global_batch_size": 2,
-            "micro_batch_size": 1,
-            "seq_length": 64,
-            "finetune_lr": 1e-4,
-            "min_lr": 1e-5,
-            "lr_warmup_iters": 2,
-            "peft": None,  # Disable PEFT for simpler testing
-            "pretrained_checkpoint": "/fake/checkpoint/path",  # Required for finetuning
-        }
-    else:
-        # Pretrain configs use the new parameterless API
-        # They return a fixed ConfigContainer with default settings
-        overrides = {}
-
-    return overrides
+    # All configs now use parameterless API (or peft_scheme only for peft)
+    return {}
 
 
 class _FakeModelCfg:
@@ -71,6 +50,7 @@ class _FakeModelCfg:
 
     def __init__(self):
         self.cross_entropy_fusion_impl = "native"
+        self.context_parallel_size = 1
 
     def finalize(self):
         # qwen3 recipe may call finalize(); make it a no-op
@@ -125,14 +105,21 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
+    # qwen3_next PEFT is intentionally not implemented
+    if recipe_func.__name__ == "qwen3_next_80b_a3b_peft_config":
+        with pytest.raises(NotImplementedError):
+            recipe_func(**overrides)
+        return
+
     cfg = recipe_func(**overrides)
 
     _assert_basic_config(cfg)
 
     # Ensure tokenizer is properly configured
-    is_finetune = "finetune" in recipe_func.__name__.lower()
-    if is_finetune:
-        # Finetuning recipes always use HF tokenizer
+    recipe_name = recipe_func.__name__.lower()
+    is_sft_or_peft = "sft" in recipe_name or "peft" in recipe_name
+    if is_sft_or_peft:
+        # SFT and PEFT recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
     else:
@@ -148,64 +135,79 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
-    recipe_name = recipe_func.__name__.lower()
     if "qwen3" in recipe_name and "pretrain" in recipe_name and "next" not in recipe_name:
         assert cfg.model.cross_entropy_fusion_impl == "te"
 
-    # Finetuning-specific assertions
-    if is_finetune:
-        # Should have pretrained_checkpoint set (even if fake)
-        assert cfg.checkpoint.pretrained_checkpoint is not None
-        # Should have PEFT config (or None if disabled in test)
+    # SFT and PEFT-specific assertions
+    if is_sft_or_peft:
+        # New parameterless API - pretrained_checkpoint is set by user after config creation
+        # Just verify the checkpoint config exists
+        assert cfg.checkpoint is not None
+        # Should have PEFT config (or None if SFT)
         assert hasattr(cfg, "peft")  # peft field should exist
         # Dataset should be configured (SQuAD by default)
         assert cfg.dataset is not None
 
 
-# Qwen3 MoE finetune-specific tests
-_QWEN3_MOE_FINETUNE_FUNCS = [
+# Qwen3 MoE SFT and PEFT-specific tests
+_QWEN3_MOE_SFT_FUNCS = [
     getattr(_qwen_module, name)
     for name in [
-        "qwen3_30b_a3b_finetune_config",
-        "qwen3_235b_a22b_finetune_config",
+        "qwen3_30b_a3b_sft_config",
+        "qwen3_235b_a22b_sft_config",
+    ]
+    if callable(getattr(_qwen_module, name, None))
+]
+
+_QWEN3_MOE_PEFT_FUNCS = [
+    getattr(_qwen_module, name)
+    for name in [
+        "qwen3_30b_a3b_peft_config",
+        "qwen3_235b_a22b_peft_config",
     ]
     if callable(getattr(_qwen_module, name, None))
 ]
 
 
-@pytest.mark.parametrize("recipe_func", _QWEN3_MOE_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "dora", "none"])
-def test_qwen3_moe_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT and full SFT configurations are correctly applied for Qwen3 MoE models."""
+@pytest.mark.parametrize("recipe_func", _QWEN3_MOE_SFT_FUNCS)
+def test_qwen3_moe_sft_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that full SFT configurations are correctly applied for Qwen3 MoE models."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-    overrides["peft"] = peft
-
-    cfg = recipe_func(**overrides)
+    cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
-    # Check PEFT config presence
-    if peft in ["lora", "dora"]:
-        assert cfg.peft is not None
-    elif peft == "none":
-        assert cfg.peft is None
+    # Full SFT should not have PEFT config
+    assert cfg.peft is None
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN3_MOE_PEFT_FUNCS)
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_qwen3_moe_peft_config(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT configurations are correctly applied for Qwen3 MoE models."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    cfg = recipe_func(peft_scheme=peft_scheme)
+
+    _assert_basic_config(cfg)
+
+    # PEFT config should be present
+    assert cfg.peft is not None
 
 
 def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 30B-A3B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("qwen3_30b_a3b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = qwen3_30b_a3b_finetune_config(**overrides)
+    cfg = qwen3_30b_a3b_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -224,15 +226,12 @@ def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 30B-A3B DoRA has correct default parallelism."""
-    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("qwen3_30b_a3b_finetune_config")
-    overrides["peft"] = "dora"
-
-    cfg = qwen3_30b_a3b_finetune_config(**overrides)
+    cfg = qwen3_30b_a3b_peft_config(peft_scheme="dora")
 
     _assert_basic_config(cfg)
 
@@ -251,15 +250,12 @@ def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 30B-A3B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("qwen3_30b_a3b_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = qwen3_30b_a3b_finetune_config(**overrides)
+    cfg = qwen3_30b_a3b_sft_config()
 
     _assert_basic_config(cfg)
 
@@ -273,15 +269,12 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_finetune_config
+    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("qwen3_235b_a22b_finetune_config")
-    overrides["peft"] = "lora"
-
-    cfg = qwen3_235b_a22b_finetune_config(**overrides)
+    cfg = qwen3_235b_a22b_peft_config(peft_scheme="lora")
 
     _assert_basic_config(cfg)
 
@@ -304,15 +297,12 @@ def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen3_235b_a22b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B DoRA has correct default parallelism."""
-    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_finetune_config
+    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("qwen3_235b_a22b_finetune_config")
-    overrides["peft"] = "dora"
-
-    cfg = qwen3_235b_a22b_finetune_config(**overrides)
+    cfg = qwen3_235b_a22b_peft_config(peft_scheme="dora")
 
     _assert_basic_config(cfg)
 
@@ -335,15 +325,12 @@ def test_qwen3_235b_a22b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen3_235b_a22b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_finetune_config
+    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("qwen3_235b_a22b_finetune_config")
-    overrides["peft"] = "none"
-
-    cfg = qwen3_235b_a22b_finetune_config(**overrides)
+    cfg = qwen3_235b_a22b_sft_config()
 
     _assert_basic_config(cfg)
 

@@ -30,6 +30,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    ValidationConfig,
 )
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
@@ -78,7 +79,12 @@ class TestSupervisedFinetuning:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(
+                pretrain_checkpoint_dir,
+                pretrain_iters,
+                ckpt_format=pretrain_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=pretrain_cfg.checkpoint.storage_writers_per_rank,
+            )
 
             # Create finetune config and run (lower LR, different seed, use pretrained checkpoint)
             finetune_cfg = self._create_config(
@@ -91,7 +97,12 @@ class TestSupervisedFinetuning:
                 pretrained_checkpoint=pretrain_checkpoint_dir,
             )
             finetune(finetune_cfg, forward_step)
-            verify_checkpoint_files(finetune_checkpoint_dir, finetune_iters)
+            verify_checkpoint_files(
+                finetune_checkpoint_dir,
+                finetune_iters,
+                ckpt_format=finetune_cfg.checkpoint.ckpt_format,
+                storage_writers_per_rank=finetune_cfg.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(shared_base_dir)
@@ -115,11 +126,13 @@ class TestSupervisedFinetuning:
             model=Llama3ModelProvider145M(seq_length=seq_length),
             train=TrainingConfig(
                 train_iters=train_iters,
-                eval_interval=5,
-                eval_iters=0,
                 global_batch_size=8,
                 micro_batch_size=1,
                 exit_signal_handler=True,
+            ),
+            validation=ValidationConfig(
+                eval_interval=5,
+                eval_iters=0,
             ),
             optimizer=OptimizerConfig(
                 optimizer="adam",

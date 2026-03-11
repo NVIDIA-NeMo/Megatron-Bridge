@@ -22,7 +22,8 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.recipes.gpt_oss.gpt_oss import (
-    gpt_oss_20b_finetune_config,
+    gpt_oss_20b_peft_config,
+    gpt_oss_20b_sft_config,
 )
 
 
@@ -129,24 +130,34 @@ class TestGPTOSSFinetuneRecipes:
         return str(megatron_checkpoint_dir)
 
     def _finetune_wrapper_lora(self, checkpoint_dir, **kwargs):
-        """Wrapper to adapt GPT-OSS finetune_config to the test runner signature (with LoRA).
+        """Wrapper to adapt GPT-OSS peft_config to the test runner signature (with LoRA).
 
-        The runner will pass (dir, name) among others; we forward
-        everything to finetune_config and inject the toy model checkpoint.
+        Creates a PEFT config and injects the toy model checkpoint.
         """
-        kwargs.setdefault("pretrained_checkpoint", checkpoint_dir)
-        kwargs.setdefault("peft", "lora")  # Explicitly use LoRA
-        return gpt_oss_20b_finetune_config(**kwargs)
+        config = gpt_oss_20b_peft_config(peft_scheme="lora")
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Load from pretrained checkpoint and not from default path
+        # Apply any additional overrides from kwargs
+        if "dir" in kwargs:
+            config.logger.dir = kwargs["dir"]
+        if "name" in kwargs:
+            config.logger.name = kwargs["name"]
+        return config
 
     def _finetune_wrapper_full(self, checkpoint_dir, **kwargs):
-        """Wrapper to adapt GPT-OSS finetune_config to the test runner signature (full SFT, no LoRA).
+        """Wrapper to adapt GPT-OSS sft_config to the test runner signature (full SFT, no LoRA).
 
-        The runner will pass (dir, name) among others; we forward
-        everything to finetune_config and inject the toy model checkpoint.
+        Creates a full SFT config and injects the toy model checkpoint.
         """
-        kwargs.setdefault("pretrained_checkpoint", checkpoint_dir)
-        kwargs.setdefault("peft", None)  # No PEFT for full finetuning
-        return gpt_oss_20b_finetune_config(**kwargs)
+        config = gpt_oss_20b_sft_config()
+        config.checkpoint.pretrained_checkpoint = checkpoint_dir
+        config.checkpoint.load = None  # Load from pretrained checkpoint and not from default path
+        # Apply any additional overrides from kwargs
+        if "dir" in kwargs:
+            config.logger.dir = kwargs["dir"]
+        if "name" in kwargs:
+            config.logger.name = kwargs["name"]
+        return config
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
@@ -229,15 +240,15 @@ class TestGPTOSSFinetuneRecipes:
         # Override to use smaller model for faster testing
         config.model.seq_length = seq_length
         config.train.train_iters = 5
-        config.train.eval_interval = 100  # Skip mid-training evaluation
-        config.train.eval_iters = 1
+        config.validation.eval_interval = 100  # Skip mid-training evaluation
+        config.validation.eval_iters = 1
         config.train.micro_batch_size = 1
         config.train.global_batch_size = 2  # Minimize gradient accumulation
         config.scheduler.lr_warmup_iters = 1
 
         # Calculate proper dataset splits
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
-        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        eval_samples_needed = config.validation.eval_iters * config.train.global_batch_size
         test_samples_needed = 8  # Minimal test samples
         total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
 
@@ -261,7 +272,12 @@ class TestGPTOSSFinetuneRecipes:
             finetune(config, forward_step)
 
             # Verify checkpoints were saved
-            verify_checkpoint_files(config.checkpoint.save, 5)
+            verify_checkpoint_files(
+                config.checkpoint.save,
+                5,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(tmp_path)

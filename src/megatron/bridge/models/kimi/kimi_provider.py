@@ -109,7 +109,6 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     bf16: bool = True
     params_dtype: torch.dtype = torch.bfloat16
-    async_tensor_model_parallel_allreduce: bool = True
     attention_softmax_in_fp32: bool = False
     persist_layer_norm: bool = True
     num_layers_in_first_pipeline_stage: Optional[int] = None

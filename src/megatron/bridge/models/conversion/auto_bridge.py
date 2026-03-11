@@ -17,10 +17,12 @@ from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
+import torch
 import torch.distributed as dist
 import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from modelopt.torch.quantization.utils import is_quantized
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -46,7 +48,16 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
+    "Qwen2_5OmniModel",
 )
+
+# Mapping from non-standard HF architecture names to their actual transformers class names.
+# Some HF model configs report architecture names that don't follow the standard
+# 'ForCausalLM'/'ForConditionalGeneration' convention and don't directly map to a
+# transformers class. This dict resolves those aliases.
+HF_ARCHITECTURE_ALIASES: dict[str, str] = {
+    "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
+}
 
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
@@ -418,6 +429,8 @@ class AutoBridge(Generic[MegatronModelT]):
         source_path: Optional[Union[str, Path]] = None,
         strict: bool = True,
         merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -444,7 +457,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 the path will be automatically determined from the HuggingFace configuration.
             strict: Whether to perform strict validation during weight export
             merge_adapter_weights: Whether to gather/merge LoRA adapter weights into base tensors during export.
-
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently. When False (default), only rank 0 performs
+                the save operation after gathering weights from all ranks.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+                This is useful for reducing I/O pressure when dealing with large-scale distributed
+                training. Only effective when distributed_save=True. Default is 1 (all ranks save).
 
         Example:
             >>> # Save model after training
@@ -465,13 +484,23 @@ class AutoBridge(Generic[MegatronModelT]):
                 "AutoBridge.from_hf_config() creates a config-only bridge; "
                 "use AutoBridge.from_hf_pretrained(...) instead."
             )
+
+        # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
+        additional_files = None
+        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
+            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+
         if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
             if dist.get_rank() == 0:
-                self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
+                self.hf_pretrained.save_artifacts(
+                    path, original_source_path=source_path, additional_files=additional_files
+                )
         else:
             # No distributed training, save artifacts
-            self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
+            self.hf_pretrained.save_artifacts(
+                path, original_source_path=source_path, additional_files=additional_files
+            )
 
         self.save_hf_weights(
             model,
@@ -479,6 +508,8 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress,
             strict,
             merge_adapter_weights=merge_adapter_weights,
+            distributed_save=distributed_save,
+            save_every_n_ranks=save_every_n_ranks,
         )
 
     def save_hf_weights(
@@ -488,6 +519,8 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         strict: bool = True,
         merge_adapter_weights: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -509,6 +542,10 @@ class AutoBridge(Generic[MegatronModelT]):
             path: Directory path where weight files will be saved
             show_progress: Display progress bar during export
             merge_adapter_weights: Whether to gather/merge LoRA adapter weights into base tensors during export.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
 
         Raises:
             ValueError: If the state source doesn't support streaming save
@@ -537,6 +574,19 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
         )
+        model_instance = self._get_model_instance(model)
+        quant_tensors = None
+        if is_quantized(model_instance):
+            quant_tensors = {}
+
+            def _filter_quant(gen):
+                for name, tensor in gen:
+                    if "_quantizer." in name:
+                        quant_tensors[name] = tensor
+                        continue
+                    yield name, tensor
+
+            generator = _filter_quant(generator)
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
@@ -544,9 +594,24 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
+            self.hf_pretrained.state.source.save_generator(
+                generator,
+                path,
+                strict=strict,
+                distributed_save=distributed_save,
+                save_every_n_ranks=save_every_n_ranks,
+            )
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+
+        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
+        if quant_tensors:
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+            if rank == 0 and quant_tensors:
+                sidecar_path = Path(path) / "modelopt_weights.pt"
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(quant_tensors, sidecar_path)
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -807,7 +872,11 @@ class AutoBridge(Generic[MegatronModelT]):
 
             # Save in HuggingFace format
             self.save_hf_pretrained(
-                megatron_model, hf_path, show_progress=show_progress, source_path=source_path, strict=strict
+                megatron_model,
+                hf_path,
+                show_progress=show_progress,
+                source_path=source_path,
+                strict=strict,
             )
 
     def push_to_hub(self, path: str | Path) -> None: ...
@@ -1075,11 +1144,14 @@ class AutoBridge(Generic[MegatronModelT]):
             # For auto_map models, return the class name as a string
             return cls_name
 
+        # Resolve non-standard architecture names via alias mapping
+        resolved_arch = HF_ARCHITECTURE_ALIASES.get(causal_lm_arch, causal_lm_arch)
+
         try:
-            return getattr(transformers, causal_lm_arch)
+            return getattr(transformers, resolved_arch)
         except AttributeError:
             raise ValueError(
-                f"\n✗ Architecture class '{causal_lm_arch}' not found in transformers\n\n"
+                f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
                 f"This could mean:\n"
                 f"1. The model requires a newer version of transformers\n"
                 f"2. The model uses a custom modeling file not in the standard library\n"
@@ -1116,8 +1188,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 # For auto_map models, use class-name string
                 arch_key = arch_name
             else:
+                # Resolve non-standard architecture names via alias mapping
+                resolved_arch = HF_ARCHITECTURE_ALIASES.get(architecture, architecture)
                 try:
-                    arch_class = getattr(transformers, architecture)
+                    arch_class = getattr(transformers, resolved_arch)
                     arch_key = arch_class
                 except AttributeError:
                     # Fall back to name-based registration

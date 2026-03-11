@@ -69,7 +69,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
         "patch_size": 14,
         "spatial_merge_size": 2,
         "temporal_patch_size": 2,
-        "deepstack_visual_indexes": [1, 2, 3],  # Adjusted for 4-layer model (must be < num_hidden_layers)
+        "deepstack_visual_indexes": [1],  # Must be <= layers on first PP stage (e.g. 2 layers with PP=2)
     },
     "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
     "text_config": {
@@ -83,7 +83,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
         "vocab_size": 2048,
         "max_position_embeddings": 32768,
         "rope_theta": 1000000.0,
-        "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "rope_scaling": {"rope_type": "default", "mrope_section": [16, 24, 24]},
         "torch_dtype": "bfloat16",
     },
     "vocab_size": 2048,  # KEY: Reduced from 152064 (74x smaller!) - saves 1.24B params in embeddings
@@ -114,10 +114,15 @@ class TestQwen3VLConversion:
         config = Qwen3VLConfig(**HF_QWEN3_VL_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16
 
-        # IMPORTANT: Set rope_scaling on text_config (not just main config)
-        # The text model initialization uses config.text_config which needs rope_scaling
+        # IMPORTANT: Set rope_parameters on text_config (not just main config)
+        # The text model initialization uses config.text_config which needs rope_parameters
+        # rope_type must be "default" - MRoPE is indicated by the mrope_section parameter
         if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_scaling = {"type": "mrope", "mrope_section": [16, 24, 24]}
+            config.text_config.rope_parameters = {
+                "rope_type": "default",
+                "mrope_section": [16, 24, 24],
+                "rope_theta": 1000000.0,
+            }
 
         # Create model with random weights and convert to bfloat16
         model = Qwen3VLForConditionalGeneration(config)
@@ -337,7 +342,7 @@ HF_QWEN3_VL_MOE_TOY_MODEL_CONFIG = {
         "patch_size": 14,
         "spatial_merge_size": 2,
         "temporal_patch_size": 2,
-        "deepstack_visual_indexes": [1, 2, 3],  # Must be < num_hidden_layers (4)
+        "deepstack_visual_indexes": [1],  # Must be <= layers on first PP stage (e.g. 2 layers with PP=2)
     },
     "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
     "text_config": {
@@ -354,7 +359,7 @@ HF_QWEN3_VL_MOE_TOY_MODEL_CONFIG = {
         "num_experts_per_tok": 2,
         "moe_intermediate_size": 384,  # Must match main!
         "decoder_sparse_step": 1,
-        "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "rope_scaling": {"rope_type": "default", "mrope_section": [16, 24, 24]},
         "torch_dtype": "bfloat16",
     },
     "vocab_size": 2048,  # Reduced from 151936 (74x smaller!)
@@ -374,7 +379,11 @@ class TestQwen3VLMoEConversion:
         config.torch_dtype = torch.bfloat16
 
         if hasattr(config, "text_config") and config.text_config is not None:
-            config.text_config.rope_scaling = {"type": "mrope", "mrope_section": [16, 24, 24]}
+            config.text_config.rope_parameters = {
+                "rope_type": "default",
+                "mrope_section": [16, 24, 24],
+                "rope_theta": 5000000.0,
+            }
 
         model = Qwen3VLMoeForConditionalGeneration(config)
         model = model.to(dtype=torch.bfloat16)
