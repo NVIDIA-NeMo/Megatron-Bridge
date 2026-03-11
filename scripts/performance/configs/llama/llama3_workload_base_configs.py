@@ -348,6 +348,16 @@ LLAMA3_70B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
 # Llama3 8B pretrain presets - V1 (only version)
 # =============================================================================
 
+LLAMA3_8B_PRETRAIN_CONFIG_R100_BF16_V1 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    micro_batch_size=1,
+    cuda_graph_impl="none",
+    cuda_graph_scope="full_iteration",
+)
+LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_CS_V1 = LLAMA3_8B_PRETRAIN_CONFIG_R100_BF16_V1
+LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_MX_V1 = LLAMA3_8B_PRETRAIN_CONFIG_R100_FP8_CS_V1
+LLAMA3_8B_PRETRAIN_CONFIG_R100_NVFP4_V1 = LLAMA3_8B_PRETRAIN_CONFIG_R100_BF16_V1
+
 LLAMA3_8B_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=4,
