@@ -127,6 +127,7 @@ url = "https://pypi.nvidia.com"
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
+nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" }
 
 [project.optional-dependencies]
 recipes = [
