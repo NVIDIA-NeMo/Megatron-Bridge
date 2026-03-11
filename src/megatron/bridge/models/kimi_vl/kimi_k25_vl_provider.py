@@ -64,6 +64,9 @@ class KimiK25VLModelProvider(KimiK2Provider):
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
 
+    # Generation configuration
+    generation_config: Any | None = None
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
         Provide a KimiK25VL model instance with vision and language components.
@@ -74,9 +77,7 @@ class KimiK25VLModelProvider(KimiK2Provider):
         """
         from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
-        model = KimiK25VLModel(
-            self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        model = KimiK25VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
         # Apply freeze options if any are enabled
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:

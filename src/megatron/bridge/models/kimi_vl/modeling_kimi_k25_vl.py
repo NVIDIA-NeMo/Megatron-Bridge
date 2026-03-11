@@ -76,7 +76,7 @@ class KimiK25VLModel(MegatronModule):
 
         if config.hf_model_path is None:
             raise ValueError("hf_model_path must be set.")
-        
+
         KimiK25ForConditionalGeneration = get_class_from_dynamic_module(
             "modeling_kimi_k25.KimiK25ForConditionalGeneration",
             config.hf_model_path,
@@ -89,11 +89,14 @@ class KimiK25VLModel(MegatronModule):
             )
             # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
             import importlib
+
             _vit_module = importlib.import_module(MoonViT3dPretrainedModel.__module__)
             _OrigEncoderInit = _vit_module.MoonViT3dEncoder.__init__
+
             def _patched_encoder_init(self, *args, **kwargs):
                 self.use_deterministic_attn = False
                 _OrigEncoderInit(self, *args, **kwargs)
+
             _vit_module.MoonViT3dEncoder.__init__ = _patched_encoder_init
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
@@ -121,7 +124,7 @@ class KimiK25VLModel(MegatronModule):
                 MoonViT3dEncoder.use_deterministic_attn = False
 
             self.vision_tower = MoonViT3dPretrainedModel(self.vision_tower_config)
-            self.mm_projector = PatchMergerMLP(self.projector_config) # TODO: support different types of mm projector
+            self.mm_projector = PatchMergerMLP(self.projector_config)  # TODO: support different types of mm projector
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
             hook_hf_module_setattr_for_tp_grad_sync(self.mm_projector)
@@ -134,7 +137,9 @@ class KimiK25VLModel(MegatronModule):
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         self._extract_image_features = types.MethodType(KimiK25ForConditionalGeneration._extract_image_features, self)
-        self._merge_input_ids_with_image_features = types.MethodType(KimiK25ForConditionalGeneration._merge_input_ids_with_image_features, self)
+        self._merge_input_ids_with_image_features = types.MethodType(
+            KimiK25ForConditionalGeneration._merge_input_ids_with_image_features, self
+        )
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -180,14 +185,13 @@ class KimiK25VLModel(MegatronModule):
                 image_features = self._extract_image_features(pixel_values, image_grid_thw)
                 image_features = self.mm_projector(image_features)
                 inputs_embeds = inputs_embeds.to(image_features[0].dtype)
-                inputs_embeds, attention_mask, labels, position_ids = (
-                    self._merge_input_ids_with_image_features(
-                        image_features,
-                        inputs_embeds,
-                        input_ids,
-                        attention_mask,
-                        labels,
-                    ))
+                inputs_embeds, attention_mask, labels, position_ids = self._merge_input_ids_with_image_features(
+                    image_features,
+                    inputs_embeds,
+                    input_ids,
+                    attention_mask,
+                    labels,
+                )
 
                 # Transpose back to (T, B, D) for Megatron language model
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
@@ -222,16 +226,10 @@ class KimiK25VLModel(MegatronModule):
             # Vision model consists of patch_embed and blocks
             modules.append(self.vision_tower)
 
-        if (
-            freeze_vision_projection
-            and hasattr(self, "mm_projector")
-            and self.mm_projector is not None
-        ):
+        if freeze_vision_projection and hasattr(self, "mm_projector") and self.mm_projector is not None:
             # Vision projection is the merger module
             modules.append(self.mm_projector)
 
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
-
-
