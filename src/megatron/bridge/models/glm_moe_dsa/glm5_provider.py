@@ -32,5 +32,4 @@ class GLM5ModelProvider(DeepSeekV3ModelProvider):
     dsa_indexer_topk: int = 2048
     dsa_indexer_loss_coeff: float = 0.001
     dsa_indexer_use_sparse_loss: bool = True
-    mtp_num_layers: int = 1
     mtp_loss_scaling_factor: float = 0.1

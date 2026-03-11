@@ -88,7 +88,6 @@ class GLM5Bridge(MegatronModelBridge):
             "dsa_indexer_loss_coeff": 0.001,
             "dsa_indexer_use_sparse_loss": True,
             # MTP params
-            "mtp_num_layers": hf_config.num_nextn_predict_layers,
             "mtp_loss_scaling_factor": 0.1,
             # GLM5 uses default rope parameters (not yarn rope_scaling)
             "rotary_scaling_factor": 1.0,
@@ -141,12 +140,6 @@ class GLM5Bridge(MegatronModelBridge):
         provider.attention_softmax_in_fp32 = False
         provider.make_vocab_size_divisible_by = 1280
         return provider
-
-    def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        """Override to store config before mapping_registry is called."""
-        # Store config on instance for use in mapping_registry
-        self._hf_config = hf_pretrained.config
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
@@ -238,14 +231,32 @@ class GLM5Bridge(MegatronModelBridge):
                 ),
             ]
         )
-        # optionally add MTP mappings
-        if not hasattr(self, "_hf_config"):
-            logger.warning("No HF config found, skipping MTP mappings.")
-            return MegatronMappingRegistry(*mapping_list)
-        hf_config = self._hf_config
+        hf_config = self.hf_config
         num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):
+            # MTP specific mappings
+            mapping_list.extend(
+                [
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.{mtp_layer}.enorm.weight",
+                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.enorm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.{mtp_layer}.hnorm.weight",
+                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.hnorm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.{mtp_layer}.eh_proj.weight",
+                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.eh_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.{mtp_layer}.final_layernorm.weight",
+                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.shared_head.norm.weight",
+                    ),
+                ]
+            )
+
             for layer_prefix in ("transformer_layer", "mtp_model_layer"):
                 for megatron_param, hf_param in (param_mappings | layer_specific_mappings).items():
                     megatron_param = (
@@ -255,28 +266,6 @@ class GLM5Bridge(MegatronModelBridge):
                     )
                     hf_param = hf_param.replace("layers.*", f"layers.{mtp_layer + num_transformer_layers}")
                     mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-
-                # MTP specific mappings
-                mapping_list.extend(
-                    [
-                        AutoMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.enorm.weight",
-                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.enorm.weight",
-                        ),
-                        AutoMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.hnorm.weight",
-                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.hnorm.weight",
-                        ),
-                        AutoMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.eh_proj.weight",
-                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.eh_proj.weight",
-                        ),
-                        AutoMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.final_layernorm.weight",
-                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.shared_head.norm.weight",
-                        ),
-                    ]
-                )
                 # Special mappings that require parameter concatenation/transformation
                 mapping_list.extend(
                     [
