@@ -21,7 +21,7 @@ explicitly override on the CLI.
 
 Example::
 
-    torchrun --nproc_per_node=1 scripts/training/run_recipe.py \\
+    uv run python scripts/training/run_recipe.py \\
         --recipe vanilla_gpt_pretrain_config \\
         model.num_layers=2 model.hidden_size=256 model.num_attention_heads=4 \\
         model.activation_func=silu model.gated_linear_unit=true \\
