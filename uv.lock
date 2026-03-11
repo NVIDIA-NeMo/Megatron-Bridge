@@ -3089,7 +3089,7 @@ requires-dist = [
     { name = "mlflow", specifier = ">=3.5.0" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
     { name = "nvdlfw-inspect", marker = "extra == 'tensor-inspect'", specifier = "==0.2.1" },
-    { name = "nvidia-resiliency-ext", specifier = "~=0.4.1" },
+    { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "open-clip-torch", specifier = ">=3.2.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -4092,7 +4092,7 @@ wheels = [
 [[package]]
 name = "nvidia-resiliency-ext"
 version = "0.4.1"
-source = { registry = "https://pypi.nvidia.com/" }
+source = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=v0.4.1#54f85fe422d296cf04ea524130014bd3a2c3add1" }
 dependencies = [
     { name = "defusedxml" },
     { name = "nvidia-ml-py" },
@@ -4101,14 +4101,6 @@ dependencies = [
     { name = "pynvml" },
     { name = "pyyaml" },
     { name = "torch", marker = "sys_platform == 'never'" },
-]
-wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp310-cp310-manylinux_2_31_aarch64.whl", hash = "sha256:cf80599411018ebbf03da64769527dee6b37746b72b8606f919b7999633770b8" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:0c23e621d598ba436549db83deeb3569c19df0194b89fe6169d62b6ead711be3" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp311-cp311-manylinux_2_31_aarch64.whl", hash = "sha256:d8ca454a8b8abef72e0ff0e33914686c263414e8891471c02a9f6af9d2d6b925" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:dde6034f29350ac6326cdd861ceec641bdd93be0eddbf034739f4cd9452a4dd9" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp312-cp312-manylinux_2_31_aarch64.whl", hash = "sha256:b3bd5f01535574b16d0f38bca6e39afe3806c4a2896eee1b321cd944e00025a7" },
-    { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.4.1-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:ca9f8de465af345952bedbea53c90c0e2323d88cfd830ded0e806fad91845c0e" },
 ]
 
 [[package]]
@@ -6733,7 +6725,7 @@ name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mpmath" },
+    { name = "mpmath", marker = "python_full_version < '3.13' or sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
@@ -7055,16 +7047,15 @@ name = "torch"
 version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
-    { name = "sympy" },
+    { name = "filelock", marker = "sys_platform != 'linux'" },
+    { name = "fsspec", marker = "sys_platform != 'linux'" },
+    { name = "jinja2", marker = "sys_platform != 'linux'" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and sys_platform != 'linux'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and sys_platform != 'linux'" },
+    { name = "setuptools", marker = "python_full_version >= '3.12' and sys_platform != 'linux'" },
+    { name = "sympy", marker = "sys_platform != 'linux'" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
 ]
 
 [[package]]
@@ -7072,8 +7063,8 @@ name = "torchvision"
 version = "0.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
+    { name = "numpy", marker = "sys_platform != 'linux'" },
+    { name = "pillow", marker = "sys_platform != 'linux'" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
 
