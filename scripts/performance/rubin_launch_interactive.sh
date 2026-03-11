@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# NOTE: THIS SCRIPT IS ADDED TEMPORARILY. IT WILL BE REMOVED IN NEAR FUTURE.
+#
 # Launch Megatron-Bridge training inside an interactive NeMo container.
 #
 # Prerequisites:
@@ -7,10 +10,10 @@
 #       --container-image <CONTAINER_IMAGE> bash
 #
 # Usage:
-#   bash scripts/performance/launch_interactive.sh
+#   bash scripts/performance/rubin_launch_interactive.sh
 #
 # Override any variable before sourcing, e.g.:
-#   MODEL_FAMILY=qwen MODEL_RECIPE=qwen3_8b bash scripts/performance/launch_interactive.sh
+#   MODEL_FAMILY=qwen MODEL_RECIPE=qwen3_30b_a3b bash scripts/performance/rubin_launch_interactive.sh
 
 set -euo pipefail
 
@@ -94,10 +97,6 @@ HYDRA_OVERRIDES=(
     # Force FP32 reduction to fix NaN grad norm issues on single-GPU runs.
     mixed_precision.grad_reduce_in_fp32=true
     ddp.grad_reduce_in_fp32=true
-
-    # precision_aware_optimizer is auto-enabled for bf16+adam in
-    # set_post_overrides and can cause NaN on some hardware/configs.
-    optimizer.use_precision_aware_optimizer=false
 )
 
 echo "============================================================"
