@@ -37,7 +37,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
-PARALLELISM_CONFIGS=("4,1" "4,2")
+PARALLELISM_CONFIGS=("4,1" "2,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"

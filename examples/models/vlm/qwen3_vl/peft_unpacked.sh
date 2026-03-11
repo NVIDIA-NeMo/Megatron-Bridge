@@ -37,13 +37,13 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
-PARALLELISM_CONFIGS=("2,1" "1,2")
+PARALLELISM_CONFIGS=("4,1" "2,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
     
     echo "Running LoRA finetuning with TP=$TP, PP=$PP"
-    uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_peft_config \
         --step_func qwen3_vl_step \
         --peft_scheme lora \
