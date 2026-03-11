@@ -9,6 +9,44 @@ Please use the custom container `nvcr.io/nvidia/nemo:26.02.nemotron_3_super` whe
 Run all commands from `/opt/Megatron-Bridge` (e.g. `docker run -w /opt/Megatron-Bridge ...`)
 ```
 
+## Getting the Latest Code
+
+For the best experience, it is recommended to use the latest code from the `super-v3` branch. There are two ways to do this:
+
+### Option 1: Update the Code Inside the Container
+
+Launch the container and update the code in-place:
+
+```bash
+# Pull the latest changes from the super-v3 branch
+cd /opt/megatron
+git pull origin super-v3
+```
+
+### Option 2: Mount the Repo from Host
+
+This approach lets you work with the code on your host machine and mount it into the container at runtime.
+
+**Step 1 — Pull the latest `super-v3` branch on the host:**
+
+```bash
+git checkout super-v3 && git pull origin super-v3
+```
+
+**Step 2 — Mount the repo when launching the container:**
+
+```bash
+MEGATRON_BRIDGE_PATH=/path/to/Megatron-Bridge  # set this to your local clone
+
+docker run --rm -it \
+  -v $MEGATRON_BRIDGE_PATH:/opt/Megatron-Bridge \
+  -w /opt/Megatron-Bridge \
+  nvcr.io/nvidia/nemo:26.02.nemotron_3_super \
+  bash
+```
+
+---
+
 ## Conversion with 🤗 Hugging Face
 
 ### Import HF → Megatron
@@ -193,6 +231,10 @@ Notes:
 
 
 ## Quantization (PTQ and QAT)
+
+```{important}
+Quantization support requires the latest code from the `super-v3` branch. See [Getting the Latest Code](#getting-the-latest-code) for instructions.
+```
 
 Nemotron 3 Super supports four quantization configurations:
 
