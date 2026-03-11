@@ -88,6 +88,7 @@ def import_hf_to_megatron(
     torch_dtype: Optional[str] = None,
     device_map: Optional[str] = None,
     trust_remote_code: bool = False,
+    device: Optional[str] = None,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -98,8 +99,14 @@ def import_hf_to_megatron(
         torch_dtype: Model precision ("float32", "float16", "bfloat16")
         device_map: Device placement strategy ("auto", "cuda:0", etc.)
         trust_remote_code: Allow custom model code execution
+        device: Device for weight conversion ops ("cpu", "cuda"). Defaults to
+            "cuda" when available.
     """
-    print(f"🔄 Starting import: {hf_model} -> {megatron_path}")
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    print(f"Starting import: {hf_model} -> {megatron_path}")
+    print(f"   Conversion device: {device}")
 
     # Prepare kwargs
     kwargs = {}
@@ -116,14 +123,15 @@ def import_hf_to_megatron(
         print(f"   Trust remote code: {trust_remote_code}")
 
     # Import using the convenience method
-    print(f"📥 Loading HuggingFace model: {hf_model}")
+    print(f"Loading HuggingFace model: {hf_model}")
     AutoBridge.import_ckpt(
         hf_model_id=hf_model,
         megatron_path=megatron_path,
+        device=device,
         **kwargs,
     )
 
-    print(f"✅ Successfully imported model to: {megatron_path}")
+    print(f"Successfully imported model to: {megatron_path}")
 
     # Verify the checkpoint was created
     checkpoint_path = Path(megatron_path)
@@ -223,6 +231,11 @@ def main():
     import_parser.add_argument("--torch-dtype", choices=["float32", "float16", "bfloat16"], help="Model precision")
     import_parser.add_argument("--device-map", help='Device placement strategy (e.g., "auto", "cuda:0")')
     import_parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
+    import_parser.add_argument(
+        "--device",
+        default=None,
+        help='Device for weight conversion ops (default: "cuda" if available, else "cpu")',
+    )
 
     # Export subcommand (Megatron -> HF)
     export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
@@ -251,6 +264,7 @@ def main():
             torch_dtype=args.torch_dtype,
             device_map=args.device_map,
             trust_remote_code=args.trust_remote_code,
+            device=args.device,
         )
 
     elif args.command == "export":

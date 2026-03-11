@@ -79,6 +79,7 @@ def main(
     megatron_load_path: str | None = None,
     trust_remote_code: bool | None = None,
     strict: bool = False,
+    device: str = "cuda",
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -128,7 +129,7 @@ def main(
         megatron_model = [m.cuda() for m in megatron_model]
 
     else:
-        model_provider = bridge.to_megatron_provider(load_weights=True)
+        model_provider = bridge.to_megatron_provider(load_weights=True, device=device)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
