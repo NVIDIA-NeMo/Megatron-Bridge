@@ -101,9 +101,11 @@ MXFP8 (`bf16_with_mxfp8_mixed`) enables mixed-precision training on Blackwell GP
 - [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"`
 - [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"`
 
+> **Note**: For GB200 nodes (4 GPUs/node), also update `--gpus-per-node` and `--ntasks-per-node` to 4 in the SBATCH directives.
+
 ### Pretrain
 
-Pretrain uses the **DCLM** dataset by default when `DCLM_DATA_DIR` and `DCLM_CACHE` are set (see [slurm_pretrain.sh](slurm_pretrain.sh)).
+Pretrain uses the **DCLM** dataset by default when `DCLM_DATA_DIR` and `DCLM_CACHE` are set (see [slurm_pretrain.sh](slurm_pretrain.sh)). A single random DCLM shard was used for testing.
 
 To use your own preprocessed DCLM data, set the dataset config as follows (e.g. in the recipe or via overrides):
 

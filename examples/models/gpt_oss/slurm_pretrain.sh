@@ -55,8 +55,15 @@ RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_pretrain_config}"               # bf16
 DATASET_NAME=dclm  # set to "mock" for mock data; "dclm" uses DCLM when DCLM_DATA_DIR/DCLM_CACHE are set below
 SEQ_LENGTH=4096
 
-# export DCLM_DATA_DIR="/path/to/dclm/preprocessed"
-# export DCLM_CACHE="/path/to/cache"
+# When DATASET_NAME=dclm, set DCLM_DATA_DIR and DCLM_CACHE so the recipe uses DCLM; leave unset for mock
+if [ "$DATASET_NAME" = "dclm" ]; then
+    # export DCLM_DATA_DIR="/path/to/dclm/preprocessed"
+    # export DCLM_CACHE="/path/to/cache"
+    :
+else
+    unset DCLM_DATA_DIR
+    unset DCLM_CACHE
+fi
 
 TRAIN_ITERS=1000
 GLOBAL_BATCH_SIZE=128

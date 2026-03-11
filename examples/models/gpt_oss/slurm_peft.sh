@@ -28,8 +28,8 @@
 
 #SBATCH --job-name=gpt-oss-lora
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=8  # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
+#SBATCH --gpus-per-node=8    # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
 #SBATCH --time=24:00:00
 #SBATCH --partition=batch
 #SBATCH --account=my_account
@@ -42,18 +42,18 @@
 # ==============================================================================
 
 # Workspace directory for checkpoints and results
-export WORKSPACE="${WORKSPACE:-/lustre/fsw/portfolios/coreai/users/weijiac/nemo_workspace}"
+export WORKSPACE="${WORKSPACE:-/workspace}"
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
-export WKDIR="${WKDIR:-/lustre/fsw/portfolios/coreai/users/weijiac}"
+export WKDIR="${WKDIR:-}"
 
 # Model and training configurations (use pretrain checkpoint or converted Megatron checkpoint)
 # After pretrain, use e.g. ${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp2_pp4_ep4_spTrue_cp1
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
-RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_peft_config}"
-# RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"  # Hopper FP8 current scaling
-# RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"               # Blackwell MXFP8
+# RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_peft_config}"               # bf16 (default)
+# RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"           # Hopper FP8 current scaling
+RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"                        # Blackwell MXFP8
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
@@ -68,11 +68,11 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 PARALLELISM_CONFIGS=("2,2,4,1,True" "4,1,4,1,True")
 
 # Container image (required)
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-$WKDIR/sqsh/nemo_26.02.rc5.sqsh}"
+CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional; comma-separated for srun --container-mounts)
-CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-/lustre:/lustre,$WKDIR/nemo_workspace/Megatron-Bridge:/opt/Megatron-Bridge,$WKDIR/nemo_workspace/Megatron-LM:/opt/megatron-lm}"
+CONTAINER_MOUNTS=""
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"
 
 # ==============================================================================
