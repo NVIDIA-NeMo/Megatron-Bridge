@@ -134,9 +134,10 @@ class CausalVideoTokenizer(torch.nn.Module):  # noqa: D101
         Args:
             input_tensor: The input tensor Bx3xTxHxW layout, range [-1..1].
         Returns:
+            The encoded output depends on the tokenizer variant.
             For causal continuous video (CV) tokenizer, the tuple contains:
                 - The latent embedding, Bx16x(t)x(h)x(w), where the compression
-                rate is (T/t x H/h x W/w), and channel dimension of 16.
+                  rate is (T/t x H/h x W/w), and channel dimension of 16.
             For causal discrete video (DV) tokenizer, the tuple contains:
               1) The indices, Bx(t)x(h)x(w), from a codebook of size 64K, which
                 is formed by FSQ levels of (8,8,8,5,5,5).
