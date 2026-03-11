@@ -23,6 +23,8 @@ language: "en-US"
 # Settings related to reviews.
 # Default: {}
 reviews:
+  # Disable CodeRabbit reviews — using Claude Code Review instead.
+  enabled: false
   # Set the profile for reviews. Assertive profile yields more feedback, that may be considered nitpicky.
   # Options: chill, assertive
   # Default: "chill"
