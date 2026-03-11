@@ -195,7 +195,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_s
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image_url": image_path},
+                        {"type": "image", "image_url": load_image(image_path)},
                         {"type": "text", "text": prompt},
                     ],
                 }
