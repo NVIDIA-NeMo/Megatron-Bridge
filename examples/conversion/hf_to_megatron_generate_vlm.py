@@ -25,6 +25,12 @@ Example:
 
   # Load from Megatron checkpoint:
   uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
+
+  # Kimi K2.5 VL generation (text-only):
+  uv run python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path=/path/to/Kimi-K2.5 --prompt="Hello, how are you?" --trust_remote_code
+
+  # Kimi K2.5 VL generation (with image, multi-GPU with expert parallelism):
+  torchrun --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path=/path/to/Kimi-K2.5 --prompt="Describe this image." --image_path=/path/to/test_image.jpg --trust_remote_code --tp 1 --ep 8
 """
 
 import argparse
@@ -36,8 +42,15 @@ import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from PIL import Image
-from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
+
+try:
+    from qwen_vl_utils import process_vision_info
+
+    QWEN_VL_UTILS_AVAILABLE = True
+except ImportError:
+    QWEN_VL_UTILS_AVAILABLE = False
+    process_vision_info = None
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
@@ -115,7 +128,13 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+
+    return output_tensor, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -135,7 +154,29 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_image_inputs(processor, image_path: Optional[str], prompt: str):
+def _is_kimi_processor(processor) -> bool:
+    """Check if the processor is a Kimi K2.5 processor."""
+    return processor is not None and type(processor).__name__ == "KimiK25Processor"
+
+
+def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
+    """Pad input_ids so sequence length is divisible by tp_size.
+
+    This is needed for sequence parallel, which is required for MoE models
+    when using tensor parallel and expert parallel together.
+    """
+    seq_len = input_ids.shape[1]
+    remainder = seq_len % tp_size
+    if remainder != 0:
+        pad_len = tp_size - remainder
+        padding = torch.full(
+            (input_ids.shape[0], pad_len), pad_token_id, dtype=input_ids.dtype, device=input_ids.device
+        )
+        input_ids = torch.cat([input_ids, padding], dim=1)
+    return input_ids
+
+
+def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_size: int = 1):
     """Process image inputs for vision-language model.
 
     Args:
@@ -147,32 +188,40 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         Tuple of (input_ids, pixel_values, image_grid_thw, image_sizes, messages)
     """
     if image_path:
-        # Create messages with image and text
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image_url": image_path},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+        is_kimi = type(processor).__name__ == "KimiK25Processor"
 
-        # Process vision info
-        # image_inputs, video_inputs = process_vision_info(messages)
+        if is_kimi:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image_url": image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            inputs = processor(messages=messages)
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image_path},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
 
-        # # Apply chat template
-        # text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            image_inputs, video_inputs = process_vision_info(messages)
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
 
-        # # Process inputs
-        # inputs = processor(
-        #     text=[text],
-        #     images=image_inputs,
-        #     videos=video_inputs,
-        #     padding=True,
-        #     return_tensors="pt",
-        # )
-        inputs = processor(messages=messages)
         return (
             inputs.input_ids,
             inputs.pixel_values,
@@ -183,7 +232,8 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
-        return inputs.input_ids, None, None, None, None
+        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, 0)
+        return input_ids, None, None, None, None
 
 
 def main(args) -> None:
@@ -248,6 +298,10 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
+    # TEMP FIX for inference failure when mtp_num_layers is not None
+    for m in model:
+        m.config.mtp_num_layers = None
+
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
@@ -278,7 +332,7 @@ def main(args) -> None:
     # Process inputs (text and image if provided)
     prompt = args.prompt
     input_ids, pixel_values, image_grid_thw, image_sizes, messages = process_image_inputs(
-        processor, args.image_path, prompt
+        processor, args.image_path, prompt, tp_size=tp
     )
 
     # Move to GPU

@@ -35,32 +35,13 @@ _DEEPSEEK_RECIPE_FUNCS = [
 ]
 
 
-def _safe_overrides_for(name: str) -> dict:
-    # Minimal overrides for fast unit testing without external I/O
-    return {
-        "name": f"unit_{name}",
-        "dir": ".",
-        "mock": True,
-        "train_iters": 10,
-        "global_batch_size": 2,
-        "micro_batch_size": 1,
-        "seq_length": 64,
-        "lr": 1e-4,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "context_parallel_size": 1,
-        "use_null_tokenizer": True,
-    }
-
-
 class _FakeModelCfg:
     # Minimal provider to accept attribute assignments used in recipes
     def __init__(self):
         # Provide defaults for attributes that recipes might read
         self.rotary_base = 10000.0
         self.num_moe_experts = 0
+        self.apply_rope_fusion = False
 
     def finalize(self):
         return None
@@ -103,15 +84,14 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for(recipe_func.__name__)
-
-    cfg = recipe_func(**overrides)
+    # DeepSeek recipes are all pretrain configs - call without parameters
+    cfg = recipe_func()
 
     _assert_basic_config(cfg)
 
-    # Ensure tokenizer choice matches override
-    if overrides.get("use_null_tokenizer"):
-        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    # Ensure tokenizer is properly configured
+    # DeepSeek pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
+    if cfg.tokenizer.tokenizer_type == "NullTokenizer":
         assert cfg.tokenizer.vocab_size is not None
     else:
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"

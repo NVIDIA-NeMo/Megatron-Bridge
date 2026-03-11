@@ -891,6 +891,52 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_pack_sequences_in_batch_requires_micro_batch_size_gt_1(self, monkeypatch):
+        """Test validation error when micro_batch_size == 1 with pack_sequences_in_batch=True."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.pack_sequences_in_batch = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        error_msg = (
+            "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+            "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
+            "are required per micro-batch."
+        )
+        try:
+            with pytest.raises(
+                ValueError,
+                match=error_msg,
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_pack_sequences_in_batch_passes_with_micro_batch_size_gt_1(self, monkeypatch):
+        """Test validation passes when micro_batch_size > 1 with pack_sequences_in_batch=True."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.pack_sequences_in_batch = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize(
         "seq_length, context_parallel_size, expect_assertion_error",
         [
@@ -1750,6 +1796,28 @@ class TestCheckpointConfig:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_pretrained_checkpoint_none_skips_validation(self):
+        """Test that finalize succeeds when pretrained_checkpoint is None (no file existence check)."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint=None)
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=True)
+    def test_pretrained_checkpoint_exists_passes(self, mock_file_exists):
+        """Test that finalize succeeds when pretrained_checkpoint path exists."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/valid/checkpoint")
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/valid/checkpoint")
+
+    @patch("megatron.bridge.training.utils.checkpoint_utils.file_exists", return_value=False)
+    def test_pretrained_checkpoint_not_exists_raises(self, mock_file_exists):
+        """Test that finalize raises AssertionError when pretrained_checkpoint path does not exist."""
+        ckpt_cfg = create_test_checkpoint_config(pretrained_checkpoint="/path/to/missing/checkpoint")
+        with pytest.raises(AssertionError, match="Pretrained checkpoint /path/to/missing/checkpoint does not exist"):
+            ckpt_cfg.finalize()
+        mock_file_exists.assert_called_once_with("/path/to/missing/checkpoint")
 
 
 class TestMixedPrecisionConsistencyValidation:

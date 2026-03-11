@@ -14,7 +14,6 @@
 
 import copy
 from dataclasses import dataclass
-from typing import Any, Optional
 
 from megatron.core.activations import fast_gelu
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
@@ -39,7 +38,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
 
     vision_model_type: str = "radio"
     language_model_type: str = "nemotron5-hybrid-12b"
-    generation_config: Optional[Any] = None
 
     # Freeze knobs useful for transfer-learning scenarios
     freeze_language_model: bool = False
@@ -134,9 +132,7 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
             img_h=512,
             img_w=512,
             patch_dim=16,
-            hybrid_attention_ratio=0.0,
-            hybrid_mlp_ratio=0.0,
-            hybrid_override_pattern=self.hybrid_override_pattern,
+            hybrid_layer_pattern=self.hybrid_layer_pattern,
             image_token_index=131072,
             pixel_shuffle=True,
             max_num_tiles=12,

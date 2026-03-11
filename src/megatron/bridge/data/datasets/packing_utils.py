@@ -269,3 +269,85 @@ def fill_packing_strategy(
     assert all(not seq[0] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
     assert all(not seq[1] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
     return output_data
+
+
+def get_seqlen_list(elem: Dict) -> Tuple[List[int], int]:
+    """Extract per-sequence token counts from a packed dataset element.
+
+    Args:
+        elem: A packed dataset element with 'input_ids' and 'seq_start_id' fields.
+
+    Returns:
+        A tuple of (token_counts, tokens_minus_eos) where token_counts is a list of
+        per-sequence token counts (excluding EOS) and tokens_minus_eos is the total
+        token count excluding EOS tokens.
+    """
+    num_seq = len(elem["seq_start_id"])
+    tokens_total = len(elem["input_ids"])
+    tokens_minus_eos = tokens_total - num_seq
+
+    seq_boundaries = elem["seq_start_id"] + [tokens_total]
+
+    # subtract 1 to account for removing eos token
+    token_counts = [seq_boundaries[i + 1] - seq_boundaries[i] - 1 for i in range(num_seq)]
+
+    assert sum(token_counts) == tokens_minus_eos, (sum(token_counts), tokens_minus_eos)
+
+    return token_counts, tokens_minus_eos
+
+
+def calculate_avg_seqlen(
+    dataset_file: str, gbs: int, max_seq_len: int, drop_remainder: bool
+) -> Tuple[float, float, float, float]:
+    """Calculate average sequence length statistics from a packed dataset.
+
+    Args:
+        dataset_file: Path to the .npy packed dataset file.
+        gbs: Global batch size used to determine how many rows to process.
+        max_seq_len: Maximum sequence length (reserved for future use).
+        drop_remainder: If True, drop rows that don't fill a complete batch.
+
+    Returns:
+        A tuple of (avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row):
+            - avg_seqlen_count: Average number of sequences per row.
+            - avg_seqlen_total: Average total tokens (excluding EOS) per row.
+            - avg_seqlen_sq_individual: Average of squared per-sequence lengths.
+            - avg_seqlen_sq_per_row: Average of summed squared sequence lengths per row.
+
+    Raises:
+        ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
+    """
+    data = np.load(dataset_file, allow_pickle=True)
+
+    total_len_accum = 0
+    seqlen_sq_accum = 0
+    seq_count_accum = 0
+
+    rows_total = len(data)
+    count = (rows_total // gbs) * gbs if drop_remainder else rows_total
+
+    if count != rows_total:
+        logger.info(f"Dropping {rows_total - count}, total was {rows_total}")
+
+    for i, elem in enumerate(data):
+        if i >= count:
+            break
+        seqlen_list, total_count = get_seqlen_list(elem)
+        seqlen_sq_list = [s * s for s in seqlen_list]
+        total_len_accum += total_count
+        seqlen_sq_accum += sum(seqlen_sq_list)
+        seq_count_accum += len(seqlen_list)
+
+    if count == 0:
+        raise ValueError(
+            f"No rows to process: dataset has {rows_total} rows but gbs={gbs} with drop_remainder={drop_remainder}."
+        )
+    if seq_count_accum == 0:
+        raise ValueError("No sequences found in dataset; cannot compute average sequence length.")
+
+    avg_seqlen_count = seq_count_accum / count
+    avg_seqlen_total = total_len_accum / count
+    avg_seqlen_sq_individual = seqlen_sq_accum / seq_count_accum
+    avg_seqlen_sq_per_row = seqlen_sq_accum / count
+
+    return avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row

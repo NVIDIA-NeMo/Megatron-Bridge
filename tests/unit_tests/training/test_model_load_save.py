@@ -525,7 +525,6 @@ class TestLoadMegatronModel:
         cfg.context_parallel_size = 2
         cfg.expert_model_parallel_size = 2
         cfg.expert_tensor_parallel_size = 2
-        cfg.moe_extended_tp = True
         cfg.sequence_parallel = True
         cfg.virtual_pipeline_model_parallel_size = 2
         cfg.hierarchical_context_parallel_sizes = [2, 2]
@@ -545,7 +544,6 @@ class TestLoadMegatronModel:
         assert cfg.context_parallel_size == 1
         assert cfg.expert_model_parallel_size == 1
         assert cfg.expert_tensor_parallel_size == 1
-        assert cfg.moe_extended_tp is False
         assert cfg.sequence_parallel is False
         assert cfg.virtual_pipeline_model_parallel_size is None
         assert cfg.hierarchical_context_parallel_sizes is None
@@ -561,7 +559,6 @@ class TestLoadMegatronModel:
         cfg.context_parallel_size = 1
         cfg.expert_model_parallel_size = 1
         cfg.expert_tensor_parallel_size = 1
-        cfg.moe_extended_tp = False
         cfg.sequence_parallel = False
         cfg.virtual_pipeline_model_parallel_size = None
         cfg.hierarchical_context_parallel_sizes = None
