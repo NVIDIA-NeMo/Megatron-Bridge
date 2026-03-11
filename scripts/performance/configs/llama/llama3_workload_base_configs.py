@@ -212,7 +212,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = replace(
     BASE_LLAMA3_70B_CONFIG_GBS256,
     micro_batch_size=2,
     use_megatron_fsdp=True,
-    cpu_offloading_num_layers=20,
+    cpu_offloading_num_layers=40,
 )
 
 
@@ -242,7 +242,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB200_FP8_CS_V2 = replace(
     BASE_LLAMA3_70B_CONFIG_GBS256,
     micro_batch_size=2,
     use_megatron_fsdp=True,
-    cpu_offloading_num_layers=40,
+    cpu_offloading_num_layers=60,
 )
 
 
