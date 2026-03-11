@@ -70,10 +70,21 @@ jobs:
           submodules: recursive
 
       - name: Update submodules
+        id: mlm-commit
+        env:
+          TARGET_BRANCH: ${{ inputs.mcore-branch }}
         run: |
-          cd 3rdparty/Megatron-LM
-          git fetch origin ${{ inputs.mcore-branch }}
-          git checkout FETCH_HEAD
+          pushd 3rdparty/Megatron-LM
+            git fetch origin ${{ inputs.mcore-branch }}
+            git checkout FETCH_HEAD
+            MLM_COMMIT=$(git rev-parse HEAD)
+          popd
+
+          if [[ "$TARGET_BRANCH" == "main" ]]; then
+            echo $MLM_COMMIT > .main.commit
+          elif [[ "$TARGET_BRANCH" == "dev" ]]; then
+            echo $MLM_COMMIT > .dev.commit
+          fi
 
       - name: Upgrade lock file
         env:
@@ -182,6 +193,14 @@ jobs:
             echo "Checks not yet complete (attempt $i), retrying in 30s..."
             sleep 30
           done
+
+      - name: Revert submodule bump for dev branch
+        if: ${{ inputs.mcore-branch == 'dev' }}
+        run: |
+          git checkout 3rdparty/Megatron-LM
+          git checkout .main.commit
+          git commit -m "Revert submodule bump for dev branch"
+          git push origin ${{ env.SOURCE_BRANCH }}
 
       - name: Merge PR
         env:

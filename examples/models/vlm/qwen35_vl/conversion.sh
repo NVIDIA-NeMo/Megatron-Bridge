@@ -12,15 +12,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+set -e
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
-MODEL_NAME=Qwen3.5-35B-A3B # Qwen3.5-35B-A3B, Qwen3.5-122B-A10B, Qwen3.5-397B-A17B, Qwen3.5-27B
+# Supported model variants are:
+# Qwen3.5-0.8B, Qwen3.5-2B, Qwen3.5-4B, Qwen3.5-9B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-122B-A10B, Qwen3.5-397B-A17B
+MODEL_NAME=Qwen3.5-35B-A3B
 
-if [ "${MODEL_NAME}" = "Qwen3.5-27B" ]; then
+if [ "${MODEL_NAME}" = "Qwen3.5-0.8B" ] || [ "${MODEL_NAME}" = "Qwen3.5-2B" ] || [ "${MODEL_NAME}" = "Qwen3.5-4B" ] || [ "${MODEL_NAME}" = "Qwen3.5-9B" ] || [ "${MODEL_NAME}" = "Qwen3.5-27B" ]; then
     HF_MODEL_CLASS="Qwen3_5ForConditionalGeneration"
-else
+    EP=1
+    PP=8
+    TP=1
+elif [ "${MODEL_NAME}" = "Qwen3.5-35B-A3B" ] || [ "${MODEL_NAME}" = "Qwen3.5-122B-A10B" ] || [ "${MODEL_NAME}" = "Qwen3.5-397B-A17B" ]; then
     HF_MODEL_CLASS="Qwen3_5MoeForConditionalGeneration"
+    EP=8
+    PP=1
+    TP=1
+else
+    echo "Unsupported model variant: ${MODEL_NAME}"
+    exit 1
 fi
 
 # Make sure to upgrade to transformers >= 5.2.0
@@ -39,7 +51,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/co
     --model_class "${HF_MODEL_CLASS}" \
     --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
     --prompt "Describe this image." \
-    --tp 1 --pp 1 --ep 8
+    --tp ${TP} --pp ${PP} --ep ${EP}
 
 # Export Megatron → HF
 uv run python examples/conversion/convert_checkpoints.py export \
@@ -49,4 +61,4 @@ uv run python examples/conversion/convert_checkpoints.py export \
 
 # Round-trip validation
 uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-      --hf-model-id Qwen/${MODEL_NAME} --tp 1 --pp 2 --ep 4 --trust-remote-code
+      --hf-model-id Qwen/${MODEL_NAME} --tp ${TP} --pp ${PP} --ep ${EP}

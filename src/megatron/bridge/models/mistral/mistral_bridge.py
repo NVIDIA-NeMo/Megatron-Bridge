@@ -54,7 +54,7 @@ class MistralBridge(MegatronModelBridge):
 
         window_size, cp_comm_type = (None, None)
         if getattr(hf_config, "sliding_window", None) is not None:
-            window_size = [hf_config.sliding_window, 0]
+            window_size = [hf_config.sliding_window - 1, 0]
             cp_comm_type = "a2a"
 
         provider = cls(
