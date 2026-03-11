@@ -522,6 +522,14 @@ def parse_cli_args():
         default="bf16",
     )
     performance_args.add_argument(
+        "--optimizer_type",
+        type=str,
+        choices=["adam", "muon"],
+        help="Optimizer type for recipes that support it (e.g. Kimi-K2). Defaults to muon.",
+        required=False,
+        default="muon",
+    )
+    performance_args.add_argument(
         "-vb",
         "--enable_vboost",
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
@@ -763,6 +771,18 @@ def parse_cli_args():
     )
     testing_args.add_argument(
         "--memory_threshold", type=float, default=0.05, help="Memory validation threshold (default: 0.05 = 5%%)"
+    )
+    testing_args.add_argument(
+        "--eval_time_start_step",
+        type=int,
+        default=None,
+        help="Start step (0-indexed, inclusive) for timing average window. Overrides skip_first_percent_time when set.",
+    )
+    testing_args.add_argument(
+        "--eval_time_end_step",
+        type=int,
+        default=None,
+        help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
 
     return parser

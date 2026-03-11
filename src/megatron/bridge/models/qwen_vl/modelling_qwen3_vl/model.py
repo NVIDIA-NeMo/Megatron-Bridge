@@ -84,7 +84,8 @@ class Qwen3VLModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+        if hasattr(language_transformer_layer_spec, "submodules"):
+            language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -104,6 +105,8 @@ class Qwen3VLModel(MegatronModule):
         # on the word embeddings inside `finalize_model_grads._allreduce_word_embedding_grads`.
         self.share_embeddings_and_output_weights = False
         # process groups
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         self.pg_collection = pg_collection
         self.cp_group = pg_collection.cp
         self.tp_group = pg_collection.tp
@@ -142,6 +145,7 @@ class Qwen3VLModel(MegatronModule):
                 vision_patch_merger_spec,
                 pre_process=True,
                 post_process=True,
+                pg_collection=pg_collection,
             )
 
         self.language_model = Qwen3VLGPTModel(
@@ -161,11 +165,10 @@ class Qwen3VLModel(MegatronModule):
             pg_collection=pg_collection,
         )
         if pre_process:
-            assert len(vision_transformer_config.deepstack_visual_indexes) <= len(
-                self.language_model.decoder.layers
-            ), (
+            deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
+            assert len(deepstack_indexes) <= len(self.language_model.decoder.layers), (
                 "the deepstack_visual_embeds should on the first pp-stage of language model",
-                f"got {len(vision_transformer_config.deepstack_visual_indexes)} deepstack_visual_indexes, "
+                f"got {len(deepstack_indexes)} deepstack_visual_indexes, "
                 f" {len(self.language_model.decoder.layers)} language model layers",
             )
 

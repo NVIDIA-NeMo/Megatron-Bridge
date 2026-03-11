@@ -195,7 +195,7 @@ class TestNemotronNanoV2FinetuneRecipes:
                 "nemotron_nano_9b_v2_lora",
                 {
                     "num_layers": 4,  # Match toy model
-                    "hybrid_override_pattern": "M*M-",  # Match toy model
+                    "hybrid_layer_pattern": "M*M-",  # Match toy model
                     "hidden_size": 640,  # Match toy model
                     "ffn_hidden_size": 2240,  # Match toy model
                     "num_attention_heads": 8,  # Match toy model
@@ -214,7 +214,7 @@ class TestNemotronNanoV2FinetuneRecipes:
                 "nemotron_nano_9b_v2_full",
                 {
                     "num_layers": 4,  # Match toy model
-                    "hybrid_override_pattern": "M*M-",  # Match toy model
+                    "hybrid_layer_pattern": "M*M-",  # Match toy model
                     "hidden_size": 640,  # Match toy model
                     "ffn_hidden_size": 2240,  # Match toy model
                     "num_attention_heads": 8,  # Match toy model
@@ -300,7 +300,12 @@ class TestNemotronNanoV2FinetuneRecipes:
             finetune(config, forward_step)
 
             # Verify checkpoints were saved
-            verify_checkpoint_files(config.checkpoint.save, config.train.train_iters)
+            verify_checkpoint_files(
+                config.checkpoint.save,
+                config.train.train_iters,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(tmp_path)
@@ -314,8 +319,7 @@ HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES = {
 }
 
 MEGATRON_NEMOTRON_3_NANO_OVERRIDES = {
-    "num_layers": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["num_hidden_layers"],
-    "hybrid_override_pattern": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hybrid_override_pattern"],
+    "hybrid_layer_pattern": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hybrid_override_pattern"],
     "hidden_size": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["hidden_size"],
     "num_moe_experts": HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES["n_routed_experts"],
     "tensor_model_parallel_size": 1,
@@ -573,7 +577,12 @@ class TestNemotron3NanoFinetuneRecipes:
             finetune(config, forward_step)
 
             # Verify checkpoints were saved
-            verify_checkpoint_files(config.checkpoint.save, config.train.train_iters)
+            verify_checkpoint_files(
+                config.checkpoint.save,
+                config.train.train_iters,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
 
         finally:
             clear_directories(tmp_path)

@@ -91,6 +91,7 @@ Output:
 """
 
 import argparse
+import gc
 import importlib
 import os
 import sys
@@ -318,7 +319,13 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        output_tensor, _ = model_output
+    else:
+        output_tensor = model_output
+
+    return output_tensor, loss_func
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -609,6 +616,11 @@ def _load_megatron_model(args):
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
+    # Workaround: disable MTP for inference (causes hangs on NCCL collectives)
+    for m in megatron_model:
+        m.config.mtp_num_layers = None
+        m.config.grad_scale_func = None
+
     model_components = [m.eval() for m in megatron_model]
 
     # Register debug hooks if enabled
@@ -715,11 +727,10 @@ def compare_models_one_step(args) -> None:
     )
 
     del hf_model
-    # Reload Megatron model to ensure a fresh instance before comparison
-    megatron_model, _ = _load_megatron_model(args)
+    gc.collect()
+    torch.cuda.empty_cache()
 
-    # Broadcast HF results to all ranks after Megatron initialization
-    # (following the pattern from generate_from_hf.py)
+    # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():
         # Create tensors for broadcasting if they don't exist on non-rank-0
         if hf_next_token is None:
@@ -730,6 +741,9 @@ def compare_models_one_step(args) -> None:
                 tokenizer, "vocab_size", len(tokenizer.vocab) if hasattr(tokenizer, "vocab") else 32000
             )
             hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.float32)
+
+        # Ensure consistent dtype across ranks before broadcast
+        hf_logits = hf_logits.float()
 
         # Broadcast from rank 0 to all ranks
         torch.distributed.broadcast(hf_next_token, 0)
@@ -778,7 +792,10 @@ def compare_models_one_step(args) -> None:
             megatron_logits = megatron_output[0, -1, :]
             megatron_next_token = torch.argmax(megatron_logits, dim=-1)
 
-            if not torch.distributed.is_initialized() or parallel_state.get_tensor_model_parallel_rank() == 0:
+            if not torch.distributed.is_initialized() or (
+                parallel_state.get_tensor_model_parallel_rank() == 0
+                and parallel_state.get_expert_model_parallel_rank() == 0
+            ):
                 print(f"Megatron output shape: {megatron_output.shape}")
                 print(f"Megatron logits stats - mean: {megatron_logits.mean():.4f}, std: {megatron_logits.std():.4f}")
                 print(

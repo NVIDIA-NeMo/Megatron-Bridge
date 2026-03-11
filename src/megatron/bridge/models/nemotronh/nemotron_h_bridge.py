@@ -61,7 +61,7 @@ class NemotronHBridge(MegatronModelBridge):
         ("mamba_num_heads", "mamba_num_heads"),
         ("n_groups", "mamba_num_groups"),
         ("ssm_state_size", "mamba_state_dim"),
-        ("hybrid_override_pattern", "hybrid_override_pattern"),
+        ("hybrid_override_pattern", "hybrid_layer_pattern"),
         ("residual_in_fp32", "fp32_residual_connection"),
         ("use_bias", "add_bias_linear"),
         ("layer_norm_epsilon", "layernorm_epsilon"),
@@ -78,6 +78,9 @@ class NemotronHBridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
+        # Remove num_layers from provider as it is derived from hybrid_layer_pattern
+        provider.num_layers = None
+
         # Nemotron-H specific defaults
         provider.activation_func = squared_relu
         provider.masked_softmax_fusion = True
@@ -88,7 +91,7 @@ class NemotronHBridge(MegatronModelBridge):
         provider.is_hybrid_model = True
 
         # MoE-specific defaults (only if MoE is enabled)
-        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
+        if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts is not None:
             provider.moe_aux_loss_coeff = 0.0001
             provider.moe_router_score_function = "sigmoid"
             provider.moe_router_enable_expert_bias = True
@@ -129,10 +132,14 @@ class NemotronHBridge(MegatronModelBridge):
             # MoE layers
             "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
-            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
-            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
+            # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...
+            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
+            # SequentialMLP (moe_grouped_gemm=False): expert weights are stored per local_expert
+            "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "backbone.layers.*.mixer.experts.*.down_proj.weight",
         }
 
         mapping_list = []

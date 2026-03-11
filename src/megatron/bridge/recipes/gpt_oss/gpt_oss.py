@@ -22,6 +22,13 @@ from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER
 from megatron.bridge.training.config import ConfigContainer
 
 
+def _enable_gpt_oss_hopper_fp8_current_scaling(cfg: ConfigContainer) -> ConfigContainer:
+    """Enable Hopper FP8 current scaling for GPT-OSS recipes."""
+    cfg.mixed_precision = "bf16_with_fp8_current_scaling_mixed"
+    cfg.model.moe_router_padding_for_fp8 = True
+    return cfg
+
+
 def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     """Return a pre-training config for GPT-OSS 20B variant.
 
@@ -54,13 +61,15 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
 
+    # When CP>1 is used (e.g. via CLI override), a2a is required for TE attention backends with learnable softmax.
+    cfg.model.cp_comm_type = "a2a"
+
     # Pipeline split settings
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
 
-    if cfg.model.context_parallel_size > 1:
-        cfg.model.calculate_per_token_loss = True
-        cfg.model.cp_comm_type = "a2a"  # only a2a cp is supported for sink attention.
+    # When CP>1 (e.g. via CLI override), per-token loss avoids issues on CP ranks; harmless when CP=1.
+    cfg.model.calculate_per_token_loss = True
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"  # Default
@@ -132,7 +141,7 @@ def gpt_oss_20b_pretrain_config() -> ConfigContainer:
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = cfg.model.context_parallel_size == 1
+    cfg.ddp.average_in_collective = False  # Must be False when calculate_per_token_loss=True (used for CP>1)
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     # MoE Force Load Balancing
@@ -173,12 +182,14 @@ def gpt_oss_120b_pretrain_config() -> ConfigContainer:
     cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
 
+    # When CP>1 is used (e.g. via CLI override), a2a is required for TE attention backends with learnable softmax.
+    cfg.model.cp_comm_type = "a2a"
+
     # Pipeline split settings
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
-    if cfg.model.context_parallel_size > 1:
-        cfg.model.calculate_per_token_loss = True
-        cfg.model.cp_comm_type = "a2a"  # only a2a cp is supported for sink attention.
+    # When CP>1 (e.g. via CLI override), per-token loss avoids issues on CP ranks; harmless when CP=1.
+    cfg.model.calculate_per_token_loss = True
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -241,13 +252,19 @@ def gpt_oss_120b_pretrain_config() -> ConfigContainer:
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = True
+    cfg.ddp.average_in_collective = False  # Must be False when calculate_per_token_loss=True (used for CP>1)
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
     return cfg
+
+
+def gpt_oss_20b_pretrain_fp8_current_scaling_config() -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_pretrain_config()
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
 
 
 # =============================================================================
@@ -505,6 +522,12 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
     cfg.rng.seed = 5678
 
     return cfg
+
+
+def gpt_oss_20b_sft_fp8_current_scaling_config() -> ConfigContainer:
+    """Return a full SFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_sft_config()
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
 
 
 # =============================================================================
@@ -780,3 +803,11 @@ def gpt_oss_120b_peft_config(
     cfg.rng.seed = 5678
 
     return cfg
+
+
+def gpt_oss_20b_peft_fp8_current_scaling_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
+    cfg = gpt_oss_20b_peft_config(peft_scheme=peft_scheme)
+    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)

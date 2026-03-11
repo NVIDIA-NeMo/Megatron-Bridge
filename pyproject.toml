@@ -66,14 +66,14 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0",
+    "transformers>=5.0.0,<=5.2.0",
     "datasets>=2.20.0",
     "accelerate",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
     "typing-extensions",
     "rich",
-    "wandb>=0.19.10",
+    "wandb>=0.25.0",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
@@ -83,7 +83,7 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]",
     "mamba-ssm",
-    "nvidia-resiliency-ext",
+    "nvidia-resiliency-ext~=0.4.1",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
@@ -116,7 +116,7 @@ override-dependencies = [
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
-    "urllib3>=2.6.3"    # To address CVE-2026-21441
+    "urllib3>=2.6.3",    # To address CVE-2026-21441
 ]
 
 [[tool.uv.index]]
@@ -126,6 +126,7 @@ url = "https://pypi.nvidia.com"
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
+nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" }
 
 [project.optional-dependencies]
 recipes = [
