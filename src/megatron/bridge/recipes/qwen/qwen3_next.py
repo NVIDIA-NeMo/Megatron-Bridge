@@ -15,7 +15,6 @@
 
 import torch
 
-from megatron.bridge import AutoBridge
 from megatron.bridge.models.qwen.qwen_provider import Qwen3NextMambaModelProvider80B_A3B
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
@@ -158,10 +157,8 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     # Override dataset - Qwen3-Next does NOT support packed_sequence
     cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
 
-    # Model config from HuggingFace
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(
-        load_weights=False
-    )
+    # Model config - using MambaModel with GDN layers (same as pretrain)
+    cfg.model = Qwen3NextMambaModelProvider80B_A3B()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
@@ -169,6 +166,11 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     # Sequence length
     cfg.model.seq_length = 2048
     cfg.dataset.seq_length = 2048
+    cfg.model.init_method_std = 0.02
+
+    # Multi-Token Prediction (MTP) settings - must match pretrained checkpoint
+    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_loss_scaling_factor = 0.1
 
     # Parallelism settings (MoE-specific)
     cfg.model.pipeline_model_parallel_layout = None
@@ -185,7 +187,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
     # Note: moe_flex_dispatcher_backend may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_flex_dispatcher_backend = (
-        "deepep"  # qwen3_next has moe_flex_dispatcher_backend = "deepep" when loaded via AutoBridge.from_hf_pretrained
+        "deepep"  # Options: None, deepep, hybridep
     )
     cfg.model.moe_hybridep_num_sms = 16
 
