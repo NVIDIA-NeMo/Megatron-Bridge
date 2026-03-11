@@ -408,6 +408,7 @@ def _encode_video_latents(
 
 
 def main():
+    """Prepare WAN WebDataset shards using HF automodel encoders and resizing."""
     parser = argparse.ArgumentParser(
         description="Prepare WAN WebDataset shards using HF automodel encoders and resizing"
     )
