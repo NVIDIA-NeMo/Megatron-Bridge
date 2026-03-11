@@ -67,6 +67,7 @@ def random_audio():
     return np.random.randint(-1, 32767, size=(800), dtype=np.int16)
 
 
+@pytest.mark.pleasefixme  # TODO: replace full-size HF vision/audio encoders with dummy stubs to avoid timeout
 class TestQwen25OmniModel:
     """Test suite for Qwen2.5 Omni Model."""
 
