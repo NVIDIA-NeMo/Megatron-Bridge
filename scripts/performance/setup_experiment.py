@@ -73,6 +73,7 @@ def check_training_finished(log_file_paths: List[str]) -> bool:
                         "StopIteration" in line
                         or "after training is done" in line
                         or "exiting program at iteration" in line
+                        or "AssertionError: no samples left to consume:" in line
                     )
                 )
     return any(all_lines)
