@@ -63,9 +63,14 @@ python -m torch.distributed.run --nproc_per_node=8 \
 - See: [bridge.recipes.gpt_oss](../../../src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)
 - Available recipes:
   - `gpt_oss_20b_pretrain_config`: Pretraining configuration for 20B
-  - `gpt_oss_20b_finetune_config`: Finetuning configuration for 20B with PEFT support
+  - `gpt_oss_20b_pretrain_fp8_current_scaling_config`: Pretraining configuration for 20B with Hopper FP8 current scaling
+  - `gpt_oss_20b_sft_config`: Full SFT configuration for 20B
+  - `gpt_oss_20b_sft_fp8_current_scaling_config`: Full SFT configuration for 20B with Hopper FP8 current scaling
+  - `gpt_oss_20b_peft_config`: LoRA PEFT configuration for 20B
+  - `gpt_oss_20b_peft_fp8_current_scaling_config`: LoRA PEFT configuration for 20B with Hopper FP8 current scaling
   - `gpt_oss_120b_pretrain_config`: Pretraining configuration for 120B
-  - `gpt_oss_120b_finetune_config`: Finetuning configuration for 120B with PEFT support
+  - `gpt_oss_120b_sft_config`: Full SFT configuration for 120B
+  - `gpt_oss_120b_peft_config`: LoRA PEFT configuration for 120B
 
 Before training, ensure the following are configured:
 1. **Container Image**: Set `CONTAINER_IMAGE` in the SLURM scripts to your container path
@@ -76,6 +81,14 @@ Before training, ensure the following are configured:
    - `WANDB_API_KEY`: (optional) to enable WandB logging
 
 All training scripts use SLURM for containerized multi-node training.
+
+### FP8 Training (Hopper GPUs)
+
+The FP8 current scaling recipes enable mixed-precision training with FP8 on Hopper GPUs. To use an FP8 recipe, uncomment the FP8 `RECIPE_NAME` line in the corresponding SLURM script:
+
+- [slurm_pretrain.sh](slurm_pretrain.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"`
+- [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"`
+- [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"`
 
 ### Pretrain
 
@@ -94,19 +107,16 @@ cfg.dataset.path_to_cache = "/path/to/cache"
 
 Preprocess your data using the [DCLM data preprocessing tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm).
 
-W&B report coming soon.
-
 ### Supervised Fine-Tuning (SFT)
 
 See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. The recipe uses sequence packing by default.
-
-W&B report coming soon.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default.
 
-W&B report coming soon.
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/xs3rmk4t) for the expected loss curves and grad norms.
 
 ## Inference
 

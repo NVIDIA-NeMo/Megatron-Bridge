@@ -14,8 +14,11 @@
 
 from .gpt_oss import (
     gpt_oss_20b_peft_config,
+    gpt_oss_20b_peft_fp8_current_scaling_config,
     gpt_oss_20b_pretrain_config,
+    gpt_oss_20b_pretrain_fp8_current_scaling_config,
     gpt_oss_20b_sft_config,
+    gpt_oss_20b_sft_fp8_current_scaling_config,
     gpt_oss_120b_peft_config,
     gpt_oss_120b_pretrain_config,
     gpt_oss_120b_sft_config,
@@ -24,9 +27,12 @@ from .gpt_oss import (
 
 __all__ = [
     "gpt_oss_20b_pretrain_config",
+    "gpt_oss_20b_pretrain_fp8_current_scaling_config",
     "gpt_oss_120b_pretrain_config",
     "gpt_oss_20b_sft_config",
+    "gpt_oss_20b_sft_fp8_current_scaling_config",
     "gpt_oss_120b_sft_config",
     "gpt_oss_20b_peft_config",
+    "gpt_oss_20b_peft_fp8_current_scaling_config",
     "gpt_oss_120b_peft_config",
 ]
