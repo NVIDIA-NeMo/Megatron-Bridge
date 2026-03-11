@@ -67,6 +67,8 @@ classifiers = [
 ]
 dependencies = [
     "transformers>=5.0.0",
+    # peft>=0.18 required for transformers 5.2+ (HybridCache was removed in 5.2; peft 0.18+ handles it)
+    "peft>=0.18.0",
     "datasets>=2.20.0",
     "accelerate",
     "omegaconf>=2.3.0",

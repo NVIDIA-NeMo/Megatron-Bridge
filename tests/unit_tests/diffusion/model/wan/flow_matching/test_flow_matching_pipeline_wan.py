@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext
 
+from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext
 from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan import (
     WanAdapter,
     WanFlowMatchingPipeline,
