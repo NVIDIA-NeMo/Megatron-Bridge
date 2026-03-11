@@ -48,10 +48,9 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP N_PROC <<< "$par_config"
         echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP N_PROC=$N_PROC"
         uv run python -m torch.distributed.run --nproc_per_node=$N_PROC scripts/training/run_recipe.py \
-            --recipe ${MODEL_NAME}_peft_config \
+            --recipe ${MODEL_NAME}_peft_energon_config \
             --step_func qwen3_vl_step \
             --peft_scheme lora \
-            --dataset_type energon \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
             model.seq_length=$SEQ_LENGTH \
             train.train_iters=$TRAIN_ITERS \

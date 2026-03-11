@@ -57,16 +57,13 @@ def _make_energon_dataset(
 # =============================================================================
 # Qwen3-VL 8B SFT Configuration
 # =============================================================================
-def qwen3_vl_8b_sft_config(dataset_type: str | None = None) -> ConfigContainer:
+def qwen3_vl_8b_sft_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-VL 8B (dense model).
 
     Default configuration: 1 node, 8 GPUs
     - TP=2, PP=1
     - LR=5e-6 (full SFT)
     - Sequence length: 4096
-
-    Args:
-        dataset_type: Dataset type ('energon', 'hf', or None for default HF provider).
     """
     cfg = _sft_common_vlm()
 
@@ -159,11 +156,8 @@ def qwen3_vl_8b_sft_config(dataset_type: str | None = None) -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Dataset configuration
-    if dataset_type == "energon":
-        cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
-    else:
-        cfg.dataset.seq_length = 4096
-        cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -198,7 +192,7 @@ def qwen3_vl_8b_sft_config(dataset_type: str | None = None) -> ConfigContainer:
 # =============================================================================
 # Qwen3-VL 30B-A3B SFT Configuration
 # =============================================================================
-def qwen3_vl_30b_a3b_sft_config(dataset_type: str | None = None) -> ConfigContainer:
+def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-VL 30B-A3B (MoE model).
 
     Default configuration: 4 nodes, 32 GPUs
@@ -298,11 +292,8 @@ def qwen3_vl_30b_a3b_sft_config(dataset_type: str | None = None) -> ConfigContai
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Dataset configuration
-    if dataset_type == "energon":
-        cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
-    else:
-        cfg.dataset.seq_length = 4096
-        cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -337,7 +328,7 @@ def qwen3_vl_30b_a3b_sft_config(dataset_type: str | None = None) -> ConfigContai
 # =============================================================================
 # Qwen3-VL 235B-A22B SFT Configuration
 # =============================================================================
-def qwen3_vl_235b_a22b_sft_config(dataset_type: str | None = None) -> ConfigContainer:
+def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-VL 235B-A22B (MoE model).
 
     Default configuration: 64 nodes, 512 GPUs
@@ -437,11 +428,8 @@ def qwen3_vl_235b_a22b_sft_config(dataset_type: str | None = None) -> ConfigCont
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Dataset configuration
-    if dataset_type == "energon":
-        cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
-    else:
-        cfg.dataset.seq_length = 4096
-        cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -476,7 +464,7 @@ def qwen3_vl_235b_a22b_sft_config(dataset_type: str | None = None) -> ConfigCont
 # =============================================================================
 # Qwen3-VL 8B PEFT Configuration
 # =============================================================================
-def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora", dataset_type: str | None = None) -> ConfigContainer:
+def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3-VL 8B (dense model).
 
     Default configuration: 1 node, 8 GPUs
@@ -584,11 +572,8 @@ def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora", dataset_type: str 
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Dataset configuration
-    if dataset_type == "energon":
-        cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
-    else:
-        cfg.dataset.seq_length = 4096
-        cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -623,7 +608,7 @@ def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora", dataset_type: str 
 # =============================================================================
 # Qwen3-VL 30B-A3B PEFT Configuration
 # =============================================================================
-def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora", dataset_type: str | None = None) -> ConfigContainer:
+def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3-VL 30B-A3B (MoE model).
 
     Default configuration: 1 node, 8 GPUs
@@ -732,11 +717,8 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora", dataset_type:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Dataset configuration
-    if dataset_type == "energon":
-        cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
-    else:
-        cfg.dataset.seq_length = 4096
-        cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -771,9 +753,7 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora", dataset_type:
 # =============================================================================
 # Qwen3-VL 235B-A22B PEFT Configuration
 # =============================================================================
-def qwen3_vl_235b_a22b_peft_config(
-    peft_scheme: str | PEFT = "lora", dataset_type: str | None = None
-) -> ConfigContainer:
+def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3-VL 235B-A22B (MoE model).
 
     Default configuration: 8 nodes, 64 GPUs
@@ -882,11 +862,8 @@ def qwen3_vl_235b_a22b_peft_config(
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     # Dataset configuration
-    if dataset_type == "energon":
-        cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
-    else:
-        cfg.dataset.seq_length = 4096
-        cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -915,4 +892,18 @@ def qwen3_vl_235b_a22b_peft_config(
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    return cfg
+
+# =============================================================================
+# Qwen3-VL 8B PEFT with Energon Dataset
+# =============================================================================
+def qwen3_vl_8b_peft_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT (LoRA/DoRA) config for Qwen3-VL 8B with Energon dataset.
+
+    Same as qwen3_vl_8b_peft_config but uses EnergonProvider instead of HF dataset.
+    Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
+    """
+    cfg = qwen3_vl_8b_peft_config(peft_scheme=peft_scheme)
+    hf_path = "Qwen/Qwen3-VL-8B-Instruct"
+    cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
     return cfg
