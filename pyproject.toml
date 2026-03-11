@@ -112,7 +112,6 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@5671fd3675906cda1ade26c24a65d3dedd88eb89",
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
@@ -125,6 +124,7 @@ url = "https://pypi.nvidia.com"
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
+transformer-engine = { path = "3rdparty/TransformerEngine/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" }
 
