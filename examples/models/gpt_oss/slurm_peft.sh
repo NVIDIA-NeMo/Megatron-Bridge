@@ -42,7 +42,7 @@
 # ==============================================================================
 
 # Workspace directory for checkpoints and results
-export WORKSPACE="${WORKSPACE:-/workspace}"
+WORKSPACE=${WORKSPACE:-/workspace}
 
 # Base directory for container image and mounts (set if not already set, e.g. by launch_nemo.sh)
 export WKDIR="${WKDIR:-}"
