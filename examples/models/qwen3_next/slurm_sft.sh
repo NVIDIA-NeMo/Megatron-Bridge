@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Parallelism configs: "TP,PP,EP,CP,SP" per entry (TP*PP*EP must equal total GPUs)
-PARALLELISM_CONFIGS=("1,2,8,1,False")
+PARALLELISM_CONFIGS=("1,4,8,1,False")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -156,14 +156,12 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.expert_tensor_parallel_size=1 \
         model.sequence_parallel=$SP \
         model.context_parallel_size=$CP \
-        model.calculate_per_token_loss=True \
-        train.global_batch_size=$GLOBAL_BATCH_SIZE \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH
     "
 
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
+    CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
     CMD="$CMD --peft_scheme none"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
