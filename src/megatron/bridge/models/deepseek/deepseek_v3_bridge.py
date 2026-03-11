@@ -76,7 +76,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.gradient_accumulation_fusion = True
 
         provider.hidden_dropout = 0.0
         provider.attention_softmax_in_fp32 = False

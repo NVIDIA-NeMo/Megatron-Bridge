@@ -85,7 +85,6 @@ class Gemma3ModelProvider(GPTModelProvider):
     # Do not change
     is_vision_language: bool = False
     flash_decode: bool = False
-    gradient_accumulation_fusion: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(
         default_factory=lambda: gemma3_layer_spec
     )
