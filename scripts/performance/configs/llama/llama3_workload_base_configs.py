@@ -212,7 +212,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = replace(
     BASE_LLAMA3_70B_CONFIG_GBS256,
     micro_batch_size=2,
     use_megatron_fsdp=True,
-    cpu_offloading_num_layers=40,
+    cpu_offloading_num_layers=20,
 )
 
 
@@ -242,7 +242,7 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB200_FP8_CS_V2 = replace(
     BASE_LLAMA3_70B_CONFIG_GBS256,
     micro_batch_size=2,
     use_megatron_fsdp=True,
-    cpu_offloading_num_layers=60,
+    cpu_offloading_num_layers=40,
 )
 
 
@@ -529,7 +529,7 @@ _LLAMA3_70B_SFT_CONFIG_GB200 = replace(
 LLAMA3_70B_SFT_CONFIG_GB200_BF16_V1 = _LLAMA3_70B_SFT_CONFIG_GB200
 LLAMA3_70B_SFT_CONFIG_GB200_FP8_CS_V1 = replace(
     _LLAMA3_70B_SFT_CONFIG_GB200,
-    pipeline_model_parallel_size=4,
+    pipeline_model_parallel_size=8,
 )
 LLAMA3_70B_SFT_CONFIG_GB200_FP8_MX_V1 = _LLAMA3_70B_SFT_CONFIG_GB200
 
@@ -570,7 +570,10 @@ _LLAMA3_70B_LORA_CONFIG_GB300 = replace(
 )
 
 LLAMA3_70B_LORA_CONFIG_GB300_BF16_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
-LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1 = _LLAMA3_70B_LORA_CONFIG_GB300
+LLAMA3_70B_LORA_CONFIG_GB300_FP8_CS_V1 = replace(
+    _LLAMA3_70B_LORA_CONFIG_GB300,
+    pipeline_model_parallel_size=2,
+)
 LLAMA3_70B_LORA_CONFIG_GB300_FP8_MX_V1 = replace(
     _LLAMA3_70B_LORA_CONFIG_GB300,
     pipeline_model_parallel_size=2,
