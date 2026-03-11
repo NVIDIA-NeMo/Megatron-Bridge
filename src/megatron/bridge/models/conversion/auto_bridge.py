@@ -17,10 +17,12 @@ from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
+import torch
 import torch.distributed as dist
 import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from modelopt.torch.quantization.utils import is_quantized
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -454,7 +456,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 This is useful for reducing I/O pressure when dealing with large-scale distributed
                 training. Only effective when distributed_save=True. Default is 1 (all ranks save).
 
-
         Example:
             >>> # Save model after training
             >>> bridge.save_hf_pretrained(megatron_model, "./my_finetuned_model")
@@ -474,13 +475,23 @@ class AutoBridge(Generic[MegatronModelT]):
                 "AutoBridge.from_hf_config() creates a config-only bridge; "
                 "use AutoBridge.from_hf_pretrained(...) instead."
             )
+
+        # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
+        additional_files = None
+        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
+            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+
         if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
             if dist.get_rank() == 0:
-                self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
+                self.hf_pretrained.save_artifacts(
+                    path, original_source_path=source_path, additional_files=additional_files
+                )
         else:
             # No distributed training, save artifacts
-            self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
+            self.hf_pretrained.save_artifacts(
+                path, original_source_path=source_path, additional_files=additional_files
+            )
 
         self.save_hf_weights(
             model,
@@ -554,6 +565,19 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
         )
+        model_instance = self._get_model_instance(model)
+        quant_tensors = None
+        if is_quantized(model_instance):
+            quant_tensors = {}
+
+            def _filter_quant(gen):
+                for name, tensor in gen:
+                    if "_quantizer." in name:
+                        quant_tensors[name] = tensor
+                        continue
+                    yield name, tensor
+
+            generator = _filter_quant(generator)
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
@@ -570,6 +594,15 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+
+        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
+        if quant_tensors:
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+            if rank == 0 and quant_tensors:
+                sidecar_path = Path(path) / "modelopt_weights.pt"
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(quant_tensors, sidecar_path)
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -830,7 +863,11 @@ class AutoBridge(Generic[MegatronModelT]):
 
             # Save in HuggingFace format
             self.save_hf_pretrained(
-                megatron_model, hf_path, show_progress=show_progress, source_path=source_path, strict=strict
+                megatron_model,
+                hf_path,
+                show_progress=show_progress,
+                source_path=source_path,
+                strict=strict,
             )
 
     def push_to_hub(self, path: str | Path) -> None: ...

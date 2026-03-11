@@ -74,7 +74,7 @@ class GPTOSSProvider(GPTModelProvider):
     moe_ffn_hidden_size: int = 2880
     moe_router_load_balancing_type: str = "none"
     seq_length: int = 131072
-    window_size: Optional[Tuple[int, int]] = (128, 0)
+    window_size: Optional[Tuple[int, int]] = (127, 0)
     softmax_type: Literal["vanilla", "off-by-one", "learnable"] = "learnable"
     activation_func: Callable = quick_gelu
     glu_linear_offset: float = 1.0
