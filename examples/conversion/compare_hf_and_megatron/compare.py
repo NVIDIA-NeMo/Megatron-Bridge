@@ -514,7 +514,7 @@ def _load_hf_model_fp8(model_path, config, model_class, trust):
 
     from safetensors.torch import load_file
 
-    from megatron.bridge.models.deepseek.common import maybe_dequantize_fp8_weight
+    from megatron.bridge.models.kimi_vl.utils import maybe_dequantize_fp8_weight
 
     print_rank_0("Detected FP8 quantization; loading with manual dequantization...")
 

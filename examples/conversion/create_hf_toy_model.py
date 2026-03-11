@@ -244,9 +244,7 @@ def _quantize_checkpoint_fp8(output_dir: Path, block_size: int = 128) -> None:
         print("  injected quantization_config into config.json")
 
 
-def _quantize_tensor_fp8(
-    tensor: torch.Tensor, block_size: int
-) -> tuple[torch.Tensor, torch.Tensor]:
+def _quantize_tensor_fp8(tensor: torch.Tensor, block_size: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Quantize a single 2-D tensor to FP8 e4m3 with per-block scales.
 
     Returns ``(fp8_weight, scale_inv)``."""

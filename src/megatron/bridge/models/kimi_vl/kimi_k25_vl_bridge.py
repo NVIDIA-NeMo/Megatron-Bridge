@@ -23,11 +23,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.deepseek.common import (
-    get_common_configs,
-    get_common_mapping_list,
-    maybe_dequantize_fp8_weight,
-)
+from megatron.bridge.models.deepseek.common import get_common_mapping_list
+from megatron.bridge.models.kimi_vl.utils import maybe_dequantize_fp8_weight, get_common_configs
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
@@ -49,6 +46,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
+        # TODO remove get_common_configs later, need to ensure all params are set correctly.
         # Temporarily swap to text_config for get_common_configs (which reads
         # hf_pretrained.config), then restore the original VL config so that
         # save_artifacts later writes the full config (including auto_map).
@@ -95,10 +93,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         if isinstance(hf_param, str):
             hf_weights = hf_state_dict[hf_param]
             return maybe_dequantize_fp8_weight(hf_param, hf_weights, hf_state_dict)
-        return {
-            k: maybe_dequantize_fp8_weight(v, hf_state_dict[v], hf_state_dict)
-            for k, v in hf_param.items()
-        }
+        return {k: maybe_dequantize_fp8_weight(v, hf_state_dict[v], hf_state_dict) for k, v in hf_param.items()}
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.

@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for FP8 block-wise dequantization used by DeepSeek-V3 and Kimi-K2.5."""
+"""Unit tests for FP8 block-wise dequantization used by Kimi-K2.5."""
 
 import math
 
 import pytest
 import torch
 
-from megatron.bridge.models.deepseek.common import (
+from megatron.bridge.models.kimi_vl.utils import (
     dequantize_fp8_blockwise,
     maybe_dequantize_fp8_weight,
 )
