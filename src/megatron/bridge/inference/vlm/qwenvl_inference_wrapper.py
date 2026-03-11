@@ -18,7 +18,6 @@ import torch
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
-from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import InferenceWrapperConfig
 from megatron.core.inference_params import InferenceParams
 
 
@@ -30,11 +29,10 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
 
     Args:
         model (Qwen2VLModel): The Qwen2VL model
-        inference_wrapper_config (InferenceWrapperConfig): the config of inference wrapper
     """
 
-    def __init__(self, model, inference_wrapper_config: InferenceWrapperConfig):
-        super().__init__(model, inference_wrapper_config)
+    def __init__(self, model, inference_context=None):
+        super().__init__(model, inference_context=inference_context)
 
     def prep_inference_input(
         self,

@@ -12,222 +12,115 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-from typing import List, Optional, Union
-
 import torch
 
 from megatron.bridge.models.gpt_provider import GPTProvider175B
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h12288_tp4_mbs1_seqlen2048
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedDataParallelConfig,
-    GPTDatasetConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-)
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-def model_config(
-    tensor_model_parallel_size: int = 4,
-    pipeline_model_parallel_size: int = 8,
-    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: Optional[int] = 6,
-    context_parallel_size: int = 1,
-    sequence_parallel: bool = True,
-) -> GPTProvider175B:
-    """
-    Configure the GPT3 175B model.
-
-    Args:
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallel_size (int): Degree of context parallelism.
-        sequence_parallel (bool): Whether to use sequence parallelism.
-
-    Returns:
-        GPTProvider175B: Configuration for the GPT3 175B model.
-    """
-    return GPTProvider175B(
-        tensor_model_parallel_size=tensor_model_parallel_size,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_dtype=pipeline_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
-        context_parallel_size=context_parallel_size,
-        sequence_parallel=sequence_parallel,
-    )
-
-
-def pretrain_config(
-    dir: Optional[str] = None,
-    name: str = "default",
-    # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
-    mock: bool = False,
-    # Model configuration
-    tensor_model_parallel_size: int = 4,
-    pipeline_model_parallel_size: int = 8,
-    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_model_parallel_size: Optional[int] = 6,
-    context_parallel_size: int = 1,
-    sequence_parallel: bool = True,
-    use_megatron_fsdp: bool = False,
-    # Training hyperparameters
-    train_iters: int = 1_168_251,
-    global_batch_size: int = 2048,
-    micro_batch_size: int = 2,
-    seq_length: int = 2048,
-    lr: float = 0.9e-4,
-    lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
-    # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-) -> ConfigContainer:
-    """
-    Create a pre-training configuration for GPT3 175B model.
+def gpt3_175b_pretrain_config() -> ConfigContainer:
+    """Return a pre-training config for GPT3-175B.
 
     The default configuration is expected to run on 64 nodes with 8 GPUs each.
-
-    Args:
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallel (bool): Whether to use sequence parallelism.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations for learning rate decay.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration for the model.
-
-    Returns:
-        ConfigContainer: Configuration for pre-training.
+    Default parallelism: TP=4, PP=8, VP=6, SP=True.
     """
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    cfg = _pretrain_common()
 
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
+    # Model config - uses GPTProvider175B
+    cfg.model = GPTProvider175B(
+        tensor_model_parallel_size=4,
+        pipeline_model_parallel_size=8,
+        pipeline_dtype=torch.bfloat16,
+        virtual_pipeline_model_parallel_size=6,
+        context_parallel_size=1,
+        sequence_parallel=True,
     )
 
-    model_cfg = model_config(
-        tensor_model_parallel_size=tensor_model_parallel_size,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_dtype=pipeline_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
-        context_parallel_size=context_parallel_size,
-        sequence_parallel=sequence_parallel,
+    # Parallel settings
+    cfg.model.pipeline_model_parallel_layout = None
+
+    # Tokenizer - uses NullTokenizer
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+
+    # Dataset config
+    cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
+    cfg.dataset.seq_length = 2048
+    cfg.dataset.num_workers = 8
+
+    # Training config
+    cfg.train.train_iters = 1_168_251
+    cfg.train.global_batch_size = 2048
+    cfg.train.micro_batch_size = 2
+    cfg.validation.eval_interval = 2000
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Optimizer
+    cfg.scheduler.lr_warmup_iters = 2000
+    cfg.optimizer.lr = 0.9e-4
+    cfg.optimizer.min_lr = 0.9e-5
+
+    # TE (Transformer Engine)
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"  # GPT uses native
+
+    # Memory saving (recompute & offloading)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Mixed precision - bf16_mixed with grad_reduce_in_fp32=False
+    cfg.mixed_precision = get_mixed_precision_config("bf16_mixed")
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    # FP8 settings (commented - enable if using FP8)
+    # cfg.mixed_precision.fp8_recipe = "tensorwise"
+    # cfg.mixed_precision.fp8 = None
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Communication overlap - enabled with userbuffers config
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        tp_comm_overlap_cfg=userbuffers_bf16_h100_h12288_tp4_mbs1_seqlen2048,
+        defer_embedding_wgrad_compute=True,
+        wgrad_deferral_limit=50,
+        overlap_param_gather_with_optimizer_step=False,  # Currently disabled due to issue with async checkpointing
     )
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters,
-        max_lr=lr,
-    )
-    opt_config.use_precision_aware_optimizer = False
+    # Checkpoint config
+    cfg.checkpoint.save_interval = 2000
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
 
-    if isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
-
-    precision_config.grad_reduce_in_fp32 = False
-
-    if comm_overlap_config is None:
-        comm_overlap_config = CommOverlapConfig(
-            tp_comm_overlap=True,
-            tp_comm_overlap_cfg=userbuffers_bf16_h100_h12288_tp4_mbs1_seqlen2048,
-            defer_embedding_wgrad_compute=True,
-            wgrad_deferral_limit=50,
-            overlap_param_gather_with_optimizer_step=False,  # Currently disabled to an issue with async checkpointing
-        )
-
-    # Config Container
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=2000,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,
-            use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
-        ),
-        dataset=GPTDatasetConfig(
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            seq_length=seq_length,
-            num_dataset_builder_threads=1,
-            blend=blend,
-            blend_per_split=blend_per_split,
-            split=split,
-            # Dataloader config parameters
-            data_sharding=True,
-            dataloader_type="single",
-            num_workers=8,
-            skip_getting_attention_mask_from_dataset=True,
-        ),
-        logger=LoggerConfig(
-            log_interval=10,
-            tensorboard_dir=tensorboard_dir,
-            log_timers_to_tensorboard=True,
-        ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
-        checkpoint=CheckpointConfig(
-            save_interval=2000,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
-    )
+    # DDP config
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     return cfg

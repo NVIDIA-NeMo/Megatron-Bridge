@@ -17,7 +17,6 @@ from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
-from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
@@ -138,7 +137,7 @@ def _pretrain(
     pg_collection = setup_output.pg_collection
 
     # TRAINING
-    if not config.train.skip_train:
+    if not config.validation.skip_train:
         if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
@@ -154,17 +153,6 @@ def _pretrain(
             )
 
         barrier_and_log("after training is done")
-        ckpt_config = config.checkpoint
-        if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
-            save_checkpoint(
-                state,
-                model,
-                optimizer,
-                scheduler,
-                state.train_state.floating_point_operations_so_far,
-                ckpt_context,
-                train_data_iterator=train_data_iterator,
-            )
 
     else:
         print_rank_0("skipping training ...")
@@ -182,7 +170,7 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
             callback_manager=callback_manager,
         )
     if state.train_state.do_test:
@@ -195,7 +183,7 @@ def _pretrain(
             model,
             config.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not config.validation.skip_train,
             callback_manager=callback_manager,
             is_test=True,
         )

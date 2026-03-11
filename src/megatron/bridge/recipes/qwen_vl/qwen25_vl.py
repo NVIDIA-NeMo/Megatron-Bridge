@@ -12,359 +12,916 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-from typing import List, Optional, Union
+"""Qwen2.5-VL finetuning recipes with parameterless API.
+
+This module provides SFT and PEFT configurations for Qwen2.5-VL models (3B, 7B, 32B, 72B).
+"""
 
 import torch
-from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets import (
-    HFDatasetConversationProvider,
-    MockVLMConversationProvider,
-    PreloadedVLMConversationProvider,
-)
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DatasetProvider,
-    DistributedDataParallelConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-)
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
-class Qwen25VLCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Qwen2.5-VL recipe helper functions."""
+# =============================================================================
+# Qwen2.5-VL 3B SFT Configuration
+# =============================================================================
+def qwen25_vl_3b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen2.5-VL 3B Instruct.
 
-    # Core identifiers
-    hf_path: str
-    dir: Optional[str]
-    name: str
-    # Dataset configuration
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    dataset_type: Optional[str]
-    image_folder: Optional[str]
-    tokenizer_model: Optional[str]
+    Default configuration: 1 node, 8 GPUs
+    - TP=1, PP=1
+    - LR=5e-6 (full SFT)
+    - Sequence length: 4096
+    """
+    cfg = _sft_common_vlm()
+
     # Model configuration
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
-    context_parallel_size: int
-    sequence_parallel: bool
-    use_megatron_fsdp: bool
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: int
-    micro_batch_size: int
-    seq_length: int
-    lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
-    eval_interval: int
-    save_interval: int
-    # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
-    # Freeze options
-    freeze_language_model: bool
-    freeze_vision_model: bool
-    freeze_vision_projection: bool
-    # Checkpoint options
-    pretrained_checkpoint: Optional[str]
-    # PEFT options
-    peft: Optional[Union[str, PEFT]]
-    finetune_lr: float
-    # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
+    hf_path = "Qwen/Qwen2.5-VL-3B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - lower LR for full SFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=5e-6,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
 
 
-def qwen25_vl_3b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen2.5-VL 3B Instruct.
+# =============================================================================
+# Qwen2.5-VL 7B SFT Configuration
+# =============================================================================
+def qwen25_vl_7b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen2.5-VL 7B Instruct.
 
     Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
-    - Full SFT: TP=1, PP=1, LR=5e-6
-
-    See `_qwen25_vl_common` for the full list of parameters.
+    - TP=2, PP=1
+    - LR=5e-6 (full SFT)
+    - Sequence length: 4096
     """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+    cfg = _sft_common_vlm()
 
-    recommended_kwargs: Qwen25VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen2.5-VL-3B-Instruct",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen25_vl_common(**combined_kwargs)
+    # Model configuration
+    hf_path = "Qwen/Qwen2.5-VL-7B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - lower LR for full SFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=5e-6,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
 
 
-def qwen25_vl_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen2.5-VL 7B Instruct.
-
-    Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
-    - Full SFT: TP=2, PP=1, LR=5e-6
-
-    See `_qwen25_vl_common` for the full list of parameters.
-    """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
-
-    recommended_kwargs: Qwen25VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen2.5-VL-7B-Instruct",
-        "tensor_model_parallel_size": 2 if is_full_sft else 1,
-        "pipeline_model_parallel_size": 1,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen25_vl_common(**combined_kwargs)
-
-
-def qwen25_vl_32b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen2.5-VL 32B Instruct.
+# =============================================================================
+# Qwen2.5-VL 32B SFT Configuration
+# =============================================================================
+def qwen25_vl_32b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen2.5-VL 32B Instruct.
 
     Default configuration: 2 nodes, 16 GPUs total
-    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
-    - Full SFT: TP=8, PP=2, LR=5e-6
-
-    See `_qwen25_vl_common` for the full list of parameters.
+    - TP=8, PP=2
+    - LR=5e-6 (full SFT)
+    - Sequence length: 4096
     """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+    cfg = _sft_common_vlm()
 
-    recommended_kwargs: Qwen25VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen2.5-VL-32B-Instruct",
-        "tensor_model_parallel_size": 8 if is_full_sft else 1,
-        "pipeline_model_parallel_size": 2 if is_full_sft else 1,
-        "pipeline_dtype": torch.bfloat16 if is_full_sft else None,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen25_vl_common(**combined_kwargs)
+    # Model configuration
+    hf_path = "Qwen/Qwen2.5-VL-32B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - lower LR for full SFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=5e-6,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
 
 
-def qwen25_vl_72b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a fine-tuning config for Qwen2.5-VL 72B Instruct.
+# =============================================================================
+# Qwen2.5-VL 72B SFT Configuration
+# =============================================================================
+def qwen25_vl_72b_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen2.5-VL 72B Instruct.
 
     Default configuration: 4 nodes, 32 GPUs total
-    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
-    - Full SFT: TP=8, PP=4, LR=5e-6
-
-    See `_qwen25_vl_common` for the full list of parameters.
+    - TP=8, PP=4
+    - LR=5e-6 (full SFT)
+    - Sequence length: 4096
     """
-    # Check if user is doing full SFT or PEFT
-    peft_value = user_kwargs.get("peft", None)
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+    cfg = _sft_common_vlm()
 
-    recommended_kwargs: Qwen25VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen2.5-VL-72B-Instruct",
-        "tensor_model_parallel_size": 8 if is_full_sft else 1,
-        "pipeline_model_parallel_size": 4 if is_full_sft else 1,
-        "pipeline_dtype": torch.bfloat16 if is_full_sft else None,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _qwen25_vl_common(**combined_kwargs)
-
-
-def _qwen25_vl_common(
-    hf_path: str,
-    dir: Optional[str] = None,
-    name: str = "qwen25_vl_finetune",
-    pretrained_checkpoint: Optional[str] = None,
-    # Dataset configuration
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    dataset_type: Optional[str] = None,
-    image_folder: Optional[str] = None,
-    tokenizer_model: Optional[str] = None,
     # Model configuration
-    tensor_model_parallel_size: int = 2,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
-    context_parallel_size: int = 1,
-    sequence_parallel: bool = False,
-    use_megatron_fsdp: bool = False,
-    # Training hyperparameters
-    train_iters: int = 300000,
-    global_batch_size: int = 32,
-    micro_batch_size: int = 2,
-    seq_length: int = 4096,
-    lr: float = 3e-4,
-    min_lr: float = 3e-5,
-    lr_warmup_iters: int = 500,
-    lr_decay_iters: Optional[int] = None,
-    eval_interval: int = 500,
-    save_interval: int = 500,
-    # Precision and comm overlap
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
-    # Freeze options
-    freeze_language_model: bool = False,
-    freeze_vision_model: bool = False,
-    freeze_vision_projection: bool = False,
-    # PEFT options
-    peft: Optional[Union[str, PEFT]] = None,
-    finetune_lr: Optional[float] = None,
-    # W&B logging
-    wandb_project: Optional[str] = None,
-    wandb_entity: Optional[str] = None,
-    wandb_exp_name: Optional[str] = None,
-) -> ConfigContainer:
-    """
-    Create a fine-tuning configuration for Qwen2.5-VL models using a given HuggingFace path.
+    hf_path = "Qwen/Qwen2.5-VL-72B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
 
-    The dataset pipeline is conversation-based. To train multimodal tokens, ensure your
-    preprocessed data includes placeholders (e.g., <image>) as needed.
-    """
-    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, name)
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    # Parallel settings
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
 
-    # Build provider via AutoBridge and set parallel/seq params here
-    bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
-    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
-    model_cfg.pipeline_dtype = pipeline_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
-    model_cfg.context_parallel_size = context_parallel_size
-    model_cfg.sequence_parallel = sequence_parallel
-    model_cfg.freeze_language_model = freeze_language_model
-    model_cfg.freeze_vision_model = freeze_vision_model
-    model_cfg.freeze_vision_projection = freeze_vision_projection
-    model_cfg.seq_length = seq_length
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
 
-    # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
-    effective_lr = finetune_lr if finetune_lr is not None else lr
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=effective_lr,
-        min_lr=min_lr,
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - lower LR for full SFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=5e-6,
+        min_lr=3e-5,
     )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
 
-    # PEFT config
-    peft_config = default_peft_config(peft)
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # Determine dataset selection strategy.
-    _dataset_choice = dataset_type or "hf"
-    _processor_model = tokenizer_model or hf_path
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
 
-    if _dataset_choice == "mock":
-        dataset_cfg: DatasetProvider = MockVLMConversationProvider(
-            seq_length=seq_length,
-            hf_processor_path=_processor_model,
-            prompt="Describe this image.",
-            num_workers=1,
-            dataloader_type="single",
-            data_sharding=True,
-            pin_memory=True,
-            persistent_workers=False,
-            create_attention_mask=True,
-            pad_to_max_length=True,
-        )
-    elif _dataset_choice == "preloaded":
-        dataset_cfg = PreloadedVLMConversationProvider(
-            seq_length=seq_length,
-            hf_processor_path=_processor_model,
-            train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
-            valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,
-            test_data_path=test_data_path[0] if isinstance(test_data_path, list) else test_data_path,
-            image_folder=image_folder,
-            num_workers=2,
-            dataloader_type="single",
-            data_sharding=True,
-            pin_memory=True,
-            persistent_workers=False,
-        )
-    elif _dataset_choice == "hf":
-        dataset_cfg = HFDatasetConversationProvider(
-            seq_length=seq_length,
-            hf_processor_path=_processor_model,
-            maker_name="make_cord_v2_dataset",
-            num_workers=2,
-            dataloader_type="single",
-            data_sharding=True,
-            pin_memory=True,
-            persistent_workers=False,
-        )
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
+
+
+# =============================================================================
+# Qwen2.5-VL 3B PEFT Configuration
+# =============================================================================
+def qwen25_vl_3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Qwen2.5-VL 3B Instruct.
+
+    Default configuration: 1 node, 8 GPUs
+    - TP=1, PP=1
+    - LR=1e-4 (PEFT)
+    - Sequence length: 4096
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+    """
+    cfg = _peft_common_vlm()
+
+    # PEFT scheme
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        cfg.peft = default_peft_config(peft_scheme)
     else:
-        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Expected one of ['mock', 'preloaded', 'hf'].")
+        cfg.peft = peft_scheme
 
-    cfg = ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=train_iters,
-            eval_interval=eval_interval,
-            eval_iters=32,
-            global_batch_size=global_batch_size,
-            micro_batch_size=micro_batch_size,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=False,
-            overlap_param_gather=False,
-            average_in_collective=True,
-            data_parallel_sharding_strategy="optim_grads_params",
-            use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,
-        ),
-        dataset=dataset_cfg,
-        logger=LoggerConfig(
-            log_interval=10,
-            tensorboard_dir=tensorboard_dir,
-            log_timers_to_tensorboard=True,
-            wandb_project=wandb_project,
-            wandb_entity=wandb_entity,
-            wandb_exp_name=wandb_exp_name,
-        ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
-        checkpoint=CheckpointConfig(
-            pretrained_checkpoint=pretrained_checkpoint,
-            save_interval=save_interval,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        peft=peft_config,
-        comm_overlap=comm_overlap_config,
-        mixed_precision=precision_config,
+    # Model configuration
+    hf_path = "Qwen/Qwen2.5-VL-3B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - higher LR for PEFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=1e-4,
+        min_lr=3e-5,
     )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
+
+
+# =============================================================================
+# Qwen2.5-VL 7B PEFT Configuration
+# =============================================================================
+def qwen25_vl_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Qwen2.5-VL 7B Instruct.
+
+    Default configuration: 1 node, 8 GPUs
+    - TP=1, PP=1
+    - LR=1e-4 (PEFT)
+    - Sequence length: 4096
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+    """
+    cfg = _peft_common_vlm()
+
+    # PEFT scheme
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        cfg.peft = default_peft_config(peft_scheme)
+    else:
+        cfg.peft = peft_scheme
+
+    # Model configuration
+    hf_path = "Qwen/Qwen2.5-VL-7B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings - lower TP for PEFT
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - higher LR for PEFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=1e-4,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
+
+
+# =============================================================================
+# Qwen2.5-VL 32B PEFT Configuration
+# =============================================================================
+def qwen25_vl_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Qwen2.5-VL 32B Instruct.
+
+    Default configuration: 1 node, 8 GPUs
+    - TP=1, PP=1
+    - LR=1e-4 (PEFT)
+    - Sequence length: 4096
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+    """
+    cfg = _peft_common_vlm()
+
+    # PEFT scheme
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        cfg.peft = default_peft_config(peft_scheme)
+    else:
+        cfg.peft = peft_scheme
+
+    # Model configuration
+    hf_path = "Qwen/Qwen2.5-VL-32B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings - lower TP/PP for PEFT
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - higher LR for PEFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=1e-4,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+
+    return cfg
+
+
+# =============================================================================
+# Qwen2.5-VL 72B PEFT Configuration
+# =============================================================================
+def qwen25_vl_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Qwen2.5-VL 72B Instruct.
+
+    Default configuration: 1 node, 8 GPUs
+    - TP=1, PP=1
+    - LR=1e-4 (PEFT)
+    - Sequence length: 4096
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+    """
+    cfg = _peft_common_vlm()
+
+    # PEFT scheme
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        cfg.peft = default_peft_config(peft_scheme)
+    else:
+        cfg.peft = peft_scheme
+
+    # Model configuration
+    hf_path = "Qwen/Qwen2.5-VL-72B-Instruct"
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = 4096
+
+    # Parallel settings - lower TP/PP for PEFT
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # VLM-specific settings
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+
+    # TE / Transformer implementation
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # CUDA Graph settings
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+
+    # Kernel selections
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # Memory saving (disabled by default)
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Training config
+    cfg.train.train_iters = 300000
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_eval = 100
+
+    # Validation config
+    cfg.validation.eval_interval = 500
+    cfg.validation.eval_iters = 32
+
+    # Optimizer - higher LR for PEFT
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=500,
+        lr_decay_iters=300000,
+        max_lr=1e-4,
+        min_lr=3e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    # Optimizer precision settings (disabled by default for full precision)
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    # Dataset configuration
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = hf_path
+
+    # DDP settings
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+
+    # FP8 and MXFP8 settings (disabled by default)
+    cfg.mixed_precision = "bf16_mixed"
+    # cfg.mixed_precision.fp8_recipe = None
+    # cfg.mixed_precision.fp8 = False
+    # cfg.mixed_precision.fp8_param_gather = False
+    # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    # Checkpoint config
+    # cfg.checkpoint.save = "path/to/save"
+    # cfg.checkpoint.load = "path/to/load"
+    # Uncomment below to use a pretrained checkpoint
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     return cfg
