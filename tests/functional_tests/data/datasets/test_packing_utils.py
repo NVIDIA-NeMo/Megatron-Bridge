@@ -34,7 +34,7 @@ class TestDataPackingUtils:
             [17, 11, 0, -5],
             [100, 200],
         ]
-        bin_sums = list(map(sum, bins)) 
+        bin_sums = list(map(sum, bins))
         bin_size = 1
         s = 11
         first_bin_that_fits = find_first_bin_that_fits(bin_sums, s, bin_size)

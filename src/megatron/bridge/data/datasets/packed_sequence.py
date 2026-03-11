@@ -19,9 +19,8 @@ from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
-from tqdm import tqdm
-
 from megatron.core.msc_utils import MultiStorageClientFeature
+from tqdm import tqdm
 
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.data.datasets.sft import create_sft_dataset
@@ -31,12 +30,16 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 logger = logging.getLogger(__name__)
 
 _shared_dataset = None
+
+
 def _tokenize_get_item(i):
     return _shared_dataset[i]
+
 
 def _tokenize_init_worker(dataset):
     global _shared_dataset
     _shared_dataset = dataset
+
 
 def _retrieve_tokenized(dataset, num_workers):
     if num_workers == 1:
@@ -44,6 +47,7 @@ def _retrieve_tokenized(dataset, num_workers):
     num_workers = num_workers if num_workers > 0 else mp.cpu_count()
     with Pool(num_workers, initializer=_tokenize_init_worker, initargs=(dataset,)) as pool:
         return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
+
 
 def tokenize_dataset(
     path: Path,
@@ -139,6 +143,7 @@ def tokenize_dataset(
 
     return dataset
 
+
 def prepare_packed_sequence_data(
     input_path: Path,
     output_path: Path,
@@ -181,7 +186,7 @@ def prepare_packed_sequence_data(
         seed,
         dataset_kwargs,
         pad_seq_to_mult=pad_seq_to_mult,
-        num_tokenizer_workers=num_tokenizer_workers
+        num_tokenizer_workers=num_tokenizer_workers,
     )
     sequences, histogram = create_hist(dataset, max_seq_length)
 
