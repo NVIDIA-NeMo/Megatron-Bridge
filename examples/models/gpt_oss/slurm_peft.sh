@@ -51,9 +51,9 @@ export WKDIR="${WKDIR:-}"
 # After pretrain, use e.g. ${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp2_pp4_ep4_spTrue_cp1
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
-# RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_peft_config}"               # bf16 (default)
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_peft_config}"               # bf16 (default)
 # RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"           # Hopper FP8 current scaling
-RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"                        # Blackwell MXFP8
+# RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"                        # Blackwell MXFP8
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
