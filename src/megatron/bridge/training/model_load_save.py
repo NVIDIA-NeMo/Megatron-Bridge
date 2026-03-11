@@ -386,6 +386,8 @@ def load_megatron_model(
     model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
+    model_cfg.overlap_moe_expert_parallel_comm = False # Required with EP=1
+    model_cfg.delay_wgrad_compute = False # Required with overlap=False
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False
