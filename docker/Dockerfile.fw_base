@@ -183,21 +183,7 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr
 ##
 ##############################################################################
 
-RUN apt-get update -y \
-    && apt-mark hold \
-        libnccl2 libnccl-dev \
-        libibverbs1 libibverbs-dev ibverbs-providers ibverbs-utils \
-        librdmacm1 librdmacm-dev rdma-core \
-    && apt-get upgrade -y \
-    && apt-mark unhold \
-        libnccl2 libnccl-dev \
-        libibverbs1 libibverbs-dev ibverbs-providers ibverbs-utils \
-        librdmacm1 librdmacm-dev rdma-core
-
-# RUN rm -rf /opt/hpcx/ompi \
-#     && rm -rf /usr/local/mpi \
-#     && rm -rf /usr/local/ucx \
-#     && ldconfig
+RUN apt-get update -y
 
 #################################################
 ## Remove existing EFA and aws-ofi-nccl only (preserve ibverbs/mlx5)
