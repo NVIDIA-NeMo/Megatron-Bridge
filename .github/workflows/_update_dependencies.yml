@@ -28,7 +28,7 @@ jobs:
   pre-flight:
     runs-on: ubuntu-latest
     outputs:
-      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}
+      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}-${{ inputs.mcore-branch }}
       date: ${{ steps.ref.outputs.date }}
     steps:
       - name: Get date
@@ -70,10 +70,21 @@ jobs:
           submodules: recursive
 
       - name: Update submodules
+        id: mlm-commit
+        env:
+          TARGET_BRANCH: ${{ inputs.mcore-branch }}
         run: |
-          cd 3rdparty/Megatron-LM
-          git fetch origin ${{ inputs.mcore-branch }}
-          git checkout FETCH_HEAD
+          pushd 3rdparty/Megatron-LM
+            git fetch origin ${{ inputs.mcore-branch }}
+            git checkout FETCH_HEAD
+            MLM_COMMIT=$(git rev-parse HEAD)
+          popd
+
+          if [[ "$TARGET_BRANCH" == "main" ]]; then
+            echo $MLM_COMMIT > .main.commit
+          elif [[ "$TARGET_BRANCH" == "dev" ]]; then
+            echo $MLM_COMMIT > .dev.commit
+          fi
 
       - name: Upgrade lock file
         env:
@@ -183,9 +194,17 @@ jobs:
             sleep 30
           done
 
+      - name: Revert submodule bump for dev branch
+        if: ${{ inputs.mcore-branch == 'dev' }}
+        run: |
+          git checkout 3rdparty/Megatron-LM
+          git checkout .main.commit
+          git commit -m "Revert submodule bump for dev branch"
+          git push origin ${{ env.SOURCE_BRANCH }}
+
       - name: Merge PR
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}) (${{ needs.pre-flight.outputs.date }})"
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         run: |
           PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
           if [ -z "$PR_NUMBER" ]; then
