@@ -17,7 +17,6 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
-from megatron.core import parallel_state
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
     get_pos_emb_on_this_cp_rank,
@@ -52,6 +51,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         rotary_interleaved: bool = False,
         seq_len_interpolation_factor: Optional[float] = None,
         rotary_base: int = 10000,
+        cp_group: torch.distributed.ProcessGroup = None,
     ) -> None:
         super().__init__()
 
@@ -69,6 +69,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # default mrope section is [24, 20, 20], if no mrope section is provided, use default mrope section
         self.mrope_section = [24, 20, 20]
+        assert cp_group is not None, "cp_group is required"
+        self.cp_group = cp_group
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -127,10 +129,10 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
         # shape (seq_length, bs, 1, 2 * dim)
         emb = emb[..., None, :].transpose(0, 1).contiguous()
-        if parallel_state.get_context_parallel_world_size() > 1 and not self.is_thd_format:
+        if self.cp_group.size() > 1 and not self.is_thd_format:
             # slice rotary_pos_emb along sequence dimension and select the parition of the current
             # CP rank
-            emb = get_pos_emb_on_this_cp_rank(emb, 0, parallel_state.get_context_parallel_group())
+            emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
         return emb
 
 
@@ -173,6 +175,13 @@ def get_rope_index(
         total_input_ids = input_ids
         if attention_mask is None:
             attention_mask = torch.ones_like(total_input_ids)
+        # Handle multi-dimensional attention masks
+        elif attention_mask.dim() > 2:
+            # Collapse to [batch, seq] while preserving padding information
+            attention_mask = attention_mask.any(dim=-1)
+            if attention_mask.dim() == 3:
+                attention_mask = attention_mask.squeeze(1)
+            attention_mask = attention_mask.to(dtype=total_input_ids.dtype)
         position_ids = torch.ones(
             3,
             input_ids.shape[0],
@@ -250,6 +259,13 @@ def get_rope_index(
         return position_ids, mrope_position_deltas
     else:
         if attention_mask is not None:
+            # Handle multi-dimensional attention mask
+            if attention_mask.dim() > 2:
+                # Collapse to [batch, seq] while preserving padding information
+                attention_mask = attention_mask.any(dim=-1)
+                if attention_mask.dim() == 3:
+                    attention_mask = attention_mask.squeeze(1)
+                attention_mask = attention_mask.to(dtype=torch.long)
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
             position_ids = position_ids.unsqueeze(0).expand(3, -1, -1).to(attention_mask.device)

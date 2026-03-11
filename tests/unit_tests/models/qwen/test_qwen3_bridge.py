@@ -22,6 +22,7 @@ from transformers import Qwen2Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
@@ -100,7 +101,7 @@ class TestMegatronQwen3Bridge:
         assert result.hidden_size == qwen3_config.hidden_size
         assert result.num_attention_heads == qwen3_config.num_attention_heads
         assert result.seq_length == qwen3_config.max_position_embeddings
-        assert result.rotary_base == qwen3_config.rope_parameters["rope_theta"]
+        assert result.rotary_base == rope_theta_from_hf(qwen3_config)
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3, qwen3_config):
         """Test vocabulary size mapping."""
@@ -148,7 +149,7 @@ class TestMegatronQwen3Bridge:
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
         # Check position embedding
-        assert result.rotary_base == qwen3_config.rope_parameters["rope_theta"]
+        assert result.rotary_base == rope_theta_from_hf(qwen3_config)
 
     def test_provider_bridge_qwen3_specific_features(self, mock_pretrained_qwen3):
         """Test Qwen3-specific features."""

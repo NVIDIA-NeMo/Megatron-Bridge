@@ -93,11 +93,12 @@ class MambaModelConfig(ModelConfig):
     on the embedded ``transformer`` config are accessible directly on this object
     via ``__getattr__``/``__setattr__`` proxying.
 
-    Supports hybrid SSM/attention architectures via ``hybrid_attention_ratio``,
-    ``hybrid_mlp_ratio``, and ``hybrid_override_pattern``.
+    Supports hybrid SSM/attention architectures via ``hybrid_layer_pattern``
 
     Note:
         ``vocab_size`` must be set before passing this config to ``MambaModelBuilder``.
+        ``hybrid_attention_ratio``,``hybrid_mlp_ratio``, and
+        ``hybrid_override_pattern`` are deprecated and will be removed in a future release.
     """
 
     builder: ClassVar[str] = "megatron.bridge.models.mamba.MambaModelBuilder"
@@ -108,6 +109,7 @@ class MambaModelConfig(ModelConfig):
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
     hybrid_override_pattern: str | None = None
+    hybrid_layer_pattern: str | None = None
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
     position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
@@ -222,9 +224,7 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self._model_config.seq_length,
-            hybrid_attention_ratio=self._model_config.hybrid_attention_ratio,
-            hybrid_mlp_ratio=self._model_config.hybrid_mlp_ratio,
-            hybrid_override_pattern=self._model_config.hybrid_override_pattern,
+            hybrid_layer_pattern=self._model_config.hybrid_layer_pattern,
             fp16_lm_cross_entropy=self._model_config.fp16_lm_cross_entropy,
             parallel_output=self._model_config.parallel_output,
             share_embeddings_and_output_weights=self._model_config.share_embeddings_and_output_weights,
@@ -246,7 +246,7 @@ class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
         use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
-        data_parallel_random_init: bool = True,
+        data_parallel_random_init: bool = False,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
     ) -> list[MCoreMambaModel]:

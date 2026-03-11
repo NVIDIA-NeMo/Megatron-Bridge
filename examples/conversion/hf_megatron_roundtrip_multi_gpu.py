@@ -62,6 +62,8 @@ console = Console()
 # These are compared in float32 to avoid false mismatches.
 IGNORE_PRECISION_PARAMS = [
     "e_score_correction_bias",
+    "A_log",
+    "linear_attn.norm.weight",
 ]
 
 
