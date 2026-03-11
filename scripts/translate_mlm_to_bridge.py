@@ -18,11 +18,11 @@ Bidirectional config translator: Megatron-LM ←→ Megatron Bridge.
 
 Direction 1 — MLM → Bridge (default):
   Input:   YAML config or raw MLM CLI args
-  Output:  Bridge Hydra overrides, standalone recipe, or launch command
+  Output:  Bridge Hydra overrides or standalone recipe
 
 Direction 2 — Bridge → MLM (``--reverse``):
   Input:   Recipe name (``--recipe``) and/or CLI overrides (``--args``)
-  Output:  MLM pretrain_gpt.py CLI args or launch command
+  Output:  MLM pretrain_gpt.py CLI args
 
 Examples:
   # MLM → Bridge: from YAML
@@ -49,10 +49,6 @@ Examples:
   # Bridge → MLM: overrides only (no recipe)
   python scripts/translate_mlm_to_bridge.py --reverse \\
       --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
-
-  # Bridge → MLM: full command
-  python scripts/translate_mlm_to_bridge.py --reverse --emit command \\
-      --recipe llama32_1b_pretrain_config --nproc 8
 """
 
 from __future__ import annotations
@@ -599,29 +595,6 @@ def emit_overrides(result: TranslationResult) -> str:
         lines.append("\n# ── Skipped args (not needed in Bridge) ───────────────")
         for arg_name, arg_val in result.skipped:
             lines.append(f"#   --{arg_name}")
-
-    return "\n".join(lines)
-
-
-def emit_command(result: TranslationResult, base_recipe: str = "vanilla_gpt_pretrain_config") -> str:
-    """Emit the full run_recipe.py launch command."""
-    lines = []
-
-    if result.env_vars:
-        lines.append("# Environment variables")
-        for k, v in result.env_vars.items():
-            lines.append(f"export {k}={v}")
-        lines.append("")
-
-    lines.append("torchrun --nproc_per_node=8 scripts/training/run_recipe.py \\")
-    lines.append(f"  --recipe {base_recipe} \\")
-
-    for path, val in result.overrides.items():
-        lines.append(f"  {path}={_format_value_for_override(val, key=path)} \\")
-
-    # Remove trailing backslash from last line
-    if lines and lines[-1].endswith(" \\"):
-        lines[-1] = lines[-1][:-2]
 
     return "\n".join(lines)
 
@@ -1497,27 +1470,6 @@ def emit_mlm_args(result: ReverseTranslationResult) -> str:
     return "\n".join(lines)
 
 
-def emit_mlm_command(
-    result: ReverseTranslationResult,
-    script_path: str = "pretrain_gpt.py",
-    nproc: int = 8,
-) -> str:
-    """Emit full torchrun + pretrain_gpt.py launch command."""
-    lines = []
-    lines.append(f"torchrun --nproc_per_node={nproc} {script_path} \\")
-
-    for mlm_name, val in result.mlm_args.items():
-        frag = _to_flag_and_value(mlm_name, True if val is None else val)
-        if frag:
-            lines.append(f"  {frag} \\")
-
-    # Remove trailing backslash from last line
-    if lines and lines[-1].endswith(" \\"):
-        lines[-1] = lines[-1][:-2]
-
-    return "\n".join(lines)
-
-
 # ---------------------------------------------------------------------------
 #  CLI
 # ---------------------------------------------------------------------------
@@ -1538,7 +1490,6 @@ def main():
           python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config
           python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config \\
               --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
-          python scripts/translate_mlm_to_bridge.py --reverse --emit command --recipe llama32_1b_pretrain_config
           python scripts/translate_mlm_to_bridge.py --reverse --args "model.num_layers=32 model.hidden_size=4096"
         """),
     )
@@ -1558,30 +1509,13 @@ def main():
     )
     parser.add_argument(
         "--emit",
-        choices=["overrides", "recipe", "command"],
+        choices=["overrides", "recipe"],
         default="overrides",
         help="Output format (default: overrides). "
-        "For --reverse: 'overrides' emits MLM args, 'command' emits full torchrun command",
+        "MLM→Bridge: 'overrides' emits Hydra overrides, 'recipe' emits a standalone recipe file. "
+        "Bridge→MLM (--reverse): always emits MLM args (--emit is ignored).",
     )
     parser.add_argument("--recipe-name", type=str, default="custom_model", help="Recipe name for --emit recipe")
-    parser.add_argument(
-        "--base-recipe",
-        type=str,
-        default="vanilla_gpt_pretrain_config",
-        help="Base recipe name for --emit command (MLM→Bridge direction)",
-    )
-    parser.add_argument(
-        "--script-path",
-        type=str,
-        default="pretrain_gpt.py",
-        help="Path to pretrain_gpt.py for --reverse --emit command",
-    )
-    parser.add_argument(
-        "--nproc",
-        type=int,
-        default=8,
-        help="nproc_per_node for --emit command",
-    )
     parser.add_argument("--output", "-o", type=str, help="Write output to file instead of stdout")
 
     cli_args = parser.parse_args()
@@ -1628,11 +1562,7 @@ def main():
             bridge_overrides.update(parse_bridge_overrides(cli_args.args))
 
         result = translate_bridge_to_mlm(bridge_overrides)
-
-        if cli_args.emit == "command":
-            output = emit_mlm_command(result, script_path=cli_args.script_path, nproc=cli_args.nproc)
-        else:
-            output = emit_mlm_args(result)
+        output = emit_mlm_args(result)
 
         _write_output(output, cli_args.output)
 
@@ -1659,11 +1589,7 @@ def main():
 
         result = translate(parsed_args, env_vars)
 
-        if cli_args.emit == "overrides":
-            output = emit_overrides(result)
-        elif cli_args.emit == "command":
-            output = emit_command(result, base_recipe=cli_args.base_recipe)
-        elif cli_args.emit == "recipe":
+        if cli_args.emit == "recipe":
             output = emit_recipe(result, recipe_name=cli_args.recipe_name)
         else:
             output = emit_overrides(result)

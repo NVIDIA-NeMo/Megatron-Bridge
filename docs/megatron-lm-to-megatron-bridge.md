@@ -19,10 +19,6 @@ python scripts/translate_mlm_to_bridge.py \
 # Emit a standalone Bridge recipe Python file
 python scripts/translate_mlm_to_bridge.py \
     --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
-
-# Emit a full torchrun launch command
-python scripts/translate_mlm_to_bridge.py \
-    --yaml DeepSeek-V3.yaml --emit command --nproc 8
 ```
 
 ### Bridge → MLM (reverse direction)
@@ -40,10 +36,6 @@ python scripts/translate_mlm_to_bridge.py --reverse \
 # From Bridge overrides only (no recipe)
 python scripts/translate_mlm_to_bridge.py --reverse \
     --args "model.num_layers=32 model.activation_func=silu model.gated_linear_unit=true"
-
-# Emit a full torchrun + pretrain_gpt.py command
-python scripts/translate_mlm_to_bridge.py --reverse --emit command --nproc 8 \
-    --recipe llama32_1b_pretrain_config
 ```
 
 ### Key mappings

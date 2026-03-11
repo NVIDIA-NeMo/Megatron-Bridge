@@ -36,12 +36,10 @@ parse_raw_args = _mod.parse_raw_args
 translate = _mod.translate
 TranslationResult = _mod.TranslationResult
 emit_overrides = _mod.emit_overrides
-emit_command = _mod.emit_command
 parse_bridge_overrides = _mod.parse_bridge_overrides
 translate_bridge_to_mlm = _mod.translate_bridge_to_mlm
 ReverseTranslationResult = _mod.ReverseTranslationResult
 emit_mlm_args = _mod.emit_mlm_args
-emit_mlm_command = _mod.emit_mlm_command
 _flatten_dict = _mod._flatten_dict
 _format_value_for_override = _mod._format_value_for_override
 
@@ -608,61 +606,6 @@ class TestEmitOverrides:
 
 
 # ===========================================================================
-#  Group 7 — emit_command
-# ===========================================================================
-
-
-class TestEmitCommand:
-    """Tests for emit_command(result, base_recipe) -> str."""
-
-    def test_contains_torchrun(self):
-        """Output includes torchrun launch prefix."""
-        r = _make_result()
-        out = emit_command(r)
-        assert "torchrun" in out
-        assert "nproc_per_node" in out
-
-    def test_contains_run_recipe(self):
-        """Output references run_recipe.py."""
-        r = _make_result()
-        out = emit_command(r)
-        assert "run_recipe.py" in out
-
-    def test_contains_recipe_name(self):
-        """Custom base_recipe appears in output."""
-        r = _make_result()
-        out = emit_command(r, base_recipe="my_recipe")
-        assert "my_recipe" in out
-
-    def test_overrides_appear(self):
-        """Overrides appear in the command."""
-        r = _make_result(**{"model.num_layers": 32})
-        out = emit_command(r)
-        assert "model.num_layers=32" in out
-
-    def test_no_trailing_backslash(self):
-        """Last line does not end with trailing backslash."""
-        r = _make_result(**{"model.num_layers": 32})
-        out = emit_command(r)
-        last_line = out.rstrip("\n").split("\n")[-1]
-        assert not last_line.endswith(" \\")
-
-    def test_env_vars_emitted(self):
-        """env_vars appear as export statements before torchrun."""
-        r = TranslationResult()
-        r.env_vars = {"MY_VAR": "value123"}
-        r.add_override("model.num_layers", 4)
-        out = emit_command(r)
-        assert "export MY_VAR=value123" in out
-
-    def test_no_env_vars_when_empty(self):
-        """No 'export' line when env_vars is empty."""
-        r = _make_result(**{"model.num_layers": 4})
-        out = emit_command(r)
-        assert "export" not in out
-
-
-# ===========================================================================
 #  Group 8 — parse_bridge_overrides
 # ===========================================================================
 
@@ -894,64 +837,6 @@ class TestEmitMlmArgs:
         r.skipped.append(("rng", None))
         out = emit_mlm_args(r)
         assert "Skipped" in out
-
-
-# ===========================================================================
-#  Group 11 — emit_mlm_command
-# ===========================================================================
-
-
-class TestEmitMlmCommand:
-    """Tests for emit_mlm_command(result, script_path, nproc) -> str."""
-
-    def test_contains_torchrun(self):
-        """Output starts with torchrun prefix."""
-        r = _make_reverse_result()
-        out = emit_mlm_command(r)
-        assert "torchrun" in out
-
-    def test_default_nproc(self):
-        """Default nproc=8 used."""
-        r = _make_reverse_result()
-        out = emit_mlm_command(r)
-        assert "nproc_per_node=8" in out
-
-    def test_custom_nproc(self):
-        """Custom nproc reflected in output."""
-        r = _make_reverse_result()
-        out = emit_mlm_command(r, nproc=4)
-        assert "nproc_per_node=4" in out
-
-    def test_contains_script_path(self):
-        """Default script_path appears in output."""
-        r = _make_reverse_result()
-        out = emit_mlm_command(r)
-        assert "pretrain_gpt.py" in out
-
-    def test_custom_script_path(self):
-        """Custom script_path reflected in output."""
-        r = _make_reverse_result()
-        out = emit_mlm_command(r, script_path="/workspace/pretrain_gpt.py")
-        assert "/workspace/pretrain_gpt.py" in out
-
-    def test_flag_arg_in_command(self):
-        """Flag arg (None value) emits '--flag' in command."""
-        r = _make_reverse_result(bf16=None)
-        out = emit_mlm_command(r)
-        assert "--bf16" in out
-
-    def test_value_arg_in_command(self):
-        """Value arg emits '--name value' in command."""
-        r = _make_reverse_result(**{"num-layers": 32})
-        out = emit_mlm_command(r)
-        assert "--num-layers 32" in out
-
-    def test_no_trailing_backslash_on_last_line(self):
-        """Last line does not end with trailing backslash."""
-        r = _make_reverse_result(**{"num-layers": 32})
-        out = emit_mlm_command(r)
-        last_line = out.rstrip("\n").split("\n")[-1]
-        assert not last_line.endswith(" \\")
 
 
 # ===========================================================================
