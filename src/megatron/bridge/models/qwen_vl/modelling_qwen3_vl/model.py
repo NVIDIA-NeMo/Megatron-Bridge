@@ -439,6 +439,14 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
+            # On non-pre_process PP stages (e.g. the last stage where MTP runs),
+            # convert lm_input_ids to THD format so it matches position_ids.
+            if packed_seq_params is not None:
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.int32, device=input_ids.device)
+                lm_input_ids, _ = preprocess_packed_seqs(
+                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                )
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
