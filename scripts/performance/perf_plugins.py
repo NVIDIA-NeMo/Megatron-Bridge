@@ -313,10 +313,6 @@ class PerfEnvPlugin(Plugin):
             if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
-        if gpu == "gb300" and model_recipe_name == "llama3_70b" and train_task == "lora":
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
-
     def _set_layernorm_sm_margin(
         self,
         task: Union["run.Partial", "run.Script"],
