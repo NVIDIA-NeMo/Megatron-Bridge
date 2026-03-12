@@ -74,7 +74,6 @@ class OlMoEBridge(MegatronModelBridge):
         # OlMoE-specific architecture settings
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.hidden_dropout = 0.0
         provider.share_embeddings_and_output_weights = False
