@@ -51,7 +51,6 @@ from megatron.bridge.training.tensor_inspect import (
 )
 
 
-
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
 
@@ -79,6 +78,7 @@ class SetupOutput(NamedTuple):
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpointing_context: dict[str, Any]
     pg_collection: ProcessGroupCollection
+
 
 def setup(
     state: GlobalState,
@@ -253,7 +253,7 @@ def setup(
 
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
     if cfg.peft is not None:
-        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
+        should_load_checkpoint = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
         if should_load_checkpoint:
             # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
             # This is switched off here in order to load these states from the checkpoint
@@ -284,6 +284,7 @@ def setup(
         model,
         state.tensorboard_logger,
         state.wandb_logger,
+        comet_logger=state.comet_logger,
         current_training_step=state.train_state.step,
     )
 
@@ -301,9 +302,7 @@ def setup(
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
     if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(
-            train_valid_test_datasets_provider, pg_collection=pg_collection
-        )
+        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
@@ -364,13 +363,13 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = partial(
-            finalize_model_grads, pg_collection=pg_collection
-        )
+        model_config.finalize_model_grads_func = partial(finalize_model_grads, pg_collection=pg_collection)
         model_config.grad_scale_func = optimizer.scale_loss
 
 
-def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
+def _create_peft_pre_wrap_hook(
+    cfg: ConfigContainer, state: GlobalState
+) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
     """Create a pre-wrap hook that handles PEFT logic.
 
     This hook is executed before the model is wrapped with DDP/FSDP and handles:
@@ -384,6 +383,7 @@ def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Call
     Returns:
         A callable hook that can be registered with the model provider
     """
+
     def peft_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
         """Pre-wrap hook that handles PEFT transformation.
 
