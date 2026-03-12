@@ -94,7 +94,7 @@ NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_FP8_CS_V1 = replace(
 BASE_NEMOTRON_3_SUPER_CONFIG = WorkloadBaseConfig(
     num_gpus=64,
     global_batch_size=512,
-    tensor_model_parallel_size=4,
+    tensor_model_parallel_size=1,
     expert_tensor_parallel_size=1,
     expert_model_parallel_size=64,
 )
