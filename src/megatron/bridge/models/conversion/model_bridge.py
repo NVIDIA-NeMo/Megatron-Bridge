@@ -470,9 +470,16 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
         provider = provider_class(**provider_kwargs)
 
+        # All models that flow through the base provider_bridge use RoPE.
+        # YARN is already handled above (hf_config_to_provider_kwargs sets
+        # position_embedding_type="yarn"), so we only need to guard against
+        # overwriting it here.  Every other rope_type value (None, "default",
+        # "llama3", "longrope", …) means plain RoPE.
         hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
-        rope_type = hf_rope_scaling.get("rope_type", None) if hf_rope_scaling else None
-        if rope_type is None:
+        rope_type = None
+        if hf_rope_scaling:
+            rope_type = hf_rope_scaling.get("type") or hf_rope_scaling.get("rope_type")
+        if rope_type != "yarn":
             provider.position_embedding_type = "rope"
 
         # Apply MLA rope params via setattr (for MLA models like DeepSeek, Kimi)
