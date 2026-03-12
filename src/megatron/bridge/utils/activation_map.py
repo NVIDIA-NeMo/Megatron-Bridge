@@ -84,10 +84,11 @@ def str_to_callable(name: str) -> Callable:
     if len(parts) == 2:
         try:
             module = importlib.import_module(parts[0])
-            return getattr(module, parts[1])
+            resolved = getattr(module, parts[1])
+            if callable(resolved):
+                return resolved
         except (ImportError, AttributeError):
             pass
 
-    raise ValueError(
-        f"Unknown activation function: '{name}'. Known names: {sorted(n for n in ACTIVATION_FUNC_MAP if '.' not in n)}"
-    )
+    known_names = sorted(n for n in ACTIVATION_FUNC_MAP if "." not in n)
+    raise ValueError(f"Unknown activation function: '{name}'. Known names: {known_names}")
