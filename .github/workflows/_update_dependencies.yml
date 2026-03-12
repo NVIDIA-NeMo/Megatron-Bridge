@@ -28,7 +28,7 @@ jobs:
   pre-flight:
     runs-on: ubuntu-latest
     outputs:
-      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}
+      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}-${{ inputs.mcore-branch }}
       date: ${{ steps.ref.outputs.date }}
     steps:
       - name: Get date
@@ -204,7 +204,7 @@ jobs:
 
       - name: Merge PR
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}) (${{ needs.pre-flight.outputs.date }})"
+          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
         run: |
           PR_NUMBER="${{ steps.create-pull-request.outputs.pull-request-number }}"
           if [ -z "$PR_NUMBER" ]; then
