@@ -305,7 +305,11 @@ def main() -> None:
         args.hf_path,
     )
 
+    mode = args.mode or infer_train_mode(args.recipe)
+
     if args.dataset is not None:
+        if mode != "finetune":
+            raise ValueError("--dataset is only supported for finetune recipes.")
         config = apply_dataset_override(
             config,
             dataset_name=args.dataset,
@@ -318,7 +322,15 @@ def main() -> None:
         cli_overrides=cli_overrides or None,
     )
 
-    mode = args.mode or infer_train_mode(args.recipe)
+    # Ensure dataset.seq_length and model.seq_length stay in sync after CLI overrides
+    if (
+        hasattr(config, "model")
+        and config.model is not None
+        and hasattr(config, "dataset")
+        and config.dataset is not None
+    ):
+        if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
+            config.model.seq_length = config.dataset.seq_length
 
     forward_step = load_forward_step(args.step_func)
     train_func = TRAIN_MODES[mode]

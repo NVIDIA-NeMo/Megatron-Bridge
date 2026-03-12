@@ -14,9 +14,12 @@
 
 """Unit tests for GSM8K dataset processor."""
 
+import pytest
+
 from megatron.bridge.data.hf_processors.gsm8k import _extract_final_answer, process_gsm8k_example
 
 
+@pytest.mark.unit
 class TestExtractFinalAnswer:
     """Test cases for the _extract_final_answer helper."""
 
@@ -43,6 +46,7 @@ class TestExtractFinalAnswer:
         assert _extract_final_answer("Total cost is $12.50.\n#### 12.50") == "12.50"
 
 
+@pytest.mark.unit
 class TestProcessGsm8kExample:
     """Test cases for process_gsm8k_example function."""
 
@@ -98,7 +102,7 @@ class TestProcessGsm8kExample:
     def test_unicode_characters(self):
         example = {
             "question": "Café sells 5 crépes at €2 each. What is the total in €?",
-            "answer": "5 × 2 = 10.\n#### 10",
+            "answer": "5 \u00d7 2 = 10.\n#### 10",
         }
         result = process_gsm8k_example(example)
         assert "Café" in result["input"]
@@ -115,7 +119,7 @@ class TestProcessGsm8kExample:
         class MockTokenizer:
             vocab_size = 50000
 
-        result = process_gsm8k_example(example, tokenizer=MockTokenizer())
+        result = process_gsm8k_example(example, MockTokenizer())
         assert result["input"] == "Question: What is 2+2? Answer:"
         assert result["original_answers"] == ["4"]
 

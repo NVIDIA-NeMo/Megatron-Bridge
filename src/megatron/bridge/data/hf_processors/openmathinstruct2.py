@@ -27,7 +27,7 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 def process_openmathinstruct2_example(
-    example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+    example: dict[str, Any], _tokenizer: Optional[MegatronTokenizer] = None
 ) -> ProcessExampleOutput:
     """Process a single OpenMathInstruct-2 example into the required format.
 

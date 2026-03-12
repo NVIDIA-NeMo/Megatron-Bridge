@@ -14,9 +14,12 @@
 
 """Unit tests for OpenMathInstruct-2 dataset processor."""
 
+import pytest
+
 from megatron.bridge.data.hf_processors.openmathinstruct2 import process_openmathinstruct2_example
 
 
+@pytest.mark.unit
 class TestProcessOpenmathinstruct2Example:
     """Test cases for process_openmathinstruct2_example function."""
 
@@ -120,7 +123,7 @@ class TestProcessOpenmathinstruct2Example:
         class MockTokenizer:
             vocab_size = 50000
 
-        result = process_openmathinstruct2_example(example, tokenizer=MockTokenizer())
+        result = process_openmathinstruct2_example(example, MockTokenizer())
         assert result["input"] == "Problem: What is 1+1? Solution:"
         assert result["original_answers"] == ["2"]
 

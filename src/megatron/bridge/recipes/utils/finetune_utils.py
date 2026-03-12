@@ -147,16 +147,13 @@ def default_gsm8k_config(
         packed_sequence: Whether to enable packed sequences for training efficiency
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing
             (set to `2 * context_parallel_size` for THD CP runs).
-        apply_tokenizer_chat_template: If True, apply the tokenizer's chat template
-            when processing examples.
-        dataset_subset: Dataset subset to use - 'main' (default) or 'socratic'
 
     Returns:
         HFDatasetConfig configured for GSM8K finetuning
 
     Note:
         - GSM8K has 7,473 train and 1,319 test examples
-        - Since test split exists, we use it as validation (do_test=True, do_validation=False)
+        - Loads the full DatasetDict so the published test split is used for evaluation
         - Uses 'batch' dataloader type for variable-length finetuning
     """
     # Create packed sequence specs if needed
@@ -167,16 +164,14 @@ def default_gsm8k_config(
     return HFDatasetConfig(
         dataset_name="openai/gsm8k",  # Hugging Face dataset name
         dataset_subset="main",  # 'main' or 'socratic'
-        split="train",  # Use train split for training
         process_example_fn=process_gsm8k_example,  # Processing function
         seq_length=seq_length,
         seed=5678,
         memmap_workers=1,
         # Dataloader config parameters
         dataloader_type="batch",
-        do_validation=True,
-        do_test=False,
-        val_proportion=0.1,
+        do_validation=False,
+        do_test=True,
         num_workers=2,
         data_sharding=True,
         pin_memory=True,

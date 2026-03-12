@@ -35,7 +35,7 @@ def _extract_final_answer(answer: str) -> str:
 
 
 def process_gsm8k_example(
-    example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+    example: dict[str, Any], _tokenizer: Optional[MegatronTokenizer] = None
 ) -> ProcessExampleOutput:
     """Process a single GSM8K example into the required format.
 
