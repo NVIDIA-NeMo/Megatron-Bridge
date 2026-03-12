@@ -894,6 +894,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
 
     return cfg
 
+
 # =============================================================================
 # Qwen3-VL 8B PEFT with Energon Dataset
 # =============================================================================
