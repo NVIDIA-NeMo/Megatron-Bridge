@@ -51,7 +51,7 @@ class Gemma2Bridge(MegatronModelBridge):
         provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
         provider.attn_logit_softcapping = hf_config.attn_logit_softcapping
         provider.final_logit_softcapping = hf_config.final_logit_softcapping
-        provider.window_size = (hf_config.sliding_window, 0)
+        provider.window_size = (hf_config.sliding_window - 1, 0)
 
         provider.normalization = "RMSNorm"
         provider.activation_func = fast_gelu

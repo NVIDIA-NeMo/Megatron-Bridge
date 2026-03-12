@@ -14,6 +14,7 @@
 
 import logging
 import math
+from dataclasses import fields
 from typing import Dict, Mapping, Optional, Tuple, Union
 
 import torch
@@ -28,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt_oss.gpt_oss_provider import GPTOSSProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
@@ -91,7 +93,7 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.glu_linear_offset = 1.0
 
         provider.softmax_type = "learnable"
-        provider.window_size = (128, 0)
+        provider.window_size = (hf_pretrained.config.sliding_window - 1, 0)
         provider.window_attn_skip_freq = 2
 
         # GPT-OSS uses intermediate_size for MoE FFN hidden size
@@ -103,8 +105,18 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.yarn_beta_fast = 32.0
         provider.yarn_beta_slow = 1.0
         provider.yarn_correction_range_round_to_int = False
+        provider.yarn_mscale = None
+        provider.yarn_mscale_all_dim = None
 
-        return provider
+        # Re-wrap as GPTOSSProvider so yarn_* are dataclass fields and get serialized in run_config.yaml.
+        # When GPTOSSProvider is removed, these fields must be preserved elsewhere
+        # (e.g. on GPTModelProvider or in Megatron Core) so HF→Megatron import still writes them:
+        #   yarn_rotary_scaling_factor, yarn_original_max_position_embeddings, yarn_beta_fast,
+        #   yarn_beta_slow, yarn_correction_range_round_to_int, yarn_mscale, yarn_mscale_all_dim
+        data = {
+            f.name: getattr(provider, f.name, f.default) for f in fields(GPTOSSProvider) if not f.name.startswith("_")
+        }
+        return GPTOSSProvider(**data)
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
@@ -235,6 +247,23 @@ class GPTOSSBridge(MegatronModelBridge):
                 GPTOSSMLPGateUpProjMapping(
                     hf_param="model.layers.*.mlp.experts.gate_up_proj_bias",
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc1.bias*",
+                ),
+                # SequentialMLP (moe_grouped_gemm=False): expert weights stored per local_expert
+                GPTOSSMLPDownProjMapping(
+                    hf_param="model.layers.*.mlp.experts.down_proj",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                ),
+                GPTOSSMLPDownProjMapping(
+                    hf_param="model.layers.*.mlp.experts.down_proj_bias",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.bias",
+                ),
+                GPTOSSMLPGateUpProjMapping(
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                ),
+                GPTOSSMLPGateUpProjMapping(
+                    hf_param="model.layers.*.mlp.experts.gate_up_proj_bias",
+                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.bias",
                 ),
             ]
         )
