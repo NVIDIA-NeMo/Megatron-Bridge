@@ -459,6 +459,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         if yarn_params:
             for key, value in yarn_params.items():
                 setattr(provider, key, value)
+        hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
+        rope_type = hf_rope_scaling.get("rope_type", None) if hf_rope_scaling else None
+        if rope_type is None:
+            provider.position_embedding_type = "rope"
 
         # Apply MLA rope params via setattr (for MLA models like DeepSeek, Kimi)
         if mla_rope_params:

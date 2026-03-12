@@ -65,7 +65,6 @@ class GLM45Bridge(MegatronModelBridge):
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
         provider.add_bias_linear = False
         provider.share_embeddings_and_output_weights = False
 
