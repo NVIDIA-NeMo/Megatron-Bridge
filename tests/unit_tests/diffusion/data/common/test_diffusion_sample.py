@@ -23,7 +23,6 @@ def test_add():
     sample1 = DiffusionSample(
         __key__="sample1",
         __restore_key__=(),
-
         __subflavors__=["default"],
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
@@ -32,7 +31,6 @@ def test_add():
     sample2 = DiffusionSample(
         __key__="sample2",
         __restore_key__=(),
-
         __subflavors__=["default"],
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
@@ -54,7 +52,6 @@ def test_radd():
     sample = DiffusionSample(
         __key__="sample",
         __restore_key__=(),
-
         __subflavors__=["default"],
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
@@ -70,7 +67,6 @@ def test_radd():
         DiffusionSample(
             __key__="sample1",
             __restore_key__=(),
-    
             __subflavors__=["default"],
             video=torch.randn(3, 8, 16, 16),
             context_embeddings=torch.randn(10, 512),
@@ -79,7 +75,6 @@ def test_radd():
         DiffusionSample(
             __key__="sample2",
             __restore_key__=(),
-    
             __subflavors__=["default"],
             video=torch.randn(3, 8, 16, 16),
             context_embeddings=torch.randn(10, 512),
@@ -88,7 +83,6 @@ def test_radd():
         DiffusionSample(
             __key__="sample3",
             __restore_key__=(),
-    
             __subflavors__=["default"],
             video=torch.randn(3, 8, 16, 16),
             context_embeddings=torch.randn(10, 512),
@@ -105,7 +99,6 @@ def test_lt():
     sample1 = DiffusionSample(
         __key__="sample1",
         __restore_key__=(),
-
         __subflavors__=["default"],
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
@@ -114,7 +107,6 @@ def test_lt():
     sample2 = DiffusionSample(
         __key__="sample2",
         __restore_key__=(),
-
         __subflavors__=["default"],
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
