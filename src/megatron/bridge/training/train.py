@@ -1090,10 +1090,6 @@ def save_checkpoint_and_time(
     if energy_monitor is not None:
         energy_monitor.pause()
 
-    # Extra barrier is added to make sure all ranks report the max time.
-    timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
-    timers(timer_key, log_level=0).start(barrier=True)
-
     should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
         state.cfg.optimizer.use_distributed_optimizer,
@@ -1101,6 +1097,11 @@ def save_checkpoint_and_time(
     )
     if should_force_param_sync:
         force_param_sync(model)
+
+    # Extra barrier is added to make sure all ranks report the max time.
+    timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
+    timers(timer_key, log_level=0).start(barrier=True)
+
     save_checkpoint(
         state,
         model,

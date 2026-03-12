@@ -110,6 +110,12 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
                     _results_queue._manager.shutdown()
                     del _results_queue
 
+                from megatron.core.dist_checkpointing.strategies.cached_metadata_filesystem_reader import (
+                    CachedMetadataFileSystemReader,
+                )
+
+                CachedMetadataFileSystemReader.clear_metadata_cache()
+
             except Exception:
                 pass
 

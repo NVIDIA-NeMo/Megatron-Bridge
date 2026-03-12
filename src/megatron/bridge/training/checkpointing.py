@@ -669,9 +669,13 @@ def save_checkpoint(
                             logger.debug("Failed to plug in the read metadata from the load strategy...")
 
                 if ckpt_cfg.fully_parallel_save:
+                    if ckpt_cfg.fully_parallel_save_process_group == "ep_dp":
+                        parallelization_group = pg_collection.expt_dp
+                    else:
+                        parallelization_group = pg_collection.dp_cp
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        pg_collection.dp_cp,
+                        parallelization_group,
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # Store save strategy for future checkpoint saves
@@ -1235,6 +1239,8 @@ def _load_model_weights_from_checkpoint(
     checkpoint_path: str,
     model: list[MegatronModule],
     fully_parallel_load: bool = False,
+    fully_parallel_load_process_group: Literal["dp", "ep_dp"] = "dp",
+    fully_parallel_load_exchange_algo: Literal["broadcast", "gather_rounds", "gather_object"] = "broadcast",
     return_state_dict: bool = False,
     dist_ckpt_strictness: Literal[
         "assume_ok_unexpected",
@@ -1258,6 +1264,8 @@ def _load_model_weights_from_checkpoint(
         checkpoint_path: path to a distributed checkpoint.
         model: The model module(s) to load weights into.
         fully_parallel_load: Apply full load parallelization across DP.
+        fully_parallel_load_process_group: Process group for fully parallel load ("dp" or "ep_dp").
+        fully_parallel_load_exchange_algo: Algorithm for exchanging data during fully parallel load.
         return_state_dict: Skips loading state dict into model and returns model state dict
             itself. Default False.
         dist_ckpt_strictness: Determine handling of key mismatch during checkpoint load.
@@ -1281,7 +1289,15 @@ def _load_model_weights_from_checkpoint(
     load_strategy = get_default_load_sharded_strategy(checkpoint_path)
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        if fully_parallel_load_process_group == "ep_dp":
+            parallelization_group = pg_collection.expt_dp
+        else:
+            parallelization_group = pg_collection.dp_cp
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy,
+            parallelization_group,
+            exchange_algo=fully_parallel_load_exchange_algo,
+        )
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
@@ -2076,9 +2092,19 @@ def _load_global_dist_base_checkpoint(
         raise RuntimeError("Detected load from a distributed checkpoint, but sharded state dict is not provided.")
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
-    load_strategy = get_default_load_sharded_strategy(checkpoint_name)
+    load_strategy = get_default_load_sharded_strategy(
+        checkpoint_name, cache_metadata=ckpt_cfg.ckpt_assume_constant_structure
+    )
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        if ckpt_cfg.fully_parallel_load_process_group == "ep_dp":
+            parallelization_group = pg_collection.expt_dp
+        else:
+            parallelization_group = pg_collection.dp_cp
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy,
+            parallelization_group,
+            exchange_algo=ckpt_cfg.fully_parallel_load_exchange_algo,
+        )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     state_dict = dist_checkpointing.load(

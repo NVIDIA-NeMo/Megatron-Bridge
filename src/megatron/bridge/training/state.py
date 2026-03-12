@@ -338,14 +338,26 @@ class GlobalState:
         return self._straggler_timer
 
     def initialize_async_checkpoint_worker(self) -> None:
-        """Initializes the async checkpoint worker."""
+        """Initializes the async checkpoint worker and warms up persistent caller with QoS priorities."""
         if (
             self._async_calls_queue is None
             and self.cfg
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+            ckpt_cfg = self.cfg.checkpoint
+            self._async_calls_queue = AsyncCallsQueue(persistent=ckpt_cfg.use_persistent_ckpt_worker)
+            if ckpt_cfg.use_persistent_ckpt_worker:
+                rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+                AsyncCallsQueue.warmup_persistent_caller(
+                    rank,
+                    'spawn',
+                    cpu_priority=ckpt_cfg.async_ckpt_cpu_priority,
+                    io_priority=ckpt_cfg.async_ckpt_io_priority,
+                )
+                from megatron.core.dist_checkpointing.strategies.filesystem_async import get_write_results_queue
+
+                get_write_results_queue('spawn')
 
     @property
     def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
