@@ -91,7 +91,7 @@ def thinker_config():
     return _make_toy_thinker_config()
 
 
-@pytest.mark.pleasefixme  # TODO: replace full-size HF vision/audio encoders with dummy stubs to avoid timeout
+@pytest.mark.timeout(30)
 class TestQwen25OmniModel:
     """Test suite for Qwen2.5 Omni Model."""
 
