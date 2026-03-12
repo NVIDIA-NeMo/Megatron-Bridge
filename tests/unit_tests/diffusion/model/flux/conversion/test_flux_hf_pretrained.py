@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from megatron.bridge.diffusion.models.flux.conversion import flux_hf_pretrained as flux_hf_module
+from megatron.bridge.diffusion.conversion.flux import flux_hf_pretrained as flux_hf_module
 
 
 pytestmark = [pytest.mark.unit]

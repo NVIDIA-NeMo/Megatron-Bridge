@@ -17,7 +17,7 @@ import types
 import pytest
 import torch
 
-from megatron.bridge.diffusion.models.flux.conversion import flux_bridge as flux_bridge_module
+from megatron.bridge.diffusion.conversion.flux import flux_bridge as flux_bridge_module
 
 
 pytestmark = [pytest.mark.unit]

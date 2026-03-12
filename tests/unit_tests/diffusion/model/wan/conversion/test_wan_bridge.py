@@ -16,7 +16,7 @@ import types
 
 import pytest
 
-from megatron.bridge.diffusion.models.wan.conversion import wan_bridge as wan_bridge_module
+from megatron.bridge.diffusion.conversion.wan import wan_bridge as wan_bridge_module
 
 
 pytestmark = [pytest.mark.unit]

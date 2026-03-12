@@ -138,7 +138,6 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         return DiffusionSample(
             __key__=sample["__key__"],
             __restore_key__=sample["__restore_key__"],
-            __subflavor__=None,
             __subflavors__=sample["__subflavors__"],
             video=video_latent,
             context_embeddings=context_embeddings,

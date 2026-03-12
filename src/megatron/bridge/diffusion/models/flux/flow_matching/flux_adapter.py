@@ -20,7 +20,7 @@ import random
 from typing import Any, Dict
 
 import torch
-from dfm.src.automodel.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
+from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 
 
