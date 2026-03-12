@@ -28,32 +28,32 @@ Forward Step Options:
 
 Examples:
     Basic usage with checkpoint loading (uses automodel pipeline):
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint --mock
 
     Using original FluxForwardStep:
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint --mock --use-original-step
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint \
         --config-file my_custom_config.yaml
 
     Using CLI overrides only:
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint \
         model.tensor_model_parallel_size=4 train.train_iters=5000 optimizer.lr=1e-5
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint \
         --config-file conf/my_config.yaml \
         model.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
 
     Using automodel pipeline with custom parameters (automodel is default):
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint --mock \
         --flow-shift=1.0 --use-loss-weighting
 
