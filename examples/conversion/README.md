@@ -49,19 +49,25 @@ Saving HF-ckpt in Llama-3.2-1B...
 
 ### 2. `convert_checkpoints.py` - Checkpoint Conversion
 
-A tool for importing/exporting models between HuggingFace and Megatron checkpoint formats.
+A tool for importing/exporting models between HuggingFace and Megatron checkpoint formats
+in a single-process workflow.
 
 **Features:**
 - Import HuggingFace models to Megatron checkpoint format
 - Export Megatron checkpoints to HuggingFace format
+- Single-GPU or CPU-only conversion without tensor/pipeline/expert parallelism
 - Configurable model settings (dtype, device mapping)
 - Progress tracking and validation
+
+This script is intentionally limited to single-GPU conversion without model parallelism.
+For distributed or model-parallel checkpoint conversion, use
+`examples/conversion/convert_checkpoints_multi_gpu.py`.
 
 **Usage:**
 
 **Import HF to Megatron:**
 ```bash
-# Basic import (uses GPU for conversion by default when available)
+# Basic single-GPU import (uses one GPU for conversion by default when available)
 uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b
@@ -82,7 +88,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 
 **Export Megatron to HF:**
 ```bash
-# Basic export
+# Basic single-GPU export
 uv run python examples/conversion/convert_checkpoints.py export \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b \

@@ -14,10 +14,13 @@
 # limitations under the License.
 
 """
-Megatron-HuggingFace Checkpoint Conversion Example
+Single-GPU Megatron-HuggingFace Checkpoint Conversion Example
 
 This script demonstrates how to convert models between HuggingFace and Megatron formats
-using the AutoBridge import_ckpt and export_ckpt methods.
+using the AutoBridge import_ckpt and export_ckpt methods in a single-process workflow.
+It is intended for single-GPU conversion (or CPU-only conversion) without tensor,
+pipeline, or expert model parallelism. For distributed or model-parallel checkpoint
+conversion, use examples/conversion/convert_checkpoints_multi_gpu.py instead.
 
 Features:
 - Import HuggingFace models to Megatron checkpoint format
@@ -26,25 +29,25 @@ Features:
 - Configurable model and conversion settings
 
 Usage examples:
-  # Import a HuggingFace model to Megatron format
+  # Import a HuggingFace model to Megatron format on a single GPU
   uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b
 
-  # Export a Megatron checkpoint to HuggingFace format
+  # Export a Megatron checkpoint to HuggingFace format on a single GPU
   uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b \
     --hf-path ./exports/llama3_2_1b_hf
 
-  # Import with custom settings
+  # Import with custom single-GPU settings
   uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --torch-dtype bfloat16 \
     --device-map auto
 
-  # Export without progress bar (useful for scripting)
+  # Export without progress bar (useful for single-GPU scripting)
   uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
@@ -215,15 +218,17 @@ def export_megatron_to_hf(
 def main():
     """Main function to handle command line arguments and execute conversions."""
     parser = argparse.ArgumentParser(
-        description="Convert models between HuggingFace and Megatron formats",
+        description="Convert models between HuggingFace and Megatron formats on a single GPU or CPU without model parallelism",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Conversion direction")
+    subparsers = parser.add_subparsers(dest="command", help="Single-process conversion direction")
 
     # Import subcommand (HF -> Megatron)
-    import_parser = subparsers.add_parser("import", help="Import HuggingFace model to Megatron checkpoint format")
+    import_parser = subparsers.add_parser(
+        "import", help="Import HuggingFace model to Megatron checkpoint format on a single GPU or CPU"
+    )
     import_parser.add_argument("--hf-model", required=True, help="HuggingFace model ID or path to model directory")
     import_parser.add_argument(
         "--megatron-path", required=True, help="Directory path where the Megatron checkpoint will be saved"
@@ -238,7 +243,9 @@ def main():
     )
 
     # Export subcommand (Megatron -> HF)
-    export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
+    export_parser = subparsers.add_parser(
+        "export", help="Export Megatron checkpoint to HuggingFace format on a single GPU or CPU"
+    )
     export_parser.add_argument("--hf-model", required=True, help="HuggingFace model ID or path to model directory")
     export_parser.add_argument(
         "--megatron-path", required=True, help="Directory path where the Megatron checkpoint is stored"

@@ -197,7 +197,12 @@ model = bridge.to_megatron_model(wrap_with_ddp=False, device="cuda")
 
 ### CLI
 
-The single-GPU conversion scripts accept a `--device` flag that defaults to `cuda` when a GPU is available:
+`examples/conversion/convert_checkpoints.py` is the single-process conversion entry point.
+It supports single-GPU conversion (or CPU-only conversion) and does not
+configure tensor, pipeline, or expert model parallelism. For distributed or
+model-parallel checkpoint conversion, use `examples/conversion/convert_checkpoints_multi_gpu.py`.
+
+The single-GPU conversion script accepts a `--device` flag that defaults to `cuda` when a GPU is available:
 
 ```bash
 # Explicit GPU conversion
