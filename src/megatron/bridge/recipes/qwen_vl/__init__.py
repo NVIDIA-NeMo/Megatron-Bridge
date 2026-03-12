@@ -16,6 +16,7 @@
 # Qwen3-VL models
 from .qwen3_vl import (
     qwen3_vl_8b_peft_config,
+    qwen3_vl_8b_peft_energon_config,
     qwen3_vl_8b_sft_config,
     qwen3_vl_30b_a3b_peft_config,
     qwen3_vl_30b_a3b_sft_config,
@@ -91,6 +92,7 @@ __all__ = [
     "qwen3_vl_235b_a22b_sft_config",
     # Qwen3-VL PEFT configs
     "qwen3_vl_8b_peft_config",
+    "qwen3_vl_8b_peft_energon_config",
     "qwen3_vl_30b_a3b_peft_config",
     "qwen3_vl_235b_a22b_peft_config",
 ]
