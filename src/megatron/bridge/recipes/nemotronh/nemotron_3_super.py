@@ -284,7 +284,7 @@ def _nemotron_3_super_common(
         ),
         tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
-            async_save=True,
+            async_save=False,
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -507,6 +507,5 @@ def _nemotron_3_super_finetune_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-
 
     return cfg
