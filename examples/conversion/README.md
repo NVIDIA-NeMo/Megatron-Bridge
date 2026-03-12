@@ -15,7 +15,7 @@ Demonstrates round-trip conversion between HuggingFace and Megatron-LM model for
 
 **Usage:**
 ```bash
-# Basic conversion (uses default Llama-3.2-1B)
+# Basic conversion (uses default Llama-3.2-1B, GPU-accelerated when available)
 uv run python examples/conversion/hf_megatron_roundtrip.py
 
 # Convert specific model
@@ -23,6 +23,9 @@ uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-ll
 
 # Save to specific directory
 uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-1B --output-dir ./converted_models
+
+# Force CPU-only conversion
+uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-1B --device cpu
 ```
 
 **Example Output:**
@@ -58,7 +61,7 @@ A tool for importing/exporting models between HuggingFace and Megatron checkpoin
 
 **Import HF to Megatron:**
 ```bash
-# Basic import
+# Basic import (uses GPU for conversion by default when available)
 uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b
@@ -69,6 +72,12 @@ uv run python examples/conversion/convert_checkpoints.py import \
   --megatron-path ./checkpoints/llama3_2_1b \
   --torch-dtype bfloat16 \
   --device-map auto
+
+# Force CPU-only conversion (no GPU required)
+uv run python examples/conversion/convert_checkpoints.py import \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path ./checkpoints/llama3_2_1b \
+  --device cpu
 ```
 
 **Export Megatron to HF:**
@@ -89,14 +98,12 @@ uv run python examples/conversion/convert_checkpoints.py export \
 
 **Example Output:**
 ```
-🔄 Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
-📥 Loading HuggingFace model: meta-llama/Llama-3.2-1B
+Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
+   Conversion device: cuda
+Loading HuggingFace model: meta-llama/Llama-3.2-1B
 ...
   successfully saved checkpoint from iteration       0 to ./checkpoints/llama3_2_1b [ t 1/1, p 1/1 ]
-✅ Successfully imported model to: ./checkpoints/llama3_2_1b
-📁 Checkpoint structure:
-   📂 iter_0000000/
-   📄 latest_train_state.pt
+Successfully imported model to: ./checkpoints/llama3_2_1b
 ```
 
 ### 3. `hf_to_megatron_generate_text.py` - Text Generation

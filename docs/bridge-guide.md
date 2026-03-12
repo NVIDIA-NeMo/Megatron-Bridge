@@ -171,6 +171,50 @@ for name, weight in bridge.export_hf_weights(megatron_model, cpu=True):
     print(f"Exported {name}: {tuple(weight.shape)}")
 ```
 
+## GPU-Accelerated Conversion
+
+By default, checkpoint conversion runs tensor operations (chunking, concatenation, QKV merging, etc.) on CPU. You can accelerate conversion by passing `device="cuda"` to run these operations on GPU instead. The conversion streams weights one parameter at a time, so GPU memory usage stays low regardless of model size.
+
+### Python API
+
+```python
+from megatron.bridge import AutoBridge
+
+# GPU-accelerated import (one-call workflow)
+AutoBridge.import_ckpt(
+    "meta-llama/Llama-3.2-1B",
+    "./megatron_checkpoints/llama32_1b",
+    device="cuda",
+)
+
+# GPU-accelerated conversion via provider
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+provider = bridge.to_megatron_provider(load_weights=True, device="cuda")
+
+# Or via to_megatron_model
+model = bridge.to_megatron_model(wrap_with_ddp=False, device="cuda")
+```
+
+### CLI
+
+The single-GPU conversion scripts accept a `--device` flag that defaults to `cuda` when a GPU is available:
+
+```bash
+# Explicit GPU conversion
+uv run python examples/conversion/convert_checkpoints.py import \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path ./checkpoints/llama32_1b \
+  --device cuda
+
+# Force CPU-only (e.g., on a CPU-only machine)
+uv run python examples/conversion/convert_checkpoints.py import \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path ./checkpoints/llama32_1b \
+  --device cpu
+```
+
+Multi-GPU conversion scripts always use CUDA for conversion operations.
+
 ## Common Patterns and Best Practices
 When working with Megatron Bridge, there are several patterns that will help you use the API effectively and avoid common pitfalls.
 
@@ -284,11 +328,11 @@ AutoBridge.list_supported_models() -> list[str]
 AutoBridge.supports(config: Any) -> bool
 
 # Provider/model construction
-AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider
-AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]
+AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None, device: str | torch.device | None = None) -> GPTModelProvider
+AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, device: str | torch.device | None = None, **kwargs) -> list[MegatronModule]
 
 # HF → Megatron weights
-AutoBridge.load_hf_weights(model: list[MegatronModule], hf_path: str | Path | None = None) -> None
+AutoBridge.load_hf_weights(model: list[MegatronModule], hf_path: str | Path | None = None, device: str | torch.device | None = None) -> None
 
 # Megatron → HF conversion
 AutoBridge.export_hf_weights(model: list[MegatronModule], cpu: bool = False, show_progress: bool = True, conversion_tasks: Optional[list[WeightConversionTask]] = None) -> Iterable[HFWeightTuple]
@@ -300,7 +344,7 @@ AutoBridge.save_megatron_model(model: list[MegatronModule], path: str | Path) ->
 AutoBridge.load_megatron_model(path: str | Path, **kwargs) -> list[MegatronModule]
 
 # One-call workflows
-AutoBridge.import_ckpt(hf_model_id: str | Path, megatron_path: str | Path, **kwargs) -> None  # HF → Megatron ckpt
+AutoBridge.import_ckpt(hf_model_id: str | Path, megatron_path: str | Path, device: str | torch.device | None = None, **kwargs) -> None  # HF → Megatron ckpt
 AutoBridge.export_ckpt(megatron_path: str | Path, hf_path: str | Path, show_progress: bool = True) -> None  # Megatron → HF
 
 # Config extraction
