@@ -263,7 +263,7 @@ This taxonomy does not replace every existing label:
 - Issues should leave triage with one `type` label and one `area` label.
 - An issue keeps `needs-triage` until a maintainer has responded or assigned it. Adding type and area labels is classification; the issue leaves `needs-triage` only when a maintainer engages (responds, assigns, or explicitly routes it).
 - After a maintainer engages, transition to `needs-follow-up` (deferred work oncall should track), `needs-author` (waiting on reporter for more info), `blocked` (external dependency), or no state label (actively being worked on).
-- PRs should not use `needs-triage`. Use `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
+- PRs should not use `needs-triage`. Use `needs-review`, `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
 - `high-complexity` starts as a manual maintainer label, not an automated heuristic.
 - `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
 - `needs-follow-up` is the visibility label for deferred work that should stay on the oncall radar.
