@@ -124,6 +124,9 @@ W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/h32cflfn) for the expected loss curves and grad norms.
+
 ## Evaluation
 
 Coming soon.

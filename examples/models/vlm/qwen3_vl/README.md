@@ -131,6 +131,10 @@ field_map:
 
 Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
 
+
+### Expected Training Dynamics
+We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.
+
 ## Evaluation
 
 Coming soon.
