@@ -56,6 +56,7 @@ def create_diffusion_sample(key: str, seq_len: int, video_shape=(16, 8), embeddi
     return DiffusionSample(
         __key__=key,
         __restore_key__=(),
+        __subflavor__=None,
         __subflavors__=["default"],
         video=torch.randn(seq_len, video_shape[0]),
         context_embeddings=torch.randn(10, embedding_dim),
