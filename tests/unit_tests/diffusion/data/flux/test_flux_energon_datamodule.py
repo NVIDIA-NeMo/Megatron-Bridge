@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+
 from megatron.bridge.diffusion.data.flux import flux_energon_datamodule as flux_dm_mod
 from megatron.bridge.diffusion.data.flux.flux_taskencoder import FluxTaskEncoder
 
@@ -42,6 +44,9 @@ class _FakeDiffusionDataModule:
     def train_dataloader(self):
         return "train"
 
+    def val_dataloader(self):
+        return "val"
+
 
 def test_flux_datamodule_config_initialization(monkeypatch):
     # Patch the symbol used inside flux_energon_datamodule module
@@ -69,9 +74,12 @@ def test_flux_datamodule_config_initialization(monkeypatch):
     assert cfg.dataset.task_encoder.latent_channels == 16
     assert cfg.dataset.use_train_split_for_val is True
 
-    # build_datasets should return train loader thrice
+    # build_datasets returns (iter(train_dataloader()), iter(val_dataloader()), iter(val_dataloader()))
     train, val, test = cfg.build_datasets(context=None)
-    assert train == "train" and val == "train" and test == "train"
+    assert isinstance(train, Iterator) and isinstance(val, Iterator) and isinstance(test, Iterator)
+    assert list(train) == list("train")
+    assert list(val) == list("val")
+    assert list(test) == list("val")
 
 
 def test_flux_datamodule_config_with_custom_parameters(monkeypatch):
