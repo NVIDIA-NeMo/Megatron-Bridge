@@ -45,7 +45,7 @@ HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
 def main(
     hf_model_id: str = HF_MODEL_ID,
-    output_dir: str = None,
+    output_dir: str | None = None,
     trust_remote_code: bool | None = None,
     device: str | None = None,
 ) -> None:
