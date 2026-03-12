@@ -648,14 +648,10 @@ def _create_model(
     else:
         pre_process = is_pp_first_stage(pp_group)
         post_process = is_pp_last_stage(pp_group)
-        if model_type == ModelType.encoder_or_decoder:
-            # Deprecated in upstream; simplify to first/last stage semantics
-            model = model_provider.provide()
-        else:
-            model = model_provider.provide(
-                pre_process=pre_process,
-                post_process=post_process,
-            )
+        model = model_provider.provide(
+            pre_process=pre_process,
+            post_process=post_process,
+        )
         model.model_type = model_type
 
     if not isinstance(model, list):

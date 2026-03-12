@@ -168,7 +168,6 @@ class TestCreateModel:
         assert len(result) == 1
         assert result[0] is mock_model
         assert mock_model.model_type == ModelType.encoder_or_decoder
-        model_provider.provide.assert_called_once_with()  # No pre/post process args
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_encoder_decoder_multi_pipeline(self, mock_tensor_parallel):
@@ -186,7 +185,6 @@ class TestCreateModel:
         assert len(result) == 1
         assert result[0] is mock_model
         assert mock_model.model_type == ModelType.encoder_or_decoder
-        model_provider.provide.assert_called_once_with()
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_sets_tensor_parallel_attributes(self, mock_tensor_parallel):
