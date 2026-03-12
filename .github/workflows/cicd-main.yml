@@ -292,6 +292,29 @@ jobs:
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
+  check-labels:
+    runs-on: ubuntu-latest
+    needs: [pre-flight]
+    outputs:
+      needs_more_tests: ${{ steps.check.outputs.needs_more_tests }}
+    steps:
+      - name: Check PR labels
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.ref }}" == refs/heads/pull-request/* ]]; then
+            PR_NUMBER=$(echo "${{ github.ref }}" | sed 's|refs/heads/pull-request/||')
+            LABELS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "needs-more-tests"; then
+              echo "needs_more_tests=true" >> $GITHUB_OUTPUT
+            else
+              echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+          fi
+
   cicd-unit-tests:
     if: |
       (
@@ -429,7 +452,7 @@ jobs:
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
-  # L1: runs on main push and schedule (not PRs)
+  # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
     strategy:
       fail-fast: false
@@ -457,15 +480,16 @@ jobs:
           - script: L1_Launch_recipes_ministral3
           - script: L1_Launch_recipes_nemotronh
           - script: L1_Launch_recipes_qwen
-    needs: [pre-flight, cicd-unit-tests]
+    needs: [pre-flight, cicd-unit-tests, check-labels]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
       (
         success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
     name: ${{ matrix.script }}
     environment: nemo-ci
@@ -548,6 +572,7 @@ jobs:
     if: |
       (
         success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
