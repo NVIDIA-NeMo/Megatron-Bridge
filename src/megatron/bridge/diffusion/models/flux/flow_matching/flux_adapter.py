@@ -20,8 +20,9 @@ import random
 from typing import Any, Dict
 
 import torch
-from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 from megatron.core.models.common.vision_module.vision_module import VisionModule
+
+from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 
 
 class MegatronFluxAdapter(ModelAdapter):
