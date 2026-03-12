@@ -1202,11 +1202,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         populated.
         """
 
-        # Ensure hf_pretrained has the required state structure
-        if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
-            raise ValueError("hf_pretrained.state.source is required for weight ordering")
-
-        hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys()
+        # When hf_pretrained has state.source, use HF keys for validation.
+        # For config-only bridges (PretrainedConfig), skip HF key validation
+        # since we're generating weights, not reading them.
+        has_hf_state = hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")
+        hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
 
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
@@ -1243,8 +1243,8 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
                     continue
 
-                # ensure hf weights exist
-                if not mapping.allow_hf_name_mismatch:
+                # ensure hf weights exist (skip for config-only export where hf_keys is None)
+                if hf_keys is not None and not mapping.allow_hf_name_mismatch:
                     if isinstance(mapping.hf_param, str):
                         if mapping.hf_param not in hf_keys:
                             logger.warning(f"WARNING: Can't find {mapping.hf_param} in hf_keys")

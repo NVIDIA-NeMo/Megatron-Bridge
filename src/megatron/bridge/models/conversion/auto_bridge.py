@@ -23,6 +23,7 @@ import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from modelopt.torch.quantization.utils import is_quantized
+from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -478,29 +479,70 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-            raise ValueError(
-                "save_hf_pretrained requires a pretrained HuggingFace model. "
-                "AutoBridge.from_hf_config() creates a config-only bridge; "
-                "use AutoBridge.from_hf_pretrained(...) instead."
-            )
+        is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)
 
-        # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
-        additional_files = None
-        if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
-            additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+        def _save_artifacts():
+            if is_config_only:
+                # Config-only path: write config.json and download modeling files from Hub.
+                # We use json.dump with allow_nan=True so values like float('inf')
+                # (e.g. in time_step_limit) serialise as "Infinity", matching the
+                # format produced by NemotronHConfig.save_pretrained().
+                import json as _json
+
+                Path(path).mkdir(parents=True, exist_ok=True)
+                config_dict = getattr(self.hf_pretrained, "_bridge_original_dict", None)
+                if config_dict is None:
+                    config_dict = self.hf_pretrained.to_dict()
+
+                if getattr(self.hf_pretrained, "_bridge_original_dict", None) is None:
+                    # PretrainedConfig.to_dict() always returns the class-level
+                    # model_type ("") and puts torch_dtype under "dtype".
+                    # Fix both so the output config.json matches what a real
+                    # model-specific Config subclass would produce.
+                    if 'model_type' in self.hf_pretrained.__dict__:
+                        config_dict['model_type'] = self.hf_pretrained.__dict__['model_type']
+                    if 'dtype' in config_dict and config_dict.get('torch_dtype') is None:
+                        config_dict['torch_dtype'] = config_dict.pop('dtype')
+
+                with open(Path(path) / "config.json", "w") as _f:
+                    _json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
+
+                # Download custom modeling files from a known Hub repo so the output
+                # is fully loadable with from_pretrained(trust_remote_code=True).
+                # This follows the same hf_hub_download pattern used by
+                # PreTrainedBase._copy_custom_modeling_files() in base.py.
+                hub_repo = getattr(self._model_bridge, "HUB_REFERENCE_REPO", None)
+                if hub_repo:
+                    try:
+                        from huggingface_hub import hf_hub_download, list_repo_files
+
+                        repo_files = list_repo_files(hub_repo)
+                        py_files = [f for f in repo_files if f.endswith(".py")]
+                        for py_file in py_files:
+                            hf_hub_download(
+                                repo_id=hub_repo,
+                                filename=py_file,
+                                local_dir=path,
+                                local_dir_use_symlinks=False,
+                            )
+                    except Exception as exc:
+                        import logging as _logging
+
+                        _logging.getLogger(__name__).warning(
+                            "Could not download modeling files from %s: %s", hub_repo, exc
+                        )
+            else:
+                # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
+                additional_files = None
+                if hasattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS") and self._model_bridge.ADDITIONAL_FILE_PATTERNS:
+                    additional_files = self._model_bridge.ADDITIONAL_FILE_PATTERNS
+                self.hf_pretrained.save_artifacts(path, original_source_path=source_path, additional_files=additional_files)
 
         if dist.is_available() and dist.is_initialized():
-            # Distributed training, only rank 0 saves artifacts
             if dist.get_rank() == 0:
-                self.hf_pretrained.save_artifacts(
-                    path, original_source_path=source_path, additional_files=additional_files
-                )
+                _save_artifacts()
         else:
-            # No distributed training, save artifacts
-            self.hf_pretrained.save_artifacts(
-                path, original_source_path=source_path, additional_files=additional_files
-            )
+            _save_artifacts()
 
         self.save_hf_weights(
             model,
@@ -602,7 +644,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 save_every_n_ranks=save_every_n_ranks,
             )
         else:
-            raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+            # Config-only fallback: collect weights and save directly as safetensors
+            hf_sd = {}
+            for name, tensor in generator:
+                hf_sd[name] = tensor.contiguous().cpu()
+            save_file(hf_sd, str(Path(path) / "model.safetensors"))
 
         # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
         if quant_tensors:
@@ -822,8 +868,13 @@ class AutoBridge(Generic[MegatronModelT]):
         This is a convenience method that loads a Megatron checkpoint and
         exports it to HuggingFace format. This is useful for sharing trained
         models or deploying them with HuggingFace inference tools.
-        Requires a bridge created with `from_hf_pretrained` so the tokenizer
-        and other HuggingFace artifacts can be saved alongside the weights.
+
+        For full pretrained bridges (created with `from_hf_pretrained`), the tokenizer
+        and other HuggingFace artifacts are saved alongside the weights.
+
+        For config-only bridges (created with `from_hf_config`), only the config.json
+        and weights are saved. Custom modeling files are downloaded from the bridge's
+        HUB_REFERENCE_REPO if configured.
 
         Args:
             megatron_path: Directory path where the Megatron checkpoint is stored
@@ -836,30 +887,26 @@ class AutoBridge(Generic[MegatronModelT]):
                 the path will be automatically determined from the HuggingFace configuration.
 
         Example:
-            >>> # Basic export
+            >>> # Basic export with pretrained bridge
             >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             >>> bridge.export_ckpt(
             ...     "./megatron_checkpoints/my_model",
             ...     "./hf_exports/my_model"
             ... )
 
-            >>> # Export with specific settings
+            >>> # Export with config-only bridge (auto-config mode)
+            >>> from transformers import PretrainedConfig
+            >>> config = PretrainedConfig(**hf_cfg_dict)
+            >>> bridge = AutoBridge.from_hf_config(config)
             >>> bridge.export_ckpt(
             ...     "./megatron_checkpoints/my_model",
-            ...     "./hf_exports/my_model",
-            ...     show_progress=False
+            ...     "./hf_exports/my_model"
             ... )
 
             >>> # Load the exported model with HuggingFace
             >>> from transformers import AutoModelForCausalLM
             >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
         """
-        if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-            raise ValueError(
-                "export_ckpt requires a pretrained HuggingFace model. "
-                "AutoBridge.from_hf_config() creates a config-only bridge; "
-                "use AutoBridge.from_hf_pretrained(...) instead."
-            )
         try:
             from megatron.bridge.training.model_load_save import temporary_distributed_context
         except ImportError:

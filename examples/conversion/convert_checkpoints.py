@@ -50,6 +50,12 @@ Usage examples:
     --megatron-path ./checkpoints/custom_model \
     --hf-path ./exports/custom_model_hf \
     --no-progress
+
+  # Export using auto-config (no HF model needed, synthesizes config from checkpoint)
+  uv run python examples/conversion/convert_checkpoints.py export \
+    --auto-config \
+    --megatron-path ./checkpoints/nemotron_h_custom \
+    --hf-path ./exports/nemotron_h_custom_hf
 """
 
 import argparse
@@ -137,9 +143,10 @@ def import_hf_to_megatron(
 
 
 def export_megatron_to_hf(
-    hf_model: str,
+    hf_model: Optional[str],
     megatron_path: str,
     hf_path: str,
+    auto_config: bool = False,
     show_progress: bool = True,
     strict: bool = True,
 ) -> None:
@@ -147,9 +154,13 @@ def export_megatron_to_hf(
     Export a Megatron checkpoint to HuggingFace format.
 
     Args:
+        hf_model: HuggingFace model ID or path (loads full model with weights).
         megatron_path: Directory path where the Megatron checkpoint is stored
         hf_path: Directory path where the HuggingFace model will be saved
+        auto_config: If True, auto-generate the HF config from the checkpoint's
+            run_config.yaml. No external config or model needed.
         show_progress: Display progress bar during weight export
+        strict: Whether to perform strict validation during weight export
     """
     print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
 
@@ -174,9 +185,28 @@ def export_megatron_to_hf(
 
     print(f"📋 Found configuration: {config_files[0]}")
 
-    # For demonstration, we'll create a bridge from a known config
-    # This would typically be extracted from the checkpoint metadata
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    # Create bridge: auto-config (synthesize from run_config.yaml) or full pretrained
+    if auto_config:
+        import yaml
+
+        from transformers import PretrainedConfig
+
+        from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+        from megatron.bridge.training.model_load_save import load_model_config
+
+        print("🔧 Auto-generating HF config from run_config.yaml...")
+
+        model_cfg, _ = load_model_config(str(checkpoint_path))
+        hf_cfg_dict = NemotronHBridge.megatron_to_hf_config(model_cfg)
+
+        config = PretrainedConfig(**hf_cfg_dict)
+        config._bridge_original_dict = dict(hf_cfg_dict)
+        bridge = AutoBridge.from_hf_config(config)
+        print(f"📋 Synthesized HF config from {config_files[0]}")
+    elif hf_model:
+        bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    else:
+        raise ValueError("Either --hf-model or --auto-config must be provided for export.")
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
@@ -226,7 +256,13 @@ def main():
 
     # Export subcommand (Megatron -> HF)
     export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
-    export_parser.add_argument("--hf-model", required=True, help="HuggingFace model ID or path to model directory")
+    export_parser.add_argument("--hf-model", help="HuggingFace model ID or path to model directory (loads full model)")
+    export_parser.add_argument(
+        "--auto-config",
+        action="store_true",
+        help="Auto-generate HF config from the Megatron checkpoint's run_config.yaml. "
+        "No external config or model needed — the bridge synthesizes config.json from the checkpoint.",
+    )
     export_parser.add_argument(
         "--megatron-path", required=True, help="Directory path where the Megatron checkpoint is stored"
     )
@@ -244,6 +280,12 @@ def main():
         parser.print_help()
         return 1
 
+    if args.command == "export":
+        if not args.hf_model and not args.auto_config:
+            export_parser.error("Either --hf-model or --auto-config is required for export")
+        if args.hf_model and args.auto_config:
+            export_parser.error("--hf-model and --auto-config are mutually exclusive")
+
     if args.command == "import":
         import_hf_to_megatron(
             hf_model=args.hf_model,
@@ -258,6 +300,7 @@ def main():
             hf_model=args.hf_model,
             megatron_path=args.megatron_path,
             hf_path=args.hf_path,
+            auto_config=args.auto_config,
             show_progress=not args.no_progress,
             strict=not args.not_strict,
         )
