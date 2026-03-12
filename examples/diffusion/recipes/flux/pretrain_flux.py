@@ -19,16 +19,9 @@ FLUX Pretraining Script with YAML and CLI Configuration Overrides.
 This script provides a flexible way to pretrain FLUX models using Megatron-Bridge with support for
 both YAML configuration files and command-line overrides using Hydra-style syntax.
 
-Forward Step Options:
-    - Automodel FlowMatchingPipeline (default): Unified flow matching implementation
-    - Original FluxForwardStep (--use-original-step): Classic implementation
-
 Examples:
-    Basic usage with default configuration (uses automodel pipeline):
+    Basic usage with default configuration:
         $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --mock
-
-    Using original FluxForwardStep:
-        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --mock --use-original-step
 
     Using a custom YAML config file:
         $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --config-file my_custom_config.yaml
@@ -41,9 +34,6 @@ Examples:
         model.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
 
-    Using automodel pipeline with custom parameters (automodel is default):
-        $ uv run torchrun --nproc_per_node=8 pretrain_flux.py --mock \
-        --flow-shift=1.0 --use-loss-weighting
 
 Configuration Precedence:
     1. Base configuration from pretrain_config() recipe
@@ -68,7 +58,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.diffusion.models.flux.flux_step_with_automodel import create_flux_forward_step
+from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
 from megatron.bridge.diffusion.recipes.flux.flux import pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -142,20 +132,15 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
     # Forward step implementation choice
     parser.add_argument(
-        "--use-original-step",
-        action="store_true",
-        help="Use original FluxForwardStep instead of automodel FlowMatchingPipeline (default)",
-    )
-    parser.add_argument(
         "--flow-shift",
         type=float,
         default=1.0,
-        help="Flow shift parameter (for automodel pipeline)",
+        help="Flow shift parameter",
     )
     parser.add_argument(
         "--use-loss-weighting",
         action="store_true",
-        help="Use loss weighting (for automodel pipeline)",
+        help="Use loss weighting",
     )
 
     # Parse known args for the script, remaining will be treated as overrides
@@ -177,22 +162,19 @@ def main() -> None:
     and handles type conversions automatically.
 
     Examples of CLI usage:
-        # Use default config with custom learning rate (automodel pipeline is default)
+        # Use default config with custom learning rate
         torchrun --nproc_per_node=8 pretrain_flux.py --mock optimizer.lr=0.0002
-
-        # Use original FluxForwardStep instead of automodel pipeline
-        torchrun --nproc_per_node=8 pretrain_flux.py --mock --use-original-step
 
         # Custom config file with additional overrides
         torchrun --nproc_per_node=8 pretrain_flux.py --config-file my_config.yaml train.train_iters=50000
 
-        # Multiple overrides for distributed training (uses automodel by default)
+        # Multiple overrides for distributed training
         torchrun --nproc_per_node=8 pretrain_flux.py --mock \
             model.tensor_model_parallel_size=4 \
             model.pipeline_model_parallel_size=2 \
             train.global_batch_size=512
 
-        # Automodel pipeline with custom flow matching parameters
+        # Pipeline with custom flow matching parameters
         torchrun --nproc_per_node=8 pretrain_flux.py --mock \
             --flow-shift=1.0 --use-loss-weighting
     """
@@ -234,43 +216,21 @@ def main() -> None:
     # Apply overrides while preserving excluded fields
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
-    # Create forward step (configurable: original or automodel pipeline)
-    # Default is automodel pipeline unless --use-original-step is specified
-    if not args.use_original_step:
-        # Use automodel FlowMatchingPipeline
-        flux_forward_step = create_flux_forward_step(
-            use_automodel_pipeline=True,
-            timestep_sampling=args.timestep_sampling,
-            logit_mean=args.logit_mean,
-            logit_std=args.logit_std,
-            flow_shift=args.flow_shift,
-            scheduler_steps=args.scheduler_steps,
-            guidance_scale=args.guidance_scale,
-            use_loss_weighting=args.use_loss_weighting,
-        )
-        if get_rank_safe() == 0:
-            logger.info("=" * 70)
-            logger.info("✅ Using AUTOMODEL FlowMatchingPipeline")
-            logger.info(f"   Timestep Sampling: {args.timestep_sampling}")
-            logger.info(f"   Flow Shift: {args.flow_shift}")
-            logger.info(f"   Loss Weighting: {args.use_loss_weighting}")
-            logger.info("=" * 70)
-    else:
-        # Use original FluxForwardStep
-        flux_forward_step = create_flux_forward_step(
-            use_automodel_pipeline=False,
-            timestep_sampling=args.timestep_sampling,
-            logit_mean=args.logit_mean,
-            logit_std=args.logit_std,
-            mode_scale=args.mode_scale,
-            scheduler_steps=args.scheduler_steps,
-            guidance_scale=args.guidance_scale,
-        )
-        if get_rank_safe() == 0:
-            logger.info("=" * 70)
-            logger.info("✅ Using ORIGINAL FluxForwardStep")
-            logger.info(f"   Timestep Sampling: {args.timestep_sampling}")
-            logger.info("=" * 70)
+    flux_forward_step = FluxForwardStep(
+        timestep_sampling=args.timestep_sampling,
+        logit_mean=args.logit_mean,
+        logit_std=args.logit_std,
+        flow_shift=args.flow_shift,
+        scheduler_steps=args.scheduler_steps,
+        guidance_scale=args.guidance_scale,
+        use_loss_weighting=args.use_loss_weighting,
+    )
+    if get_rank_safe() == 0:
+        logger.info("=" * 70)
+        logger.info(f"   Timestep Sampling: {args.timestep_sampling}")
+        logger.info(f"   Flow Shift: {args.flow_shift}")
+        logger.info(f"   Loss Weighting: {args.use_loss_weighting}")
+        logger.info("=" * 70)
 
     # Display final configuration
     if get_rank_safe() == 0:
@@ -284,9 +244,8 @@ def main() -> None:
         logger.info(f"  mode_scale: {args.mode_scale}")
         logger.info(f"  scheduler_steps: {args.scheduler_steps}")
         logger.info(f"  guidance_scale: {args.guidance_scale}")
-        if not args.use_original_step:
-            logger.info(f"  flow_shift: {args.flow_shift}")
-            logger.info(f"  use_loss_weighting: {args.use_loss_weighting}")
+        logger.info(f"  flow_shift: {args.flow_shift}")
+        logger.info(f"  use_loss_weighting: {args.use_loss_weighting}")
 
     # Start training
     logger.debug("Starting pretraining...")
