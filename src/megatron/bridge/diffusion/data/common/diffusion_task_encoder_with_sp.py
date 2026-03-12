@@ -102,6 +102,7 @@ class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):  # noqa:
         return DiffusionSample(
             __key__=",".join([s.__key__ for s in samples]),
             __restore_key__=(),  # Will be set by energon based on `samples`
+            __subflavor__=None,
             __subflavors__=samples[0].__subflavors__,
             video=cat("video"),
             context_embeddings=cat("context_embeddings"),
