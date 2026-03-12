@@ -454,12 +454,28 @@ def test_qwen3_vl_8b_is_dense_model(monkeypatch: pytest.MonkeyPatch):
 def _patch_energon_deps(monkeypatch):
     """Monkeypatch AutoBridge and HF tokenizer/processor for energon config tests."""
     monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
-    monkeypatch.setattr(_qwen3_vl_module, "AutoTokenizer", type("FakeAutoTokenizer", (), {
-        "from_pretrained": staticmethod(lambda *a, **kw: None),
-    }))
-    monkeypatch.setattr(_qwen3_vl_module, "Qwen3VLProcessor", type("FakeProcessor", (), {
-        "from_pretrained": staticmethod(lambda *a, **kw: None),
-    }))
+    monkeypatch.setattr(
+        _qwen3_vl_module,
+        "AutoTokenizer",
+        type(
+            "FakeAutoTokenizer",
+            (),
+            {
+                "from_pretrained": staticmethod(lambda *a, **kw: None),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        _qwen3_vl_module,
+        "Qwen3VLProcessor",
+        type(
+            "FakeProcessor",
+            (),
+            {
+                "from_pretrained": staticmethod(lambda *a, **kw: None),
+            },
+        ),
+    )
 
 
 def test_qwen3_vl_8b_peft_energon_builds_config(monkeypatch: pytest.MonkeyPatch):
