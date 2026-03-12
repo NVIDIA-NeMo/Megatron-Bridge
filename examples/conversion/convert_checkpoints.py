@@ -105,7 +105,7 @@ def import_hf_to_megatron(
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"Starting import: {hf_model} -> {megatron_path}")
+    print(f"🔄 Starting import: {hf_model} -> {megatron_path}")
     print(f"   Conversion device: {device}")
 
     # Prepare kwargs
@@ -123,7 +123,7 @@ def import_hf_to_megatron(
         print(f"   Trust remote code: {trust_remote_code}")
 
     # Import using the convenience method
-    print(f"Loading HuggingFace model: {hf_model}")
+    print(f"📥 Loading HuggingFace model: {hf_model}")
     AutoBridge.import_ckpt(
         hf_model_id=hf_model,
         megatron_path=megatron_path,
@@ -131,7 +131,7 @@ def import_hf_to_megatron(
         **kwargs,
     )
 
-    print(f"Successfully imported model to: {megatron_path}")
+    print(f"✅ Successfully imported model to: {megatron_path}")
 
     # Verify the checkpoint was created
     checkpoint_path = Path(megatron_path)
