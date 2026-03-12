@@ -106,14 +106,10 @@ Before training, ensure the following environment variables are set:
 See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms, with unpacked sequences.
 See the [sft.sh](sft.sh) script for full parameter fine-tuning with sequence-packing.
 
-W&B report coming soon.
-
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism, with unpacked sequences.
 See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
-
-W&B report coming soon.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 

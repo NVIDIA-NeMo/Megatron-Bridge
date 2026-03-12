@@ -85,9 +85,12 @@ The current date is {today}.
 
 - See: [bridge.recipes.ministral3](../../apidocs/bridge/bridge.recipes.ministral3.md)
 - Available recipes:
-  - `ministral3_3b_finetune_config`: Finetuning for 3B VL model with PEFT support
-  - `ministral3_8b_finetune_config`: Finetuning for 8B VL model with PEFT support
-  - `ministral3_14b_finetune_config`: Finetuning for 14B VL model with PEFT support
+  - `ministral3_3b_sft_config`: Finetuning for 3B VL model
+  - `ministral3_8b_sft_config`: Finetuning for 8B VL model
+  - `ministral3_14b_sft_config`: Finetuning for 14B VL model
+  - `ministral3_3b_peft_config`: Finetuning for 3B VL model with PEFT support
+  - `ministral3_8b_peft_config`: Finetuning for 8B VL model with PEFT support
+  - `ministral3_14b_peft_config`: Finetuning for 14B VL model with PEFT support
 
 Before training, ensure the following environment variables are set:
 1. `SAVE_DIR`: checkpoint and log saving directory
@@ -103,13 +106,9 @@ Pretraining is not verified for this model.
 
 See the [sft_unpacked.sh](sft_unpacked.sh) script for full parameter fine-tuning with configurable model parallelisms.
 
-W&B report coming soon.
-
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [peft_unpacked.sh](peft_unpacked.sh) script for LoRA fine-tuning with configurable tensor and pipeline parallelism.
-
-W&B report coming soon.
 
 ### Recommended Configurations
 

@@ -444,3 +444,106 @@ def test_qwen3_vl_8b_is_dense_model(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.moe_router_fusion is False
     assert cfg.model.moe_permute_fusion is False
     assert cfg.model.moe_grouped_gemm is False
+
+
+# =============================================================================
+# Qwen3-VL 8B PEFT Energon Config Tests
+# =============================================================================
+
+
+def _patch_energon_deps(monkeypatch):
+    """Monkeypatch AutoBridge and HF tokenizer/processor for energon config tests."""
+    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen3_vl_module, "AutoTokenizer", type("FakeAutoTokenizer", (), {
+        "from_pretrained": staticmethod(lambda *a, **kw: None),
+    }))
+    monkeypatch.setattr(_qwen3_vl_module, "Qwen3VLProcessor", type("FakeProcessor", (), {
+        "from_pretrained": staticmethod(lambda *a, **kw: None),
+    }))
+
+
+def test_qwen3_vl_8b_peft_energon_builds_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that the energon PEFT config builds a valid ConfigContainer."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.peft is not None
+
+
+def test_qwen3_vl_8b_peft_energon_uses_energon_provider(monkeypatch: pytest.MonkeyPatch):
+    """Test that the energon config uses EnergonProvider as dataset."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    from megatron.bridge.data.energon.energon_provider import EnergonProvider
+
+    assert isinstance(cfg.dataset, EnergonProvider)
+
+
+def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch):
+    """Test that the energon dataset has correct seq_length, batch sizes."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.dataset.micro_batch_size == cfg.train.micro_batch_size
+    assert cfg.dataset.global_batch_size == cfg.train.global_batch_size
+
+
+@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
+def test_qwen3_vl_8b_peft_energon_schemes(peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that lora and dora schemes work with energon config."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config(peft_scheme=peft_scheme)
+
+    _assert_basic_config(cfg)
+    assert cfg.peft is not None
+    assert hasattr(cfg.peft, "dim")
+    assert hasattr(cfg.peft, "alpha")
+
+
+def test_qwen3_vl_8b_peft_energon_parallelism(monkeypatch: pytest.MonkeyPatch):
+    """Test that energon config inherits 8B PEFT parallelism (TP=1, PP=1)."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 1
+
+
+def test_qwen3_vl_8b_peft_energon_precision(monkeypatch: pytest.MonkeyPatch):
+    """Test that energon config uses bf16_mixed precision."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    assert cfg.mixed_precision == "bf16_mixed"
+
+
+def test_qwen3_vl_8b_peft_energon_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that energon PEFT config has freeze options set to False."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+
+
+def test_qwen3_vl_8b_peft_energon_task_encoder(monkeypatch: pytest.MonkeyPatch):
+    """Test that energon config creates a QwenVLTaskEncoder in the dataset."""
+    _patch_energon_deps(monkeypatch)
+
+    cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
+
+    from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
+
+    assert isinstance(cfg.dataset.task_encoder, QwenVLTaskEncoder)
