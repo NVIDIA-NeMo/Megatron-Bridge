@@ -166,7 +166,6 @@ class FluxTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         return DiffusionSample(
             __key__=sample["__key__"],
             __restore_key__=sample["__restore_key__"],
-            __subflavor__=None,
             __subflavors__=sample["__subflavors__"],
             video=image_latent,  # Store unpacked latents [C, H, W]
             context_embeddings=prompt_embeds,

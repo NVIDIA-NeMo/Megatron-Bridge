@@ -520,6 +520,6 @@ class TestMambaModelBuilderBuildDistributedModels:
         assert args[2] is self.pg
         assert args[3] is None  # ddp_config
         assert args[7] is True  # wrap_with_ddp
-        assert args[8] is True  # data_parallel_random_init
+        assert args[8] is False  # data_parallel_random_init
         assert args[9] is Float16Module  # mixed_precision_wrapper
         assert args[11] is ModelType.encoder_or_decoder  # model_type
