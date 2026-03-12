@@ -21,7 +21,7 @@ Covers three training scenarios:
 4. SFT with activation recomputation
 
 Run with:
-    torchrun --nproc_per_node=2 -m pytest tests/functional_tests/recipes/test_qwen35_vl_recipes_finetune.py -v
+    uv run torchrun --nproc_per_node=2 -m pytest tests/functional_tests/recipes/test_qwen35_vl_recipes_finetune.py -v
 """
 
 import pytest
