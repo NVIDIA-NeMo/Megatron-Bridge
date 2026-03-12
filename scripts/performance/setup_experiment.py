@@ -271,6 +271,17 @@ def main(
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
 
+    if (
+        not dgxc_cluster
+        and getattr(args, "save_dir", None) is not None
+        and args.save_dir
+    ):
+        save_dir_parent = str(Path(args.save_dir).resolve().parent)
+        save_dir_mount = f"{save_dir_parent}:{save_dir_parent}"
+        if save_dir_mount not in custom_mounts:
+            custom_mounts.append(save_dir_mount)
+            logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
+
     run_script_path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {run_script_path}")
     if not run_script_path.is_file():
