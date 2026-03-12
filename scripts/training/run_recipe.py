@@ -22,38 +22,43 @@ CLI overrides.
 
 Usage:
     Pretrain:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config
 
     Finetune:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_finetune_config
 
-    With CLI overrides:
-        torchrun --nproc_per_node=8 run_recipe.py \
+    With CLI overrides (Hydra-style, works for any config field):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             train.train_iters=5000 \
             optimizer.lr=0.0003
 
     With VLM step function:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
     With packed sequences and custom sequence length:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             --packed_sequence \
             --seq_length 2048
 
-    With a different finetuning dataset:
-        torchrun --nproc_per_node=8 run_recipe.py \
+    With a different finetuning dataset (finetune only):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_finetune_config \
-            --dataset gsm8k
+            --finetune_dataset gsm8k
 
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe qwen3_8b_finetune_config \
-            --dataset openmathinstruct2
+            --finetune_dataset openmathinstruct2
+
+    Override pretrain data paths via Hydra-style CLI overrides:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_pretrain_config \
+            dataset.data_path=/data/my_dataset_text_document
 
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
@@ -167,12 +172,14 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "Use a local path for more stable multinode training.",
     )
     parser.add_argument(
-        "--dataset",
+        "--finetune_dataset",
         type=str,
         default=None,
         choices=sorted(DATASET_CONFIGS.keys()),
-        help="Override the recipe's default dataset. "
-        "If omitted, the recipe's built-in dataset (typically SQuAD) is used.",
+        help="Override the finetuning dataset (finetune recipes only). "
+        "If omitted, the recipe's built-in dataset (typically SQuAD) is used. "
+        "For pretraining, override data paths via Hydra-style CLI args instead "
+        "(e.g., dataset.data_path=/data/my_dataset_text_document).",
     )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
@@ -307,12 +314,16 @@ def main() -> None:
 
     mode = args.mode or infer_train_mode(args.recipe)
 
-    if args.dataset is not None:
+    if args.finetune_dataset is not None:
         if mode != "finetune":
-            raise ValueError("--dataset is only supported for finetune recipes.")
+            raise ValueError(
+                "--finetune_dataset is only supported for finetune recipes. "
+                "For pretraining, override data paths via Hydra-style CLI args "
+                "(e.g., dataset.data_path=/data/my_dataset_text_document)."
+            )
         config = apply_dataset_override(
             config,
-            dataset_name=args.dataset,
+            dataset_name=args.finetune_dataset,
             packed_sequence=args.packed_sequence,
             seq_length=args.seq_length,
         )
