@@ -104,12 +104,15 @@ uv run python examples/conversion/convert_checkpoints.py export \
 
 **Example Output:**
 ```
-Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
+🔄 Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
    Conversion device: cuda
-Loading HuggingFace model: meta-llama/Llama-3.2-1B
+📥 Loading HuggingFace model: meta-llama/Llama-3.2-1B
 ...
   successfully saved checkpoint from iteration       0 to ./checkpoints/llama3_2_1b [ t 1/1, p 1/1 ]
-Successfully imported model to: ./checkpoints/llama3_2_1b
+✅ Successfully imported model to: ./checkpoints/llama3_2_1b
+📁 Checkpoint structure:
+   📂 iter_0000000/
+   📄 latest_train_state.pt
 ```
 
 ### 3. `hf_to_megatron_generate_text.py` - Text Generation
