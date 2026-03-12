@@ -51,7 +51,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         train.train_iters=$TRAIN_ITERS \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
         train.micro_batch_size=$MICRO_BATCH_SIZE \
-        train.eval_iters=$EVAL_ITERS \
+        validation.eval_iters=$EVAL_ITERS \
         validation.eval_interval=$EVAL_INTERVAL \
         optimizer.lr=$LR \
         optimizer.min_lr=$MIN_LR \
