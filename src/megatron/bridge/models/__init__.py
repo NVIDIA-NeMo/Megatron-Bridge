@@ -182,6 +182,10 @@ from megatron.bridge.models.qwen_audio import (
     Qwen2AudioBridge,
     Qwen2AudioModel,
     Qwen2AudioModelProvider,
+from megatron.bridge.models.qwen_omni import (
+    Qwen25OmniBridge,
+    Qwen25OmniModel,
+    Qwen25OmniModelProvider,
 )
 from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
@@ -359,6 +363,10 @@ __all__ = [
     "NemotronVLBridge",
     "NemotronNano12Bv2Provider",
     "NemotronNano12Bv2VLModelProvider",
+    # Omni Models
+    "Qwen25OmniModel",
+    "Qwen25OmniBridge",
+    "Qwen25OmniModelProvider",
     "SarvamMLABridge",
     "SarvamMoEBridge",
 ]
