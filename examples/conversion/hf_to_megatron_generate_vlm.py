@@ -225,7 +225,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str, tp_s
         return (
             inputs.input_ids,
             inputs.pixel_values,
-            getattr(inputs, "image_grid_thw", None) or getattr(inputs, "grid_thws", None),
+            image_grid_thw,
             getattr(inputs, "image_sizes", None),
             messages,
         )
