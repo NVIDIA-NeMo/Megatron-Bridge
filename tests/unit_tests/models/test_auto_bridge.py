@@ -1237,22 +1237,17 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with (
-            patch.object(
-                AutoBridge,
-                "_causal_lm_architecture",
-                new_callable=PropertyMock,
-                return_value=Mock(),
-            ),
-            patch(
-                "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf",
-                return_value=iter(weight_iter),
-            ),
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
                 "megatron.bridge.models.conversion.auto_bridge.is_quantized",
                 return_value=True,
             ),
             patch("torch.save") as mock_torch_save,
         ):
+            mock_model_bridge = Mock()
+            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
             # Capture what save_generator receives by consuming the generator it's passed
             saved_pairs = []
 
@@ -1267,6 +1262,13 @@ class TestAutoBridge:
             # Only the normal weight should have passed through to save_generator
             assert len(saved_pairs) == 1
             assert saved_pairs[0][0] == "model.layers.0.self_attn.q_proj.weight"
+            mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+                mock_megatron_model,
+                mock_hf_model,
+                cpu=True,
+                show_progress=True,
+                merge_adapter_weights=True,
+            )
 
             # The quantizer tensor should have been saved via torch.save sidecar
             mock_torch_save.assert_called_once()
@@ -1302,23 +1304,25 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with (
-            patch.object(
-                AutoBridge,
-                "_causal_lm_architecture",
-                new_callable=PropertyMock,
-                return_value=Mock(),
-            ),
-            patch(
-                "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf",
-                return_value=iter(weight_iter),
-            ),
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
                 "megatron.bridge.models.conversion.auto_bridge.is_quantized",
                 return_value=False,
             ),
             patch("torch.save") as mock_torch_save,
         ):
+            mock_model_bridge = Mock()
+            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
             mock_source.save_generator = Mock()
             bridge.save_hf_weights(mock_megatron_model, "/tmp/output")
 
+            mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+                mock_megatron_model,
+                mock_hf_model,
+                cpu=True,
+                show_progress=True,
+                merge_adapter_weights=True,
+            )
             mock_torch_save.assert_not_called()
