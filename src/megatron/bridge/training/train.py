@@ -717,7 +717,7 @@ def train_step(
         )
 
         # Handle finetuning vs pretraining data consumption
-        seq_length = model_config.seq_length  # Default for pretraining
+        seq_length = getattr(model_config, "seq_length", cfg.model.seq_length)  # Default for pretraining
         forward_backward_data_iterator = data_iterator  # Default for pretraining
 
         if cfg.dataset.dataloader_type == "batch":
@@ -727,7 +727,7 @@ def train_step(
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
                 num_microbatches=get_num_microbatches(),
-                default_seq_length=model_config.seq_length,
+                default_seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
                 seq_key="tokens",
             )
 
@@ -745,9 +745,9 @@ def train_step(
         if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
                 model,
-                seq_length=model_config.seq_length,
+                seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
                 micro_batch_size=train_config.micro_batch_size,
-                decoder_seq_length=model_config.seq_length,
+                decoder_seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
             )
         else:
             adjust_tensor_shapes_fn = None
