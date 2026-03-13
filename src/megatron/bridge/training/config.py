@@ -1677,7 +1677,10 @@ class ConfigContainer(Container):
                 )
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
-        validate_flex_dispatcher_backend(self.model)
+        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+            validate_flex_dispatcher_backend(self.model.transformer)
+        else:
+            validate_flex_dispatcher_backend(self.model)
 
         for f in fields(ValidationConfig):
             train_val = getattr(self.train, f.name)
@@ -1758,15 +1761,19 @@ class ConfigContainer(Container):
         For configs that don't inherit from Mcore, key values are logged via
         `_get_key_config_values`, which excludes None values and callables.
         """
+        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+            transformer_cfg = self.model.transformer
+        else:
+            transformer_cfg = self.model
         # Determine the correct Mcore parent class for the model config
         # Some models (e.g., DeepSeek) use MLATransformerConfig instead of TransformerConfig
-        model_mcore_class = _get_mcore_transformer_parent(self.model)
+        model_mcore_class = _get_mcore_transformer_parent(transformer_cfg)
 
         # Map of config names to their (config object, Mcore parent class or None)
         mcore_configs = [
             ("optimizer", self.optimizer, MCoreOptimizerConfig),
             ("ddp", self.ddp, MCoreDistributedDataParallelConfig),
-            ("model", self.model, model_mcore_class),
+            ("model", transformer_cfg, model_mcore_class),
         ]
 
         # Non-Mcore configs - log all values
