@@ -14,15 +14,6 @@
 
 """Compatibility utilities for HuggingFace transformers 5.0+ configs."""
 
-import transformers.utils.import_utils as _hf_import_utils
-
-
-# Shim for is_torch_fx_available, removed in transformers 5.x but still
-# referenced by some custom model repos (e.g. Kimi-K2's modeling_deepseek.py).
-# torch.fx has been stable since PyTorch 1.10, so always return True.
-if not hasattr(_hf_import_utils, "is_torch_fx_available"):
-    _hf_import_utils.is_torch_fx_available = lambda: True
-
 
 def rope_theta_from_hf(config) -> float:
     """Extract rope_theta from a HuggingFace config.
