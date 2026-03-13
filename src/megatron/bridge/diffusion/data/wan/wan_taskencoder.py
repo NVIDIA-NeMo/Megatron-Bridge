@@ -159,10 +159,7 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
     @stateless
     def batch(self, samples: List[DiffusionSample]) -> dict:
         """Return dictionary with data for batch."""
-        if self.packing_buffer_size is None:
-            # no packing
-            return super().batch(samples).to_dict()
-
+        # NOTE: Wan always need to run with sequence packing
         # packing
         sample = samples[0]
 

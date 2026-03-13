@@ -43,8 +43,16 @@ console = Console()
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
 
-def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_code: bool | None = None) -> None:
+def main(
+    hf_model_id: str = HF_MODEL_ID,
+    output_dir: str | None = None,
+    trust_remote_code: bool | None = None,
+    device: str | None = None,
+) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models."""
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
     model_name = hf_model_id.split("/")[-1]
     if output_dir:
         save_path = os.path.join(output_dir, model_name)
@@ -58,7 +66,7 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_co
             hf_path=hf_model_id,
         ),
     )
-    megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+    megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, device=device)
     console.print(weights_verification_table(bridge, megatron_model))
 
     console.print(f"Saving HF-ckpt in {save_path}...")
@@ -75,9 +83,14 @@ if __name__ == "__main__":
         default=None,
         help="The directory where the converted model directory will be created. Defaults to the current working directory.",
     )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help='Device for weight conversion ops (default: "cuda" if available, else "cpu")',
+    )
 
     args = parser.parse_args()
-    main(args.hf_model_id, args.output_dir, args.trust_remote_code)
+    main(args.hf_model_id, args.output_dir, args.trust_remote_code, args.device)
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()

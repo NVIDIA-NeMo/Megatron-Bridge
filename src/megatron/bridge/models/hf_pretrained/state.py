@@ -457,8 +457,9 @@ class SafeTensorsStateSource(StateSource):
               and/or the index file. Can also be a Hugging Face Hub model ID.
     """
 
-    def __init__(self, path: Union[str, Path]):
+    def __init__(self, path: Union[str, Path], device: str = "cpu"):
         self.model_name_or_path = path
+        self.device = device
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
@@ -588,6 +589,8 @@ class SafeTensorsStateSource(StateSource):
 
         from safetensors import safe_open
 
+        device = self.device
+
         loaded_tensors = {}
         remaining_keys = set(keys_to_load)
         key_to_filename_map = self.key_to_filename_map
@@ -602,7 +605,7 @@ class SafeTensorsStateSource(StateSource):
             for filename, keys_in_file in file_to_keys_map.items():
                 file_path = self.path / filename
                 if file_path.exists():
-                    with safe_open(file_path, framework="pt", device="cpu") as f:
+                    with safe_open(file_path, framework="pt", device=device) as f:
                         for key in keys_in_file:
                             if key in f.keys():
                                 loaded_tensors[key] = f.get_tensor(key)
@@ -617,7 +620,7 @@ class SafeTensorsStateSource(StateSource):
             for safetensor_file_path in safetensor_files:
                 if not remaining_keys:
                     break
-                with safe_open(safetensor_file_path, framework="pt", device="cpu") as f:
+                with safe_open(safetensor_file_path, framework="pt", device=device) as f:
                     current_file_keys = f.keys()
                     for key in list(remaining_keys):
                         if key in current_file_keys:

@@ -289,6 +289,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("v_head_dim", "v_head_dim"),
         # MTP
         ("num_nextn_predict_layers", "mtp_num_layers"),
+        ("mtp_num_hidden_layers", "mtp_num_layers"),
     ]
 
     # YARN rope scaling field mapping for GPT models: (hf_rope_scaling_key, megatron_yarn_param)
@@ -719,6 +720,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_pretrained: HFPreTrained,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         allowed_mismatched_params: Optional[List[str]] = None,
+        device: Optional[Union[str, torch.device]] = None,
     ) -> List[MegatronModel]:
         """Load HuggingFace weights into Megatron models.
 
@@ -736,6 +738,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 or list of model instances (one per virtual pipeline stage).
             allowed_mismatched_params (Optional[List[str]]): List of parameter names or patterns
                 to allow mismatch (skip instead of raise error).
+            device (Optional[Union[str, torch.device]]): Device to move HF weights to before
+                conversion. When set to ``"cuda"``, tensor operations (chunk, cat, QKV merge,
+                etc.) run on GPU, which can significantly speed up conversion.  The per-parameter
+                streaming design keeps peak GPU memory low (only 1-3 tensors in flight).
+                Defaults to None (keep on the device they were loaded on).
 
         Returns:
             List[MegatronModel]: The input megatron_model as a list with loaded weights.
@@ -784,6 +791,13 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             # 1) Fetch source tensor(s) from HF state dict
             hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
 
+            # 1b) Move to target device so downstream ops (chunk, cat, merge_qkv) run on GPU
+            if device is not None:
+                if isinstance(hf_weights, dict):
+                    hf_weights = {k: v.to(device, non_blocking=True) for k, v in hf_weights.items()}
+                else:
+                    hf_weights = hf_weights.to(device, non_blocking=True)
+
             # 2) Delegate conversion & distribution to the bridge
             converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
 
@@ -827,6 +841,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         hf_pretrained: HFPreTrained,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        device: Optional[Union[str, torch.device]] = None,
     ) -> Iterable[MegatronWeightTuple]:
         """Generator variant of load_weights_hf_to_megatron for streaming weight conversion.
 
@@ -841,6 +856,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 or list of model instances to extract configuration from.
             conversion_tasks (Optional[List[WeightConversionTask]]): Pre-built conversion tasks.
                 If not provided, tasks will be built automatically from the models.
+            device (Optional[Union[str, torch.device]]): Device to move HF weights to before
+                conversion. When set to ``"cuda"``, tensor operations run on GPU for faster
+                conversion. Defaults to None (keep on the device they were loaded on).
 
         Yields:
             MegatronWeightTuple: Named tuples containing:
@@ -884,6 +902,12 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 hf_weights = hf_state_dict[task.mapping.hf_param]
             else:
                 hf_weights = {k: hf_state_dict[v] for k, v in task.mapping.hf_param.items()}
+
+            if device is not None:
+                if isinstance(hf_weights, dict):
+                    hf_weights = {k: v.to(device, non_blocking=True) for k, v in hf_weights.items()}
+                else:
+                    hf_weights = hf_weights.to(device, non_blocking=True)
 
             converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
             if converted_weights is not None:
