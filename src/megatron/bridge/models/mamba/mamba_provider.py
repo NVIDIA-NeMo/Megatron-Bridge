@@ -37,6 +37,7 @@ try:
         get_hybrid_total_layer_count as _mcore_get_hybrid_total_layer_count,
     )
 except ImportError:
+    # TODO(yuya): remove fallback once MCore pin includes get_hybrid_total_layer_count
     _mcore_get_hybrid_total_layer_count = None
 
 
