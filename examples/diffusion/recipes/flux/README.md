@@ -36,7 +36,7 @@ huggingface-cli download black-forest-labs/FLUX.1-dev \
   --local-dir-use-symlinks False
 ```
 
-**Note**: It is recommended to save the checkpoint because we will need to reuse the VAE, text encoders for the inference pipeline later as well.
+**Note**: It is recommended to save the checkpoint because we will need to reuse the VAE and text encoders for the inference pipeline later as well.
 
 ### Import: Hugging Face → Megatron
 
@@ -90,7 +90,7 @@ uv run python examples/diffusion/recipes/flux/inference_flux.py \
 
 ## 3. Pretraining
 
-The script [pretrain_flux.py](pretrain_flux.py) runs FLUX pretraining with the `pretrain_config()` recipe. Configuration can be overridden Hydra-style CLI keys.
+The script [pretrain_flux.py](pretrain_flux.py) runs FLUX pretraining with the `pretrain_config()` recipe. Configuration can be overridden with Hydra-style CLI keys.
 
 **Recipe:** [megatron.bridge.diffusion.recipes.flux.flux.pretrain_config](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/diffusion/recipes/flux/flux.py)
 
@@ -125,7 +125,7 @@ Before pretraining with real data, set the dataset in the recipe or in your YAML
 
 ## 4. Fine-Tuning
 
-The script [finetune_flux.py](finetune_flux.py) fine-tunes a pretrained FLUX checkpoint (Megatron format). It loads model weights and resets optimizer and step count; config can be overridden via YAML and CLI like pretrain.
+The script [finetune_flux.py](finetune_flux.py) fine-tunes a pretrained FLUX checkpoint (Megatron format). It loads model weights and resets optimizer and step count; config can be overridden via YAML and CLI as with pretraining.
 
 Point `--load-checkpoint` at the **Megatron checkpoint directory** (either the base dir, e.g. `.../flux.1-dev`, or a specific iteration, e.g. `.../flux.1-dev/iter_0000000`):
 
@@ -152,7 +152,7 @@ uv run torchrun --nproc_per_node=8 examples/diffusion/recipes/flux/finetune_flux
 3. **Pretraining**  
    Run [pretrain_flux.py](pretrain_flux.py) with `--mock` or your data config; optionally use `--config-file` and CLI overrides.
 
-4. **Fine-tuning**  
+4. **Fine-Tuning**  
    Run [finetune_flux.py](finetune_flux.py) with `--load-checkpoint` set to a Megatron checkpoint (import or pretrain/finetune output), then `--mock` or your data and overrides.
 
 For more details, see the docstrings in each script and the recipe in `src/megatron/bridge/diffusion/recipes/flux/flux.py`.
