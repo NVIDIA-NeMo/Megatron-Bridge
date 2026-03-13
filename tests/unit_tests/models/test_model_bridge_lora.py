@@ -973,12 +973,12 @@ def test_merge_lora_adapter_weights_gdn_in_proj_split(monkeypatch):
     )
 
 
-def test_stream_weights_megatron_to_hf_skips_merge_when_disabled(monkeypatch):
+def _stream_weights_with_merge_disabled(monkeypatch, converted_name: str):
     bridge = DummyBridge()
 
     class DummyMapping:
         def megatron_to_hf(self, weight, module):
-            return {"hf.weight": torch.ones(1)}
+            return {converted_name: torch.ones(1)}
 
     task = WeightConversionTask(
         param_name="decoder.layers.0.mlp.linear_fc1.to_wrap.weight",
@@ -1026,8 +1026,22 @@ def test_stream_weights_megatron_to_hf_skips_merge_when_disabled(monkeypatch):
         )
     )
 
+    return weights
+
+
+@pytest.mark.parametrize(
+    ("converted_name", "expected_name"),
+    [
+        ("hf.weight", "hf.base_layer.weight"),
+        ("hf.tensor", "hf.base_layer.tensor"),
+        ("hf", "hf.base_layer"),
+    ],
+)
+def test_stream_weights_megatron_to_hf_skips_merge_when_disabled(monkeypatch, converted_name, expected_name):
+    weights = _stream_weights_with_merge_disabled(monkeypatch, converted_name)
+
     assert len(weights) == 1
-    assert weights[0].param_name in {"hf.weight", "hf.base_layer.weight"}
+    assert weights[0].param_name == expected_name
 
 
 def test_column_parallel_mapping_skips_ep_gather_for_adapters(monkeypatch):

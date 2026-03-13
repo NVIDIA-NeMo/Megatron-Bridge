@@ -280,6 +280,16 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                     m, dim=self.dim, alpha=self.alpha, dropout=self.dropout, lora_A_init_method=self.lora_A_init_method
                 )
 
+            # Some linear_fc1 modules do not map to separate gate/up HF weights:
+            # - vision_model.*.linear_fc1 are plain MLP projections
+            # - *.mlp.experts.linear_fc1 export as a single fused gate_up_proj tensor
+            # CanonicalLoRA targets linear_fc1 via the linear_fc1_up/gate aliases, so skip
+            # these unsupported cases instead of wrapping them as split gate/up adapters.
+            if name == "linear_fc1" and (
+                full_name.startswith("vision_model.") or full_name.endswith(".mlp.experts.linear_fc1")
+            ):
+                return m
+
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 

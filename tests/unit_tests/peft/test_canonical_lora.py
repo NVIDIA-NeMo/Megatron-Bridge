@@ -84,6 +84,37 @@ class MegatronStyleModel(nn.Module):
         self.linear_fc2 = MockMegatronLinear(2048, 512)
 
 
+class VisionLanguageMegatronStyleModel(nn.Module):
+    """Model with both language and vision linear_fc1 modules."""
+
+    def __init__(self):
+        super().__init__()
+        self.language_model = nn.Module()
+        self.language_model.linear_fc1 = MockMegatronLinear(512, 2048)
+
+        self.vision_model = nn.Module()
+        self.vision_model.merger = nn.Module()
+        self.vision_model.merger.linear_fc1 = MockMegatronLinear(512, 512)
+
+
+class MoEMegatronStyleModel(nn.Module):
+    """Model with dense, expert, and shared-expert linear_fc1 modules."""
+
+    def __init__(self):
+        super().__init__()
+        self.language_model = nn.Module()
+        self.language_model.decoder = nn.Module()
+        self.language_model.decoder.layers = nn.ModuleList([nn.Module()])
+
+        layer = self.language_model.decoder.layers[0]
+        layer.mlp = nn.Module()
+        layer.mlp.linear_fc1 = MockMegatronLinear(512, 2048)
+        layer.mlp.experts = nn.Module()
+        layer.mlp.experts.linear_fc1 = MockMegatronLinear(512, 2048)
+        layer.mlp.shared_experts = nn.Module()
+        layer.mlp.shared_experts.linear_fc1 = MockMegatronLinear(512, 2048)
+
+
 class NestedModel(nn.Module):
     """Model with nested structure for testing pattern matching."""
 
@@ -272,6 +303,60 @@ class TestCanonicalLoRA:
                 # Check that non-target layers were not transformed
                 assert isinstance(transformed_model.linear_proj, MockMegatronLinear)
                 assert isinstance(transformed_model.linear_fc2, MockMegatronLinear)
+
+    def test_canonical_lora_skips_visual_linear_fc1(self):
+        """Vision-side linear_fc1 should not be rewritten as canonical gate/up."""
+        model = VisionLanguageMegatronStyleModel()
+        lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch(
+            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
+        ):
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+
+                transformed_model = lora(model, training=True)
+
+        assert isinstance(transformed_model.language_model.linear_fc1, LoRALinearSplitFC1UpGate)
+        assert isinstance(transformed_model.vision_model.merger.linear_fc1, MockMegatronLinear)
+
+    def test_canonical_lora_skips_moe_expert_linear_fc1(self):
+        """Grouped expert linear_fc1 should not be rewritten as canonical gate/up."""
+        model = MoEMegatronStyleModel()
+        lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=False,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with patch(
+            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
+        ):
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+                mock_adapter.return_value = nn.Linear(1, 1)
+
+                transformed_model = lora(model, training=True)
+
+        layer = transformed_model.language_model.decoder.layers[0]
+        assert isinstance(layer.mlp.linear_fc1, LoRALinearSplitFC1UpGate)
+        assert isinstance(layer.mlp.experts.linear_fc1, MockMegatronLinear)
+        assert isinstance(layer.mlp.shared_experts.linear_fc1, LoRALinearSplitFC1UpGate)
 
     def test_canonical_lora_transform_nested_model(self):
         """Test CanonicalLoRA transformation on nested model structures."""
