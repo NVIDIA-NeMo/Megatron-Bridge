@@ -22,6 +22,8 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 @dataclass(kw_only=True)
@@ -99,7 +101,7 @@ class MixedPrecisionConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider,
+        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
         optimizer_config: Optional[OptimizerConfig] = None,
         ddp_config: Optional[DistributedDataParallelConfig] = None,
     ) -> None:
