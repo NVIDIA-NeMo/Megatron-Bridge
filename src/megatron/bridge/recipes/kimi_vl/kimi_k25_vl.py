@@ -93,6 +93,7 @@ def kimi_k25_vl_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
     cfg.dataset.sequence_length = 4096
     cfg.dataset.num_workers = 8
+    cfg.dataset.pack_sequences_in_batch = False
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
