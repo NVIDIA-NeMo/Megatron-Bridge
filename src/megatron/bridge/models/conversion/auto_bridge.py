@@ -286,6 +286,7 @@ class AutoBridge(Generic[MegatronModelT]):
         model: list[MegatronModelT],
         hf_path: str | Path | None = None,
         allowed_mismatched_params: list[str] | None = None,
+        device: Optional[Union[str, torch.device]] = None,
     ) -> None:
         """
         Load HuggingFace weights into a Megatron model.
@@ -300,6 +301,9 @@ class AutoBridge(Generic[MegatronModelT]):
                 from the bridge's hf_pretrained instance
             allowed_mismatched_params: Optional list of parameter names or patterns
                 to allow mismatch (skip instead of raise error).
+            device: Device to use for weight conversion operations. When set to
+                ``"cuda"``, tensor operations (chunk, cat, QKV merge, etc.) run
+                on GPU for faster conversion. Defaults to None (CPU).
 
         Returns:
             The input model with loaded weights
@@ -331,7 +335,7 @@ class AutoBridge(Generic[MegatronModelT]):
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
         self._model_bridge.load_weights_hf_to_megatron(
-            pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
+            pre_trained, model, allowed_mismatched_params=allowed_mismatched_params, device=device
         )
 
         return model
@@ -754,6 +758,7 @@ class AutoBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
+        device: Optional[Union[str, torch.device]] = None,
         **kwargs,
     ) -> None:
         """
@@ -768,6 +773,9 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
+            device: Device to use for weight conversion operations. When set to
+                ``"cuda"``, tensor operations (chunk, cat, QKV merge, etc.) run
+                on GPU for faster conversion. Defaults to None (CPU).
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -782,19 +790,19 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     "./megatron_checkpoints/llama3_8b"
             ... )
 
-            >>> # Import with specific settings
+            >>> # Import with GPU-accelerated conversion
             >>> AutoBridge.import_ckpt(
             ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b",
+            ...     device="cuda",
             ...     torch_dtype=torch.float16,
-            ...     device_map="auto"
             ... )
         """
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
         # Convert to Megatron model
-        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True, device=device)
 
         # Save as Megatron checkpoint
         hf_tokenizer_kwargs = None
@@ -885,9 +893,10 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         load_weights: bool = True,
         hf_path: str | Path | None = None,
+        device: Optional[Union[str, torch.device]] = None,
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
-        provider = self.to_megatron_provider(load_weights, hf_path)
+        provider = self.to_megatron_provider(load_weights, hf_path, device=device)
 
         # Finalize the provider before creating models
         if hasattr(provider, "finalize"):
@@ -895,7 +904,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         return provider.provide_distributed_model(**kwargs)
 
-    def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
+    def to_megatron_provider(
+        self,
+        load_weights: bool = True,
+        hf_path: str | Path | None = None,
+        device: Optional[Union[str, torch.device]] = None,
+    ) -> GPTModelProvider:
         """
         Convert to a Megatron model provider.
 
@@ -910,6 +924,9 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_path: Optional path to load weights from. If None, uses weights
                 from the bridge's hf_pretrained instance. Useful for loading
                 weights from a different checkpoint.
+            device: Device to use for weight conversion operations. When set to
+                ``"cuda"``, tensor operations (chunk, cat, QKV merge, etc.) run
+                on GPU for faster conversion. Defaults to None (CPU).
 
         Returns:
             GPTModelProvider: A configured model provider ready to create
@@ -947,13 +964,15 @@ class AutoBridge(Generic[MegatronModelT]):
             provider.perform_initialization = False
             if hf_path is None:
                 provider.register_pre_wrap_hook(
-                    partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)
+                    partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained, device=device)
                 )
             else:
                 # Load from specified path
                 trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
                 pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-                provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
+                provider.register_pre_wrap_hook(
+                    partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained, device=device)
+                )
 
         hf_identifier: str | None = None
         if hf_path is not None:

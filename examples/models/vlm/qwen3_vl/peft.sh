@@ -25,10 +25,11 @@ PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 MODEL_NAME=qwen3_vl_8b
 DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
-TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=32
+TRAIN_ITERS=100
+GLOBAL_BATCH_SIZE=16
 MICRO_BATCH_SIZE=2
-EVAL_ITERS=10
+EVAL_ITERS=20
+EVAL_INTERVAL=20
 LR=0.00005
 MIN_LR=0.000005
 LR_WARMUP_ITERS=10
@@ -45,7 +46,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP <<< "$par_config"
         echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
         uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-            --recipe ${MODEL_NAME}_finetune_config \
+            --recipe ${MODEL_NAME}_peft_config \
             --step_func qwen3_vl_step \
             --peft_scheme lora \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -53,7 +54,8 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             train.train_iters=$TRAIN_ITERS \
             train.global_batch_size=$GLOBAL_BATCH_SIZE \
             train.micro_batch_size=$MICRO_BATCH_SIZE \
-            train.eval_iters=$EVAL_ITERS \
+            validation.eval_iters=$EVAL_ITERS \
+            validation.eval_interval=$EVAL_INTERVAL \
             optimizer.lr=$LR \
             optimizer.min_lr=$MIN_LR \
             scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
@@ -80,10 +82,11 @@ PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-30B-A3B-Instruct
 MODEL_NAME=qwen3_vl_30b_a3b
 DATASET_NAME=cord_v2
 SEQ_LENGTH=4096
-TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=32
+TRAIN_ITERS=100
+GLOBAL_BATCH_SIZE=16
 MICRO_BATCH_SIZE=2
-EVAL_ITERS=10
+EVAL_ITERS=20
+EVAL_INTERVAL=20
 LR=0.00005
 MIN_LR=0.000005
 LR_WARMUP_ITERS=10
@@ -100,7 +103,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP <<< "$par_config"
         echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
         uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-            --recipe ${MODEL_NAME}_finetune_config \
+            --recipe ${MODEL_NAME}_peft_config \
             --step_func qwen3_vl_step \
             --peft_scheme lora \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
@@ -108,7 +111,8 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             train.train_iters=$TRAIN_ITERS \
             train.global_batch_size=$GLOBAL_BATCH_SIZE \
             train.micro_batch_size=$MICRO_BATCH_SIZE \
-            train.eval_iters=$EVAL_ITERS \
+            validation.eval_iters=$EVAL_ITERS \
+            validation.eval_interval=$EVAL_INTERVAL \
             optimizer.lr=$LR \
             optimizer.min_lr=$MIN_LR \
             scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
