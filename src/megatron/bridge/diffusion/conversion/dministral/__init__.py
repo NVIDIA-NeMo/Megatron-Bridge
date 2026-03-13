@@ -11,3 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from megatron.bridge.diffusion.conversion.dministral.dministral3_bridge import DMinistral3Bridge
+
+__all__ = ["DMinistral3Bridge"]

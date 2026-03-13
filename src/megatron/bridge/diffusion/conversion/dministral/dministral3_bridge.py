@@ -1,0 +1,93 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Megatron Bridge for DMinistral 3 (diffusion) Vision-Language Models.
+
+Converts between HuggingFace Mistral3ForConditionalGeneration and
+Megatron-Core GPTModel format, using DMinistral3ModelProvider which
+replaces core attention with FlexDotProductAttention for sbd_block_diff.
+
+Supported models:
+- Ministral-3-3B-Base-2512
+- Ministral-3-8B-Base-2512
+"""
+
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    GatedMLPMapping,
+    QKVMapping,
+)
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+
+# Ensure the base Ministral3Bridge is registered first so we can override it
+from megatron.bridge.models.ministral3 import Ministral3Bridge  # noqa: F401
+
+from megatron.bridge.diffusion.models.dministral.dministral3_provider import DMinistral3ModelProvider
+from megatron.core.models.gpt.gpt_model import GPTModel
+
+try:
+    from transformers import Mistral3ForConditionalGeneration
+    HAS_MISTRAL3 = True
+except ImportError:
+    Mistral3ForConditionalGeneration = None
+    HAS_MISTRAL3 = False
+
+
+@MegatronModelBridge.register_bridge(source=Mistral3ForConditionalGeneration, target=GPTModel)
+class DMinistral3Bridge(MegatronModelBridge):
+    """HF <-> Megatron bridge for DMinistral3 diffusion language models."""
+
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> DMinistral3ModelProvider:
+        hf_config = hf_pretrained.config
+        text_config = getattr(hf_config, "text_config", hf_config)
+        return DMinistral3ModelProvider(
+            hidden_size=text_config.hidden_size,
+            ffn_hidden_size=text_config.intermediate_size,
+            num_layers=text_config.num_hidden_layers,
+            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
+            rotary_base=text_config.rope_parameters["rope_theta"],
+            vocab_size=text_config.vocab_size,
+            hf_config=hf_config,
+        )
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        param_mappings = {
+            "embedding.word_embeddings.weight": "language_model.model.embed_tokens.weight",
+            "output_layer.weight": "language_model.lm_head.weight",
+            "decoder.final_layernorm.weight": "language_model.model.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "language_model.model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "language_model.model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "language_model.model.layers.*.self_attn.o_proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "language_model.model.layers.*.mlp.down_proj.weight",
+        }
+
+        mapping_list = [AutoMapping(megatron_param=k, hf_param=v) for k, v in param_mappings.items()]
+        mapping_list.extend([
+            QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                q="language_model.model.layers.*.self_attn.q_proj.weight",
+                k="language_model.model.layers.*.self_attn.k_proj.weight",
+                v="language_model.model.layers.*.self_attn.v_proj.weight",
+            ),
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                gate="language_model.model.layers.*.mlp.gate_proj.weight",
+                up="language_model.model.layers.*.mlp.up_proj.weight",
+            ),
+        ])
+
+        return MegatronMappingRegistry(*mapping_list)
