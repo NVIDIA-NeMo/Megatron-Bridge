@@ -30,8 +30,6 @@ import filelock
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 
-import megatron.bridge.models.conversion.transformers_compat  # noqa: F401  # patches removed HF utils
-
 
 def safe_load_config_with_retry(
     path: Union[str, Path], trust_remote_code: bool = False, max_retries: int = 3, base_delay: float = 1.0, **kwargs
