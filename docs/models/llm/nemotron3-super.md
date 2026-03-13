@@ -50,13 +50,16 @@ docker run --rm -it \
 ## Conversion with 🤗 Hugging Face
 
 ### Import HF → Megatron
-To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
+To import the HF model to your desired `$MEGATRON_MODEL_PATH`, use the distributed
+conversion script because this model uses expert parallelism. The single-process
+`examples/conversion/convert_checkpoints.py` script is limited to single-GPU conversion
+without model parallelism.
 
 ```bash
 HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/output/megatron/ckpt
 
-torchrun --nproc-per-node=8 examples/conversion/convert_checkpoints.py import \
+torchrun --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py import \
 --hf-model $HF_MODEL \
 --megatron-path $MEGATRON_PATH \
 --tp 1 \
@@ -73,7 +76,7 @@ HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/trained/megatron/ckpt
 OUTPUT_PATH=/path/to/output/hf/ckpt
 
-torchrun --nproc-per-node=8 examples/conversion/convert_checkpoints.py export \
+torchrun --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py export \
 --hf-model $HF_MODEL \
 --megatron-path $MEGATRON_PATH \
 --hf-path $OUTPUT_PATH \

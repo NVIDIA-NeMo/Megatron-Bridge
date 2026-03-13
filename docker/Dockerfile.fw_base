@@ -59,6 +59,7 @@ RUN git clone https://github.com/vllm-project/vllm.git . && \
 FROM base AS trtllm_repo
 
 ARG TRT_LLM_COMMIT
+ARG CUDA_VER
 ARG NVRTC_VER
 ARG TRT_VER
 
@@ -75,6 +76,7 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM . && \
     git submodule update --init --recursive && \
     git lfs install && git lfs pull && \
     sed -i "s/NVRTC_VER=\"[^\"]*\"/NVRTC_VER=\"${NVRTC_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
+    sed -i "s/TRT_CUDA_VERSION=\"[^\"]*\"/TRT_CUDA_VERSION=\"${CUDA_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
     sed -i "s/CUDA_RUNTIME==\"[^\"]*\"/CUDA_RUNTIME==\"${NVRTC_VER}\"/g" /src/tensorrt_llm/docker/common/install_tensorrt.sh && \
     sed -i "/triton/d" requirements.txt && \
     sed -i "s/tensorrt~=[0-9.]*/tensorrt~=${TRT_VER}/g" requirements.txt && \
@@ -250,7 +252,7 @@ RUN export LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/openmpi/lib:${LD_LIBR
     && cd .. \
     && rm -rf aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v} \
     && rm aws-ofi-nccl-${AWS_OFI_NCCL_VERSION//v}.tar.gz
-    
+
 ##############################################################################
 ##
 ## Reinstall CUDA toolkit packages
