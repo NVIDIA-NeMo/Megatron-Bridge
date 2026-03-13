@@ -289,13 +289,14 @@ class TestDiTCrossAttentionInit:
         attn = DiTCrossAttention.__new__(DiTCrossAttention)
         _init_module_and_attrs(attn, config)
         mock_super_init.side_effect = lambda *a, **kw: None
-        DiTCrossAttention.__init__(
-            attn, config, submodules, layer_number=1, attn_mask_type=AttnMaskType.no_mask
-        )
+        DiTCrossAttention.__init__(attn, config, submodules, layer_number=1, attn_mask_type=AttnMaskType.no_mask)
         return attn
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_layernorms_and_linear_kv_built(self, mock_build, mock_super_init):
         config = _make_config(layernorm_across_heads=False, add_bias_linear=False)
         submodules = DiTCrossAttentionSubmodules(
@@ -310,12 +311,13 @@ class TestDiTCrossAttentionInit:
         assert mock_build.call_count == 3
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_layernorms_none_when_absent(self, mock_build, mock_super_init):
         config = _make_config()
-        submodules = DiTCrossAttentionSubmodules(
-            q_layernorm=None, k_layernorm=None, linear_kv=MagicMock()
-        )
+        submodules = DiTCrossAttentionSubmodules(q_layernorm=None, k_layernorm=None, linear_kv=MagicMock())
 
         attn = self._run_init(config, submodules, mock_super_init)
 
@@ -325,12 +327,13 @@ class TestDiTCrossAttentionInit:
         assert mock_build.call_count == 1
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_linear_kv_uses_crossattn_emb_size(self, mock_build, mock_super_init):
         config = _make_config(hidden_size=64, crossattn_emb_size=128)
-        submodules = DiTCrossAttentionSubmodules(
-            q_layernorm=None, k_layernorm=None, linear_kv=MagicMock()
-        )
+        submodules = DiTCrossAttentionSubmodules(q_layernorm=None, k_layernorm=None, linear_kv=MagicMock())
 
         self._run_init(config, submodules, mock_super_init)
 
@@ -338,12 +341,13 @@ class TestDiTCrossAttentionInit:
         assert call_args[0][1] == 128  # crossattn_emb_size used
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_linear_kv_falls_back_to_hidden_size(self, mock_build, mock_super_init):
         config = _make_config(hidden_size=64)
-        submodules = DiTCrossAttentionSubmodules(
-            q_layernorm=None, k_layernorm=None, linear_kv=MagicMock()
-        )
+        submodules = DiTCrossAttentionSubmodules(q_layernorm=None, k_layernorm=None, linear_kv=MagicMock())
 
         self._run_init(config, submodules, mock_super_init)
 

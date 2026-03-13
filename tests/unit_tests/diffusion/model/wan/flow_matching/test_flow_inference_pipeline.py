@@ -274,7 +274,9 @@ class TestForwardPPStep:
         from megatron.core import parallel_state
 
         monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 2, raising=False)
-        monkeypatch.setattr(parallel_state, "is_pipeline_first_stage", lambda ignore_virtual=True: False, raising=False)
+        monkeypatch.setattr(
+            parallel_state, "is_pipeline_first_stage", lambda ignore_virtual=True: False, raising=False
+        )
         monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda ignore_virtual=True: True, raising=False)
 
         S, B, H = 8, 2, 16
@@ -302,7 +304,9 @@ class TestForwardPPStep:
         from megatron.core import parallel_state
 
         monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 3, raising=False)
-        monkeypatch.setattr(parallel_state, "is_pipeline_first_stage", lambda ignore_virtual=True: False, raising=False)
+        monkeypatch.setattr(
+            parallel_state, "is_pipeline_first_stage", lambda ignore_virtual=True: False, raising=False
+        )
         monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda ignore_virtual=True: False, raising=False)
 
         S, B, H = 8, 2, 16
@@ -319,7 +323,9 @@ class TestForwardPPStep:
         monkeypatch.setattr(f"{PIPELINE_MODULE}.broadcast_from_last_pipeline_stage", broadcast_mock)
 
         latent = torch.randn(S, B, H)
-        out = pip.forward_pp_step(latent, grid_sizes=[(2, 2, 2)], max_video_seq_len=S, timestep=torch.tensor([10.0, 10.0]), arg_c={})
+        out = pip.forward_pp_step(
+            latent, grid_sizes=[(2, 2, 2)], max_video_seq_len=S, timestep=torch.tensor([10.0, 10.0]), arg_c={}
+        )
 
         recv_mock.assert_called_once()
         send_mock.assert_called_once()
