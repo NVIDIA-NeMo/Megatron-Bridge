@@ -67,6 +67,7 @@ def parse_args():  # noqa: D103
     parser.add_argument("--num_inference_steps", type=int, default=10)
     parser.add_argument("--guidance_scale", type=float, default=0.0)
     parser.add_argument("--output_path", type=str, default="/tmp/flux_output")
+    parser.add_argument("--base_seed", type=int, default=42, help="Random seed for reproducibility")
     return parser.parse_args()
 
 
