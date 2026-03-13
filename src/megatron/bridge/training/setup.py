@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import inspect
+import warnings
 import logging
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
-from megatron.bridge.models.common import ModelConfig
+from megatron.bridge.models.common import ModelBuilder, ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -223,14 +224,7 @@ def setup(
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
 
-    model = cfg.model.provide_distributed_model(
-        ddp_config=cfg.ddp,
-        use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
-        use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
-        overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-        data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        pg_collection=pg_collection,
-    )
+    model = _build_distributed_model(cfg, pg_collection)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
@@ -348,6 +342,37 @@ def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
         model_cfg.pre_wrap_hooks.append(hook)
     else:
         model_cfg.register_pre_wrap_hook(hook)
+
+
+def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
+    """Build distributed model from either ModelConfig or ModelProviderMixin."""
+    model_config = cfg.model
+    if isinstance(model_config, ModelConfig):
+        builder_cls = model_config.get_builder_cls()
+        builder = builder_cls(model_config)
+        return builder.build_distributed_models(
+            pg_collection=pg_collection,
+            ddp_config=cfg.ddp,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        )
+    else:
+        warnings.warn(
+            "ModelProviderMixin-based model configuration is deprecated. "
+            "Migrate to ModelConfig + ModelBuilder.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return model_config.provide_distributed_model(
+            ddp_config=cfg.ddp,
+            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            pg_collection=pg_collection,
+        )
 
 
 def _update_model_config_funcs(
