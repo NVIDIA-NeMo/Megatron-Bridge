@@ -334,7 +334,7 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.peft is not None
     assert cfg.peft.dim == 32
     assert cfg.peft.alpha == 32

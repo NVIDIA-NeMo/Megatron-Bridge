@@ -330,6 +330,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("v_head_dim", "v_head_dim"),
         # MTP
         ("num_nextn_predict_layers", "mtp_num_layers"),
+        ("mtp_num_hidden_layers", "mtp_num_layers"),
     ]
 
     # YARN rope scaling field mapping for GPT models: (hf_rope_scaling_key, megatron_yarn_param)
