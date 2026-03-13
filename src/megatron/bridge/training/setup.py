@@ -18,6 +18,9 @@ import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
@@ -289,7 +292,7 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model,
+        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, MambaModelConfig)) else cfg.model,
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
@@ -339,7 +342,7 @@ def setup(
 
 def _update_model_config_funcs(
     model: MegatronModule,
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     ddp_config: DistributedDataParallelConfig,
     optimizer: Optional[MegatronOptimizer],
     *,
