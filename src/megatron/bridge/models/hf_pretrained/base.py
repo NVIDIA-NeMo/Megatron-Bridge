@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -22,6 +23,9 @@ import torch
 from transformers import AutoConfig, PreTrainedModel
 
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
+
+
+logger = logging.getLogger(__name__)
 
 
 class PreTrainedBase(ABC):
@@ -218,8 +222,8 @@ class PreTrainedBase(ABC):
                         src_file = sys.modules[model_class.__module__].__file__
                         src_path = Path(src_file).parent
                         source_paths.append(src_path)
-                    except OSError:  # ignore if model_name_or_path does not contain the modeling file
-                        pass
+                    except Exception as e:
+                        logger.debug("Could not load dynamic module for %s: %s", self.model_name_or_path, e)
 
             if hasattr(self, "model_name_or_path") and self.model_name_or_path:
                 source_paths.append(self.model_name_or_path)
@@ -285,7 +289,10 @@ class PreTrainedBase(ABC):
             if hasattr(self, "_model") and self._model is not None:
                 source = self.model.state_dict()
             elif hasattr(self, "model_name_or_path") and self.model_name_or_path:
-                source = SafeTensorsStateSource(self.model_name_or_path)
+                source = SafeTensorsStateSource(
+                    self.model_name_or_path,
+                    device=getattr(self, "device", "cpu"),
+                )
 
             if source is None:
                 raise ValueError(

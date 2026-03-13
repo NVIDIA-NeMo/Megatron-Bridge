@@ -15,7 +15,7 @@ Demonstrates round-trip conversion between HuggingFace and Megatron-LM model for
 
 **Usage:**
 ```bash
-# Basic conversion (uses default Llama-3.2-1B)
+# Basic conversion (uses default Llama-3.2-1B, GPU-accelerated when available)
 uv run python examples/conversion/hf_megatron_roundtrip.py
 
 # Convert specific model
@@ -23,6 +23,9 @@ uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-ll
 
 # Save to specific directory
 uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-1B --output-dir ./converted_models
+
+# Force CPU-only conversion
+uv run python examples/conversion/hf_megatron_roundtrip.py --hf-model-id meta-llama/Llama-3.2-1B --device cpu
 ```
 
 **Example Output:**
@@ -46,19 +49,25 @@ Saving HF-ckpt in Llama-3.2-1B...
 
 ### 2. `convert_checkpoints.py` - Checkpoint Conversion
 
-A tool for importing/exporting models between HuggingFace and Megatron checkpoint formats.
+A tool for importing/exporting models between HuggingFace and Megatron checkpoint formats
+in a single-process workflow.
 
 **Features:**
 - Import HuggingFace models to Megatron checkpoint format
 - Export Megatron checkpoints to HuggingFace format
+- Single-GPU or CPU-only conversion without tensor/pipeline/expert parallelism
 - Configurable model settings (dtype, device mapping)
 - Progress tracking and validation
+
+This script is intentionally limited to single-GPU conversion without model parallelism.
+For distributed or model-parallel checkpoint conversion, use
+`examples/conversion/convert_checkpoints_multi_gpu.py`.
 
 **Usage:**
 
 **Import HF to Megatron:**
 ```bash
-# Basic import
+# Basic single-GPU import (uses one GPU for conversion by default when available)
 uv run python examples/conversion/convert_checkpoints.py import \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b
@@ -69,11 +78,17 @@ uv run python examples/conversion/convert_checkpoints.py import \
   --megatron-path ./checkpoints/llama3_2_1b \
   --torch-dtype bfloat16 \
   --device-map auto
+
+# Force CPU-only conversion (no GPU required)
+uv run python examples/conversion/convert_checkpoints.py import \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --megatron-path ./checkpoints/llama3_2_1b \
+  --device cpu
 ```
 
 **Export Megatron to HF:**
 ```bash
-# Basic export
+# Basic single-GPU export
 uv run python examples/conversion/convert_checkpoints.py export \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b \
@@ -90,6 +105,7 @@ uv run python examples/conversion/convert_checkpoints.py export \
 **Example Output:**
 ```
 🔄 Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
+   Conversion device: cuda
 📥 Loading HuggingFace model: meta-llama/Llama-3.2-1B
 ...
   successfully saved checkpoint from iteration       0 to ./checkpoints/llama3_2_1b [ t 1/1, p 1/1 ]
