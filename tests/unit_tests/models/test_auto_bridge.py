@@ -297,25 +297,6 @@ class TestAutoBridge:
             # Check that a pre-wrap hook was registered for loading weights
             mock_provider.register_pre_wrap_hook.assert_called_once()
 
-    def test_to_megatron_provider_with_device(self, llama_config):
-        """Test to_megatron_provider passes device to the pre-wrap hook."""
-        mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_hf_model.config = LlamaConfig(**llama_config)
-
-        mock_model_bridge = Mock()
-        mock_provider = Mock(spec=GPTModelProvider)
-        mock_provider.register_pre_wrap_hook = Mock()
-        mock_model_bridge.provider_bridge.return_value = mock_provider
-        mock_model_bridge.load_weights_hf_to_megatron = Mock()
-
-        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
-            bridge = AutoBridge(mock_hf_model)
-            bridge.to_megatron_provider(load_weights=True, device="cuda")
-
-            mock_provider.register_pre_wrap_hook.assert_called_once()
-            registered_hook = mock_provider.register_pre_wrap_hook.call_args[0][0]
-            assert registered_hook.keywords.get("device") == "cuda"
-
     def test_to_megatron_provider_sets_hf_model_id_from_path(self):
         """to_megatron_provider tags providers with the provided HF path."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
@@ -476,26 +457,7 @@ class TestAutoBridge:
             bridge.load_hf_weights(mock_megatron_model)
 
             mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
-                mock_hf_model, mock_megatron_model, allowed_mismatched_params=None, device=None
-            )
-
-    def test_load_hf_weights_with_device(self):
-        """Test loading weights with device parameter for GPU-accelerated conversion."""
-        mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_config = Mock(spec=PretrainedConfig)
-        mock_hf_model.config = mock_config
-
-        mock_megatron_model = [Mock()]
-
-        mock_model_bridge = Mock()
-        mock_model_bridge.load_weights_hf_to_megatron = Mock()
-
-        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
-            bridge = AutoBridge(mock_hf_model)
-            bridge.load_hf_weights(mock_megatron_model, device="cuda")
-
-            mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
-                mock_hf_model, mock_megatron_model, allowed_mismatched_params=None, device="cuda"
+                mock_hf_model, mock_megatron_model, allowed_mismatched_params=None
             )
 
     def test_load_hf_weights_with_allowed_mismatched_params(self):
@@ -516,7 +478,7 @@ class TestAutoBridge:
             bridge.load_hf_weights(mock_megatron_model, allowed_mismatched_params=whitelist)
 
             mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
-                mock_hf_model, mock_megatron_model, allowed_mismatched_params=whitelist, device=None
+                mock_hf_model, mock_megatron_model, allowed_mismatched_params=whitelist
             )
 
     def test_load_hf_weights_from_path(self):
@@ -549,7 +511,6 @@ class TestAutoBridge:
                     mock_loaded_model,
                     mock_megatron_model,
                     allowed_mismatched_params=None,
-                    device=None,
                 )
 
     def test_load_hf_weights_no_path_config_only(self):
@@ -843,9 +804,7 @@ class TestAutoBridge:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Meta-Llama-3-8B")
-        mock_bridge.to_megatron_model.assert_called_once_with(
-            wrap_with_ddp=False, use_cpu_initialization=True, device=None
-        )
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
@@ -877,37 +836,13 @@ class TestAutoBridge:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
-        mock_bridge.to_megatron_model.assert_called_once_with(
-            wrap_with_ddp=False, use_cpu_initialization=True, device=None
-        )
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
             hf_tokenizer_path="./local_model",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
             low_memory_save=True,
-        )
-
-    @patch.object(AutoBridge, "save_megatron_model")
-    @patch.object(AutoBridge, "to_megatron_model")
-    @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_with_device(self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model):
-        """Test import_ckpt passes device parameter through to to_megatron_model."""
-        mock_bridge = Mock(spec=AutoBridge)
-        mock_from_hf_pretrained.return_value = mock_bridge
-
-        mock_megatron_model = [Mock()]
-        mock_bridge.to_megatron_model.return_value = mock_megatron_model
-        mock_bridge.save_megatron_model = Mock()
-
-        AutoBridge.import_ckpt(
-            "meta-llama/Meta-Llama-3-8B",
-            "./megatron_checkpoint",
-            device="cuda",
-        )
-
-        mock_bridge.to_megatron_model.assert_called_once_with(
-            wrap_with_ddp=False, use_cpu_initialization=True, device="cuda"
         )
 
     def test_export_ckpt_basic(self):

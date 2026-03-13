@@ -503,7 +503,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         scatter_list = None
         if self.tp_rank == src_rank and splits:
-            scatter_list = [s.to(device=device, dtype=dtype).contiguous() for s in splits]
+            scatter_list = [s.to(device=device, dtype=dtype) for s in splits]
 
         torch.distributed.scatter(
             output,
