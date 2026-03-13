@@ -400,8 +400,9 @@ jobs:
           - script: L2_Launch_ckpts_mlm_to_mbridge_llama32_1b
           - script: L2_Launch_ckpts_mbridge_to_mlm_qwen3_4b
           - script: L2_Launch_ckpts_mlm_to_mbridge_qwen3_4b
-          - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b
-          - script: L2_Launch_ckpts_mlm_to_mbridge_nemotronh_4b
+          # NemotronH 4B ckpt L2 jobs skipped until hybrid_override_pattern -> hybrid_layer_pattern (PR #2628)
+          # - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b
+          # - script: L2_Launch_ckpts_mlm_to_mbridge_nemotronh_4b
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |

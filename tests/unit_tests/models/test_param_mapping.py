@@ -271,6 +271,34 @@ class TestAutoMapping:
         with pytest.raises(ValueError):
             mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
 
+    def test_detect_parallelism_type_dynamic_module(self):
+        mtq = pytest.importorskip("modelopt.torch.quantization")
+        DynamicModule = pytest.importorskip("modelopt.torch.opt.dynamic").DynamicModule
+
+        class Wrapper(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(4, 4)
+
+            def forward(self, x):
+                return self.linear(x)
+
+        model = Wrapper()
+        mtq.quantize(model, mtq.INT8_DEFAULT_CFG)
+        quantized_linear = model.linear
+
+        assert isinstance(quantized_linear, DynamicModule)
+        assert type(quantized_linear).__name__ == "QuantLinear"
+        assert quantized_linear.get_original_cls_by_level(level=0).__name__ == "Linear"
+
+        AutoMapping.register_module_type("Linear", "column")
+        try:
+            mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
+            result = mapping._detect_parallelism_type(quantized_linear)
+            assert result == "column"
+        finally:
+            AutoMapping._MODULE_TYPE_REGISTRY["column"].discard("Linear")
+
 
 class TestHelperFunctions:
     def test_qkv_merge_split(self, transformer_config):
@@ -401,7 +429,10 @@ class TestGatedMLPMapping:
             # Should have 2 splits (one per TP rank)
             assert len(splits) == 2
             # Each split should be concatenated [gate_shard; up_shard]
-            assert splits[0].shape == (128, 32)  # Half of 128 gate + half of 128 up = 64 + 64 = 128
+            assert splits[0].shape == (
+                128,
+                32,
+            )  # Half of 128 gate + half of 128 up = 64 + 64 = 128
             assert splits[1].shape == (128, 32)
 
     def test_megatron_to_hf_single_tp(self, mock_distributed_env, transformer_config):
@@ -477,14 +508,24 @@ class TestMappingEdgeCases:
         """Test that wildcard patterns are validated correctly."""
         # Valid patterns - should not raise
         DirectMapping("layer.*.weight", "model.*.weight")
-        QKVMapping(megatron_param="*.qkv.weight", q="*.q_proj.weight", k="*.k_proj.weight", v="*.v_proj.weight")
+        QKVMapping(
+            megatron_param="*.qkv.weight",
+            q="*.q_proj.weight",
+            k="*.k_proj.weight",
+            v="*.v_proj.weight",
+        )
 
         # Invalid patterns - mismatched wildcard counts
         with pytest.raises(ValueError, match="Wildcard count mismatch"):
             DirectMapping("layer.*.*.weight", "model.*.weight")
 
         with pytest.raises(ValueError, match="Wildcard count mismatch"):
-            QKVMapping("*.qkv.weight", q="*.*.q_proj.weight", k="*.k_proj.weight", v="*.v_proj.weight")
+            QKVMapping(
+                "*.qkv.weight",
+                q="*.*.q_proj.weight",
+                k="*.k_proj.weight",
+                v="*.v_proj.weight",
+            )
 
     def test_qkv_bias_handling(self, transformer_config):
         """Test QKV mapping handles biases correctly."""
@@ -571,7 +612,12 @@ class TestMappingEdgeCases:
         assert resolved.hf_param == "model.0.weight"
 
         # Test QKVMapping
-        qkv_mapping = QKVMapping("*.qkv.weight", q="*.q_proj.weight", k="*.k_proj.weight", v="*.v_proj.weight")
+        qkv_mapping = QKVMapping(
+            "*.qkv.weight",
+            q="*.q_proj.weight",
+            k="*.k_proj.weight",
+            v="*.v_proj.weight",
+        )
         resolved_qkv = qkv_mapping.resolve(("layer0",))
         assert resolved_qkv.megatron_param == "layer0.qkv.weight"
         assert resolved_qkv.hf_param["q"] == "layer0.q_proj.weight"

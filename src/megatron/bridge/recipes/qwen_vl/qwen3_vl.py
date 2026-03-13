@@ -18,14 +18,40 @@ This module provides SFT and PEFT configurations for Qwen3-VL MoE models (8B, 30
 """
 
 import torch
+from transformers import AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+
+
+def _make_energon_dataset(
+    hf_path: str, seq_length: int, micro_batch_size: int, global_batch_size: int
+) -> EnergonProvider:
+    """Create an EnergonProvider dataset config for Qwen3-VL recipes."""
+    tokenizer = AutoTokenizer.from_pretrained(hf_path)
+    # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
+    # This processor accepts both images and videos kwargs.
+    image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
+    task_encoder = QwenVLTaskEncoder(
+        tokenizer=tokenizer,
+        image_processor=image_processor,
+        max_padding_length=seq_length,
+    )
+    return EnergonProvider(
+        path="",  # Must be set via CLI override: dataset.path=<path>
+        seq_length=seq_length,
+        micro_batch_size=micro_batch_size,
+        global_batch_size=global_batch_size,
+        num_workers=2,
+        task_encoder=task_encoder,
+    )
 
 
 # =============================================================================
@@ -42,7 +68,7 @@ def qwen3_vl_8b_sft_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-8B"
+    hf_path = "Qwen/Qwen3-VL-8B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -177,7 +203,7 @@ def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-30B-A3B"
+    hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -196,7 +222,7 @@ def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
     cfg.model.freeze_vision_projection = False
 
     # Token dispatcher settings (MoE)
-    cfg.model.moe_token_dispatcher_type = None
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_hybridep_num_sms = 16
 
@@ -332,7 +358,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
     cfg.model.freeze_vision_projection = False
 
     # Token dispatcher settings (MoE)
-    cfg.model.moe_token_dispatcher_type = None
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_hybridep_num_sms = 16
 
@@ -458,7 +484,7 @@ def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-8B"
+    hf_path = "Qwen/Qwen3-VL-8B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -602,7 +628,7 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCont
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-30B-A3B"
+    hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -621,7 +647,7 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCont
     cfg.model.freeze_vision_projection = False
 
     # Token dispatcher settings (MoE)
-    cfg.model.moe_token_dispatcher_type = None
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_hybridep_num_sms = 16
 
@@ -766,7 +792,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
     cfg.model.freeze_vision_projection = False
 
     # Token dispatcher settings (MoE)
-    cfg.model.moe_token_dispatcher_type = None
+    cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_hybridep_num_sms = 16
 
@@ -866,4 +892,19 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    return cfg
+
+
+# =============================================================================
+# Qwen3-VL 8B PEFT with Energon Dataset
+# =============================================================================
+def qwen3_vl_8b_peft_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT (LoRA/DoRA) config for Qwen3-VL 8B with Energon dataset.
+
+    Same as qwen3_vl_8b_peft_config but uses EnergonProvider instead of HF dataset.
+    Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
+    """
+    cfg = qwen3_vl_8b_peft_config(peft_scheme=peft_scheme)
+    hf_path = "Qwen/Qwen3-VL-8B-Instruct"
+    cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
     return cfg
