@@ -261,7 +261,9 @@ class TestForwardPPStep:
         monkeypatch.setattr(f"{PIPELINE_MODULE}.broadcast_from_last_pipeline_stage", broadcast_mock)
 
         latent = torch.randn(S, B, H)
-        out = pip.forward_pp_step(latent, grid_sizes=[(2, 2, 2)], max_video_seq_len=S, timestep=torch.tensor([10.0, 10.0]), arg_c={})
+        out = pip.forward_pp_step(
+            latent, grid_sizes=[(2, 2, 2)], max_video_seq_len=S, timestep=torch.tensor([10.0, 10.0]), arg_c={}
+        )
 
         send_mock.assert_called_once()
         broadcast_mock.assert_called_once()
@@ -287,7 +289,9 @@ class TestForwardPPStep:
         monkeypatch.setattr(f"{PIPELINE_MODULE}.broadcast_from_last_pipeline_stage", broadcast_mock)
 
         latent = torch.randn(S, B, H)
-        out = pip.forward_pp_step(latent, grid_sizes=[(2, 2, 2)], max_video_seq_len=S, timestep=torch.tensor([10.0, 10.0]), arg_c={})
+        out = pip.forward_pp_step(
+            latent, grid_sizes=[(2, 2, 2)], max_video_seq_len=S, timestep=torch.tensor([10.0, 10.0]), arg_c={}
+        )
 
         recv_mock.assert_called_once()
         broadcast_mock.assert_called_once()
@@ -338,7 +342,9 @@ class TestSetupModelFromCheckpoint:
         monkeypatch.setattr(f"{PIPELINE_MODULE}.WanModelProvider", mock_provider_cls)
         monkeypatch.setattr(f"{PIPELINE_MODULE}._load_megatron_model", mock_load)
 
-        pip = _make_pipeline(tensor_parallel_size=2, pipeline_parallel_size=4, context_parallel_size=2, sequence_parallel=True)
+        pip = _make_pipeline(
+            tensor_parallel_size=2, pipeline_parallel_size=4, context_parallel_size=2, sequence_parallel=True
+        )
         result = pip.setup_model_from_checkpoint("/fake/checkpoint")
 
         mock_provider_instance.finalize.assert_called_once()

@@ -16,7 +16,12 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
-from megatron.bridge.diffusion.models.wan.utils import grid_sizes_calculation, patchify, thd_split_inputs_cp, unpatchify
+from megatron.bridge.diffusion.models.wan.utils import (
+    grid_sizes_calculation,
+    patchify,
+    thd_split_inputs_cp,
+    unpatchify,
+)
 
 
 def test_grid_sizes_calculation_basic():

@@ -18,14 +18,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.nn as nn
+from megatron.core.transformer.attention import SelfAttentionSubmodules
+from megatron.core.transformer.enums import AttnMaskType
 
 from megatron.bridge.diffusion.models.common.dit_attention import (
     DiTCrossAttention,
     DiTCrossAttentionSubmodules,
     DiTSelfAttention,
 )
-from megatron.core.transformer.attention import SelfAttentionSubmodules
-from megatron.core.transformer.enums import AttnMaskType
 
 
 pytestmark = [pytest.mark.unit]
@@ -136,7 +136,10 @@ class TestDiTSelfAttentionInit:
         return attn
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.SelfAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_layernorms_built_when_submodules_present(self, mock_build, mock_super_init):
         config = _make_config(layernorm_across_heads=False)
         submodules = _make_self_attn_submodules(q_layernorm=MagicMock(), k_layernorm=MagicMock())
@@ -158,7 +161,10 @@ class TestDiTSelfAttentionInit:
         assert attn.k_layernorm is None
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.SelfAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_layernorm_across_heads_uses_full_projection_size(self, mock_build, mock_super_init):
         config = _make_config(layernorm_across_heads=True)
         submodules = _make_self_attn_submodules(q_layernorm=MagicMock(), k_layernorm=MagicMock())
@@ -172,7 +178,10 @@ class TestDiTSelfAttentionInit:
         assert k_call_kwargs["hidden_size"] == 64  # kv_projection_size
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.SelfAttention.__init__", return_value=None)
-    @patch("megatron.bridge.diffusion.models.common.dit_attention.build_module", side_effect=lambda *a, **kw: nn.Identity())
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
     def test_layernorm_per_head_uses_head_size(self, mock_build, mock_super_init):
         config = _make_config(layernorm_across_heads=False)
         submodules = _make_self_attn_submodules(q_layernorm=MagicMock(), k_layernorm=MagicMock())
