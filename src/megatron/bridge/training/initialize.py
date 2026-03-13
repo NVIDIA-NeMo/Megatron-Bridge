@@ -296,7 +296,10 @@ def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, mic
         torch._C._jit_override_can_fuse_on_cpu(True)
         torch._C._jit_override_can_fuse_on_gpu(True)
 
-    _warmup_jit_function(model_config, micro_batch_size)
+    _warmup_jit_function(
+        model_config.transformer if isinstance(model_config, (GPTModelConfig, MambaModelConfig)) else model_config,
+        micro_batch_size,
+    )
 
 
 def destroy_global_state() -> None:
