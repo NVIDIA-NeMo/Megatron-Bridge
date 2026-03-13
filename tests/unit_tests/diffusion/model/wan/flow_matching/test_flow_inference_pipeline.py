@@ -418,7 +418,10 @@ class TestGenerate:
 
         monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 1, raising=False)
 
-        pip = _make_pipeline()
+        text_len = 16
+        text_hidden = 32
+
+        pip = _make_pipeline(text_len=text_len)
 
         mock_model = _make_mock_model(hidden_size=16)
         pip.model = mock_model
@@ -428,7 +431,7 @@ class TestGenerate:
             t5_dtype=torch.float32,
             vae_stride=(4, 8, 8),
             patch_size=(1, 2, 2),
-            text_len=512,
+            text_len=text_len,
             english_sample_neg_prompt="",
         )
         pip.vae_stride = (4, 8, 8)
@@ -438,18 +441,18 @@ class TestGenerate:
         mock_vae = MagicMock()
         mock_vae.config = vae_cfg
         mock_vae.dtype = torch.float32
-        mock_vae.decode.return_value = SimpleNamespace(sample=torch.randn(1, 3, 81, 480, 720))
+        mock_vae.decode.return_value = SimpleNamespace(sample=torch.randn(1, 3, 5, 16, 16))
         pip.vae = mock_vae
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.return_value = {
-            "input_ids": torch.zeros(1, 512, dtype=torch.long),
-            "attention_mask": torch.cat([torch.ones(1, 10), torch.zeros(1, 502)], dim=1),
+            "input_ids": torch.zeros(1, text_len, dtype=torch.long),
+            "attention_mask": torch.cat([torch.ones(1, 4), torch.zeros(1, text_len - 4)], dim=1),
         }
         pip.tokenizer = mock_tokenizer
 
         mock_text_encoder = MagicMock()
-        mock_text_encoder.return_value.last_hidden_state = torch.randn(1, 512, 4096)
+        mock_text_encoder.return_value.last_hidden_state = torch.randn(1, text_len, text_hidden)
         mock_text_encoder.to = MagicMock(return_value=mock_text_encoder)
         mock_text_encoder.cpu = MagicMock(return_value=mock_text_encoder)
         pip.text_encoder = mock_text_encoder
@@ -459,7 +462,7 @@ class TestGenerate:
         mock_base_sched.config = {"solver_order": 2}
         mock_sched = MagicMock()
         mock_sched.timesteps = torch.linspace(999, 0, 2)  # 2 steps for speed
-        mock_sched.step.return_value = (torch.randn(1, 16, 21, 60, 90),)
+        mock_sched.step.return_value = (torch.randn(1, 16, 2, 2, 2),)
 
         monkeypatch.setattr(
             f"{PIPELINE_MODULE}.FlowMatchEulerDiscreteScheduler.from_pretrained",
@@ -479,8 +482,8 @@ class TestGenerate:
         pip = pipeline_for_generate
         result = pip.generate(
             prompts=["a cat"],
-            sizes=[(720, 480)],
-            frame_nums=[81],
+            sizes=[(16, 16)],
+            frame_nums=[5],
             sampling_steps=2,
             seed=42,
             offload_model=False,
@@ -492,8 +495,8 @@ class TestGenerate:
         pip.rank = 1
         result = pip.generate(
             prompts=["a cat"],
-            sizes=[(720, 480)],
-            frame_nums=[81],
+            sizes=[(16, 16)],
+            frame_nums=[5],
             sampling_steps=2,
             seed=42,
             offload_model=False,
@@ -504,8 +507,8 @@ class TestGenerate:
         pip = pipeline_for_generate
         pip.generate(
             prompts=["a cat"],
-            sizes=[(720, 480)],
-            frame_nums=[81],
+            sizes=[(16, 16)],
+            frame_nums=[5],
             sampling_steps=2,
             seed=12345,
             offload_model=False,
@@ -515,8 +518,8 @@ class TestGenerate:
         pip = pipeline_for_generate
         pip.generate(
             prompts=["a cat"],
-            sizes=[(720, 480)],
-            frame_nums=[81],
+            sizes=[(16, 16)],
+            frame_nums=[5],
             sampling_steps=2,
             n_prompt="bad quality",
             seed=0,
@@ -530,8 +533,8 @@ class TestGenerate:
         pip = pipeline_for_generate
         pip.generate(
             prompts=["a dog"],
-            sizes=[(720, 480)],
-            frame_nums=[81],
+            sizes=[(16, 16)],
+            frame_nums=[5],
             sampling_steps=2,
             seed=0,
             offload_model=True,
@@ -540,11 +543,11 @@ class TestGenerate:
 
     def test_generate_batch_of_two(self, pipeline_for_generate):
         pip = pipeline_for_generate
-        pip.vae.decode.return_value = SimpleNamespace(sample=torch.randn(2, 3, 81, 480, 720))
+        pip.vae.decode.return_value = SimpleNamespace(sample=torch.randn(2, 3, 5, 16, 16))
         result = pip.generate(
             prompts=["a cat", "a dog"],
-            sizes=[(720, 480), (720, 480)],
-            frame_nums=[81, 81],
+            sizes=[(16, 16), (16, 16)],
+            frame_nums=[5, 5],
             sampling_steps=2,
             seed=42,
             offload_model=False,
