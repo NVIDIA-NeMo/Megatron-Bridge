@@ -14,6 +14,7 @@
 
 import abc
 import os
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
 
@@ -62,6 +63,12 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
+
+warnings.warn(
+    "ModelProviderMixin-based model configuration is deprecated. Migrate to ModelConfig + ModelBuilder.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
