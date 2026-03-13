@@ -389,33 +389,40 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         is_mla_provider = self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)
         rope_scaling = getattr(hf_config, "rope_scaling", None)
 
-        if rope_scaling is not None and isinstance(rope_scaling, dict):
+        rope_type = None
+        if rope_scaling is not None and isinstance(rope_scaling, dict) and rope_scaling != {}:
             rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
-            if rope_type == "yarn":
-                # Check if this is an MLA provider (uses direct field names)
-                # or a GPT provider (uses yarn_ prefixed field names)
-                if is_mla_provider:
-                    # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
-                    mla_params = {}
-                    for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
-                        value = rope_scaling.get(hf_key)
-                        if value is not None:
-                            mla_params[megatron_key] = value
-                    if mla_params:
-                        provider_kwargs["_mla_rope_params"] = mla_params
-                else:
-                    # GPT models: use yarn_ prefixed field names
-                    yarn_params = {"position_embedding_type": "yarn"}
-                    for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
-                        yarn_params[megatron_key] = rope_scaling.get(hf_key)
-                    if "truncate" in rope_scaling:
-                        yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
-                    if yarn_params:
-                        provider_kwargs["_yarn_params"] = yarn_params
+
+        if rope_type == "yarn":
+            # Check if this is an MLA provider (uses direct field names)
+            # or a GPT provider (uses yarn_ prefixed field names)
+            if is_mla_provider:
+                # MLA models: use direct field names (mscale, rotary_scaling_factor, etc.)
+                mla_params = {}
+                for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
+                    value = rope_scaling.get(hf_key)
+                    if value is not None:
+                        mla_params[megatron_key] = value
+                if mla_params:
+                    provider_kwargs["_mla_rope_params"] = mla_params
+            else:
+                # GPT models: use yarn_ prefixed field names
+                yarn_params = {"position_embedding_type": "yarn"}
+                for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
+                    yarn_params[megatron_key] = rope_scaling.get(hf_key)
+                if "truncate" in rope_scaling:
+                    yarn_params["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                if yarn_params:
+                    provider_kwargs["_yarn_params"] = yarn_params
         elif is_mla_provider:
-            # MLA provider without rope_scaling in HF config:
-            # Override rotary_scaling_factor to 1.0 (no scaling) instead of
-            # using MLATransformerConfig default of 40
+            if rope_type not in (None, "default"):
+                logger.warning(
+                    f"rope_type={rope_type!r} is not 'yarn' and has no explicit MLA handling; "
+                    "falling back to rotary_scaling_factor=1.0 / mscale_all_dim=1.0. "
+                    "Consider adding explicit support for this rope_type."
+                )
+            # rope_scaling absent/empty or rope_type is a no-scaling variant (None, 'default'):
+            # Override rotary_scaling_factor to 1.0 instead of using MLATransformerConfig default of 40.
             provider_kwargs["_mla_rope_params"] = {"rotary_scaling_factor": 1.0, "mscale_all_dim": 1.0}
 
         # Handle vocab_size_divisible_by
