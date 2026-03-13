@@ -15,7 +15,7 @@
 """
 Unit tests for Qwen3VL Self Attention implementation.
 
-Run with: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_attention.py"""
+Run with: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_attention.py"""
 
 import datetime
 import os

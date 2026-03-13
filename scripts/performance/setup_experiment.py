@@ -73,6 +73,7 @@ def check_training_finished(log_file_paths: List[str]) -> bool:
                         "StopIteration" in line
                         or "after training is done" in line
                         or "exiting program at iteration" in line
+                        or "AssertionError: no samples left to consume:" in line
                     )
                 )
     return any(all_lines)
@@ -132,6 +133,8 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     performance_params = {
         "timing_threshold": args.timing_threshold,
         "skip_first_percent_time": args.skip_first_percent_time,
+        "eval_time_start_step": args.eval_time_start_step,
+        "eval_time_end_step": args.eval_time_end_step,
     }
 
     for key, value in performance_params.items():
@@ -639,6 +642,8 @@ if __name__ == "__main__":
         performance_params={
             "timing_threshold": args.timing_threshold,
             "skip_first_percent_time": args.skip_first_percent_time,
+            "eval_time_start_step": args.eval_time_start_step,
+            "eval_time_end_step": args.eval_time_end_step,
         },
         memory_params={
             "memory_threshold": args.memory_threshold,

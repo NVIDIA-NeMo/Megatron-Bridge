@@ -66,13 +66,11 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0",
-    # peft>=0.18 required for transformers 5.2+ (HybridCache was removed in 5.2; peft 0.18+ handles it)
-    "peft>=0.18.0",
+    "transformers>=5.0.0,<=5.2.0",
     "datasets>=2.20.0",
     "accelerate",
     "diffusers>=0.36.0",
-    "peft>=0.17.0",
+    "peft>=0.18.0",
     "einops",
     "imageio",
     "imageio-ffmpeg",
@@ -90,7 +88,7 @@ dependencies = [
     "qwen-vl-utils",
     "transformer-engine[pytorch,core_cu13]",
     "mamba-ssm",
-    "nvidia-resiliency-ext~=0.4.1",
+    "nvidia-resiliency-ext~=0.5.0",
     "causal-conv1d",
     "flash-linear-attention",
     "timm",
@@ -119,7 +117,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@5671fd3675906cda1ade26c24a65d3dedd88eb89",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@287770466f0f4433052260a765db5ff7b8be1320",
     "mlflow>=3.5.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt>=0.42.0a0",
@@ -133,7 +131,7 @@ url = "https://pypi.nvidia.com"
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
-nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.4.1" }
+nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "v0.5.0" }
 
 [project.optional-dependencies]
 recipes = [
