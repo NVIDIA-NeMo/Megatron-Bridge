@@ -71,6 +71,13 @@ class MixedPrecisionConfig:
     megatron_fsdp_main_grads_dtype: str | Optional[torch.dtype] = None
     megatron_fsdp_grad_comm_dtype: str | Optional[torch.dtype] = None
 
+    def __post_init__(self):
+        if self.grad_reduce_in_fp32:
+            if self.megatron_fsdp_main_grads_dtype is None:
+                object.__setattr__(self, "megatron_fsdp_main_grads_dtype", torch.float32)
+            if self.megatron_fsdp_grad_comm_dtype is None:
+                object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", torch.float32)
+
     def __setattr__(self, name: str, value) -> None:
         # Use object.__setattr__ to avoid recursion
         object.__setattr__(self, name, value)
