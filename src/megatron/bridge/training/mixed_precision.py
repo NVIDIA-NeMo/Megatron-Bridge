@@ -400,6 +400,7 @@ def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     cfg.fp4 = "e2m1"
     cfg.fp4_recipe = "nvfp4"
     cfg.fp8_param_gather = False
+    cfg.fp8_recipe = None
     return cfg
 
 
