@@ -186,7 +186,7 @@ class TestDiTSelfAttentionInit:
         config = _make_config(layernorm_across_heads=False)
         submodules = _make_self_attn_submodules(q_layernorm=MagicMock(), k_layernorm=MagicMock())
 
-        attn = self._run_init(config, submodules, mock_super_init)
+        self._run_init(config, submodules, mock_super_init)
 
         q_call_kwargs = mock_build.call_args_list[0].kwargs
         assert q_call_kwargs["hidden_size"] == 16  # hidden_size_per_attention_head

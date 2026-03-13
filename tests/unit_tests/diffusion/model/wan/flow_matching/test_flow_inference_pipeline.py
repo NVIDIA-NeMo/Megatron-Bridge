@@ -523,7 +523,7 @@ class TestGenerate:
             offload_model=False,
         )
         calls = pip.tokenizer.call_args_list
-        captions_encoded = [c[0][0] if c[0] else c[1].get("text", "") for c in calls]
+        _ = [c[0][0] if c[0] else c[1].get("text", "") for c in calls]
         assert any("bad quality" in str(c) for c in calls)
 
     def test_generate_offload_model(self, pipeline_for_generate):
