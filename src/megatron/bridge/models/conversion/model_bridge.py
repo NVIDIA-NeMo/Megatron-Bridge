@@ -1097,7 +1097,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 final_tensor = tensor.cpu() if cpu else tensor
 
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
-                    hf_name = hf_name[: -len("weight")] + "base_layer.weight"
+                    suffix_pos = hf_name.rfind(".")
+                    if suffix_pos == -1:
+                        hf_name = hf_name + ".base_layer"
+                    else:
+                        hf_name = hf_name[:suffix_pos] + ".base_layer" + hf_name[suffix_pos:]
 
                 # Handle tied embeddings case
                 # TODO(yuya): fix this hard coded naming
