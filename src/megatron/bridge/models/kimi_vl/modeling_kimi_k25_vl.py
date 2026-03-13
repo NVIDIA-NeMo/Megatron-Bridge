@@ -20,6 +20,7 @@ from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
@@ -415,7 +416,8 @@ class KimiK25VLModel(MegatronModule):
             loss_mask: Mask for loss computation.
         """
 
-        if "qkv_format" in kwargs and kwargs["qkv_format"] == "thd":
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+            # TODO: FIX THIS THD format data
             input_ids, position_ids, padding_mask, kwargs = squeeze_input_for_thd(
                 input_ids, position_ids, padding_mask, kwargs
             )
@@ -451,6 +453,9 @@ class KimiK25VLModel(MegatronModule):
 
             # Transpose back to (T, B, D) for Megatron language model
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
+
+            if self.config.sequence_parallel:
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
         outputs = self.language_model.forward(
             input_ids=None,
