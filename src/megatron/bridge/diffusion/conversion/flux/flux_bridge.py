@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Mapping
+from typing import Dict, Mapping
 
 import torch
 from diffusers import FluxTransformer2DModel
@@ -21,7 +21,7 @@ from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrai
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
@@ -93,6 +93,44 @@ class FluxBridge(MegatronModelBridge):
         else:
             hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
         return hf_weights
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Merge split proj_out weight_1 and weight_2 back into a single HF 'weight' for export.
+
+        On load we split HF proj_out.weight into weight_1 (linear_fc2) and weight_2 (linear_proj).
+        On export we must merge them back as [weight_2, weight_1] along dim=1 to match HF format.
+        """
+        if not hasattr(self, "_export_proj_out_pending"):
+            self._export_proj_out_pending = {}
+
+        result = {}
+        for hf_name, tensor in list(converted_weights_dict.items()):
+            if hf_name.endswith(".weight_1"):
+                base = hf_name[: -len(".weight_1")]
+                self._export_proj_out_pending.setdefault(base, {})["weight_1"] = tensor
+                if "weight_2" in self._export_proj_out_pending[base]:
+                    w1 = self._export_proj_out_pending[base]["weight_1"]
+                    w2 = self._export_proj_out_pending[base]["weight_2"]
+                    merged = torch.cat([w2, w1], dim=1)
+                    result[f"{base}.weight"] = merged
+                    del self._export_proj_out_pending[base]
+            elif hf_name.endswith(".weight_2"):
+                base = hf_name[: -len(".weight_2")]
+                self._export_proj_out_pending.setdefault(base, {})["weight_2"] = tensor
+                if "weight_1" in self._export_proj_out_pending[base]:
+                    w1 = self._export_proj_out_pending[base]["weight_1"]
+                    w2 = self._export_proj_out_pending[base]["weight_2"]
+                    merged = torch.cat([w2, w1], dim=1)
+                    result[f"{base}.weight"] = merged
+                    del self._export_proj_out_pending[base]
+            else:
+                result[hf_name] = tensor
+        return result
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.

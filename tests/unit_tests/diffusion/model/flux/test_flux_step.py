@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -95,14 +94,15 @@ class TestFluxForwardStepInitialization:
         """Test FluxForwardStep initialization with default values."""
         step = FluxForwardStep()
 
-        assert step.timestep_sampling == "logit_normal"
-        assert step.logit_mean == 0.0
-        assert step.logit_std == 1.0
-        assert step.mode_scale == 1.29
-        assert step.scheduler_steps == 1000
-        assert step.guidance_scale == 3.5
         assert step.autocast_dtype == torch.bfloat16
-        assert hasattr(step, "scheduler")
+        assert hasattr(step, "pipeline")
+        # Pipeline holds timestep/config; check pipeline was created with defaults
+        assert step.pipeline.timestep_sampling == "logit_normal"
+        assert step.pipeline.flow_shift == 1.0
+        assert step.pipeline.logit_mean == 0.0
+        assert step.pipeline.logit_std == 1.0
+        assert step.pipeline.num_train_timesteps == 1000
+        assert step.pipeline.model_adapter.guidance_scale == 3.5
 
     def test_initialization_custom(self):
         """Test FluxForwardStep initialization with custom values."""
@@ -110,207 +110,71 @@ class TestFluxForwardStepInitialization:
             timestep_sampling="uniform",
             logit_mean=1.0,
             logit_std=2.0,
-            mode_scale=1.5,
+            flow_shift=1.5,
             scheduler_steps=500,
             guidance_scale=7.5,
         )
 
-        assert step.timestep_sampling == "uniform"
-        assert step.logit_mean == 1.0
-        assert step.logit_std == 2.0
-        assert step.mode_scale == 1.5
-        assert step.scheduler_steps == 500
-        assert step.guidance_scale == 7.5
+        assert step.pipeline.timestep_sampling == "uniform"
+        assert step.pipeline.logit_mean == 1.0
+        assert step.pipeline.logit_std == 2.0
+        assert step.pipeline.flow_shift == 1.5
+        assert step.pipeline.num_train_timesteps == 500
+        assert step.pipeline.model_adapter.guidance_scale == 7.5
+
+    def test_initialization_use_loss_weighting(self):
+        """Test FluxForwardStep with use_loss_weighting=True."""
+        step = FluxForwardStep(use_loss_weighting=True)
+        assert step.pipeline.use_loss_weighting is True
 
 
-class TestFluxForwardStepTimestepSampling:
-    """Test timestep sampling methods."""
+class TestFluxForwardStepPrepareBatch:
+    """Test _prepare_batch_for_pipeline."""
 
-    def test_compute_density_logit_normal(self):
-        """Test logit-normal timestep sampling."""
-        step = FluxForwardStep(timestep_sampling="logit_normal", logit_mean=0.0, logit_std=1.0)
-        batch_size = 10
-
-        u = step.compute_density_for_timestep_sampling("logit_normal", batch_size)
-
-        assert u.shape == (batch_size,)
-        assert (u >= 0).all()
-        assert (u <= 1).all()
-
-    def test_compute_density_mode(self):
-        """Test mode-based timestep sampling."""
-        step = FluxForwardStep(timestep_sampling="mode", mode_scale=1.29)
-        batch_size = 10
-
-        u = step.compute_density_for_timestep_sampling("mode", batch_size)
-
-        assert u.shape == (batch_size,)
-        assert (u >= 0).all()
-        assert (u <= 1).all()
-
-    def test_compute_density_uniform(self):
-        """Test uniform timestep sampling."""
-        step = FluxForwardStep(timestep_sampling="uniform")
-        batch_size = 10
-
-        u = step.compute_density_for_timestep_sampling("uniform", batch_size)
-
-        assert u.shape == (batch_size,)
-        assert (u >= 0).all()
-        assert (u <= 1).all()
-
-    def test_compute_density_uses_instance_defaults(self):
-        """Test that compute_density uses instance defaults when not provided."""
-        step = FluxForwardStep(logit_mean=0.5, logit_std=0.8, mode_scale=1.5)
-
-        # Should use instance defaults
-        u = step.compute_density_for_timestep_sampling("logit_normal", batch_size=5)
-
-        assert u.shape == (5,)
-
-    def test_compute_density_override_defaults(self):
-        """Test that compute_density can override instance defaults."""
-        step = FluxForwardStep(logit_mean=0.0, logit_std=1.0)
-
-        # Override with custom values
-        u = step.compute_density_for_timestep_sampling("logit_normal", batch_size=5, logit_mean=1.0, logit_std=0.5)
-
-        assert u.shape == (5,)
-
-
-class TestFluxForwardStepLatentOperations:
-    """Test latent packing/unpacking operations."""
-
-    def test_pack_latents(self):
-        """Test _pack_latents method."""
+    def test_prepare_batch_maps_keys(self):
+        """Test that Megatron keys are mapped to pipeline keys."""
         step = FluxForwardStep()
-        batch_size = 2
-        num_channels = 16
-        height = 64
-        width = 64
+        batch = {
+            "latents": torch.randn(2, 16, 64, 64),
+            "prompt_embeds": torch.randn(2, 77, 4096),
+            "pooled_prompt_embeds": torch.randn(2, 768),
+            "text_ids": torch.zeros(2, 77, 3),
+        }
 
-        latents = torch.randn(batch_size, num_channels, height, width)
-        packed = step._pack_latents(latents, batch_size, num_channels, height, width)
+        pipeline_batch = step._prepare_batch_for_pipeline(batch)
 
-        expected_seq_len = (height // 2) * (width // 2)
-        expected_channels = num_channels * 4
-        assert packed.shape == (batch_size, expected_seq_len, expected_channels)
+        assert "image_latents" in pipeline_batch
+        assert pipeline_batch["image_latents"] is batch["latents"]
+        assert pipeline_batch["prompt_embeds"] is batch["prompt_embeds"]
+        assert pipeline_batch["pooled_prompt_embeds"] is batch["pooled_prompt_embeds"]
+        assert pipeline_batch["text_ids"] is batch["text_ids"]
+        assert pipeline_batch["data_type"] == "image"
+        assert "latents" not in pipeline_batch
 
-    def test_unpack_latents(self):
-        """Test _unpack_latents method."""
+    def test_prepare_batch_extra_keys_copied(self):
+        """Test that extra batch keys are copied (except latents)."""
         step = FluxForwardStep()
-        batch_size = 2
-        num_patches = 1024  # (64 // 2) * (64 // 2)
-        channels = 64  # 16 * 4
-        height = 64
-        width = 64
+        batch = {
+            "latents": torch.randn(1, 16, 32, 32),
+            "custom_key": "value",
+        }
 
-        packed_latents = torch.randn(batch_size, num_patches, channels)
-        unpacked = step._unpack_latents(packed_latents, height, width)
+        pipeline_batch = step._prepare_batch_for_pipeline(batch)
 
-        expected_channels = channels // 4
-        assert unpacked.shape == (batch_size, expected_channels, height, width)
+        assert pipeline_batch["custom_key"] == "value"
+        assert pipeline_batch["image_latents"] is batch["latents"]
 
-    def test_pack_unpack_roundtrip(self):
-        """Test that pack and unpack are consistent."""
+    def test_prepare_batch_optional_keys(self):
+        """Test prepare_batch when optional keys are missing."""
         step = FluxForwardStep()
-        batch_size = 2
-        num_channels = 16
-        height = 64
-        width = 64
+        batch = {"latents": torch.randn(1, 16, 32, 32)}
 
-        original = torch.randn(batch_size, num_channels, height, width)
-        packed = step._pack_latents(original, batch_size, num_channels, height, width)
-        unpacked = step._unpack_latents(packed, height, width)
+        pipeline_batch = step._prepare_batch_for_pipeline(batch)
 
-        assert unpacked.shape == original.shape
-        # Note: Due to the reshape operations, values should be approximately equal
-        # but the exact comparison might not hold due to floating point operations
-
-    def test_prepare_latent_image_ids(self):
-        """Test _prepare_latent_image_ids method."""
-        step = FluxForwardStep()
-        batch_size = 2
-        height = 64
-        width = 64
-        device = torch.device("cpu")
-        dtype = torch.float32
-
-        # First call creates the IDs
-        ids = step._prepare_latent_image_ids(batch_size, height, width, device, dtype)
-
-        expected_seq_len = (height // 2) * (width // 2)
-        assert ids.shape == (batch_size, expected_seq_len, 3)
-        assert ids.device == device
-        assert ids.dtype == dtype
-
-        # Second call should use cache
-        ids2 = step._prepare_latent_image_ids(batch_size, height, width, device, dtype)
-        assert ids2.shape == ids.shape
-
-    def test_prepare_latent_image_ids_caching(self):
-        """Test that _prepare_latent_image_ids uses LRU cache."""
-        step = FluxForwardStep()
-
-        # Cache should work with same parameters
-        ids1 = step._prepare_latent_image_ids(2, 64, 64, torch.device("cpu"), torch.float32)
-        ids2 = step._prepare_latent_image_ids(2, 64, 64, torch.device("cpu"), torch.float32)
-
-        # Should be the same object from cache
-        assert ids1.data_ptr() == ids2.data_ptr()
-
-
-@pytest.mark.run_only_on("GPU")
-class TestFluxForwardStepPrepareImageLatent:
-    """Test prepare_image_latent method."""
-
-    def test_prepare_image_latent_basic(self):
-        """Test prepare_image_latent with basic input."""
-        step = FluxForwardStep()
-        batch_size = 2
-        channels = 16
-        height = 64
-        width = 64
-
-        latents = torch.randn(batch_size, channels, height, width, device="cuda")
-
-        # Mock model
-        mock_model = MagicMock()
-        mock_model.guidance_embed = False
-
-        result = step.prepare_image_latent(latents, mock_model)
-
-        # Unpack result tuple
-        ret_latents, noise, packed_noisy_input, latent_ids, guidance_vec, timesteps = result
-
-        # Check shapes (transposed from [B, ...] to [seq, B, ...] format)
-        assert ret_latents.shape[1] == batch_size
-        assert noise.shape[1] == batch_size
-        assert packed_noisy_input.shape[1] == batch_size
-        assert latent_ids.shape[0] == batch_size
-        assert guidance_vec is None
-        assert timesteps.shape[0] == batch_size
-
-    def test_prepare_image_latent_with_guidance(self):
-        """Test prepare_image_latent with guidance embedding."""
-        step = FluxForwardStep(guidance_scale=7.5)
-        batch_size = 2
-        channels = 16
-        height = 64
-        width = 64
-
-        latents = torch.randn(batch_size, channels, height, width, device="cuda")
-
-        # Mock model with guidance
-        mock_model = MagicMock()
-        mock_model.guidance_embed = True
-
-        result = step.prepare_image_latent(latents, mock_model)
-        ret_latents, noise, packed_noisy_input, latent_ids, guidance_vec, timesteps = result
-
-        assert guidance_vec is not None
-        assert guidance_vec.shape == (batch_size,)
-        assert torch.all(guidance_vec == 7.5)
+        assert pipeline_batch["image_latents"] is batch["latents"]
+        assert pipeline_batch.get("prompt_embeds") is None
+        assert pipeline_batch.get("pooled_prompt_embeds") is None
+        assert pipeline_batch.get("text_ids") is None
 
 
 class TestFluxForwardStepLossFunction:
@@ -333,106 +197,21 @@ class TestFluxForwardStepLossFunction:
 
         loss_fn = step._create_loss_function(loss_mask, check_for_nan_in_loss=False, check_for_spiky_loss=True)
 
-        # Verify it's a partial with expected arguments
         assert loss_fn.func.__name__ == "masked_next_token_loss"
         assert loss_fn.keywords["check_for_nan_in_loss"] is False
         assert loss_fn.keywords["check_for_spiky_loss"] is True
 
 
-class TestFluxForwardStepIntegration:
-    """Integration tests for FluxForwardStep."""
+class TestFluxForwardStepPipelineConfig:
+    """Test pipeline configuration exposed by FluxForwardStep."""
 
-    def test_timestep_sampling_methods_produce_valid_values(self):
-        """Test that all timestep sampling methods produce valid u values."""
-        batch_size = 100
+    def test_pipeline_num_train_timesteps(self):
+        """Test that pipeline has correct num_train_timesteps."""
+        step = FluxForwardStep(scheduler_steps=500)
+        assert step.pipeline.num_train_timesteps == 500
 
-        for method in ["logit_normal", "mode", "uniform"]:
+    def test_pipeline_timestep_sampling_options(self):
+        """Test pipeline accepts different timestep_sampling values."""
+        for method in ("logit_normal", "uniform", "mode"):
             step = FluxForwardStep(timestep_sampling=method)
-            u = step.compute_density_for_timestep_sampling(method, batch_size)
-
-            assert u.shape == (batch_size,)
-            assert (u >= 0).all(), f"{method} produced u < 0"
-            assert (u <= 1).all(), f"{method} produced u > 1"
-            assert not torch.isnan(u).any(), f"{method} produced NaN values"
-
-    def test_latent_operations_preserve_batch_dimension(self):
-        """Test that latent operations preserve batch dimension."""
-        step = FluxForwardStep()
-
-        for batch_size in [1, 2, 4]:
-            latents = torch.randn(batch_size, 16, 64, 64)
-            packed = step._pack_latents(latents, batch_size, 16, 64, 64)
-            unpacked = step._unpack_latents(packed, 64, 64)
-
-            assert packed.shape[0] == batch_size
-            assert unpacked.shape[0] == batch_size
-
-
-class TestFluxForwardStepEdgeCases:
-    """Test edge cases and error handling."""
-
-    def test_pack_latents_small_dimensions(self):
-        """Test _pack_latents with small dimensions."""
-        step = FluxForwardStep()
-        latents = torch.randn(1, 4, 4, 4)
-
-        packed = step._pack_latents(latents, 1, 4, 4, 4)
-
-        assert packed.shape == (1, 4, 16)  # (4/2) * (4/2) = 4, 4*4 = 16
-
-    def test_unpack_latents_small_dimensions(self):
-        """Test _unpack_latents with small dimensions."""
-        step = FluxForwardStep()
-        packed = torch.randn(1, 4, 16)
-
-        unpacked = step._unpack_latents(packed, 4, 4)
-
-        assert unpacked.shape == (1, 4, 4, 4)
-
-    def test_compute_density_mode_with_extreme_scale(self):
-        """Test mode sampling with extreme scale values."""
-        step = FluxForwardStep()
-
-        # Test with very small scale
-        u_small = step.compute_density_for_timestep_sampling("mode", 10, mode_scale=0.01)
-        assert (u_small >= 0).all() and (u_small <= 1).all()
-
-        # Test with larger scale
-        u_large = step.compute_density_for_timestep_sampling("mode", 10, mode_scale=2.0)
-        assert (u_large >= 0).all() and (u_large <= 1).all()
-
-    def test_prepare_latent_image_ids_different_sizes(self):
-        """Test _prepare_latent_image_ids with different image sizes."""
-        step = FluxForwardStep()
-
-        for height, width in [(32, 32), (64, 64), (128, 128)]:
-            ids = step._prepare_latent_image_ids(2, height, width, torch.device("cpu"), torch.float32)
-
-            expected_seq_len = (height // 2) * (width // 2)
-            assert ids.shape == (2, expected_seq_len, 3)
-
-
-class TestFluxForwardStepScheduler:
-    """Test scheduler integration."""
-
-    def test_scheduler_initialized_with_correct_steps(self):
-        """Test that scheduler is initialized with correct number of steps."""
-        scheduler_steps = 500
-        step = FluxForwardStep(scheduler_steps=scheduler_steps)
-
-        assert step.scheduler.num_train_timesteps == scheduler_steps
-        assert len(step.scheduler.timesteps) == scheduler_steps
-
-    def test_scheduler_timesteps_in_valid_range(self):
-        """Test that scheduler timesteps are in valid range."""
-        step = FluxForwardStep()
-
-        assert (step.scheduler.timesteps >= 0).all()
-        assert (step.scheduler.timesteps <= step.scheduler.num_train_timesteps).all()
-
-    def test_scheduler_sigmas_in_valid_range(self):
-        """Test that scheduler sigmas are in valid range."""
-        step = FluxForwardStep()
-
-        assert (step.scheduler.sigmas >= 0).all()
-        assert (step.scheduler.sigmas <= 1).all()
+            assert step.pipeline.timestep_sampling == method

@@ -12,6 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+FLUX Inference Script for text-to-image generation.
+
+Runs the FLUX diffusion model to generate images from text prompts. Requires a Megatron-format
+FLUX checkpoint (e.g. from convert_checkpoints.py import), a VAE checkpoint, and optionally
+T5/CLIP text encoder IDs (downloaded from Hugging Face by default).
+
+Examples:
+    Single prompt, default resolution (1024x1024) and 10 steps:
+        $ uv run python inference_flux.py --flux_ckpt /path/to/flux/iter_0000000 \\
+            --vae_ckpt /path/to/vae --prompts "a dog holding a sign said hello world" \\
+            --output_path ./flux_output
+
+    Multiple prompts:
+        $ uv run python inference_flux.py --flux_ckpt /path/to/flux/iter_0000000 \\
+            --vae_ckpt /path/to/vae --prompts "prompt one" --prompts "prompt two" \\
+            --output_path ./flux_output
+
+    Custom resolution and inference steps:
+        $ uv run python inference_flux.py --flux_ckpt /path/to/flux/iter_0000000 \\
+            --vae_ckpt /path/to/vae --prompts "a cat on a mat" \\
+            --height 512 --width 512 --num_inference_steps 20 --output_path ./flux_output
+
+    From repository root:
+        $ uv run python examples/diffusion/recipes/flux/inference_flux.py \\
+            --flux_ckpt /aot/checkpoints/dfm/flux.1-dev/iter_0000000 \\
+            --vae_ckpt /aot/checkpoints/flux.1-dev/vae \\
+            --prompts "a dog holding a sign said hello world" --output_path ./flux_output
+"""
+
 import argparse
 import os
 
@@ -25,7 +55,6 @@ def parse_args():  # noqa: D103
     parser.add_argument("--vae_ckpt", type=str, default=None, help="Path to VAE")
     parser.add_argument("--t5_version", type=str, default="google/t5-v1_1-xxl")
     parser.add_argument("--clip_version", type=str, default="openai/clip-vit-large-patch14")
-    parser.add_argument("--do_convert_from_hf", action="store_true", default=False)
     parser.add_argument(
         "--prompts",
         type=str,
@@ -38,6 +67,7 @@ def parse_args():  # noqa: D103
     parser.add_argument("--num_inference_steps", type=int, default=10)
     parser.add_argument("--guidance_scale", type=float, default=0.0)
     parser.add_argument("--output_path", type=str, default="/tmp/flux_output")
+    parser.add_argument("--base_seed", type=int, default=42, help="Random seed for reproducibility")
     return parser.parse_args()
 
 

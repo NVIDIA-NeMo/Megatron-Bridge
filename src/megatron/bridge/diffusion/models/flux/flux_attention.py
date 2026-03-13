@@ -115,6 +115,7 @@ class JointSelfAttention(Attention):
                 tp_comm_buffer_name="qkv",
             )
 
+        self.context_pre_only = context_pre_only
         if not context_pre_only:
             self.added_linear_proj = build_module(
                 submodules.linear_proj,
@@ -128,6 +129,8 @@ class JointSelfAttention(Attention):
                 is_expert=False,
                 tp_comm_buffer_name="proj",
             )
+        else:
+            self.added_linear_proj = None
 
         if submodules.q_layernorm is not None:
             self.q_layernorm = build_module(
@@ -360,10 +363,14 @@ class JointSelfAttention(Attention):
         attention_output = core_attn_out[additional_hidden_states.shape[0] :, :, :]
 
         output, bias = self.linear_proj(attention_output)
-        encoder_output, encoder_bias = self.added_linear_proj(encoder_attention_output)
+        if self.added_linear_proj is not None:
+            encoder_output, encoder_bias = self.added_linear_proj(encoder_attention_output)
+            encoder_output = encoder_output + encoder_bias
+        else:
+            # context_pre_only: encoder output not used by caller; return as-is
+            encoder_output = encoder_attention_output
 
         output = output + bias
-        encoder_output = encoder_output + encoder_bias
 
         return output, encoder_output
 

@@ -22,40 +22,28 @@ both YAML configuration files and command-line overrides using Hydra-style synta
 The script loads a pretrained checkpoint and continues training with your custom dataset.
 Fine-tuning typically uses lower learning rates and fewer training iterations compared to pretraining.
 
-Forward Step Options:
-    - Automodel FlowMatchingPipeline (default): Unified flow matching implementation
-    - Original FluxForwardStep (--use-original-step): Classic implementation
-
 Examples:
-    Basic usage with checkpoint loading (uses automodel pipeline):
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+    Basic usage with checkpoint loading:
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint --mock
 
-    Using original FluxForwardStep:
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
-        --load-checkpoint /path/to/pretrained/checkpoint --mock --use-original-step
-
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint \
         --config-file my_custom_config.yaml
 
     Using CLI overrides only:
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint \
         model.tensor_model_parallel_size=4 train.train_iters=5000 optimizer.lr=1e-5
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
+        $ uv run torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/pretrained/checkpoint \
         --config-file conf/my_config.yaml \
         model.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
 
-    Using automodel pipeline with custom parameters (automodel is default):
-        $ torchrun --nproc_per_node=8 finetune_flux.py \
-        --load-checkpoint /path/to/pretrained/checkpoint --mock \
-        --flow-shift=1.0 --use-loss-weighting
 
 Configuration Precedence:
     1. Base configuration from pretrain_config() recipe
@@ -81,7 +69,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.diffusion.models.flux.flux_step_with_automodel import create_flux_forward_step
+from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
 from megatron.bridge.diffusion.recipes.flux.flux import pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -159,22 +147,16 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
-    # Forward step implementation choice
-    parser.add_argument(
-        "--use-original-step",
-        action="store_true",
-        help="Use original FluxForwardStep instead of automodel FlowMatchingPipeline (default)",
-    )
     parser.add_argument(
         "--flow-shift",
         type=float,
         default=1.0,
-        help="Flow shift parameter (for automodel pipeline)",
+        help="Flow shift parameter",
     )
     parser.add_argument(
         "--use-loss-weighting",
         action="store_true",
-        help="Use loss weighting (for automodel pipeline)",
+        help="Use loss weighting",
     )
 
     # Parse known args for the script, remaining will be treated as overrides
@@ -197,20 +179,16 @@ def main() -> None:
     and handles type conversions automatically.
 
     Examples of CLI usage:
-        # Fine-tune with default config and custom learning rate (automodel pipeline is default)
+        # Fine-tune with default config and custom learning rate
         torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/checkpoint --mock optimizer.lr=1e-5
-
-        # Use original FluxForwardStep instead of automodel pipeline
-        torchrun --nproc_per_node=8 finetune_flux.py \
-        --load-checkpoint /path/to/checkpoint --mock --use-original-step
 
         # Custom config file with additional overrides
         torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/checkpoint \
         --config-file my_config.yaml train.train_iters=5000
 
-        # Multiple overrides for distributed fine-tuning (uses automodel by default)
+        # Multiple overrides for distributed fine-tuning
         torchrun --nproc_per_node=8 finetune_flux.py \
         --load-checkpoint /path/to/checkpoint --mock \
         model.tensor_model_parallel_size=4 \
@@ -218,10 +196,6 @@ def main() -> None:
         train.global_batch_size=512 \
         optimizer.lr=5e-6
 
-        # Automodel pipeline with custom flow matching parameters
-        torchrun --nproc_per_node=8 finetune_flux.py \
-        --load-checkpoint /path/to/checkpoint --mock \
-        --flow-shift=1.0 --use-loss-weighting
     """
     args, cli_overrides = parse_cli_args()
 
@@ -337,43 +311,21 @@ def main() -> None:
         cfg.checkpoint.load = None  # Clear load to ensure pretrained_checkpoint takes precedence
     cfg.checkpoint.finetune = True
 
-    # Create forward step (configurable: original or automodel pipeline)
-    # Default is automodel pipeline unless --use-original-step is specified
-    if not args.use_original_step:
-        # Use automodel FlowMatchingPipeline
-        flux_forward_step = create_flux_forward_step(
-            use_automodel_pipeline=True,
-            timestep_sampling=args.timestep_sampling,
-            logit_mean=args.logit_mean,
-            logit_std=args.logit_std,
-            flow_shift=args.flow_shift,
-            scheduler_steps=args.scheduler_steps,
-            guidance_scale=args.guidance_scale,
-            use_loss_weighting=args.use_loss_weighting,
-        )
-        if get_rank_safe() == 0:
-            logger.info("=" * 70)
-            logger.info("✅ Using AUTOMODEL FlowMatchingPipeline")
-            logger.info(f"   Timestep Sampling: {args.timestep_sampling}")
-            logger.info(f"   Flow Shift: {args.flow_shift}")
-            logger.info(f"   Loss Weighting: {args.use_loss_weighting}")
-            logger.info("=" * 70)
-    else:
-        # Use original FluxForwardStep
-        flux_forward_step = create_flux_forward_step(
-            use_automodel_pipeline=False,
-            timestep_sampling=args.timestep_sampling,
-            logit_mean=args.logit_mean,
-            logit_std=args.logit_std,
-            mode_scale=args.mode_scale,
-            scheduler_steps=args.scheduler_steps,
-            guidance_scale=args.guidance_scale,
-        )
-        if get_rank_safe() == 0:
-            logger.info("=" * 70)
-            logger.info("✅ Using ORIGINAL FluxForwardStep")
-            logger.info(f"   Timestep Sampling: {args.timestep_sampling}")
-            logger.info("=" * 70)
+    flux_forward_step = FluxForwardStep(
+        timestep_sampling=args.timestep_sampling,
+        logit_mean=args.logit_mean,
+        logit_std=args.logit_std,
+        flow_shift=args.flow_shift,
+        scheduler_steps=args.scheduler_steps,
+        guidance_scale=args.guidance_scale,
+        use_loss_weighting=args.use_loss_weighting,
+    )
+    if get_rank_safe() == 0:
+        logger.info("=" * 70)
+        logger.info(f"   Timestep Sampling: {args.timestep_sampling}")
+        logger.info(f"   Flow Shift: {args.flow_shift}")
+        logger.info(f"   Loss Weighting: {args.use_loss_weighting}")
+        logger.info("=" * 70)
 
     # Display final configuration
     if get_rank_safe() == 0:
@@ -394,9 +346,8 @@ def main() -> None:
         logger.info(f"  mode_scale: {args.mode_scale}")
         logger.info(f"  scheduler_steps: {args.scheduler_steps}")
         logger.info(f"  guidance_scale: {args.guidance_scale}")
-        if not args.use_original_step:
-            logger.info(f"  flow_shift: {args.flow_shift}")
-            logger.info(f"  use_loss_weighting: {args.use_loss_weighting}")
+        logger.info(f"  flow_shift: {args.flow_shift}")
+        logger.info(f"  use_loss_weighting: {args.use_loss_weighting}")
 
     # Start training (fine-tuning)
     logger.debug("Starting fine-tuning...")

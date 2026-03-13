@@ -57,4 +57,8 @@ class FluxDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
         self.sequence_length = self.dataset.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
-        return self.dataset.train_dataloader(), self.dataset.train_dataloader(), self.dataset.train_dataloader()
+        return (
+            iter(self.dataset.train_dataloader()),
+            iter(self.dataset.val_dataloader()),
+            iter(self.dataset.val_dataloader()),
+        )

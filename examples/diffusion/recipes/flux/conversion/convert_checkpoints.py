@@ -129,6 +129,8 @@ def import_hf_to_megatron(
     bridge = FluxBridge()
     provider = bridge.provider_bridge(hf)
     provider.perform_initialization = False
+    # Finalize config so init_method/output_layer_init_method are set (required by Megatron MLP)
+    provider.finalize()
     megatron_models = provider.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=True)
     bridge.load_weights_hf_to_megatron(hf, megatron_models)
 
