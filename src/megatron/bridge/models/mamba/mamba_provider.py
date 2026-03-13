@@ -23,7 +23,6 @@ from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as def
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.post_training.modelopt.mamba.model_specs import get_mamba_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.ssm.mamba_hybrid_layer_allocation import get_hybrid_total_layer_count
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
@@ -33,7 +32,42 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
+try:
+    from megatron.core.ssm.mamba_hybrid_layer_allocation import (
+        get_hybrid_total_layer_count as _mcore_get_hybrid_total_layer_count,
+    )
+except ImportError:
+    # TODO(yuya): remove fallback once MCore pin includes get_hybrid_total_layer_count
+    _mcore_get_hybrid_total_layer_count = None
+
+
 logger = logging.getLogger(__name__)
+
+_HYBRID_MAIN_PATTERN_SYMBOLS = frozenset({"M", "*", "-", "E", "|"})
+
+
+def _fallback_get_hybrid_total_layer_count(pattern: str) -> int:
+    """Count main-decoder layers for older MCore branches.
+
+    Older MCore revisions predate ``get_hybrid_total_layer_count`` and do not
+    understand pipe-delimited fVPP layouts. Bridge still needs to derive
+    ``num_layers`` correctly for both legacy and newer hybrid patterns.
+    """
+
+    main_pattern = pattern.split("/")[0]
+    invalid_chars = sorted({char for char in main_pattern if char not in _HYBRID_MAIN_PATTERN_SYMBOLS})
+    if invalid_chars:
+        raise ValueError(
+            f"In main pattern, '{invalid_chars[0]}' is not a valid layer symbol. "
+            f"Valid symbols are: {_HYBRID_MAIN_PATTERN_SYMBOLS}"
+        )
+    return len(main_pattern.replace("|", ""))
+
+
+def _get_hybrid_total_layer_count(pattern: str) -> int:
+    if _mcore_get_hybrid_total_layer_count is not None:
+        return _mcore_get_hybrid_total_layer_count(pattern)
+    return _fallback_get_hybrid_total_layer_count(pattern)
 
 
 def modelopt_mamba_stack_spec(config: "MambaModelProvider") -> ModuleSpec:
@@ -155,7 +189,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
         # Check if hybrid_layer_pattern is specified and derive num_layers from pattern
         if self.hybrid_layer_pattern is not None:
             # Derive num_layers from pattern
-            num_layers_in_pattern = get_hybrid_total_layer_count(self.hybrid_layer_pattern)
+            num_layers_in_pattern = _get_hybrid_total_layer_count(self.hybrid_layer_pattern)
             if self.num_layers is not None:
                 if used_hybrid_override_pattern:
                     assert self.num_layers == num_layers_in_pattern, (
