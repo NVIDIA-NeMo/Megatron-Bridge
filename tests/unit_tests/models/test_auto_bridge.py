@@ -621,15 +621,11 @@ class TestAutoBridge:
 
         mock_megatron_model = [object()]
 
-        # Mock the export process
-        with patch(
-            "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf"
-        ) as mock_bridge_state:
-            mock_weight_iter = [
-                ("weight1", torch.randn(10, 10)),
-                ("weight2", torch.randn(5, 5)),
-            ]
-            mock_bridge_state.return_value = iter(mock_weight_iter)
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge = Mock()
+            mock_weight_iter = [("weight1", torch.randn(10, 10)), ("weight2", torch.randn(5, 5))]
+            mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
 
             with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
                 mock_arch_class = Mock()
@@ -647,8 +643,7 @@ class TestAutoBridge:
                     assert weights[1][0] == "weight2"
                     assert isinstance(weights[0][1], torch.Tensor)
                     assert isinstance(weights[1][1], torch.Tensor)
-                    mock_bridge_state.assert_called_once_with(
-                        (mock_arch_class, mock_megatron_model[0]),
+                    mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
                         mock_megatron_model,
                         mock_hf_model,
                         cpu=True,
@@ -666,11 +661,11 @@ class TestAutoBridge:
 
         mock_megatron_model = [object()]
 
-        with patch(
-            "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_adapter_weights_megatron_to_hf"
-        ) as mock_stream_adapter_weights:
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge = Mock()
             mock_weight_iter = [("adapter.weight", torch.randn(4, 4))]
-            mock_stream_adapter_weights.return_value = iter(mock_weight_iter)
+            mock_model_bridge.stream_adapter_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
+            mock_model_bridge_prop.return_value = mock_model_bridge
 
             with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
                 mock_arch_class = Mock()
@@ -685,10 +680,8 @@ class TestAutoBridge:
                     assert len(weights) == 1
                     assert weights[0][0] == "adapter.weight"
                     assert isinstance(weights[0][1], torch.Tensor)
-                    mock_stream_adapter_weights.assert_called_once_with(
-                        (mock_arch_class, mock_megatron_model[0]),
+                    mock_model_bridge.stream_adapter_weights_megatron_to_hf.assert_called_once_with(
                         mock_megatron_model,
-                        mock_hf_model,
                         cpu=False,
                         show_progress=False,
                     )

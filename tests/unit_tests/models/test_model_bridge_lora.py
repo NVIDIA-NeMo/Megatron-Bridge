@@ -377,6 +377,8 @@ def test_construct_adapters_names():
 
 def test_build_adapter_conversion_tasks(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapters_info = [
         (
@@ -414,7 +416,7 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     )
     monkeypatch.setattr(bridge, "mapping_registry", lambda: registry)
 
-    tasks_by_base = bridge.build_adapter_conversion_tasks(SimpleNamespace(), [Mock()])
+    tasks_by_base = bridge.build_adapter_conversion_tasks([Mock()])
     assert "decoder.layers.0.mlp.linear_fc1" in tasks_by_base
     tasks = tasks_by_base["decoder.layers.0.mlp.linear_fc1"]
     assert len(tasks) == 1
@@ -465,6 +467,8 @@ def test_materialize_adapter_weights(monkeypatch):
 
 def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapter_task = AdapterWeightConversionTask(
         global_base_prefix="decoder.layers.0.mlp.linear_fc1",
@@ -515,7 +519,6 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     weights = list(
         bridge.stream_adapter_weights_megatron_to_hf(
             megatron_model,
-            SimpleNamespace(),
             cpu=False,
             show_progress=False,
         )
@@ -529,6 +532,8 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
 
 def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapter_task = AdapterWeightConversionTask(
         global_base_prefix="decoder.layers.0.self_attn.linear_qkv",
@@ -582,7 +587,6 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     weights = list(
         bridge.stream_adapter_weights_megatron_to_hf(
             [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
-            SimpleNamespace(),
             cpu=False,
             show_progress=False,
         )
@@ -604,6 +608,8 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
 
 def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
     bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
 
     adapter_task = AdapterWeightConversionTask(
         global_base_prefix="decoder.layers.0.mlp.linear_fc1",
@@ -656,7 +662,6 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
     weights = list(
         bridge.stream_adapter_weights_megatron_to_hf(
             [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
-            SimpleNamespace(),
             cpu=False,
             show_progress=False,
         )

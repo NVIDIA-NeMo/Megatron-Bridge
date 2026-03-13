@@ -382,9 +382,8 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     cpu=True
             ... ))
         """
-        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
-        return model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance,
+        bridge = self._model_bridge
+        return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
             cpu=cpu,
@@ -413,14 +412,8 @@ class AutoBridge(Generic[MegatronModelT]):
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
         """
-        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
-        return model_bridge.stream_adapter_weights_megatron_to_hf(
-            dispatch_instance,
-            model,
-            self.hf_pretrained,
-            cpu=cpu,
-            show_progress=show_progress,
-        )
+        bridge = self._model_bridge
+        return bridge.stream_adapter_weights_megatron_to_hf(model, cpu=cpu, show_progress=show_progress)
 
     def save_hf_pretrained(
         self,
@@ -566,9 +559,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
-        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
-        generator = model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance,
+        bridge = self._model_bridge
+        generator = bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
             cpu=True,
@@ -1078,14 +1070,8 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        hf_config = getattr(self.hf_pretrained, "hf_config", None)
-        if hf_config is None:
-            if isinstance(self.hf_pretrained, PreTrainedCausalLM):
-                hf_config = self.hf_pretrained.config
-            else:
-                hf_config = self.hf_pretrained
-
-        return model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
+        # Pass the full HF context so bridge helpers can reach config-only and state-backed metadata.
+        return model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=self.hf_pretrained)
 
     @property
     def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
