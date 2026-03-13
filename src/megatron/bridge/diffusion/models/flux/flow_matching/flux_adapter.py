@@ -20,15 +20,15 @@ import random
 from typing import Any, Dict
 
 import torch
-from dfm.src.automodel.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 from megatron.core.models.common.vision_module.vision_module import VisionModule
+
+from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
 
 
 class MegatronFluxAdapter(ModelAdapter):
     """
     Adapter for FLUX models in Megatron training framework.
 
-    Key differences from standard FluxAdapter:
     - Handles sequence-first tensor layout [S, B, ...] required by Megatron
     - Integrates with pipeline parallelism
     - Maps Megatron batch keys to expected format

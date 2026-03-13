@@ -16,10 +16,10 @@ from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
-from dfm.src.automodel.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
-from dfm.src.automodel.flow_matching.flow_matching_pipeline import FlowMatchingPipeline
 from megatron.core import parallel_state
 
+from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext, ModelAdapter
+from megatron.bridge.diffusion.common.flow_matching.flow_matching_pipeline import FlowMatchingPipeline
 from megatron.bridge.diffusion.models.wan.utils import thd_split_inputs_cp
 
 

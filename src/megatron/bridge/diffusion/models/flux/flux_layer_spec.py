@@ -37,7 +37,7 @@ from megatron.bridge.diffusion.models.flux.flux_attention import (
 
 
 try:
-    from megatron.core.transformer.custom_layers.transformer_engine import (
+    from megatron.core.extensions.transformer_engine import (
         TEColumnParallelLinear,
         TEDotProductAttention,
         TENorm,

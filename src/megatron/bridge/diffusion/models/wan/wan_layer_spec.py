@@ -20,15 +20,15 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-from megatron.core.extensions.transformer_engine import TENorm
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TEDotProductAttention,
+    TENorm,
+    TERowParallelLinear,
+)
 from megatron.core.jit import jit_fuser
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.attention import SelfAttentionSubmodules
-from megatron.core.transformer.custom_layers.transformer_engine import (
-    TEColumnParallelLinear,
-    TEDotProductAttention,
-    TERowParallelLinear,
-)
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
@@ -193,6 +193,16 @@ class WanLayerWithAdaLN(TransformerLayer):
         rope_emb = rotary_pos_emb
 
         shift_full, scale_full, gate_full, shift_mlp, scale_mlp, gate_mlp = self.adaLN(timestep_emb)
+
+        # Expand modulation tensors from (1, B, h) to (s, B, h) so that @jit_fuser compiled
+        # functions receive same-shape inputs and torch.compile backward avoids incorrect
+        # gradient shape reduction (broadcasting inside compiled graphs is broken).
+        shift_full = shift_full.expand_as(hidden_states)
+        scale_full = scale_full.expand_as(hidden_states)
+        gate_full = gate_full.expand_as(hidden_states)
+        shift_mlp = shift_mlp.expand_as(hidden_states)
+        scale_mlp = scale_mlp.expand_as(hidden_states)
+        gate_mlp = gate_mlp.expand_as(hidden_states)
 
         # ******************************************** full self attention *******************************************
 

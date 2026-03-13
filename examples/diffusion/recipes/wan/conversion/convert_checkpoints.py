@@ -143,6 +143,8 @@ def import_hf_to_megatron(
             bridge = WanBridge()
             provider = bridge.provider_bridge(hf)
             provider.perform_initialization = False
+            if hasattr(provider, "finalize"):
+                provider.finalize()
             megatron_models = provider.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=True)
             bridge.load_weights_hf_to_megatron(hf, megatron_models)
             save_megatron_model(megatron_models, megatron_path, hf_tokenizer_path=None)

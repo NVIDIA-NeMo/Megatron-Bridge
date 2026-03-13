@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from megatron.bridge.diffusion.models.wan.conversion import wan_hf_pretrained as wan_hf_module
+from megatron.bridge.diffusion.conversion.wan import wan_hf_pretrained as wan_hf_module
 
 
 pytestmark = [pytest.mark.unit]
