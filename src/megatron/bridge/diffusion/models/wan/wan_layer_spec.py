@@ -24,7 +24,7 @@ from megatron.core.extensions.transformer_engine import TENorm
 from megatron.core.jit import jit_fuser
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.attention import SelfAttentionSubmodules
-from megatron.core.transformer.custom_layers.transformer_engine import (
+from megatron.core.extensions.transformer_engine import (
     TEColumnParallelLinear,
     TEDotProductAttention,
     TERowParallelLinear,
