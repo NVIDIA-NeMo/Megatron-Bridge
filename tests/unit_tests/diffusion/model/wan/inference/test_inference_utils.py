@@ -21,6 +21,38 @@ import torch
 from megatron.bridge.diffusion.models.wan.inference import utils as inf_utils
 
 
+def test_rand_name_default_length():
+    name = inf_utils.rand_name()
+    assert len(name) == 16
+    assert all(c in "0123456789abcdef" for c in name)
+
+
+def test_rand_name_custom_length():
+    name = inf_utils.rand_name(length=4)
+    assert len(name) == 8
+
+
+def test_rand_name_suffix_with_dot():
+    name = inf_utils.rand_name(length=4, suffix=".mp4")
+    assert name.endswith(".mp4")
+    assert len(name) == 8 + 4  # 8 hex chars + ".mp4"
+
+
+def test_rand_name_suffix_without_dot():
+    name = inf_utils.rand_name(length=4, suffix="png")
+    assert name.endswith(".png")
+
+
+def test_rand_name_empty_suffix():
+    name = inf_utils.rand_name(length=4, suffix="")
+    assert "." not in name
+
+
+def test_rand_name_uniqueness():
+    names = {inf_utils.rand_name() for _ in range(50)}
+    assert len(names) == 50
+
+
 def test_str2bool_variants_and_errors():
     true_vals = ["yes", "true", "t", "y", "1", "TRUE", "Yes"]
     false_vals = ["no", "false", "f", "n", "0", "FALSE", "No"]

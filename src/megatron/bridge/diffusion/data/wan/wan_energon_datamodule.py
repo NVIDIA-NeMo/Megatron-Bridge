@@ -49,4 +49,4 @@ class WanDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
         self.sequence_length = self.dataset.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
-        return self.dataset.train_dataloader(), self.dataset.train_dataloader(), self.dataset.train_dataloader()
+        return self.dataset.train_dataloader(), self.dataset.val_dataloader(), self.dataset.val_dataloader()
