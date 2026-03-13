@@ -29,7 +29,6 @@ class MegatronFluxAdapter(ModelAdapter):
     """
     Adapter for FLUX models in Megatron training framework.
 
-    Key differences from standard FluxAdapter:
     - Handles sequence-first tensor layout [S, B, ...] required by Megatron
     - Integrates with pipeline parallelism
     - Maps Megatron batch keys to expected format

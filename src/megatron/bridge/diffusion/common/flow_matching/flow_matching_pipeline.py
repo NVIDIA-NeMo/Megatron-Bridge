@@ -39,10 +39,7 @@ import torch.nn as nn
 # Import adapters from the adapters module
 from .adapters import (
     FlowMatchingContext,
-    FluxAdapter,
-    HunyuanAdapter,
     ModelAdapter,
-    SimpleAdapter,
 )
 
 
@@ -95,11 +92,8 @@ class FlowMatchingPipeline:
     - Detailed training logging
 
     Example:
-        # Create pipeline with HunyuanVideo adapter
-        from automodel.flow_matching.adapters import HunyuanAdapter
-
         pipeline = FlowMatchingPipeline(
-            model_adapter=HunyuanAdapter(),
+            model_adapter=my_adapter,
             flow_shift=3.0,
             timestep_sampling="logit_normal",
         )
@@ -534,60 +528,3 @@ class FlowMatchingPipeline:
         logger.info(f"[LOSS] Weighted:   {weighted_val:.6f}")
         logger.info(f"[LOSS] Impact:     {(weighted_val / max(unweighted_val, 1e-8)):.3f}x")
         logger.info("=" * 80 + "\n")
-
-
-# =============================================================================
-# Factory Functions
-# =============================================================================
-
-
-def create_adapter(adapter_type: str, **kwargs) -> ModelAdapter:
-    """
-    Factory function to create a model adapter by name.
-
-    Args:
-        adapter_type: Type of adapter ("hunyuan", "simple", "flux")
-        **kwargs: Additional arguments passed to the adapter constructor
-
-    Returns:
-        ModelAdapter instance
-    """
-    adapters = {
-        "hunyuan": HunyuanAdapter,
-        "simple": SimpleAdapter,
-        "flux": FluxAdapter,
-    }
-
-    if adapter_type not in adapters:
-        raise ValueError(f"Unknown adapter type: {adapter_type}. Available: {list(adapters.keys())}")
-
-    return adapters[adapter_type](**kwargs)
-
-
-def create_pipeline(
-    adapter_type: str,
-    adapter_kwargs: Optional[Dict[str, Any]] = None,
-    **pipeline_kwargs,
-) -> FlowMatchingPipeline:
-    """
-    Factory function to create a pipeline with a specific adapter.
-
-    Args:
-        adapter_type: Type of adapter ("hunyuan", "simple")
-        adapter_kwargs: Arguments for the adapter constructor
-        **pipeline_kwargs: Arguments for the pipeline constructor
-
-    Returns:
-        FlowMatchingPipeline instance
-
-    Example:
-        pipeline = create_pipeline(
-            adapter_type="hunyuan",
-            adapter_kwargs={"use_condition_latents": True},
-            flow_shift=3.0,
-            timestep_sampling="logit_normal",
-        )
-    """
-    adapter_kwargs = adapter_kwargs or {}
-    adapter = create_adapter(adapter_type, **adapter_kwargs)
-    return FlowMatchingPipeline(model_adapter=adapter, **pipeline_kwargs)

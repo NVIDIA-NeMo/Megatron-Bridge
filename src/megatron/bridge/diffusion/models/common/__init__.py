@@ -20,9 +20,7 @@ from megatron.bridge.diffusion.models.common.dit_attention import (
     DiTSelfAttention,
 )
 from megatron.bridge.diffusion.models.common.dit_embeddings import (
-    FactorizedLearnable3DEmbedding,
     ParallelTimestepEmbedding,
-    SinCosPosEmb3D,
 )
 from megatron.bridge.diffusion.models.common.normalization import RMSNorm
 
@@ -33,9 +31,7 @@ __all__ = [
     "DiTCrossAttentionSubmodules",
     "DiTSelfAttention",
     # Embeddings
-    "FactorizedLearnable3DEmbedding",
     "ParallelTimestepEmbedding",
-    "SinCosPosEmb3D",
     # Normalization
     "RMSNorm",
 ]
