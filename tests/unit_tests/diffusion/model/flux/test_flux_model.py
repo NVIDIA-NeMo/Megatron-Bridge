@@ -15,13 +15,11 @@
 """Unit tests for Flux model."""
 
 from contextlib import nullcontext
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from torch import nn
-
 from megatron.core import parallel_state
+from torch import nn
 
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
@@ -85,9 +83,7 @@ def _mock_parallel_state(monkeypatch):
     monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda: True, raising=False)
     monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_world_size", lambda: 1, raising=False)
     monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 1, raising=False)
-    monkeypatch.setattr(
-        parallel_state, "get_data_parallel_world_size", lambda *args, **kwargs: 1, raising=False
-    )
+    monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda *args, **kwargs: 1, raising=False)
     monkeypatch.setattr(parallel_state, "get_context_parallel_world_size", lambda: 1, raising=False)
     monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_group", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(parallel_state, "get_data_parallel_group", lambda *args, **kwargs: None, raising=False)
@@ -101,9 +97,7 @@ def _mock_parallel_state(monkeypatch):
     monkeypatch.setattr(parallel_state, "model_parallel_is_initialized", lambda: False, raising=False)
     # Additional mocks for layer/TE code that may call with check_initialized=False
     monkeypatch.setattr(parallel_state, "get_embedding_group", lambda *args, **kwargs: None, raising=False)
-    monkeypatch.setattr(
-        parallel_state, "get_position_embedding_group", lambda *args, **kwargs: None, raising=False
-    )
+    monkeypatch.setattr(parallel_state, "get_position_embedding_group", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(parallel_state, "get_amax_reduction_group", lambda *args, **kwargs: None, raising=False)
 
 
@@ -324,18 +318,12 @@ class TestFluxShardedStateDict:
     def test_sharded_state_dict_returns_dict(self, monkeypatch):
         """Test sharded_state_dict returns a dict-like structure."""
         _mock_parallel_state(monkeypatch)
-        monkeypatch.setattr(
-            parallel_state, "get_tensor_model_parallel_rank", lambda: 0, raising=False
-        )
-        monkeypatch.setattr(
-            parallel_state, "get_virtual_pipeline_model_parallel_rank", lambda: None, raising=False
-        )
+        monkeypatch.setattr(parallel_state, "get_tensor_model_parallel_rank", lambda: 0, raising=False)
+        monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_rank", lambda: None, raising=False)
         monkeypatch.setattr(
             parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: None, raising=False
         )
-        monkeypatch.setattr(
-            parallel_state, "get_pipeline_model_parallel_rank", lambda: 0, raising=False
-        )
+        monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_rank", lambda: 0, raising=False)
         monkeypatch.setattr(
             parallel_state, "get_data_parallel_rank", lambda with_context_parallel=False: 0, raising=False
         )

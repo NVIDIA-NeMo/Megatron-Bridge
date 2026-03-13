@@ -20,7 +20,6 @@ import pytest
 import torch
 
 from megatron.bridge.diffusion.models.flux.flux_attention import (
-    FluxSingleAttention,
     JointSelfAttention,
     JointSelfAttentionSubmodules,
 )
@@ -76,11 +75,7 @@ class TestJointSelfAttentionSplitQkv:
 
         # mixed_qkv last dim = ng * (np/ng + 2) * hn = 4 * (1 + 2) * 64 = 768
         q_per_group = num_attention_heads_per_partition // num_query_groups_per_partition
-        mixed_qkv_last_dim = (
-            num_query_groups_per_partition
-            * (q_per_group + 2)
-            * hidden_size_per_attention_head
-        )
+        mixed_qkv_last_dim = num_query_groups_per_partition * (q_per_group + 2) * hidden_size_per_attention_head
         assert mixed_qkv_last_dim == 768
 
         sq, b = 8, 2
@@ -108,11 +103,7 @@ class TestJointSelfAttentionSplitQkv:
         hidden_size_per_attention_head = 32
 
         q_per_group = num_attention_heads_per_partition // num_query_groups_per_partition  # 2
-        mixed_qkv_last_dim = (
-            num_query_groups_per_partition
-            * (q_per_group + 2)
-            * hidden_size_per_attention_head
-        )
+        mixed_qkv_last_dim = num_query_groups_per_partition * (q_per_group + 2) * hidden_size_per_attention_head
         # 2 * (2+2) * 32 = 256
         assert mixed_qkv_last_dim == 256
 

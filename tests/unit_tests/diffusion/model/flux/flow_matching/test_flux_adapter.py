@@ -254,6 +254,7 @@ class TestMegatronFluxAdapterPrepareInputs:
     def test_prepare_inputs_guidance_when_model_has_guidance_embed(self):
         """Test guidance key is set when model has guidance_embed=True."""
         adapter = MegatronFluxAdapter(guidance_scale=5.0)
+
         # Use a plain object for unwrapped model so hasattr(unwrapped, "module") is False
         # (MagicMock would have .module and the unwrap loop would go to None)
         class UnwrappedModel:
@@ -281,6 +282,7 @@ class TestMegatronFluxAdapterPrepareInputs:
     def test_prepare_inputs_no_guidance_when_guidance_embed_false(self):
         """Test guidance is not in inputs when model has guidance_embed=False."""
         adapter = MegatronFluxAdapter()
+
         # Unwrapped model with guidance_embed=False
         class UnwrappedModel:
             guidance_embed = False
