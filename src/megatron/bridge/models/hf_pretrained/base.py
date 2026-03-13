@@ -289,7 +289,10 @@ class PreTrainedBase(ABC):
             if hasattr(self, "_model") and self._model is not None:
                 source = self.model.state_dict()
             elif hasattr(self, "model_name_or_path") and self.model_name_or_path:
-                source = SafeTensorsStateSource(self.model_name_or_path)
+                source = SafeTensorsStateSource(
+                    self.model_name_or_path,
+                    device=getattr(self, "device", "cpu"),
+                )
 
             if source is None:
                 raise ValueError(
