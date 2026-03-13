@@ -14,7 +14,7 @@
 
 import os
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -23,6 +23,7 @@ from megatron.bridge.diffusion.models.wan.flow_matching.flow_inference_pipeline 
     FlowInferencePipeline,
     _encode_text,
 )
+
 
 pytestmark = [pytest.mark.unit]
 

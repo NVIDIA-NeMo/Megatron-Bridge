@@ -430,9 +430,7 @@ class TestDiTCrossAttentionGetQKV:
         mock_super_qkv.return_value = (q, k, v)
 
         attn = self._make_attn(with_layernorm=True, across_heads=False)
-        q_out, k_out, v_out = attn.get_query_key_value_tensors(
-            torch.randn(6, 3, 64), torch.randn(6, 3, 64)
-        )
+        q_out, k_out, v_out = attn.get_query_key_value_tensors(torch.randn(6, 3, 64), torch.randn(6, 3, 64))
 
         assert q_out.shape == (6, 3, 4, 16)
         assert k_out.shape == (6, 3, 4, 16)
