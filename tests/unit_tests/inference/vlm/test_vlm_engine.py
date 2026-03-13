@@ -14,6 +14,8 @@
 
 from unittest.mock import MagicMock
 
+from megatron.core.inference.contexts import StaticInferenceContext
+
 from megatron.bridge.inference.vlm.vlm_engine import VLMEngine
 
 
@@ -21,8 +23,12 @@ class TestVLMEngine:
     def test_generate(self):
         mock_controller = MagicMock()
         mock_controller.tokenize_prompt.return_value = ([1, 2, 3], "image_dict")
-        # Fix for TypeError: '>' not supported between instances of 'int' and 'MagicMock'
-        mock_controller.inference_wrapped_model.context.max_batch_size = 128
+        # MCoreEngine/StaticInferenceEngine expects inference_context to be a StaticInferenceContext
+        # (and uses inference_wrapper_config.inference_max_requests for scheduler batch size).
+        mock_controller.inference_wrapped_model.inference_context = StaticInferenceContext(
+            max_batch_size=128, max_sequence_length=8192
+        )
+        mock_controller.inference_wrapped_model.inference_wrapper_config = MagicMock(inference_max_requests=128)
 
         engine = VLMEngine(mock_controller, max_batch_size=4)
         engine.scheduler = MagicMock()

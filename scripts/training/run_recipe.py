@@ -40,6 +40,12 @@ Usage:
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
+    With packed sequences and custom sequence length:
+        torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_pretrain_config \
+            --packed_sequence \
+            --seq_length 2048
+
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
 
@@ -52,6 +58,7 @@ import inspect
 from typing import Callable
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
@@ -64,6 +71,7 @@ from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 STEP_FUNCTIONS: dict[str, Callable] = {
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
+    "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
 }
 
@@ -76,7 +84,8 @@ TRAIN_MODES = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode from recipe name. "
-    "Please include 'pretrain' or 'finetune' in the recipe name or pass --mode explicitly."
+    "Please include 'pretrain' or 'finetune' (or 'sft'/'peft') in the recipe name, "
+    "or pass --mode explicitly."
 )
 
 
@@ -112,17 +121,45 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=None,
         help="PEFT scheme to use: 'lora', 'dora', or None.",
     )
+    parser.add_argument(
+        "--packed_sequence",
+        action="store_true",
+        default=False,
+        help="Enable packed sequence training (default: False)",
+    )
+    parser.add_argument(
+        "--seq_length",
+        type=int,
+        default=None,
+        help="Sequence length for training",
+    )
+    parser.add_argument(
+        "--hf_path",
+        type=str,
+        default=None,
+        help="HuggingFace model ID or local path to model directory. "
+        "Use a local path for more stable multinode training.",
+    )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
 
 
-def load_recipe(recipe_name: str, peft_scheme: str | None) -> ConfigContainer:
+def load_recipe(
+    recipe_name: str,
+    peft_scheme: str | None,
+    packed_sequence: bool = False,
+    seq_length: int | None = None,
+    hf_path: str | None = None,
+) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
 
     Args:
         recipe_name: Full recipe function name (e.g., 'llama32_1b_pretrain_config')
         peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
+        packed_sequence: Enable packed sequence training (default: False)
+        seq_length: Sequence length for training (optional)
+        hf_path: HuggingFace model ID or local path to model directory (optional)
 
     Returns:
         ConfigContainer from calling the recipe
@@ -139,22 +176,38 @@ def load_recipe(recipe_name: str, peft_scheme: str | None) -> ConfigContainer:
 
     config_builder = getattr(recipes, recipe_name)
 
-    # Check if the recipe accepts a 'peft' argument
+    # Inspect the recipe's signature to determine which arguments it accepts
     try:
         sig = inspect.signature(config_builder)
         params = sig.parameters
-        accepts_peft = "peft" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-    except (ValueError, TypeError):
-        # If signature inspection fails, fall back to try/except
-        accepts_peft = True
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
+        accepts_peft = "peft" in params or has_var_keyword
+        accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
+        accepts_seq_length = "seq_length" in params or has_var_keyword
+        accepts_hf_path = "hf_path" in params or has_var_keyword
+    except (ValueError, TypeError):
+        # If signature inspection fails, fallback conservatively
+        accepts_peft = True  # peft is widely supported, try passing it
+        accepts_packed_sequence = False  # new parameter, don't pass if unsure
+        accepts_seq_length = False  # new parameter, don't pass if unsure
+        accepts_hf_path = False  # model-specific, don't pass if unsure
+
+    # Build kwargs dynamically based on what the recipe accepts
+    kwargs = {}
     if accepts_peft:
-        try:
-            return config_builder(peft=peft_scheme)
-        except TypeError:
-            # Fallback if peft is not accepted despite signature inspection
-            return config_builder()
-    else:
+        kwargs["peft"] = peft_scheme
+    if accepts_packed_sequence and packed_sequence:
+        kwargs["packed_sequence"] = packed_sequence
+    if accepts_seq_length and seq_length is not None:
+        kwargs["seq_length"] = seq_length
+    if accepts_hf_path and hf_path is not None:
+        kwargs["hf_path"] = hf_path
+
+    try:
+        return config_builder(**kwargs)
+    except TypeError:
+        # Fallback if the kwargs are not accepted despite signature inspection
         return config_builder()
 
 
@@ -170,7 +223,7 @@ def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered
+    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
     if has_pretrain ^ has_finetune:
         return "pretrain" if has_pretrain else "finetune"
     raise ValueError(ERR_INFER_MODE_FAILED)
@@ -180,7 +233,13 @@ def main() -> None:
     """Run GPT training (pretrain or finetune)."""
     args, cli_overrides = parse_args()
 
-    config: ConfigContainer = load_recipe(args.recipe, args.peft_scheme)
+    config: ConfigContainer = load_recipe(
+        args.recipe,
+        args.peft_scheme,
+        args.packed_sequence,
+        args.seq_length,
+        args.hf_path,
+    )
 
     config = process_config_with_overrides(
         config,

@@ -14,6 +14,7 @@
 
 """Profiling utilities for training loop."""
 
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -38,7 +39,9 @@ def should_profile_rank(config: Optional[ProfilingConfig], rank: int) -> bool:
     """
     if config is None:
         return False
-    return rank in config.profile_ranks
+
+    on_all_ranks = len(config.profile_ranks) == 0
+    return on_all_ranks or (rank in config.profile_ranks)
 
 
 def handle_profiling_step(
@@ -100,6 +103,8 @@ def handle_profiling_stop(
 
     if config.use_pytorch_profiler and pytorch_prof is not None:
         pytorch_prof.stop()
+        if pytorch_prof.execution_trace_observer is not None:
+            pytorch_prof.execution_trace_observer.unregister_callback()
 
     if config.use_nsys_profiler:
         stop_nsys_profiler(nsys_nvtx_context)
@@ -118,6 +123,20 @@ def initialize_pytorch_profiler(
     Returns:
         Initialized (but not started) PyTorch profiler
     """
+    if config.pytorch_profiler_collect_chakra:
+        et_dir = Path(f"{tensorboard_dir}/../chakra")
+        et_dir.mkdir(parents=True, exist_ok=True)
+        et = torch.profiler.ExecutionTraceObserver().register_callback(
+            f"{et_dir}/rank-{torch.distributed.get_rank()}.json.gz"
+        )
+    else:
+        et = None
+
+    def trace_handler(p):
+        profile_dir = Path(f"{tensorboard_dir}/../torch_profile")
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        p.export_chrome_trace(f"{profile_dir}/rank-{torch.distributed.get_rank()}.json.gz")
+
     prof = torch.profiler.profile(
         schedule=torch.profiler.schedule(
             wait=max(config.profile_step_start - 1, 0),
@@ -125,9 +144,10 @@ def initialize_pytorch_profiler(
             active=config.profile_step_end - config.profile_step_start,
             repeat=1,
         ),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler(tensorboard_dir),
-        record_shapes=config.record_shapes,
-        with_stack=True,
+        on_trace_ready=trace_handler,
+        record_shapes=config.pytorch_profiler_collect_shapes,
+        with_stack=config.pytorch_profiler_collect_callstack,
+        execution_trace_observer=et,
     )
     return prof
 

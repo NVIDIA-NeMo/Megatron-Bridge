@@ -66,7 +66,7 @@ checkpoint.pretrained_checkpoint=/path/to/output/megatron/ckpt
 ```
 
 Notes:
-- Default parallelism TP=1, EP=8, PP=1, CP=1. It is recommended to run this recipe on at least 2 H100 nodes (16 GPUs).
+- Default parallelism TP=1, EP=8, PP=1, CP=1. Running this recipe requires at least 2 H100 nodes (16 GPUs).
 - By default, the [SQuAD](https://huggingface.co/datasets/rajpurkar/squad) dataset is used. To use customerized dataset, see this [tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/recipes/llama#quickstart)
 - Fine-tuning requires a pretrained megatron checkpoint, which can be obtained in "Import HF → Megatron" section above
 

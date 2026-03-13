@@ -271,7 +271,7 @@ def train(
                 scheduler=scheduler,
             ),
         )
-    is_any_logging_enabled = config.logger is not None
+
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -467,7 +467,7 @@ def train(
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
-        if is_any_logging_enabled:
+        if not config.logger.skip_train_metrics_log:
             if hasattr(optimizer, "is_stub_optimizer") and not optimizer.is_stub_optimizer:
                 loss_scale = optimizer.get_loss_scale().item()
             else:
@@ -587,6 +587,27 @@ def train(
         )
         if should_exit:
             break
+
+    # Save final checkpoint when training completes normally and the last
+    # step wasn't already persisted by the interval-based save inside
+    # checkpoint_and_decide_exit.
+    if not should_exit:
+        ckpt_config = config.checkpoint
+        if (
+            ckpt_config.save
+            and global_state.train_state.step != 0
+            and ckpt_config.save_interval != 0
+            and (ckpt_config.save_interval is None or global_state.train_state.step % ckpt_config.save_interval != 0)
+        ):
+            save_checkpoint_and_time(
+                global_state,
+                model,
+                optimizer,
+                scheduler,
+                num_floating_point_operations_so_far,
+                checkpointing_context,
+                train_data_iterator=train_data_iterator,
+            )
 
     _delete_cuda_graphs(cuda_graph_helper)
 

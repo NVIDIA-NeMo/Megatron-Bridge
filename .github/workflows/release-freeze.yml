@@ -44,14 +44,13 @@ jobs:
       dry-run: ${{ inputs.dry-run }}
       use-pat: true
     secrets:
-      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
-      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_MAIN_CHANNEL_WEBHOOK }}
+      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
       PAT: ${{ secrets.PAT }}
 
   bump-docs-versions:
     needs: [code-freeze]
     runs-on: ubuntu-latest
-    environment: main
     env:
       VERSION: ${{ needs.code-freeze.outputs.release-branch }}
       DRY_RUN: ${{ inputs.dry-run }}

@@ -135,8 +135,44 @@ def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
     return os.path.join(checkpoints_path, "latest_checkpointed_iteration.txt")
 
 
+_ITERATION_DIR_MARKERS = (
+    CONFIG_FILE,  # run_config.yaml  — Megatron Bridge checkpoint
+    TRAIN_STATE_FILE,  # train_state.pt   — Megatron Bridge per-iteration state
+    "metadata.json",  # MCore distributed checkpoint (torch_dist)
+    ".metadata",  # PyTorch DCP checkpoint (fsdp_dtensor)
+)
+
+
+def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
+    """Check if ``path`` is a specific checkpoint iteration directory.
+
+    An iteration directory (e.g. ``/checkpoints/iter_0001000/``) contains the
+    actual checkpoint payload as opposed to a parent checkpoint directory
+    which holds tracker files and ``iter_*`` subdirectories.
+
+    Detection order:
+      1. ``run_config.yaml`` — present in all Megatron Bridge checkpoints.
+      2. ``train_state.pt``  — per-iteration state file written by Bridge.
+      3. ``metadata.json``   — MCore distributed checkpoint (``torch_dist``).
+      4. ``.metadata``       — PyTorch DCP checkpoint (``fsdp_dtensor``).
+
+    Args:
+        path: Filesystem path to check.
+
+    Returns:
+        True when ``path`` contains any of the recognised checkpoint markers.
+    """
+    if path is None:
+        return False
+    return any(file_exists(os.path.join(path, m)) for m in _ITERATION_DIR_MARKERS)
+
+
 def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
     """Check if a checkpoint directory exists.
+
+    Supports both parent checkpoint directories (containing tracker files) and
+    specific iteration directories (containing checkpoint markers such as
+    ``run_config.yaml``, ``metadata.json``, or ``.metadata``).
 
     Args:
         checkpoints_path: Path to the potential checkpoint directory.
@@ -146,6 +182,10 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
     """
     if checkpoints_path is None:
         return False
+
+    # Direct iteration directory (e.g. /checkpoints/iter_0001000/)
+    if is_checkpoint_iteration_directory(checkpoints_path):
+        return True
 
     train_state_filename = os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
 
