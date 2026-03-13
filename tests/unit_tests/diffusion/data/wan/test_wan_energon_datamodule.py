@@ -40,6 +40,9 @@ class _FakeDiffusionDataModule:
     def train_dataloader(self):
         return "train"
 
+    def val_dataloader(self):
+        return "val"
+
 
 def test_wan_datamodule_config_initialization(monkeypatch):
     # Patch the symbol used inside wan_energon_datamodule module
@@ -62,6 +65,6 @@ def test_wan_datamodule_config_initialization(monkeypatch):
     assert cfg.dataset.task_encoder.seq_length == 128
     assert cfg.dataset.task_encoder.packing_buffer_size == 4
 
-    # build_datasets should return train loader thrice
+    # build_datasets should return train, val, val loaders
     train, val, test = cfg.build_datasets(context=None)
-    assert train == "train" and val == "train" and test == "train"
+    assert train == "train" and val == "val" and test == "val"

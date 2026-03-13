@@ -92,5 +92,4 @@ __all__ = [
     "FlowMatchEulerDiscreteScheduler",
     "T5Config",
     "ClipConfig",
-    "AutoEncoderConfig",
 ]
