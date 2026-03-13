@@ -624,7 +624,7 @@ def training_log(
             track_names.append("z_loss")
 
         if config.model.is_hybrid_model:
-            layers = config.model.hybrid_override_pattern.count("E")
+            layers = config.model.hybrid_layer_pattern.count("E")
         else:
             layers = config.model.num_layers
 

@@ -25,10 +25,11 @@ PRETRAINED_CHECKPOINT=${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 MODEL_NAME=qwen3_vl_8b
 DATASET_NAME=energon
 SEQ_LENGTH=4096
-TRAIN_ITERS=50
-GLOBAL_BATCH_SIZE=32
+TRAIN_ITERS=100
+GLOBAL_BATCH_SIZE=16
 MICRO_BATCH_SIZE=2
-EVAL_ITERS=10
+EVAL_ITERS=20
+EVAL_INTERVAL=20
 LR=0.00005
 MIN_LR=0.000005
 LR_WARMUP_ITERS=10
@@ -47,20 +48,20 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP N_PROC <<< "$par_config"
         echo "Running LoRA finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP N_PROC=$N_PROC"
         uv run python -m torch.distributed.run --nproc_per_node=$N_PROC scripts/training/run_recipe.py \
-            --recipe ${MODEL_NAME}_finetune_config \
+            --recipe ${MODEL_NAME}_peft_energon_config \
             --step_func qwen3_vl_step \
             --peft_scheme lora \
-            --dataset_type energon \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
             model.seq_length=$SEQ_LENGTH \
             train.train_iters=$TRAIN_ITERS \
             train.global_batch_size=$GLOBAL_BATCH_SIZE \
             train.micro_batch_size=$MICRO_BATCH_SIZE \
-            train.eval_iters=$EVAL_ITERS \
+            validation.eval_iters=$EVAL_ITERS \
+            validation.eval_interval=$EVAL_INTERVAL \
             optimizer.lr=$LR \
             optimizer.min_lr=$MIN_LR \
             scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-            checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_lora_seq_pack_${pack_config}_cp${CP} \
+            checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_energon_lora_seq_pack_${pack_config}_cp${CP} \
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
             logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_seq_pack_${pack_config}_cp${CP} \

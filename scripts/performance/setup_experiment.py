@@ -59,6 +59,7 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
 def check_training_finished(log_file_paths: List[str]) -> bool:
@@ -72,6 +73,7 @@ def check_training_finished(log_file_paths: List[str]) -> bool:
                         "StopIteration" in line
                         or "after training is done" in line
                         or "exiting program at iteration" in line
+                        or "AssertionError: no samples left to consume:" in line
                     )
                 )
     return any(all_lines)
@@ -131,6 +133,8 @@ def build_performance_config(args) -> Optional[Dict[str, Any]]:
     performance_params = {
         "timing_threshold": args.timing_threshold,
         "skip_first_percent_time": args.skip_first_percent_time,
+        "eval_time_start_step": args.eval_time_start_step,
+        "eval_time_end_step": args.eval_time_end_step,
     }
 
     for key, value in performance_params.items():
@@ -478,10 +482,23 @@ def main(
             )
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
+
             wandb_run = None
+            # Bug 2 fix: wandb online mode redirects fd 2 at the OS level via os.dup2(),
+            # making all stderr writes invisible. Grab a private copy of fd 2 *before*
+            # wandb.init() so our StreamHandler bypasses wandb's capture pipe.
+            _dup_file = os.fdopen(os.dup(2), "w", buffering=1)
+            _dup_handler = logging.StreamHandler(_dup_file)
+            _dup_handler.setLevel(logging.DEBUG)
+            _dup_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+            logger.addHandler(_dup_handler)
+
             if HAVE_WANDB and wandb_key:
                 wandb_run = wandb.init(
-                    project=wandb_project_name, entity=wandb_entity_name, id=wandb_run_id, resume="allow"
+                    project=wandb_project_name,
+                    entity=wandb_entity_name,
+                    id=wandb_run_id,
+                    resume="allow",
                 )
 
             logger.info("Waiting 10 seconds for I/O to settle")
@@ -501,11 +518,15 @@ def main(
                 performance_config=performance_params,
                 memory_config=memory_params,
                 wandb_run=wandb_run,
+                _logger=logger,
             )
 
             if wandb_run:
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
+
+            logger.removeHandler(_dup_handler)
+            _dup_file.close()
 
             if not is_long_convergence_run:
                 n_attempts = max_retries + 1
@@ -621,6 +642,8 @@ if __name__ == "__main__":
         performance_params={
             "timing_threshold": args.timing_threshold,
             "skip_first_percent_time": args.skip_first_percent_time,
+            "eval_time_start_step": args.eval_time_start_step,
+            "eval_time_end_step": args.eval_time_end_step,
         },
         memory_params={
             "memory_threshold": args.memory_threshold,

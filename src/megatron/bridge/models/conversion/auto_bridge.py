@@ -17,10 +17,12 @@ from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union
 
+import torch
 import torch.distributed as dist
 import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from modelopt.torch.quantization.utils import is_quantized
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -46,7 +48,16 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
+    "Qwen2_5OmniModel",
 )
+
+# Mapping from non-standard HF architecture names to their actual transformers class names.
+# Some HF model configs report architecture names that don't follow the standard
+# 'ForCausalLM'/'ForConditionalGeneration' convention and don't directly map to a
+# transformers class. This dict resolves those aliases.
+HF_ARCHITECTURE_ALIASES: dict[str, str] = {
+    "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
+}
 
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
@@ -572,6 +583,19 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
         )
+        model_instance = self._get_model_instance(model)
+        quant_tensors = None
+        if is_quantized(model_instance):
+            quant_tensors = {}
+
+            def _filter_quant(gen):
+                for name, tensor in gen:
+                    if "_quantizer." in name:
+                        quant_tensors[name] = tensor
+                        continue
+                    yield name, tensor
+
+            generator = _filter_quant(generator)
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
         if (
@@ -588,6 +612,15 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+
+        # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
+        if quant_tensors:
+            is_distributed = dist.is_available() and dist.is_initialized()
+            rank = dist.get_rank() if is_distributed else 0
+            if rank == 0 and quant_tensors:
+                sidecar_path = Path(path) / "modelopt_weights.pt"
+                sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(quant_tensors, sidecar_path)
 
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
@@ -1122,11 +1155,14 @@ class AutoBridge(Generic[MegatronModelT]):
             # For auto_map models, return the class name as a string
             return cls_name
 
+        # Resolve non-standard architecture names via alias mapping
+        resolved_arch = HF_ARCHITECTURE_ALIASES.get(causal_lm_arch, causal_lm_arch)
+
         try:
-            return getattr(transformers, causal_lm_arch)
+            return getattr(transformers, resolved_arch)
         except AttributeError:
             raise ValueError(
-                f"\n✗ Architecture class '{causal_lm_arch}' not found in transformers\n\n"
+                f"\n✗ Architecture class '{resolved_arch}' not found in transformers\n\n"
                 f"This could mean:\n"
                 f"1. The model requires a newer version of transformers\n"
                 f"2. The model uses a custom modeling file not in the standard library\n"
@@ -1163,8 +1199,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 # For auto_map models, use class-name string
                 arch_key = arch_name
             else:
+                # Resolve non-standard architecture names via alias mapping
+                resolved_arch = HF_ARCHITECTURE_ALIASES.get(architecture, architecture)
                 try:
-                    arch_class = getattr(transformers, architecture)
+                    arch_class = getattr(transformers, resolved_arch)
                     arch_key = arch_class
                 except AttributeError:
                     # Fall back to name-based registration
