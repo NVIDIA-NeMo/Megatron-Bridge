@@ -32,3 +32,4 @@ from megatron.bridge.recipes.nemotronh import *
 from megatron.bridge.recipes.olmoe import *
 from megatron.bridge.recipes.qwen import *
 from megatron.bridge.recipes.qwen_vl import *
+from megatron.bridge.recipes.kimi_vl import *

@@ -13,18 +13,19 @@
 # limitations under the License.
 
 from typing import Mapping
+from typing import Dict, Mapping
 
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.kimi_vl.utils import maybe_dequantize_fp8_weight, get_common_configs
+from megatron.bridge.models.kimi_vl.utils import maybe_dequantize_fp8_weight, get_common_configs, dequantize_int4,quantize_to_int4
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
@@ -86,14 +87,57 @@ class KimiK25VLBridge(MegatronModelBridge):
 
         return provider
 
+    def _load_and_dequantize(self, key: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        """Load a weight, dequantizing INT4 triplets and FP8 block-wise tensors when present."""
+        base = key[:-7] if key.endswith(".weight") else key
+        packed_key = f"{base}.weight_packed"
+        if packed_key in hf_state_dict and f"{base}.weight_scale" in hf_state_dict and f"{base}.weight_shape" in hf_state_dict:
+            weight = dequantize_int4(
+                hf_state_dict[packed_key],
+                hf_state_dict[f"{base}.weight_scale"],
+                hf_state_dict[f"{base}.weight_shape"],
+                device="cpu",
+            )
+        else:
+            weight = hf_state_dict[key]
+        return maybe_dequantize_fp8_weight(key, weight, hf_state_dict)
+
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Load HF weights, dequantizing FP8 block-wise tensors to bf16 when present."""
+        """Load HF weights, dequantizing INT4 and FP8 quantized tensors when present."""
         if isinstance(hf_param, str):
-            hf_weights = hf_state_dict[hf_param]
-            return maybe_dequantize_fp8_weight(hf_param, hf_weights, hf_state_dict)
-        return {k: maybe_dequantize_fp8_weight(v, hf_state_dict[v], hf_state_dict) for k, v in hf_param.items()}
+            return self._load_and_dequantize(hf_param, hf_state_dict)
+        return {k: self._load_and_dequantize(v, hf_state_dict) for k, v in hf_param.items()}
+
+    def _is_quantized_expert_key(self, key: str) -> bool:
+        if "mlp.experts." in key and ".weight" in key:
+            if "shared_experts" in key:
+                return False
+            if ".layers.0." in key:
+                return False
+            return True
+        return False
+
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Add rotary embedding inverse frequency parameter if needed."""
+        
+        hf_state_dict = {}
+        for fqn, tensor in converted_weights_dict.items():
+            if self._is_quantized_expert_key(fqn):
+                packed, scale, shape = quantize_to_int4(tensor)
+                hf_state_dict[f"{fqn[:-7] if fqn.endswith('.weight') else fqn}.weight_packed"] = packed
+                hf_state_dict[f"{fqn[:-7] if fqn.endswith('.weight') else fqn}.weight_scale"] = scale
+                hf_state_dict[f"{fqn[:-7] if fqn.endswith('.weight') else fqn}.weight_shape"] = shape
+            else:
+                hf_state_dict[fqn] = tensor
+        return hf_state_dict
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.
