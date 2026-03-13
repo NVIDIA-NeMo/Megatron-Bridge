@@ -28,8 +28,8 @@
 
 #SBATCH --job-name=gpt-oss-sft
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
+#SBATCH --ntasks-per-node=8  # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
+#SBATCH --gpus-per-node=8    # Change to 4 for GB200 (Blackwell, 4 GPUs/node)
 #SBATCH --time=24:00:00
 #SBATCH --partition=batch
 #SBATCH --account=my_account
@@ -51,8 +51,9 @@ export WKDIR="${WKDIR:-}"
 # Use base dir (e.g. .../gpt-oss-20b) with latest_checkpointed_iteration.txt, or Bridge dir with latest_train_state.pt
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gpt-oss-20b}
 MODEL_NAME=gpt_oss_20b
-RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_config}"
-# RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"
+RECIPE_NAME="${RECIPE_NAME:-${MODEL_NAME}_sft_config}"               # bf16 (default)
+# RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"           # Hopper FP8 current scaling
+# RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"                        # Blackwell MXFP8
 DATASET_NAME=squad
 SEQ_LENGTH=2048
 TRAIN_ITERS=1000
