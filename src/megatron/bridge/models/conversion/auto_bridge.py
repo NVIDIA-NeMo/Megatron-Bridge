@@ -835,12 +835,12 @@ class AutoBridge(Generic[MegatronModelT]):
         # Export ckpt performs on CPU
         with temporary_distributed_context(backend="gloo"):
             # Load the Megatron model
-            # 'flex' dispatcher requires TPxEP > 1; fall back to 'alltoall'
-            megatron_model = self.load_megatron_model(
-                megatron_path,
-                wrap_with_ddp=False,
-                mp_overrides={"moe_token_dispatcher_type": "alltoall"},
+            mp_overrides = (
+                {"moe_token_dispatcher_type": "alltoall"}
+                if getattr(self.transformer_config, "num_moe_experts", 0) > 0
+                else None
             )
+            megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False, mp_overrides=mp_overrides)
 
             # Save in HuggingFace format
             self.save_hf_pretrained(
