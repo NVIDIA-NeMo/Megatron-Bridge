@@ -35,6 +35,7 @@ from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_model_config
 
+
 if TYPE_CHECKING:
     from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 

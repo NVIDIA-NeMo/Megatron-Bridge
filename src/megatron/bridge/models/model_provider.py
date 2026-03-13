@@ -56,6 +56,7 @@ from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
+
 if TYPE_CHECKING:
     from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 

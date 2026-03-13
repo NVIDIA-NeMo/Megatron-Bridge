@@ -93,14 +93,11 @@ class MixedPrecisionConfig:
             # the new Megatron-FSDP mixed-precision arguments to control this!
             object.__setattr__(self, "megatron_fsdp_main_grads_dtype", torch.float32)
             object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", torch.float32)
-        if (
-            name in (
-                "megatron_fsdp_main_params_dtype",
-                "megatron_fsdp_main_grads_dtype",
-                "megatron_fsdp_grad_comm_dtype"
-            )
-            and isinstance(value, str)
-        ):
+        if name in (
+            "megatron_fsdp_main_params_dtype",
+            "megatron_fsdp_main_grads_dtype",
+            "megatron_fsdp_grad_comm_dtype",
+        ) and isinstance(value, str):
             # Map string options to torch.dtype or None.
             if value == "fp32":
                 object.__setattr__(self, name, torch.float32)
