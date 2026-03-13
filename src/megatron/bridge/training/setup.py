@@ -18,8 +18,10 @@ import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 import torch
 from megatron.core.config import set_experimental_flag
@@ -196,7 +198,7 @@ def setup(
     # Register PEFT pre-wrap hook if PEFT is configured
     if cfg.peft is not None:
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
-        cfg.model.register_pre_wrap_hook(peft_hook)
+        _register_pre_wrap_hook(cfg.model, peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
     if getattr(cfg.model, "restore_modelopt_state", False):
@@ -219,7 +221,7 @@ def setup(
             load_modelopt_state(model, checkpoint_path)
             return model
 
-        cfg.model.register_pre_wrap_hook(modelopt_pre_wrap_hook)
+        _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
 
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
@@ -338,6 +340,14 @@ def setup(
         checkpointing_context,
         pg_collection,
     )
+
+
+def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
+    """Register a pre-wrap hook on either ModelConfig or ModelProviderMixin."""
+    if isinstance(model_cfg, ModelConfig):
+        model_cfg.pre_wrap_hooks.append(hook)
+    else:
+        model_cfg.register_pre_wrap_hook(hook)
 
 
 def _update_model_config_funcs(
