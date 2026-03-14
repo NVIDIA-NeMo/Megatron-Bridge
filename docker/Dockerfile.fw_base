@@ -334,13 +334,9 @@ WORKDIR /opt/tensorrt_llm
 # Copy Wheels
 RUN --mount=type=bind,from=trtllm_wheel,source=/src/tensorrt_llm/build/,target=/tmp/tensorrt_llm/build/ \
     --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
-    --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
     pip install --upgrade --ignore-installed wheel && \
     pip install --no-deps xgrammar==0.1.25 && \
     pip install /tmp/vllm/vllm*.whl && \
-    pushd /usr/local/lib/python3.12/dist-packages/vllm && \
-    patch -p1 < /opt/vllm.patch && \
-    popd && \
     pip install /tmp/tensorrt_llm/build/tensorrt_llm*.whl --extra-index-url https://pypi.nvidia.com && \
     ln -sv $(/usr/bin/python -c 'import site; print(f"{site.getsitepackages()[0]}/tensorrt_llm/libs")') lib && \
     test -f lib/libnvinfer_plugin_tensorrt_llm.so && \
