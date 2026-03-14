@@ -34,6 +34,54 @@ from megatron.bridge.training.config import (
 )
 
 
+def _benchmark_common(cfg: ConfigContainer) -> None:
+    """Apply benchmark-mode defaults that prioritize throughput measurement over convergence.
+
+    Intended for performance benchmark recipes only. Sets short training runs,
+    disables checkpointing/eval, tunes scheduler, and enables perf-oriented kernels.
+
+    Must stay in sync with ``_set_common_perf_overrides`` in
+    ``scripts/performance/utils/overrides.py``.
+
+    Individual recipes may override any of these after calling this function
+    (e.g. Kimi K2 sets ``grad_reduce_in_fp32 = True``).
+    """
+    cfg.train.train_iters = 50
+    cfg.train.eval_iters = 0
+
+    cfg.checkpoint.save = None
+
+    cfg.logger.log_interval = 1
+    cfg.logger.tensorboard_dir = None
+
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.ddp.check_for_large_grads = False
+
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+
+    cfg.scheduler.lr_decay_iters = cfg.train.train_iters
+    cfg.scheduler.lr_warmup_iters = 10
+
+    if hasattr(cfg.model, "use_transformer_engine_op_fuser") and cfg.model.use_transformer_engine_op_fuser:
+        cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.apply_rope_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    if not isinstance(cfg.mixed_precision, str):
+        cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cuda_impl = getattr(cfg.model, "cuda_graph_impl", None)
+    if cuda_impl is not None:
+        if cuda_impl != "none":
+            cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+        else:
+            cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = False
+
+    if getattr(cfg.model, "moe_flex_dispatcher_backend", None) == "hybridep":
+        cfg.model.moe_hybridep_num_sms = 32
+
+
 def _pretrain_common() -> ConfigContainer:
     """Create a base pre-training ConfigContainer with common defaults for any language model.
 
