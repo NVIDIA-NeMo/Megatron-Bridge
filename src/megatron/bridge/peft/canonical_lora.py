@@ -31,6 +31,12 @@ from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attrib
 logger = logging.getLogger(__name__)
 
 
+def _should_treat_linear_fc1_as_unfused(full_name: str) -> bool:
+    """Return True when CanonicalLoRA should keep linear_fc1 as a single adapter."""
+
+    return full_name.startswith("vision_model.") or full_name.endswith(".mlp.experts.linear_fc1")
+
+
 class ModuleDict(nn.ModuleDict):
     """
     nn.ModuleDict with a sharded_state_dict implementation for checkpointing
@@ -280,16 +286,6 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                     m, dim=self.dim, alpha=self.alpha, dropout=self.dropout, lora_A_init_method=self.lora_A_init_method
                 )
 
-            # Some linear_fc1 modules do not map to separate gate/up HF weights:
-            # - vision_model.*.linear_fc1 are plain MLP projections
-            # - *.mlp.experts.linear_fc1 export as a single fused gate_up_proj tensor
-            # CanonicalLoRA targets linear_fc1 via the linear_fc1_up/gate aliases, so skip
-            # these unsupported cases instead of wrapping them as split gate/up adapters.
-            if name == "linear_fc1" and (
-                full_name.startswith("vision_model.") or full_name.endswith(".mlp.experts.linear_fc1")
-            ):
-                return m
-
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
 
@@ -311,6 +307,11 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
+
+            if name == "linear_fc1" and _should_treat_linear_fc1_as_unfused(full_name):
+                logger.info(f"Adding lora to: {full_name} (treating unsupported canonical linear_fc1 as unfused)")
+                adapter = ParallelLinearAdapter(attrs.in_features, attrs.out_features, **adapter_kwargs)
+                return LoRALinear(m, adapter)
 
             canonical_submodules = self.canonical_mapping[match]
             logger.info(f"Adding lora to: {full_name} ({canonical_submodules})")
