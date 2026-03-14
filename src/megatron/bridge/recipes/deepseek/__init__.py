@@ -16,6 +16,42 @@ from .deepseek_v3 import (
     deepseek_v3_pretrain_config_32nodes,
 )
 
+# DeepSeek V3 perf recipes
+from .deepseek_v3_perf import (
+    deepseek_v3_pretrain_256gpu_b200_bf16_config,
+    deepseek_v3_pretrain_256gpu_b200_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_b200_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_b300_bf16_config,
+    deepseek_v3_pretrain_256gpu_b300_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_gb200_bf16_config,
+    deepseek_v3_pretrain_256gpu_gb200_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_gb200_fp8mx_config,
+    # V1 — 256 GPU
+    deepseek_v3_pretrain_256gpu_gb300_bf16_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
+    deepseek_v3_pretrain_1024gpu_h100_bf16_config,
+    deepseek_v3_pretrain_1024gpu_h100_fp8cs_config,
+    deepseek_v3_pretrain_v2_256gpu_b200_bf16_config,
+    deepseek_v3_pretrain_v2_256gpu_b200_fp8cs_config,
+    deepseek_v3_pretrain_v2_256gpu_b200_fp8mx_config,
+    deepseek_v3_pretrain_v2_256gpu_b300_bf16_config,
+    deepseek_v3_pretrain_v2_256gpu_b300_fp8cs_config,
+    deepseek_v3_pretrain_v2_256gpu_b300_fp8mx_config,
+    deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config,
+    deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config,
+    deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config,
+    # V2 — 256 GPU
+    deepseek_v3_pretrain_v2_256gpu_gb300_bf16_config,
+    deepseek_v3_pretrain_v2_256gpu_gb300_fp8cs_config,
+    deepseek_v3_pretrain_v2_256gpu_gb300_fp8mx_config,
+    deepseek_v3_pretrain_v2_256gpu_gb300_nvfp4_config,
+    deepseek_v3_pretrain_v2_1024gpu_h100_bf16_config,
+    deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config,
+)
+
 
 __all__ = [
     # DeepSeek V2/V2-Lite
@@ -24,4 +60,36 @@ __all__ = [
     # DeepSeek V3
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
+    # DeepSeek V3 perf recipes — V1 (256 GPU)
+    "deepseek_v3_pretrain_256gpu_gb300_bf16_config",
+    "deepseek_v3_pretrain_256gpu_gb300_fp8cs_config",
+    "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_gb300_nvfp4_config",
+    "deepseek_v3_pretrain_256gpu_gb200_bf16_config",
+    "deepseek_v3_pretrain_256gpu_gb200_fp8cs_config",
+    "deepseek_v3_pretrain_256gpu_gb200_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_b300_bf16_config",
+    "deepseek_v3_pretrain_256gpu_b300_fp8cs_config",
+    "deepseek_v3_pretrain_256gpu_b300_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_b200_bf16_config",
+    "deepseek_v3_pretrain_256gpu_b200_fp8cs_config",
+    "deepseek_v3_pretrain_256gpu_b200_fp8mx_config",
+    "deepseek_v3_pretrain_1024gpu_h100_bf16_config",
+    "deepseek_v3_pretrain_1024gpu_h100_fp8cs_config",
+    # DeepSeek V3 perf recipes — V2 (256 GPU)
+    "deepseek_v3_pretrain_v2_256gpu_gb300_bf16_config",
+    "deepseek_v3_pretrain_v2_256gpu_gb300_fp8cs_config",
+    "deepseek_v3_pretrain_v2_256gpu_gb300_fp8mx_config",
+    "deepseek_v3_pretrain_v2_256gpu_gb300_nvfp4_config",
+    "deepseek_v3_pretrain_v2_256gpu_gb200_bf16_config",
+    "deepseek_v3_pretrain_v2_256gpu_gb200_fp8cs_config",
+    "deepseek_v3_pretrain_v2_256gpu_gb200_fp8mx_config",
+    "deepseek_v3_pretrain_v2_256gpu_b300_bf16_config",
+    "deepseek_v3_pretrain_v2_256gpu_b300_fp8cs_config",
+    "deepseek_v3_pretrain_v2_256gpu_b300_fp8mx_config",
+    "deepseek_v3_pretrain_v2_256gpu_b200_bf16_config",
+    "deepseek_v3_pretrain_v2_256gpu_b200_fp8cs_config",
+    "deepseek_v3_pretrain_v2_256gpu_b200_fp8mx_config",
+    "deepseek_v3_pretrain_v2_1024gpu_h100_bf16_config",
+    "deepseek_v3_pretrain_v2_1024gpu_h100_fp8cs_config",
 ]
