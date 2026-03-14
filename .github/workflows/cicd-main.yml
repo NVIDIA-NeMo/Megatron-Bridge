@@ -292,6 +292,29 @@ jobs:
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
+  check-labels:
+    runs-on: ubuntu-latest
+    needs: [pre-flight]
+    outputs:
+      needs_more_tests: ${{ steps.check.outputs.needs_more_tests }}
+    steps:
+      - name: Check PR labels
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.ref }}" == refs/heads/pull-request/* ]]; then
+            PR_NUMBER=$(echo "${{ github.ref }}" | sed 's|refs/heads/pull-request/||')
+            LABELS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+            if echo "$LABELS" | grep -q "needs-more-tests"; then
+              echo "needs_more_tests=true" >> $GITHUB_OUTPUT
+            else
+              echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "needs_more_tests=false" >> $GITHUB_OUTPUT
+          fi
+
   cicd-unit-tests:
     if: |
       (
@@ -353,54 +376,21 @@ jobs:
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
 
-  cicd-functional-tests:
+  # L0: runs on every PR, main push, and schedule
+  cicd-functional-tests-l0:
     strategy:
       fail-fast: false
       max-parallel: 16
       matrix:
         include:
-          - script: L2_Launch_training
+          - script: L0_Launch_training
             timeout: 50
-          - script: L2_Launch_converter
-          - script: L2_Launch_models_deepseek
-          - script: L2_Launch_models_gemma
-          - script: L2_Launch_models_gemma_vl
-          - script: L2_Launch_models_glm
-          - script: L2_Launch_models_gpt_oss
-          - script: L2_Launch_models_llama_nemotron
-          - script: L2_Launch_models_ministral3
-          - script: L2_Launch_models_mistral
-          - script: L2_Launch_models_nemotron
-          - script: L2_Launch_models_nemotronh
-          - script: L2_Launch_models_nemotronh_quantization
-          - script: L2_Launch_models_nemotron_vl
-          - script: L2_Launch_models_olmoe
-          - script: L2_Launch_models_qwen
-          - script: L2_Launch_models_qwen_quantization
-          - script: L2_Launch_models_qwen_vl
-          - script: L2_Launch_models_qwen35_vl
-          - script: L2_Launch_recipes_gemma_vl
-          - script: L2_Launch_recipes_gpt_oss
-          - script: L2_Launch_models_qwen_vl_quantization
-          - script: L2_Launch_recipes_llama_1b
-          - script: L2_Launch_recipes_llama_3b
-          - script: L2_Launch_recipes_llama_distill
-          - script: L2_Launch_recipes_ministral3
-          - script: L2_Launch_recipes_nemotronh
-          - script: L2_Launch_recipes_qwen
-          - script: L2_Launch_data
-          - script: L2_Launch_post_training_quantization
-          - script: L2_Launch_quantization_aware_training
-          # - script: L2_Launch_quantization_export
-          - script: L2_Launch_recipes_llama_cuda_graphs
-          - script: L2_Launch_utils
-          - script: L2_Launch_ckpts_mbridge_to_mlm_llama32_1b
-          - script: L2_Launch_ckpts_mlm_to_mbridge_llama32_1b
-          - script: L2_Launch_ckpts_mbridge_to_mlm_qwen3_4b
-          - script: L2_Launch_ckpts_mlm_to_mbridge_qwen3_4b
-          # NemotronH 4B ckpt L2 jobs skipped until hybrid_override_pattern -> hybrid_layer_pattern (PR #2628)
-          # - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b
-          # - script: L2_Launch_ckpts_mlm_to_mbridge_nemotronh_4b
+          - script: L0_Launch_converter
+          - script: L0_Launch_data
+          - script: L0_Launch_models_deepseek
+          - script: L0_Launch_models_qwen3
+          - script: L0_Launch_recipes_llama_1b
+          - script: L0_Launch_utils
     needs: [pre-flight, cicd-unit-tests]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
     if: |
@@ -451,7 +441,184 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
-          timeout: ${{ matrix.timeout || 30 }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: "true"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+
+  # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
+  cicd-functional-tests-l1:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - script: L1_Launch_models_gemma1
+          - script: L1_Launch_models_gemma2
+          - script: L1_Launch_models_gemma3
+          - script: L1_Launch_models_glm
+          - script: L1_Launch_models_gpt_oss
+          - script: L1_Launch_models_ministral3
+          - script: L1_Launch_models_mistral
+          - script: L1_Launch_models_nemotron
+          - script: L1_Launch_models_nemotronh
+          - script: L1_Launch_models_olmoe
+          - script: L1_Launch_models_qwen2
+          - script: L1_Launch_models_qwen25_vl
+          - script: L1_Launch_models_qwen35_vl
+          - script: L1_Launch_models_qwen3_vl
+          - script: L1_Launch_post_training_quantization
+          - script: L1_Launch_quantization_export
+          - script: L1_Launch_recipes_gpt_oss
+          - script: L1_Launch_recipes_llama_3b
+          - script: L1_Launch_recipes_ministral3
+          - script: L1_Launch_recipes_nemotronh
+          - script: L1_Launch_recipes_qwen
+    needs: [pre-flight, cicd-unit-tests, check-labels]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
+      && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.check-labels.outputs.needs_more_tests == 'true')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+    name: ${{ matrix.script }}
+    environment: nemo-ci
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule for functional tests..."
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+
+          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+
+          echo "✅ MCore commit verified"
+          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          git log -1 --oneline
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
+          is_unit_test: "false"
+          has-azure-credentials: "true"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
+          container-image: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}
+          test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
+          runner: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+
+  # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
+  cicd-functional-tests-l2:
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - script: L2_Launch_ckpts_mbridge_to_mlm_llama32_1b
+          - script: L2_Launch_ckpts_mlm_to_mbridge_llama32_1b
+          - script: L2_Launch_ckpts_mbridge_to_mlm_qwen3_4b
+          - script: L2_Launch_ckpts_mlm_to_mbridge_qwen3_4b
+          # NemotronH 4B ckpt jobs skipped until hybrid_layer_pattern rename lands
+          # - script: L2_Launch_ckpts_mbridge_to_mlm_nemotronh_4b
+          # - script: L2_Launch_ckpts_mlm_to_mbridge_nemotronh_4b
+          - script: L2_Launch_models_gemma_vl
+          - script: L2_Launch_models_llama_nemotron
+          - script: L2_Launch_models_nemotron_vl
+          - script: L2_Launch_models_nemotronh_quantization
+          - script: L2_Launch_models_qwen_quantization
+          - script: L2_Launch_models_qwen_vl_quantization
+          - script: L2_Launch_quantization_aware_training
+          - script: L2_Launch_recipes_gemma_vl
+          - script: L2_Launch_recipes_llama_cuda_graphs
+          - script: L2_Launch_recipes_llama_distill
+          - script: L2_Launch_recipes_qwen_vl
+    needs: [pre-flight, cicd-unit-tests]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-gpu-x2
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+      )
+      && !cancelled()
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
+    name: ${{ matrix.script }}
+    environment: nemo-ci
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_ref != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule for functional tests..."
+          cd 3rdparty/Megatron-LM
+          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
+          git checkout ${{ github.event.inputs.mcore_ref }}
+
+          ACTUAL_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+
+          echo "🧪 FUNCTIONAL TESTS - MCore verification:"
+          echo "Expected: ${EXPECTED_COMMIT}"
+          echo "Actual:   ${ACTUAL_COMMIT}"
+
+          if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
+            echo "❌ ERROR: MCore commit mismatch!"
+            exit 1
+          fi
+
+          echo "✅ MCore commit verified"
+          echo "📦 Container: ${{ env.container-registry }}/megatron-bridge:${{ github.sha }}"
+          git log -1 --oneline
+
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script: ${{ matrix.script }}
+          timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -466,7 +633,9 @@ jobs:
     needs:
       - pre-flight
       - cicd-unit-tests
-      - cicd-functional-tests
+      - cicd-functional-tests-l0
+      - cicd-functional-tests-l1
+      - cicd-functional-tests-l2
     if: |
       (
         needs.pre-flight.outputs.docs_only == 'true'
@@ -489,7 +658,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           SKIPPING_IS_ALLOWED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' || needs.pre-flight.outputs.is_ci_workload == 'true' || inputs.test_suite == 'unit-only' || inputs.test_suite == 'functional-only' }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length') || echo 0
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
 
           if [ "${FAILED_JOBS:-0}" -eq 0 ] || [ "$SKIPPING_IS_ALLOWED" == "true" ]; then
               echo "✅ All previous jobs completed successfully"
@@ -497,7 +666,7 @@ jobs:
           else
               echo "❌ Found $FAILED_JOBS failed job(s)"
               # Show which jobs failed
-              gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success") | .name'
+              gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name'
               exit 1
           fi
 
