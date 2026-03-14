@@ -21,10 +21,40 @@ from .qwen3_vl import (
     qwen3_vl_8b_sft_config,
     qwen3_vl_30b_a3b_peft_config,
     qwen3_vl_30b_a3b_pretrain_mock_config,
+    qwen3_vl_30b_a3b_pretrain_config,
     qwen3_vl_30b_a3b_sft_config,
     qwen3_vl_235b_a22b_peft_config,
     qwen3_vl_235b_a22b_pretrain_mock_config,
+    qwen3_vl_235b_a22b_pretrain_config,
     qwen3_vl_235b_a22b_sft_config,
+)
+
+# Qwen3-VL perf recipes
+from .qwen3_vl_perf import (
+    qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+    # Qwen3-VL 30B-A3B
+    qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config,
+    qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config,
+    qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config,
+    # Qwen3-VL 235B-A22B
+    qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config,
+    qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config,
+    qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config,
+    qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config,
 )
 from .qwen25_vl import (
     qwen25_vl_3b_peft_config,
@@ -104,6 +134,8 @@ __all__ = [
     "qwen3_vl_8b_pretrain_mock_config",
     "qwen3_vl_30b_a3b_pretrain_mock_config",
     "qwen3_vl_235b_a22b_pretrain_mock_config",
+    "qwen3_vl_30b_a3b_pretrain_config",
+    "qwen3_vl_235b_a22b_pretrain_config",
     # Qwen3-VL SFT configs
     "qwen3_vl_8b_sft_config",
     "qwen3_vl_30b_a3b_sft_config",
@@ -113,4 +145,28 @@ __all__ = [
     "qwen3_vl_8b_peft_energon_config",
     "qwen3_vl_30b_a3b_peft_config",
     "qwen3_vl_235b_a22b_peft_config",
+    # Qwen3-VL perf recipes — 235B-A22B
+    "qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config",
+    "qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config",
+    "qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config",
+    "qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config",
+    # Qwen3-VL perf recipes — 30B-A3B
+    "qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config",
+    "qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config",
+    "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
+    "qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config",
 ]

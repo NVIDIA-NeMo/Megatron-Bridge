@@ -31,6 +31,12 @@ from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.qwen.qwen3_moe import (
+    qwen3_30b_a3b_pretrain_config as _qwen3_30b_a3b_text_pretrain,
+)
+from megatron.bridge.recipes.qwen.qwen3_moe import (
+    qwen3_235b_a22b_pretrain_config as _qwen3_235b_a22b_text_pretrain,
+)
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -263,6 +269,54 @@ def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonK
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)
+
+
+def qwen3_vl_30b_a3b_pretrain_config(
+    mock: bool = True,
+    precision_config: MixedPrecisionConfig | str | None = None,
+    comm_overlap_config: CommOverlapConfig | None = None,
+    moe_flex_dispatcher_backend: str | None = None,
+) -> ConfigContainer:
+    """VLM pretrain base config for Qwen3-VL 30B-A3B.
+
+    Delegates to the text-only Qwen3-30B-A3B pretrain config so that old perf
+    pipeline and new flat perf recipes share the same base.
+    """
+    cfg = _qwen3_30b_a3b_text_pretrain()
+    if precision_config is not None:
+        cfg.mixed_precision = precision_config
+    if comm_overlap_config is not None:
+        cfg.comm_overlap = comm_overlap_config
+    if moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
+        apply_flex_dispatcher_backend(cfg.model, moe_flex_dispatcher_backend)
+    if mock:
+        cfg.dataset.mock = True
+    return cfg
+
+
+def qwen3_vl_235b_a22b_pretrain_config(
+    mock: bool = True,
+    precision_config: MixedPrecisionConfig | str | None = None,
+    comm_overlap_config: CommOverlapConfig | None = None,
+    moe_flex_dispatcher_backend: str | None = None,
+) -> ConfigContainer:
+    """VLM pretrain base config for Qwen3-VL 235B-A22B.
+
+    Delegates to the text-only Qwen3-235B-A22B pretrain config so that old perf
+    pipeline and new flat perf recipes share the same base.
+    """
+    cfg = _qwen3_235b_a22b_text_pretrain()
+    if precision_config is not None:
+        cfg.mixed_precision = precision_config
+    if comm_overlap_config is not None:
+        cfg.comm_overlap = comm_overlap_config
+    if moe_flex_dispatcher_backend is not None:
+        cfg.model.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
+        apply_flex_dispatcher_backend(cfg.model, moe_flex_dispatcher_backend)
+    if mock:
+        cfg.dataset.mock = True
+    return cfg
 
 
 def _make_energon_dataset(

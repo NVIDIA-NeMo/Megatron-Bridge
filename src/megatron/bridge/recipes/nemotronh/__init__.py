@@ -51,6 +51,35 @@ from megatron.bridge.recipes.nemotronh.nemotronh import (
     nemotronh_56b_sft_config,
 )
 
+# NemotronH perf recipes
+from megatron.bridge.recipes.nemotronh.nemotronh_perf import (
+    # Nemotron 3 Nano — B200
+    nemotron_3_nano_pretrain_8gpu_b200_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config,
+    # Nemotron 3 Nano — B300
+    nemotron_3_nano_pretrain_8gpu_b300_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config,
+    # Nemotron 3 Nano — GB200
+    nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+    # Nemotron 3 Nano — GB300
+    nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
+    # Nemotron 3 Nano — H100
+    nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
+    nemotronh_56b_pretrain_64gpu_b200_fp8cs_config,
+    nemotronh_56b_pretrain_64gpu_b300_fp8cs_config,
+    nemotronh_56b_pretrain_64gpu_gb200_fp8cs_config,
+    # NemotronH 56B
+    nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config,
+    nemotronh_56b_pretrain_64gpu_h100_fp8cs_config,
+)
+
 
 __all__ = [
     # NemotronH models
@@ -81,4 +110,25 @@ __all__ = [
     "nemotron_3_super_pretrain_config",
     "nemotron_3_super_sft_config",
     "nemotron_3_super_peft_config",
+    # NemotronH perf recipes — 56B
+    "nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config",
+    "nemotronh_56b_pretrain_64gpu_gb200_fp8cs_config",
+    "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+    "nemotronh_56b_pretrain_64gpu_b200_fp8cs_config",
+    "nemotronh_56b_pretrain_64gpu_h100_fp8cs_config",
+    # NemotronH perf recipes — Nemotron 3 Nano
+    "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config",
+    "nemotron_3_nano_pretrain_8gpu_b300_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config",
+    "nemotron_3_nano_pretrain_8gpu_b200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config",
+    "nemotron_3_nano_pretrain_16gpu_h100_bf16_config",
+    "nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config",
 ]
