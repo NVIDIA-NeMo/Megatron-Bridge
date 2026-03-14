@@ -411,6 +411,81 @@ def forward_step(
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
+    # -------------------------------------------------------------------------
+    # Runtime FLOPs support for packed / padded language tokens
+    # -------------------------------------------------------------------------
+    # `flop_utils.num_floating_point_operations(cfg, batch_size)` only receives `(cfg, batch_size)`.
+    # Attention compute depends on the actual per-sample lengths in the microbatch:
+    #   total tokens: sum_i L_i
+    #   attention matmul: sum_i L_i^2 (causal uses ~half, handled in flop_utils)
+    #
+    # We compute per-sample averages here and stash them on the config for more accurate FLOPs.
+    microbatch_size_for_stats = None
+    try:
+        packed = forward_args.get("packed_seq_params", None)
+        cu = None
+        if packed is not None:
+            cu = getattr(packed, "cu_seqlens_q_padded", None)
+            if cu is None:
+                cu = getattr(packed, "cu_seqlens_q", None)
+
+        if cu is not None:
+            lengths = (cu[1:] - cu[:-1]).to(torch.int64)
+            denom = max(1, int(lengths.numel()))
+            total_tokens_padded = int(cu[-1].item())
+            sum_seqlen_sq_padded = int((lengths * lengths).sum().item())
+
+            state.cfg._runtime_lm_total_tokens_padded_per_sample = float(total_tokens_padded) / float(denom)
+            state.cfg._runtime_lm_sum_seqlen_sq_padded_per_sample = float(sum_seqlen_sq_padded) / float(denom)
+            microbatch_size_for_stats = denom
+        else:
+            # Non-packed path: use the padded sequence length directly.
+            seq_len_padded = int(tokens.shape[1])
+            state.cfg._runtime_lm_total_tokens_padded_per_sample = float(seq_len_padded)
+            state.cfg._runtime_lm_sum_seqlen_sq_padded_per_sample = float(seq_len_padded * seq_len_padded)
+            microbatch_size_for_stats = int(tokens.shape[0]) if tokens is not None and tokens.dim() >= 2 else 1
+    except Exception:
+        # FLOPs logging must never break training.
+        microbatch_size_for_stats = int(tokens.shape[0]) if tokens is not None and tokens.dim() >= 2 else 1
+
+    microbatch_size_for_stats = max(1, int(microbatch_size_for_stats or 1))
+
+    # -------------------------------------------------------------------------
+    # Runtime FLOPs support for vision-language models
+    # -------------------------------------------------------------------------
+    # Vision FLOPs depend on the *actual* number of visual tokens (image/video size and frames).
+    # Stash per-sample averages on the config so flop_utils can use them later.
+    vision_cfg = getattr(state.cfg.model, "vision_config", None)
+    if vision_cfg is not None:
+        image_grid_thw = forward_args.get("image_grid_thw", None)
+        video_grid_thw = forward_args.get("video_grid_thw", None)
+
+        vision_tokens_pre_total = 0
+        vision_sum_seqlen_sq_pre_total = 0
+
+        if image_grid_thw is not None:
+            vision_tokens_pre_total += int(image_grid_thw.prod(dim=-1).sum().item())
+            hw = image_grid_thw[:, 1].to(torch.int64) * image_grid_thw[:, 2].to(torch.int64)
+            t = image_grid_thw[:, 0].to(torch.int64)
+            vision_sum_seqlen_sq_pre_total += int((t * hw * hw).sum().item())
+
+        if video_grid_thw is not None:
+            vision_tokens_pre_total += int(video_grid_thw.prod(dim=-1).sum().item())
+            hw = video_grid_thw[:, 1].to(torch.int64) * video_grid_thw[:, 2].to(torch.int64)
+            t = video_grid_thw[:, 0].to(torch.int64)
+            vision_sum_seqlen_sq_pre_total += int((t * hw * hw).sum().item())
+
+        vision_tokens_pre_per_sample = float(vision_tokens_pre_total) / float(microbatch_size_for_stats)
+        vision_sum_seqlen_sq_pre_per_sample = float(vision_sum_seqlen_sq_pre_total) / float(microbatch_size_for_stats)
+
+        spatial_merge_size = getattr(vision_cfg, "spatial_merge_size", None)
+        merge_sq = int(spatial_merge_size) ** 2 if spatial_merge_size is not None else 1
+        vision_tokens_post_per_sample = vision_tokens_pre_per_sample / float(max(1, merge_sq))
+
+        state.cfg._runtime_vision_tokens_pre_per_sample = vision_tokens_pre_per_sample
+        state.cfg._runtime_vision_tokens_post_per_sample = vision_tokens_post_per_sample
+        state.cfg._runtime_vision_sum_seqlen_sq_pre_per_sample = vision_sum_seqlen_sq_pre_per_sample
+
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
     with straggler_timer:
