@@ -768,9 +768,62 @@ class TestGradReduceInFp32AffectsFsdpDtypes:
         assert config.megatron_fsdp_main_grads_dtype == torch.float32
         assert config.megatron_fsdp_grad_comm_dtype == torch.float32
 
+    def test_grad_reduce_in_fp32_false_sets_fsdp_grads_and_comm_to_none_on_init(self):
+        """When grad_reduce_in_fp32=False at init, fsdp grad dtypes default to None (auto)."""
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=False)
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_grad_reduce_in_fp32_false_sets_fsdp_grads_and_comm_to_none_via_setattr(self):
+        """Switching grad_reduce_in_fp32 from True to False resets fsdp grad dtypes to None."""
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=True)
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+        config.grad_reduce_in_fp32 = False
+
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_finalize_enforces_grad_reduce_in_fp32_false(self):
+        """finalize() overrides custom fsdp grad dtypes to None when grad_reduce_in_fp32=False."""
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=False,
+            megatron_fsdp_main_grads_dtype=torch.bfloat16,
+            megatron_fsdp_grad_comm_dtype=torch.bfloat16,
+        )
+        assert config.megatron_fsdp_main_grads_dtype == torch.bfloat16
+        assert config.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+
+        config.finalize()
+
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+    def test_grad_reduce_in_fp32_toggle_round_trip(self):
+        """Toggling grad_reduce_in_fp32 True->False->True updates fsdp dtypes correctly."""
+        config = MixedPrecisionConfig(grad_reduce_in_fp32=True)
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
+        config.grad_reduce_in_fp32 = False
+        assert config.megatron_fsdp_main_grads_dtype is None
+        assert config.megatron_fsdp_grad_comm_dtype is None
+
+        config.grad_reduce_in_fp32 = True
+        assert config.megatron_fsdp_main_grads_dtype == torch.float32
+        assert config.megatron_fsdp_grad_comm_dtype == torch.float32
+
     def test_grad_reduce_in_fp32_does_not_touch_main_params_dtype(self):
         config = MixedPrecisionConfig(
             grad_reduce_in_fp32=True,
+            megatron_fsdp_main_params_dtype=torch.bfloat16,
+        )
+        assert config.megatron_fsdp_main_params_dtype == torch.bfloat16
+
+    def test_grad_reduce_in_fp32_false_does_not_touch_main_params_dtype(self):
+        config = MixedPrecisionConfig(
+            grad_reduce_in_fp32=False,
             megatron_fsdp_main_params_dtype=torch.bfloat16,
         )
         assert config.megatron_fsdp_main_params_dtype == torch.bfloat16

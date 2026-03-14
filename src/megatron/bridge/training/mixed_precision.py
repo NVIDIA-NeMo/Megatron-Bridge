@@ -91,15 +91,19 @@ class MixedPrecisionConfig:
                 object.__setattr__(self, "fp8_param_gather", value)
         if (
             name == "grad_reduce_in_fp32"
-            and value
             and hasattr(self, "megatron_fsdp_main_grads_dtype")
             and hasattr(self, "megatron_fsdp_grad_comm_dtype")
         ):
-            # Legacy argument for Megatron-FSDP - Gradients used to be reduced in
-            # the same data-type as the main gradient data-type. Recommend using
-            # the new Megatron-FSDP mixed-precision arguments to control this!
-            object.__setattr__(self, "megatron_fsdp_main_grads_dtype", torch.float32)
-            object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", torch.float32)
+            if value:
+                # Legacy argument for Megatron-FSDP - Gradients used to be reduced in
+                # the same data-type as the main gradient data-type. Recommend using
+                # the new Megatron-FSDP mixed-precision arguments to control this!
+                object.__setattr__(self, "megatron_fsdp_main_grads_dtype", torch.float32)
+                object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", torch.float32)
+            else:
+                # Default back to "auto".
+                object.__setattr__(self, "megatron_fsdp_main_grads_dtype", None)
+                object.__setattr__(self, "megatron_fsdp_grad_comm_dtype", None)
         if name in (
             "megatron_fsdp_main_params_dtype",
             "megatron_fsdp_main_grads_dtype",
@@ -136,6 +140,9 @@ class MixedPrecisionConfig:
         if self.grad_reduce_in_fp32:
             self.megatron_fsdp_main_grads_dtype = torch.float32
             self.megatron_fsdp_grad_comm_dtype = torch.float32
+        else:
+            self.megatron_fsdp_main_grads_dtype = None
+            self.megatron_fsdp_grad_comm_dtype = None
         for mfsdp_mp_arg in (
             self.megatron_fsdp_main_params_dtype,
             self.megatron_fsdp_main_grads_dtype,
