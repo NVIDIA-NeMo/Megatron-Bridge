@@ -257,6 +257,34 @@ def test_merge_lora_adapter_weights_grouped_expert_missing_expert_idx(monkeypatc
     torch.testing.assert_close(updated["model.layers.0.mlp.experts.down_proj.weight"], 2 * torch.eye(2))
 
 
+def test_merge_lora_adapter_weights_grouped_expert_gate_up_proj_unfused(monkeypatch):
+    bridge = DummyBridge()
+    base = torch.zeros(2, 2)
+    converted = {"model.language_model.layers.0.mlp.experts.gate_up_proj": base.clone()}
+
+    adapter_weight = AdapterWeight(
+        global_base_prefix="language_model.decoder.layers.0.mlp.experts.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        linear_in_weight=MegatronWeightTuple("in", torch.eye(2), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", 2 * torch.eye(2), vp_stage=0),
+    )
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=2))],
+        converted,
+        [adapter_weight],
+    )
+
+    torch.testing.assert_close(updated["model.language_model.layers.0.mlp.experts.gate_up_proj"], 2 * torch.eye(2))
+
+
 def test_merge_canonical_adapter_from_weights(monkeypatch):
     bridge = DummyBridge()
     converted = {

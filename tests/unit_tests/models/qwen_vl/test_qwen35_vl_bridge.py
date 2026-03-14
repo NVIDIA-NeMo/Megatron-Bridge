@@ -375,3 +375,60 @@ class TestQwen35VLMoEBridgeMappingRegistry:
     def test_mapping_registry_has_vision_params(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("visual" in n or "vision_model" in n for n in names)
+
+
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+class TestQwen35VLMoEBridgeExport:
+    def test_maybe_modify_converted_hf_weight_stacks_fused_expert_keys(self, monkeypatch):
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = Mock()
+        bridge.hf_config.text_config = Mock()
+        bridge.hf_config.text_config.num_experts = 2
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.parallel_state.get_expert_model_parallel_world_size",
+            lambda: 1,
+        )
+
+        task0 = Mock()
+        task0.param_name = "language_model.decoder.layers.0.mlp.experts.linear_fc1.weight0"
+        task1 = Mock()
+        task1.param_name = "language_model.decoder.layers.0.mlp.experts.linear_fc1.weight1"
+
+        key = "model.language_model.layers.0.mlp.experts.gate_up_proj"
+        result0 = bridge.maybe_modify_converted_hf_weight(task0, {key: torch.ones(2, 2)}, {})
+        result1 = bridge.maybe_modify_converted_hf_weight(task1, {key: 2 * torch.ones(2, 2)}, {})
+
+        assert result0 == {}
+        torch.testing.assert_close(
+            result1[key],
+            torch.stack([torch.ones(2, 2), 2 * torch.ones(2, 2)], dim=0),
+        )
+        assert bridge.hf_weights_cache == {}
+
+    def test_maybe_modify_converted_hf_weight_keeps_explicit_mtp_expert_keys(self, monkeypatch):
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = Mock()
+        bridge.hf_config.text_config = Mock()
+        bridge.hf_config.text_config.num_experts = 256
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.parallel_state.get_expert_model_parallel_world_size",
+            lambda: 8,
+        )
+
+        task = Mock()
+        task.param_name = "language_model.mtp.layers.0.mtp_model_layer.mlp.experts.linear_fc1.weight0"
+        converted = {
+            "mtp.layers.0.mlp.experts.0.gate_proj.weight": torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.32.gate_proj.weight": 2 * torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.0.up_proj.weight": 3 * torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.32.up_proj.weight": 4 * torch.ones(2, 2),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(task, dict(converted), {})
+
+        assert result.keys() == converted.keys()
+        for key in converted:
+            torch.testing.assert_close(result[key], converted[key])
+        assert bridge.hf_weights_cache == {}

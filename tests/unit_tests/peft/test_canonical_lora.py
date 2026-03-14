@@ -304,8 +304,8 @@ class TestCanonicalLoRA:
                 assert isinstance(transformed_model.linear_proj, MockMegatronLinear)
                 assert isinstance(transformed_model.linear_fc2, MockMegatronLinear)
 
-    def test_canonical_lora_skips_visual_linear_fc1(self):
-        """Vision-side linear_fc1 should not be rewritten as canonical gate/up."""
+    def test_canonical_lora_treats_visual_linear_fc1_as_unfused(self):
+        """Vision-side linear_fc1 should keep a single unfused LoRA adapter."""
         model = VisionLanguageMegatronStyleModel()
         lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
 
@@ -328,10 +328,11 @@ class TestCanonicalLoRA:
                 transformed_model = lora(model, training=True)
 
         assert isinstance(transformed_model.language_model.linear_fc1, LoRALinearSplitFC1UpGate)
-        assert isinstance(transformed_model.vision_model.merger.linear_fc1, MockMegatronLinear)
+        assert isinstance(transformed_model.vision_model.merger.linear_fc1, LoRALinear)
+        assert not isinstance(transformed_model.vision_model.merger.linear_fc1, LoRALinearSplitFC1UpGate)
 
-    def test_canonical_lora_skips_moe_expert_linear_fc1(self):
-        """Grouped expert linear_fc1 should not be rewritten as canonical gate/up."""
+    def test_canonical_lora_treats_moe_expert_linear_fc1_as_unfused(self):
+        """Grouped expert linear_fc1 should keep a single unfused LoRA adapter."""
         model = MoEMegatronStyleModel()
         lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
 
@@ -355,7 +356,8 @@ class TestCanonicalLoRA:
 
         layer = transformed_model.language_model.decoder.layers[0]
         assert isinstance(layer.mlp.linear_fc1, LoRALinearSplitFC1UpGate)
-        assert isinstance(layer.mlp.experts.linear_fc1, MockMegatronLinear)
+        assert isinstance(layer.mlp.experts.linear_fc1, LoRALinear)
+        assert not isinstance(layer.mlp.experts.linear_fc1, LoRALinearSplitFC1UpGate)
         assert isinstance(layer.mlp.shared_experts.linear_fc1, LoRALinearSplitFC1UpGate)
 
     def test_canonical_lora_transform_nested_model(self):

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import re
 from typing import Dict, Mapping, Union
 
 import torch
@@ -423,9 +424,17 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             # not an expert weight
             return converted_weights_dict
 
-        assert len(converted_weights_dict) == 1, (
-            f"There should be only one key in the converted_weights_dict, got keys: {converted_weights_dict.keys()}"
-        )
+        if not converted_weights_dict:
+            return {}
+
+        # Some mappings (for example Qwen3.5 MTP expert gate/up projections) already
+        # export one final HF tensor per explicit experts.N key. Those should pass
+        # through directly instead of being repacked into the fused expert cache used
+        # by the main decoder MoE weights.
+        if all(re.search(r"\bexperts\.(\d+)\b", key) for key in converted_weights_dict):
+            return converted_weights_dict
+
+        merged_weights = {}
         for key, value in converted_weights_dict.items():
             if key not in self.hf_weights_cache:
                 self.hf_weights_cache[key] = {}
@@ -441,13 +450,19 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                     self.hf_weights_cache[key][global_expert_number] = exp_val
             if len(self.hf_weights_cache[key]) == num_experts:
                 logging.debug(f"All experts are loaded for {key}")
-                merged = torch.cat([self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0)
+                merged_weights[key] = torch.cat(
+                    [self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)],
+                    dim=0,
+                )
+
+        if len(merged_weights) == len(converted_weights_dict):
+            for key in merged_weights:
                 del self.hf_weights_cache[key]
-                return {key: merged}
-            else:
-                # not all experts are loaded yet, return empty dict
-                logging.debug(f"{len(self.hf_weights_cache[key])}/{num_experts} experts are loaded for {key}")
-                return {}
+            return merged_weights
+
+        for key in converted_weights_dict:
+            logging.debug(f"{len(self.hf_weights_cache[key])}/{num_experts} experts are loaded for {key}")
+        return {}
 
 
 def _align_weight_to_shape(weight: torch.Tensor, target_shape: torch.Size, name: str) -> torch.Tensor:
