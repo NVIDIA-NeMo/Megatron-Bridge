@@ -1200,13 +1200,17 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         megatron_model: List[MegatronModel],
     ) -> bool:
         """Treat duplicate MTP embedding copies as PP receivers during export."""
-        if task.vp_stage is None:
+        if task.vp_stage is None or not 0 <= task.vp_stage < len(megatron_model):
             return False
 
         if not task.global_param_name.endswith("embedding.word_embeddings.weight"):
             return False
 
         model_chunk = unwrap_model(megatron_model[task.vp_stage])
+        model_config = getattr(model_chunk, "config", None)
+        if getattr(model_config, "pipeline_model_parallel_size", 1) <= 1:
+            return False
+
         if getattr(model_chunk, "pre_process", False):
             return False
 
