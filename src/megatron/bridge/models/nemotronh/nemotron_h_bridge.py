@@ -54,7 +54,15 @@ class NemotronHBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    # Reference Hub repo for downloading generic modeling files (configuration_nemotron_h.py,
+    # modeling_nemotron_h.py). These files are architecture-generic and identical across all
+    # NemotronH variants. Used by auto_bridge.py's config-only save path, following the same
+    # hf_hub_download pattern as PreTrainedBase._copy_custom_modeling_files() in base.py.
+    HUB_REFERENCE_REPO = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8"
+
+
     # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
+    # Common bidirectional config field name mapping: (hf_name, megatron_name)
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
         # Mamba-specific fields
         ("mamba_head_dim", "mamba_head_dim"),
@@ -66,7 +74,12 @@ class NemotronHBridge(MegatronModelBridge):
         ("use_bias", "add_bias_linear"),
         ("layer_norm_epsilon", "layernorm_epsilon"),
         # MoE-specific fields (already in base but with different HF names)
+        ("n_routed_experts", "num_moe_experts"),
+        ("moe_intermediate_size", "moe_ffn_hidden_size"),
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
+        ("num_experts_per_tok", "moe_router_topk"),
+        ("n_group", "moe_router_num_groups"),
+        ("topk_group", "moe_router_group_topk"),
     ]
 
     # Additional files to copy during HF export (reasoning parser utilities)
@@ -103,6 +116,40 @@ class NemotronHBridge(MegatronModelBridge):
             provider.moe_shared_expert_overlap = True
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        hf_cfg = super().megatron_to_hf_config(provider)
+
+        # Clean up base CONFIG_MAPPING field that don't apply to NemotronH
+        hf_cfg.pop("num_experts", None)
+        hf_cfg.pop("num_hidden_layers", None)
+
+        # Handle conversion to layers_block_type, stripping pipes from hybrid_layer_pattern
+        pattern = hf_cfg.pop("hybrid_override_pattern", None)
+        if pattern:
+            clean_pattern = pattern.replace("|", "")
+            pattern_mapping = {"M": "mamba", "E": "moe", "*": "attention"}
+            hf_cfg["layers_block_type"] = [pattern_mapping[char] for char in clean_pattern]
+        
+        # Add auto_map for custom config/modeling classes
+        hf_cfg["auto_map"] = {
+            'AutoConfig': 'configuration_nemotron_h.NemotronHConfig',
+            'AutoModel': 'modeling_nemotron_h.NemotronHForCausalLM',
+            'AutoModelForCausalLM': 'modeling_nemotron_h.NemotronHForCausalLM',
+        }
+
+        #We choose not to set HF-only defaults such as M
+        # Mamba conv_kernel, time_step_*, mamba_hidden_act, etc
+        # Moe n_shared_experts, norm_topk_prob
+
+        # Megatron uses None="not set/disabled", but HF modeling code expects integers
+        # and will crash on None (e.g. n_routed_experts // n_group → TypeError)
+        hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+
+        return hf_cfg
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
