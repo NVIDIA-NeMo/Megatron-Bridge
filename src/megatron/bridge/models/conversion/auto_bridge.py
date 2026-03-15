@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import dataclasses
+import os
 from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
@@ -38,6 +39,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from src.megatron.bridge.models.common import ModelConfig
 
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
@@ -878,13 +880,63 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_path: str | Path | None = None,
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
-        provider = self.to_megatron_provider(load_weights, hf_path)
+        from megatron.core.process_groups_config import ProcessGroupCollection
 
-        # Finalize the provider before creating models
-        if hasattr(provider, "finalize"):
-            provider.finalize()
+        config = self.to_megatron_config(load_weights, hf_path)
 
-        return provider.provide_distributed_model(**kwargs)
+        if hasattr(config, "finalize"):
+            config.finalize()
+
+        pg_collection = kwargs.pop("pg_collection", None)
+        if pg_collection is None:
+            _initialize_torch_distributed()
+            _initialize_parallel_state(config, seed=0)
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
+        builder = config.get_builder_cls()(config)
+        return builder.build_distributed_models(
+            pg_collection=pg_collection,
+            **kwargs,
+        )
+
+    def to_megatron_config(self, load_weights: bool = True, hf_path: str | Path | None = None) -> ModelConfig:
+        provider_input = self._provider_bridge_input
+        model_config: ModelConfig = self._model_bridge.config_bridge(provider_input)
+
+        if load_weights:
+            if hf_path is None and not isinstance(self.hf_pretrained, PreTrainedCausalLM):
+                raise ValueError(
+                    "AutoBridge.from_hf_config() does not include weights. "
+                    "Pass load_weights=False for random initialization or provide hf_path to load weights."
+                )
+            # Skip weights initialization since we are going to load weights
+            setattr(model_config, "perform_initialization", False)
+            if hf_path is None:
+                model_config.pre_wrap_hooks.append(
+                    partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)
+                )
+            else:
+                # Load from specified path
+                trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
+                pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
+                model_config.pre_wrap_hooks.append(
+                    partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained)
+                )
+
+        hf_identifier: str | None = None
+        if hf_path is not None:
+            hf_identifier = str(hf_path)
+        else:
+            hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
+            if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
+                hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
+            if hf_name_or_path:
+                hf_identifier = str(hf_name_or_path)
+
+        if hf_identifier:
+            model_config.hf_model_id = hf_identifier
+
+        return model_config
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
         """
@@ -1270,3 +1322,37 @@ class AutoBridge(Generic[MegatronModelT]):
             lines_for_build.append("  (model_bridge): ")  # Fallback for empty repr
 
         return f"{class_name}(\n" + "\n".join(lines_for_build) + "\n)"
+
+
+def _initialize_torch_distributed():
+    from megatron.bridge.utils.common_utils import get_local_rank_preinit
+
+    if not torch.distributed.is_initialized():
+        os.environ["RANK"] = os.environ.get("RANK", "0")
+        os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
+        os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
+        os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
+        torch.cuda.set_device(get_local_rank_preinit())
+        torch.distributed.init_process_group("nccl")
+
+
+def _initialize_parallel_state(
+    config, seed: int | None = None, seed_kwargs: dict | None = None, **model_parallel_kwargs
+):
+    from megatron.core import parallel_state
+    from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+    if not parallel_state.is_initialized():
+        print("Model parallel not initialized, initializing...")
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=getattr(config, "tensor_model_parallel_size", 1),
+            pipeline_model_parallel_size=getattr(config, "pipeline_model_parallel_size", 1),
+            virtual_pipeline_model_parallel_size=getattr(config, "virtual_pipeline_model_parallel_size", None),
+            context_parallel_size=getattr(config, "context_parallel_size", 1) or 1,
+            expert_model_parallel_size=getattr(config, "expert_model_parallel_size", 1) or 1,
+            expert_tensor_parallel_size=getattr(config, "expert_tensor_parallel_size", None),
+            **model_parallel_kwargs,
+        )
+
+        if seed is not None:
+            model_parallel_cuda_manual_seed(seed, **(seed_kwargs or {}))
