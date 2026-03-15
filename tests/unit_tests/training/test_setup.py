@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import warnings
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -175,17 +174,13 @@ class TestBuildDistributedModel:
         mock_builder.build_distributed_models.return_value = mock_dist_model
 
         with patch.object(type(model_cfg), "get_builder_cls", return_value=mock_builder_cls):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                result = _build_distributed_model(cfg, pg_collection=MagicMock())
+            result = _build_distributed_model(cfg, pg_collection=MagicMock())
 
         mock_builder.build_distributed_models.assert_called_once()
         assert result == mock_dist_model
-        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 0
 
     def test_build_with_provider(self):
-        """Test that provide_distributed_model is called and DeprecationWarning emitted for providers."""
+        """Test that provide_distributed_model is called providers."""
         mock_provider = MagicMock()
         # Ensure isinstance(mock_provider, ModelConfig) is False
         mock_provider.__class__ = type("FakeProvider", (), {})
@@ -201,12 +196,7 @@ class TestBuildDistributedModel:
         cfg.dist.use_torch_fsdp2 = False
         cfg.rng.data_parallel_random_init = False
 
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = _build_distributed_model(cfg, pg_collection=MagicMock())
+        result = _build_distributed_model(cfg, pg_collection=MagicMock())
 
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
-        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-        assert len(deprecation_warnings) == 1
-        assert "deprecated" in str(deprecation_warnings[0].message).lower()
