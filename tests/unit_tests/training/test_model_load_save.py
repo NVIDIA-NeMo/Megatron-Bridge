@@ -291,6 +291,9 @@ class TestLoadMegatronModel:
 
         mock_from_dict.return_value = mock_model_cfg
 
+        mock_mpu_pgs = Mock()
+        mock_pg_collection.use_mpu_process_groups.return_value = mock_mpu_pgs
+
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 
@@ -309,7 +312,7 @@ class TestLoadMegatronModel:
         mock_model_cfg.get_builder_cls.assert_called_once()
         mock_builder_cls.assert_called_once_with(mock_model_cfg)
         mock_builder.build_distributed_models.assert_called_once_with(
-            pg_collection=mock_pg_collection.use_mpu_process_groups(),
+            mock_mpu_pgs,
             wrap_with_ddp=False,
         )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
