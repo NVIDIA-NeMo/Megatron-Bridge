@@ -27,6 +27,7 @@ from modelopt.torch.quantization.utils import is_quantized
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -39,7 +40,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
-from src.megatron.bridge.models.common import ModelConfig
 
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
