@@ -106,7 +106,17 @@ class TestNemotronHConversion:
         _fix_tied_weights_keys(model)
 
         # Save model, config, and modeling code to directory
-        model.save_pretrained(model_dir, safe_serialization=True)
+        # TODO(liding): To be confirmed with HF team.
+        # save_original_format=False is a workaround for a potential bug in transformers v5.
+        # Normally this should be True. Transformers v5 introduced dynamic weight conversion,
+        # which renames state_dict keys on load. If the keys already match the modeling file,
+        # the conversion is skipped. However, revert_weight_conversion() (called on save when
+        # save_original_format=True) always runs unconditionally — even when no conversion was
+        # applied on load — which can corrupt the state_dict keys. Setting save_original_format
+        # to False skips the revert entirely.
+        # This only affects saving the toy model used in this test; actual conversions use models
+        # directly from the HF Hub and are unaffected.
+        model.save_pretrained(model_dir, safe_serialization=True, save_original_format=False)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
 
