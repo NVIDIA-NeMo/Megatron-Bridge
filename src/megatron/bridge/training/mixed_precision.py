@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -22,8 +22,11 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+    from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 @dataclass(kw_only=True)
@@ -101,7 +104,7 @@ class MixedPrecisionConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
+        model_config: "GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig",
         optimizer_config: Optional[OptimizerConfig] = None,
         ddp_config: Optional[DistributedDataParallelConfig] = None,
     ) -> None:

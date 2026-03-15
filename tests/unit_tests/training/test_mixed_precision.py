@@ -849,7 +849,7 @@ class TestRegisterAndGetMixedPrecisionConfig:
         assert result.fp16 is True
 
 
-def _make_gpt_model_config_for_mp(**kwargs):
+def _make_gpt_model_config_for_mp():
     """Create a GPTModelConfig suitable for mixed precision tests."""
     tc = TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=1)
     return GPTModelConfig(transformer=tc, vocab_size=32000)
