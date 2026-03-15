@@ -64,12 +64,6 @@ except ImportError:
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
 
-warnings.warn(
-    "ModelProviderMixin-based model configuration is deprecated. Migrate to ModelConfig + ModelBuilder.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     """A mixin that implements the ModelProvider pattern for Megatron Bridge.
@@ -165,6 +159,12 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         Returns:
             A list containing the wrapped model instance.
         """
+        warnings.warn(
+            "ModelProviderMixin-based model configuration is deprecated. Migrate to ModelConfig + ModelBuilder.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if wrap_with_ddp and not ddp_config:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
