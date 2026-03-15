@@ -21,27 +21,31 @@ This script works with any model family that uses GPT-style training
 CLI overrides.
 
 Usage:
-    Pretrain:
-        torchrun --nproc_per_node=8 run_recipe.py \
+    Pretrain (single-GPU):
+        uv run python run_recipe.py \
+            --recipe llama32_1b_pretrain_config
+
+    Pretrain (multi-GPU):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config
 
     Finetune:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_finetune_config
 
     With CLI overrides:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             train.train_iters=5000 \
             optimizer.lr=0.0003
 
     With VLM step function:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
     With packed sequences and custom sequence length:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             --packed_sequence \
             --seq_length 2048

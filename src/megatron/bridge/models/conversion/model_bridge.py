@@ -34,9 +34,7 @@ from typing import (
 )
 
 import torch
-import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -61,6 +59,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils.activation_map import ACTIVATION_FUNC_MAP
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -316,15 +315,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         ("mscale_all_dim", "mscale_all_dim"),
     ]
 
-    # Common bidirectional activation function mapping: hf_name <-> megatron_func
-    ACTIVATION_MAPPING = {
-        "silu": F.silu,
-        "gelu": F.gelu,
-        "relu": F.relu,
-        "relu2": squared_relu,
-        "tanh": torch.tanh,
-        "gelu_pytorch_tanh": fast_gelu,
-    }
+    # Shared activation function mapping (hf_name <-> megatron_func).
+    # Single source of truth lives in megatron.bridge.utils.activation_map.
+    ACTIVATION_MAPPING = ACTIVATION_FUNC_MAP
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
