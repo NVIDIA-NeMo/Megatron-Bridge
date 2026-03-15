@@ -13,11 +13,17 @@
 # limitations under the License.
 
 import inspect
+import warnings
 import logging
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
+from megatron.bridge.models.common import ModelBuilder, ModelConfig
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
@@ -193,7 +199,7 @@ def setup(
     # Register PEFT pre-wrap hook if PEFT is configured
     if cfg.peft is not None:
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
-        cfg.model.register_pre_wrap_hook(peft_hook)
+        _register_pre_wrap_hook(cfg.model, peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
     if getattr(cfg.model, "restore_modelopt_state", False):
@@ -216,16 +222,9 @@ def setup(
             load_modelopt_state(model, checkpoint_path)
             return model
 
-        cfg.model.register_pre_wrap_hook(modelopt_pre_wrap_hook)
+        _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
 
-    model = cfg.model.provide_distributed_model(
-        ddp_config=cfg.ddp,
-        use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
-        use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
-        overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-        data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        pg_collection=pg_collection,
-    )
+    model = _build_distributed_model(cfg, pg_collection)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
@@ -289,7 +288,7 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model,
+        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, MambaModelConfig)) else cfg.model,
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
@@ -337,9 +336,42 @@ def setup(
     )
 
 
+def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
+    """Register a pre-wrap hook on either ModelConfig or ModelProviderMixin."""
+    if isinstance(model_cfg, ModelConfig):
+        model_cfg.pre_wrap_hooks.append(hook)
+    else:
+        model_cfg.register_pre_wrap_hook(hook)
+
+
+def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
+    """Build distributed model from either ModelConfig or ModelProviderMixin."""
+    model_config = cfg.model
+    if isinstance(model_config, ModelConfig):
+        builder_cls = model_config.get_builder_cls()
+        builder = builder_cls(model_config)
+        return builder.build_distributed_models(
+            pg_collection=pg_collection,
+            ddp_config=cfg.ddp,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        )
+    else:
+        return model_config.provide_distributed_model(
+            ddp_config=cfg.ddp,
+            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            pg_collection=pg_collection,
+        )
+
+
 def _update_model_config_funcs(
     model: MegatronModule,
-    model_config: GPTModelProvider | T5ModelProvider,
+    model_config: TransformerConfig,
     ddp_config: DistributedDataParallelConfig,
     optimizer: Optional[MegatronOptimizer],
     *,

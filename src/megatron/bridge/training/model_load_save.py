@@ -24,9 +24,11 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
@@ -187,7 +189,7 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
 
 def load_model_config(
     checkpoint_path: str,
-) -> tuple[TransformerConfig, Optional[argparse.Namespace]]:
+) -> tuple[TransformerConfig | ModelConfig, Optional[argparse.Namespace]]:
     """Returns the model config saved in the checkpoint.
 
     Supports checkpoints saved with either Megatron Bridge or MegatronLM.
@@ -224,7 +226,10 @@ def load_model_config(
             raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
 
     if mbridge_ckpt:
-        model_cfg = instantiate(run_config["model"])
+        if "_builder_" in run_config["model"]:
+            model_cfg = ModelConfig.from_dict(run_config["model"])
+        else:
+            model_cfg = instantiate(run_config["model"])
     else:
         model_cfg = _transformer_config_from_args(mlm_args)
 
@@ -233,7 +238,7 @@ def load_model_config(
 
 def build_and_load_model(
     checkpoint_path: str,
-    model_cfg: TransformerConfig,
+    model_cfg: TransformerConfig | ModelConfig,
     model_type: Optional[Literal["gpt", "mamba"]] = None,
     megatron_args: Optional[argparse.Namespace] = None,
     return_state_dict: bool = False,
@@ -282,6 +287,14 @@ def build_and_load_model(
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
             return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
+        elif isinstance(model_cfg, ModelConfig):
+            if hasattr(model_cfg, "finalize"):
+                model_cfg.finalize()
+            builder_cls = model_cfg.get_builder_cls()
+            builder = builder_cls(model_cfg)
+            return builder.build_distributed_models(
+                ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
+            )
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."

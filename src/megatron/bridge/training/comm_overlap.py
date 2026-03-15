@@ -22,6 +22,8 @@ from megatron.core.transformer.enums import CudaGraphScope
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
 
 
 try:
@@ -419,7 +421,7 @@ class CommOverlapConfig:
 
     def _get_model_comm_overlap_cfgs(
         self,
-        model_cfg: GPTModelProvider | T5ModelProvider,
+        model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
@@ -557,7 +559,9 @@ class CommOverlapConfig:
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
 
-    def _get_optimizer_overlap_cfgs(self, model_cfg: GPTModelProvider | T5ModelProvider) -> _CommOverlapConfig:
+    def _get_optimizer_overlap_cfgs(
+        self, model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig
+    ) -> _CommOverlapConfig:
         vp_size = model_cfg.virtual_pipeline_model_parallel_size
         if vp_size is None:
             vp_size = 1
@@ -599,7 +603,7 @@ class CommOverlapConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider,
+        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:
