@@ -51,6 +51,7 @@ Multi-GPU launch (torchrun) with tensor/pipeline/expert parallelism:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -162,14 +163,19 @@ def configure_device(device_index: int = 0) -> torch.device:
 
 
 def calculate_required_world_size(args: argparse.Namespace) -> int:
-    """Compute the model-parallel product used to validate distributed setup."""
+    """Compute the minimum world size compatible with the requested parallelism.
 
-    return (
-        args.tensor_model_parallel_size
-        * args.pipeline_model_parallel_size
-        * args.expert_model_parallel_size
-        * args.expert_tensor_parallel_size
+    Megatron requires WORLD_SIZE to be divisible by both the dense TP/PP domain
+    and the expert ETP/EP/PP domain. Those domains reuse the same global ranks,
+    so the minimum compatible world size is their least common multiple instead
+    of the raw product of tp, pp, ep, and etp.
+    """
+
+    dense_model_parallel_size = args.tensor_model_parallel_size * args.pipeline_model_parallel_size
+    expert_model_parallel_size = (
+        args.expert_tensor_parallel_size * args.expert_model_parallel_size * args.pipeline_model_parallel_size
     )
+    return math.lcm(dense_model_parallel_size, expert_model_parallel_size)
 
 
 @contextmanager
@@ -189,7 +195,7 @@ def distributed_context(
             raise RuntimeError(
                 f"Requested world_size={required_world_size} from model-parallel settings "
                 f"(tp={tp}, pp={pp}, ep={ep}, etp={etp}), but initialized world_size={world_size}. "
-                "Launch with torchrun --nproc_per_node equal to the product."
+                f"Launch with torchrun --nproc_per_node={required_world_size}."
             )
         yield world_size
         return
@@ -200,7 +206,7 @@ def distributed_context(
     if required_world_size > 1 and "WORLD_SIZE" not in os.environ:
         raise RuntimeError(
             "Distributed world size is greater than 1 but WORLD_SIZE is not set. "
-            "Launch with torchrun --nproc_per_node equal to the requested world size."
+            f"Launch with torchrun --nproc_per_node={required_world_size}."
         )
 
     if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
@@ -223,7 +229,7 @@ def distributed_context(
             raise RuntimeError(
                 f"Requested world_size={required_world_size} from model-parallel settings "
                 f"(tp={tp}, pp={pp}, ep={ep}, etp={etp}), but initialized world_size={world_size}. "
-                "Launch with torchrun --nproc_per_node equal to the product."
+                f"Launch with torchrun --nproc_per_node={required_world_size}."
             )
         yield world_size
     finally:
@@ -274,7 +280,7 @@ def stream_and_collect_adapters(
     )
 
     for weight_name, tensor in generator:
-        adapter_state[weight_name] = tensor
+        adapter_state[weight_name] = tensor.clone()
         print_rank_0(f"Collected adapter tensor: {weight_name} with shape {tuple(tensor.shape)}")
 
     if not adapter_state:
@@ -286,9 +292,7 @@ def stream_and_collect_adapters(
 def _normalize_base_weight_name(param_name: str) -> str:
     """Remove the 'base_layer' suffix emitted when merge_adapter_weights=False."""
 
-    if param_name.endswith("base_layer.weight"):
-        return param_name[: -len("base_layer.weight")] + "weight"
-    return param_name
+    return param_name.replace(".base_layer.", ".")
 
 
 def collect_hf_state_dict(
@@ -327,10 +331,14 @@ def merge_hf_lora_adapters(
 
     for name, tensor in adapter_state.items():
         if name.endswith(".lora_A.weight"):
-            base_name = name[: -len(".lora_A.weight")] + ".weight"
+            base_name = name[: -len(".lora_A.weight")]
+            if base_name not in base_state and f"{base_name}.weight" in base_state:
+                base_name = f"{base_name}.weight"
             grouped.setdefault(base_name, {})["A"] = tensor
         elif name.endswith(".lora_B.weight"):
-            base_name = name[: -len(".lora_B.weight")] + ".weight"
+            base_name = name[: -len(".lora_B.weight")]
+            if base_name not in base_state and f"{base_name}.weight" in base_state:
+                base_name = f"{base_name}.weight"
             grouped.setdefault(base_name, {})["B"] = tensor
 
     scale = alpha / float(dim)
@@ -395,7 +403,7 @@ def main() -> None:
         f"🧮 Model-parallel settings: tp={args.tensor_model_parallel_size}, "
         f"pp={args.pipeline_model_parallel_size}, "
         f"ep={args.expert_model_parallel_size}, etp={args.expert_tensor_parallel_size}. "
-        f"Expected world_size={required_world_size}."
+        f"Minimum example world_size={required_world_size}."
     )
 
     print_rank_0(f"🔧 Loading Hugging Face model {args.hf_model_id} with bfloat16 weights...")
