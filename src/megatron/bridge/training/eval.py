@@ -364,27 +364,32 @@ def evaluate_and_print_results(
     if timelimit:
         return
     string = f" validation loss at {prefix} | "
+
+    eval_type = "validation"
+    if "test" in prefix:
+        eval_type = "test"
+
     for key in total_loss_dict:
         string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
         ppl = math.exp(min(20, total_loss_dict[key].item()))
         string += "{} PPL: {:.6E} | ".format(key, ppl)
         if writer:
-            writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
+            writer.add_scalar("{} {}".format(key, eval_type), total_loss_dict[key].item(), state.train_state.step)
             writer.add_scalar(
-                "{} validation vs samples".format(key),
+                "{} {}".format(key, eval_type),
                 total_loss_dict[key].item(),
                 state.train_state.consumed_train_samples,
             )
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.step)
+                writer.add_scalar("{} {} ppl".format(key, eval_type), ppl, state.train_state.step)
                 writer.add_scalar(
-                    "{} validation ppl vs samples".format(key), ppl, state.train_state.consumed_train_samples
+                    "{} {} ppl vs samples".format(key, eval_type), ppl, state.train_state.consumed_train_samples
                 )
 
         if wandb_writer and is_last_rank():
-            wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
+            wandb_writer.log({"{} {}".format(key, eval_type): total_loss_dict[key].item()}, state.train_state.step)
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+                wandb_writer.log({"{} {} ppl".format(key, eval_type): ppl}, state.train_state.step)
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
         process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
