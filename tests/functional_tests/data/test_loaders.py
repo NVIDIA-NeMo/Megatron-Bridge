@@ -304,3 +304,89 @@ class TestSampleBasedDataLoaders:
         assert train_dataloader is not None
         assert valid_dataloader is not None
         assert test_dataloader is not None
+
+
+class TestPhaseTransitionDataLoaders:
+    """Tests for phase transition iterations in data loader functionality."""
+
+    def test_get_train_valid_test_num_samples_phase_transition_first_phase(self):
+        """Test sample calculation for first phase of multi-phase training."""
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = 1000
+        cfg.train.global_batch_size = 32
+        cfg.train.phase_transition_iterations = [300, 600]  # Transitions at 300 and 600
+
+        # At step 0, we're in phase 1 (0 to 300)
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg, current_step=0)
+
+        # Phase 1: iterations 0-300, samples = 300 * 32 = 9600
+        expected_train_samples = 300 * 32
+        assert train_samples == expected_train_samples
+
+    def test_get_train_valid_test_num_samples_phase_transition_second_phase(self):
+        """Test sample calculation for second phase of multi-phase training."""
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = 1000
+        cfg.train.global_batch_size = 32
+        cfg.train.phase_transition_iterations = [300, 600]
+
+        # At step 300, we're in phase 2 (300 to 600)
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg, current_step=300)
+
+        # Phase 2: iterations 300-600, samples = 300 * 32 = 9600
+        expected_train_samples = 300 * 32
+        assert train_samples == expected_train_samples
+
+    def test_get_train_valid_test_num_samples_phase_transition_last_phase(self):
+        """Test sample calculation for last phase of multi-phase training."""
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = 1000
+        cfg.train.global_batch_size = 32
+        cfg.train.phase_transition_iterations = [300, 600]
+
+        # At step 600, we're in phase 3 (600 to 1000)
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg, current_step=600)
+
+        # Phase 3: iterations 600-1000, samples = 400 * 32 = 12800
+        expected_train_samples = 400 * 32
+        assert train_samples == expected_train_samples
+
+    def test_get_train_valid_test_num_samples_phase_transition_mid_phase(self):
+        """Test sample calculation when in the middle of a phase."""
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = 1000
+        cfg.train.global_batch_size = 32
+        cfg.train.phase_transition_iterations = [300, 600]
+
+        # At step 450, we're in phase 2 (300 to 600) - should still return full phase size
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg, current_step=450)
+
+        # Phase 2: iterations 300-600, samples = 300 * 32 = 9600
+        expected_train_samples = 300 * 32
+        assert train_samples == expected_train_samples
+
+    def test_get_train_valid_test_num_samples_no_phase_transition(self):
+        """Test sample calculation without phase transitions returns total samples."""
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = 1000
+        cfg.train.global_batch_size = 32
+        cfg.train.phase_transition_iterations = None
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg, current_step=500)
+
+        # Without phase transitions, should return total samples
+        expected_train_samples = 1000 * 32
+        assert train_samples == expected_train_samples
+
+    def test_get_train_valid_test_num_samples_empty_phase_transitions(self):
+        """Test sample calculation with empty phase transitions list returns total samples."""
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = 1000
+        cfg.train.global_batch_size = 32
+        cfg.train.phase_transition_iterations = []
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg, current_step=500)
+
+        # With empty list, should return total samples
+        expected_train_samples = 1000 * 32
+        assert train_samples == expected_train_samples
