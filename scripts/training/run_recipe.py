@@ -22,29 +22,43 @@ CLI overrides.
 
 Usage:
     Pretrain:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config
 
     Finetune:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_finetune_config
 
-    With CLI overrides:
-        torchrun --nproc_per_node=8 run_recipe.py \
+    With CLI overrides (Hydra-style, works for any config field):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             train.train_iters=5000 \
             optimizer.lr=0.0003
 
     With VLM step function:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe qwen25_vl_finetune_config \
             --step_func vlm_step
 
     With packed sequences and custom sequence length:
-        torchrun --nproc_per_node=8 run_recipe.py \
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
             --recipe llama32_1b_pretrain_config \
             --packed_sequence \
             --seq_length 2048
+
+    With a different finetuning dataset (finetune only):
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_finetune_config \
+            --finetune_dataset gsm8k
+
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe qwen3_8b_finetune_config \
+            --finetune_dataset openmathinstruct2
+
+    Override pretrain data paths via Hydra-style CLI overrides:
+        uv run torchrun --nproc_per_node=8 run_recipe.py \
+            --recipe llama32_1b_pretrain_config \
+            dataset.data_path=/data/my_dataset_text_document
 
 Recipe Arguments:
     Generic scripts call recipes with no arguments: recipe().
@@ -59,6 +73,11 @@ from typing import Callable
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+from megatron.bridge.recipes.utils.finetune_utils import (
+    default_gsm8k_config,
+    default_openmathinstruct2_config,
+    default_squad_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
@@ -78,6 +97,12 @@ STEP_FUNCTIONS: dict[str, Callable] = {
 TRAIN_MODES = {
     "pretrain": pretrain,
     "finetune": finetune,
+}
+
+DATASET_CONFIGS: dict[str, tuple[Callable, int]] = {
+    "squad": (default_squad_config, 2048),
+    "openmathinstruct2": (default_openmathinstruct2_config, 4096),
+    "gsm8k": (default_gsm8k_config, 2048),
 }
 
 # Error message constants
@@ -139,6 +164,16 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=None,
         help="HuggingFace model ID or local path to model directory. "
         "Use a local path for more stable multinode training.",
+    )
+    parser.add_argument(
+        "--finetune_dataset",
+        type=str,
+        default=None,
+        choices=sorted(DATASET_CONFIGS.keys()),
+        help="Override the finetuning dataset (finetune recipes only). "
+        "If omitted, the recipe's built-in dataset (typically SQuAD) is used. "
+        "For pretraining, override data paths via Hydra-style CLI args instead "
+        "(e.g., dataset.data_path=/data/my_dataset_text_document).",
     )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
@@ -219,6 +254,29 @@ def load_forward_step(step_type: str) -> Callable:
     return STEP_FUNCTIONS[step_key]
 
 
+def apply_dataset_override(
+    config: ConfigContainer,
+    dataset_name: str,
+    packed_sequence: bool = False,
+    seq_length: int | None = None,
+) -> ConfigContainer:
+    """Replace the recipe's dataset config with the requested one.
+
+    Also updates model.seq_length to match the dataset's default when the user
+    hasn't explicitly set --seq_length.
+    """
+    config_factory, default_seq = DATASET_CONFIGS[dataset_name]
+    effective_seq = seq_length if seq_length is not None else default_seq
+    config.dataset = config_factory(
+        seq_length=effective_seq,
+        packed_sequence=packed_sequence,
+        pad_seq_to_mult=1,
+    )
+    if hasattr(config, "model") and config.model is not None:
+        config.model.seq_length = effective_seq
+    return config
+
+
 def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name."""
     lowered = recipe_name.lower()
@@ -241,12 +299,36 @@ def main() -> None:
         args.hf_path,
     )
 
+    mode = args.mode or infer_train_mode(args.recipe)
+
+    if args.finetune_dataset is not None:
+        if mode != "finetune":
+            raise ValueError(
+                "--finetune_dataset is only supported for finetune recipes. "
+                "For pretraining, override data paths via Hydra-style CLI args "
+                "(e.g., dataset.data_path=/data/my_dataset_text_document)."
+            )
+        config = apply_dataset_override(
+            config,
+            dataset_name=args.finetune_dataset,
+            packed_sequence=args.packed_sequence,
+            seq_length=args.seq_length,
+        )
+
     config = process_config_with_overrides(
         config,
         cli_overrides=cli_overrides or None,
     )
 
-    mode = args.mode or infer_train_mode(args.recipe)
+    # Ensure dataset.seq_length and model.seq_length stay in sync after CLI overrides
+    if (
+        hasattr(config, "model")
+        and config.model is not None
+        and hasattr(config, "dataset")
+        and config.dataset is not None
+    ):
+        if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
+            config.model.seq_length = config.dataset.seq_length
 
     forward_step = load_forward_step(args.step_func)
     train_func = TRAIN_MODES[mode]
