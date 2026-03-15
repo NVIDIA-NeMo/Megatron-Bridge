@@ -83,6 +83,7 @@ class DeepSeekV2ModelProvider(MLAModelProvider):
     mscale: float = 0.707
     mscale_all_dim: float = 0.707
     vocab_size: int = 102400
+    mtp_num_layers: Optional[int] = None
 
     def __post_init__(self) -> None:
         _warn_deprecated("DeepSeekV2ModelProvider")
@@ -147,6 +148,7 @@ class DeepSeekV3ModelProvider(MLAModelProvider):
     mscale: float = 1.0
     mscale_all_dim: float = 1.0
     vocab_size: int = 129280
+    mtp_num_layers: Optional[int] = None
 
     def __post_init__(self) -> None:
         _warn_deprecated("DeepSeekV3ModelProvider")
