@@ -27,6 +27,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
@@ -407,6 +408,7 @@ def save_megatron_model(
     ckpt_format: str = "torch_dist",
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
     low_memory_save: bool = False,
+    model_config: ModelProviderMixin | ModelConfig | None = None,
     hf_tokenizer_kwargs: Optional[dict] = None,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
@@ -471,14 +473,15 @@ def save_megatron_model(
         )
 
     # Get model config from the first model instance
-    model_config = get_model_config(model[0])
+    if model_config is None:
+        model_config = get_model_config(model[0])
 
     # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    if not isinstance(model_config, (ModelProviderMixin, ModelConfig)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            f"Expected model config to be an instance of ModelProviderMixin or ModelConfig, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
+            f"Model configs must inherit from ModelProviderMixin or ModelConfig to ensure proper "
             f"model instantiation and configuration handling."
         )
 

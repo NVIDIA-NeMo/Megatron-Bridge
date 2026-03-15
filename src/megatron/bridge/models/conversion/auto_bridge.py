@@ -615,6 +615,7 @@ class AutoBridge(Generic[MegatronModelT]):
         path: str | Path,
         hf_tokenizer_path: Optional[str | Path] = None,
         low_memory_save: bool = False,
+        model_config: ModelProviderMixin | ModelConfig | None = None,
         hf_tokenizer_kwargs: Optional[dict] = None,
     ) -> None:
         """
@@ -674,6 +675,7 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_tokenizer_path=hf_tokenizer_path,
             low_memory_save=low_memory_save,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+            model_config=model_config,
         )
 
     def load_megatron_model(
@@ -790,6 +792,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
+        config = bridge.to_megatron_config(load_weights=False)
         hf_tokenizer_kwargs = None
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
@@ -799,6 +802,7 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_tokenizer_path=hf_model_id,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
             low_memory_save=True,
+            model_config=config,
         )
 
     def export_ckpt(
