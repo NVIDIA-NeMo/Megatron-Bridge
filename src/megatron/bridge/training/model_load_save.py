@@ -398,6 +398,14 @@ def load_megatron_model(
             if hasattr(model_cfg, key) and value is not None:
                 setattr(model_cfg, key, value)
 
+    # flex dispatcher requires TP*EP > 1; fall back to alltoall for single-GPU export
+    if (
+        getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex"
+        and getattr(model_cfg, "tensor_model_parallel_size", 1) * getattr(model_cfg, "expert_model_parallel_size", 1)
+        <= 1
+    ):
+        model_cfg.moe_token_dispatcher_type = "alltoall"
+
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
     )
