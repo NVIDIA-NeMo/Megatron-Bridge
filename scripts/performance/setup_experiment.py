@@ -224,6 +224,7 @@ def main(
     custom_bash_cmds: List[List[str]],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
+    save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
     additional_slurm_params: Optional[Dict[str, Any]],
@@ -293,6 +294,14 @@ def main(
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
+
+    if not dgxc_cluster and save_dir:
+        save_dir_path = Path(save_dir).resolve()
+        save_dir_path.mkdir(parents=True, exist_ok=True)
+        save_dir_mount = f"{save_dir_path}:{save_dir_path}"
+        if save_dir_mount not in custom_mounts:
+            custom_mounts.append(save_dir_mount)
+            logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
 
     run_script_path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {run_script_path}")
@@ -625,6 +634,7 @@ if __name__ == "__main__":
         custom_bash_cmds=args.custom_bash_cmds,
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
+        save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
         additional_slurm_params=args.additional_slurm_params,
