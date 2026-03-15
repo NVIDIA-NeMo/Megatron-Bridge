@@ -1205,8 +1205,14 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         # Ensure hf_pretrained has the required state structure
         if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
-
-        hf_keys: Iterable[str] = hf_pretrained.state.source.get_all_keys()
+        
+        hf_keys = set(hf_pretrained.state.source.get_all_keys())
+        # Synthesize virtual weight keys from quantized triplets (_packed/_scale/_shape) for kimi vl
+        for key in list(hf_keys):
+            if key.endswith("_packed"):
+                base = key[:-7]  # e.g. "...weight_packed" -> "...weight"
+                if f"{base}_scale" in hf_keys and f"{base}_shape" in hf_keys:
+                    hf_keys.add(base)
 
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
