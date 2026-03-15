@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
@@ -107,6 +109,7 @@ def _make_vision_config():
 
 
 def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False):
+    """Create a minimal VLM pretrained wrapper for provider tests."""
     pretrained = Mock(spec=PreTrainedVLM)
     config = Mock()
     config.text_config = text_config
@@ -375,3 +378,247 @@ class TestQwen35VLMoEBridgeMappingRegistry:
     def test_mapping_registry_has_vision_params(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("visual" in n or "vision_model" in n for n in names)
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+class TestQwen35VLMoEBridgeExport:
+    def test_maybe_modify_converted_hf_weight_stacks_fused_expert_keys(self, monkeypatch):
+        """Stack per-expert fused export shards into a single HF expert tensor."""
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = Mock()
+        bridge.hf_config.text_config = Mock()
+        bridge.hf_config.text_config.num_experts = 2
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.parallel_state.get_expert_model_parallel_world_size",
+            lambda: 1,
+        )
+
+        task0 = Mock()
+        task0.param_name = "language_model.decoder.layers.0.mlp.experts.linear_fc1.weight0"
+        task1 = Mock()
+        task1.param_name = "language_model.decoder.layers.0.mlp.experts.linear_fc1.weight1"
+
+        key = "model.language_model.layers.0.mlp.experts.gate_up_proj"
+        result0 = bridge.maybe_modify_converted_hf_weight(task0, {key: torch.ones(2, 2)}, {})
+        result1 = bridge.maybe_modify_converted_hf_weight(task1, {key: 2 * torch.ones(2, 2)}, {})
+
+        assert result0 == {}
+        torch.testing.assert_close(
+            result1[key],
+            torch.stack([torch.ones(2, 2), 2 * torch.ones(2, 2)], dim=0),
+        )
+        assert bridge.hf_weights_cache == {}
+
+    def test_maybe_modify_converted_hf_weight_keeps_explicit_mtp_expert_keys(self, monkeypatch):
+        """Preserve already-expanded MTP expert keys without extra regrouping."""
+        bridge = Qwen35VLMoEBridge()
+        bridge.hf_config = Mock()
+        bridge.hf_config.text_config = Mock()
+        bridge.hf_config.text_config.num_experts = 256
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.parallel_state.get_expert_model_parallel_world_size",
+            lambda: 8,
+        )
+
+        task = Mock()
+        task.param_name = "language_model.mtp.layers.0.mtp_model_layer.mlp.experts.linear_fc1.weight0"
+        converted = {
+            "mtp.layers.0.mlp.experts.0.gate_proj.weight": torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.32.gate_proj.weight": 2 * torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.0.up_proj.weight": 3 * torch.ones(2, 2),
+            "mtp.layers.0.mlp.experts.32.up_proj.weight": 4 * torch.ones(2, 2),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(task, dict(converted), {})
+
+        assert result.keys() == converted.keys()
+        for key in converted:
+            torch.testing.assert_close(result[key], converted[key])
+        assert bridge.hf_weights_cache == {}
+
+    def test_stream_weights_megatron_to_hf_skips_mtp_duplicate_embedding_export(self, monkeypatch):
+        """Skip the last-stage MTP embedding copy when exporting shared vocab weights."""
+        bridge = Qwen35VLMoEBridge()
+        calls = []
+
+        class DummyMapping:
+            def megatron_to_hf(self, weight, module):
+                calls.append((weight, module))
+                return {}
+
+        config = SimpleNamespace(share_embeddings_and_output_weights=False, pipeline_model_parallel_size=2)
+        stage0 = SimpleNamespace(pre_process=True, config=config)
+        wrapped_stage1 = SimpleNamespace(
+            module=SimpleNamespace(
+                pre_process=False,
+                config=config,
+                language_model=SimpleNamespace(mtp_process=True),
+            )
+        )
+        duplicate_module = Mock()
+        task = WeightConversionTask(
+            param_name="language_model.embedding.word_embeddings.weight",
+            global_param_name="language_model.embedding.word_embeddings.weight",
+            mapping=DummyMapping(),
+            pp_rank=1,
+            vp_stage=1,
+            megatron_module=duplicate_module,
+            param_weight=torch.ones(1),
+        )
+
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "_with_progress_tracking",
+            lambda self, tasks, *_args, **_kwargs: tasks,
+        )
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "maybe_modify_converted_hf_weight",
+            lambda self, *_args, **_kwargs: _args[1],
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+            lambda model, *_args, **_kwargs: [model[0]]
+            if isinstance(model, list)
+            else getattr(model, "module", model),
+        )
+
+        weights = list(
+            bridge.stream_weights_megatron_to_hf(
+                [stage0, wrapped_stage1],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert weights == []
+        assert len(calls) == 1
+        assert calls[0] == (None, None)
+
+    def test_stream_weights_megatron_to_hf_keeps_pre_process_embedding_owner(self, monkeypatch):
+        """Keep the first-stage embedding owner active during export."""
+        bridge = Qwen35VLMoEBridge()
+        calls = []
+        embedding_weight = torch.ones(1)
+        embedding_module = Mock()
+
+        class DummyMapping:
+            def megatron_to_hf(self, weight, module):
+                calls.append((weight, module))
+                return {"hf.weight": weight}
+
+        stage0 = SimpleNamespace(
+            pre_process=True,
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, pipeline_model_parallel_size=2),
+            language_model=SimpleNamespace(mtp_process=False),
+        )
+        task = WeightConversionTask(
+            param_name="language_model.embedding.word_embeddings.weight",
+            global_param_name="language_model.embedding.word_embeddings.weight",
+            mapping=DummyMapping(),
+            pp_rank=0,
+            vp_stage=0,
+            megatron_module=embedding_module,
+            param_weight=embedding_weight,
+        )
+
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "_with_progress_tracking",
+            lambda self, tasks, *_args, **_kwargs: tasks,
+        )
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "maybe_modify_converted_hf_weight",
+            lambda self, *_args, **_kwargs: _args[1],
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+            lambda model, *_args, **_kwargs: [model[0]]
+            if isinstance(model, list)
+            else getattr(model, "module", model),
+        )
+
+        weights = list(
+            bridge.stream_weights_megatron_to_hf(
+                [stage0],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert len(weights) == 1
+        assert weights[0].param_name == "hf.weight"
+        assert len(calls) == 1
+        assert calls[0][0] is embedding_weight
+        assert calls[0][1] is embedding_module
+
+    def test_stream_weights_megatron_to_hf_does_not_skip_mtp_embedding_without_pp(self, monkeypatch):
+        """Do not suppress the only owner when pipeline parallelism is disabled."""
+        bridge = Qwen35VLMoEBridge()
+        calls = []
+        embedding_weight = torch.ones(1)
+        embedding_module = Mock()
+
+        class DummyMapping:
+            def megatron_to_hf(self, weight, module):
+                calls.append((weight, module))
+                return {"hf.weight": weight}
+
+        stage0 = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, pipeline_model_parallel_size=1),
+            language_model=SimpleNamespace(mtp_process=True),
+        )
+        task = WeightConversionTask(
+            param_name="language_model.embedding.word_embeddings.weight",
+            global_param_name="language_model.embedding.word_embeddings.weight",
+            mapping=DummyMapping(),
+            pp_rank=0,
+            vp_stage=0,
+            megatron_module=embedding_module,
+            param_weight=embedding_weight,
+        )
+
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "_with_progress_tracking",
+            lambda self, tasks, *_args, **_kwargs: tasks,
+        )
+        monkeypatch.setattr(
+            Qwen35VLMoEBridge,
+            "maybe_modify_converted_hf_weight",
+            lambda self, *_args, **_kwargs: _args[1],
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+            lambda model, *_args, **_kwargs: [model[0]]
+            if isinstance(model, list)
+            else getattr(model, "module", model),
+        )
+
+        weights = list(
+            bridge.stream_weights_megatron_to_hf(
+                [stage0],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert len(weights) == 1
+        assert weights[0].param_name == "hf.weight"
+        assert len(calls) == 1
+        assert calls[0][0] is embedding_weight
+        assert calls[0][1] is embedding_module
