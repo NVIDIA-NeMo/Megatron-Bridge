@@ -270,12 +270,15 @@ def get_assignment_names_at_lines(wbc_file: Path, line_nos: set[int]) -> set[str
 # ---------------------------------------------------------------------------
 
 
-def pretrain_const_to_func_and_precision(const: str) -> tuple[str, str] | None:
+def pretrain_const_to_func_and_precision(const: str) -> tuple[str, str | None] | None:
     """Map a PRETRAIN_CONFIG constant → (func_name, precision).
+
+    Precision is None when the constant has no explicit precision token
+    (e.g. DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1 has no precision between GPU and version).
 
     e.g. GPT_OSS_120B_PRETRAIN_CONFIG_B200_BF16_V1       → ("gpt_oss_120b_pretrain_config_b200", "BF16")
          QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 → ("qwen3_235b_a22b_pretrain_config_gb300", "FP8_CS")
-         LLAMA3_70B_PRETRAIN_CONFIG_H100_NVFP4_V1        → ("llama3_70b_pretrain_config_h100", "NVFP4")
+         DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1            → ("deepseek_v3_pretrain_config_gb300", None)
     """
     if "_PRETRAIN_CONFIG_" not in const:
         return None
@@ -288,7 +291,7 @@ def pretrain_const_to_func_and_precision(const: str) -> tuple[str, str] | None:
     precision_tokens = tokens[1:]
     if precision_tokens and re.match(r"^V\d+$", precision_tokens[-1]):
         precision_tokens = precision_tokens[:-1]
-    precision = "_".join(precision_tokens) if precision_tokens else "UNKNOWN"
+    precision = "_".join(precision_tokens) if precision_tokens else None
     return func_name, precision
 
 
@@ -309,6 +312,8 @@ def build_func_precisions_index(
                     if result is None:
                         continue
                     func_name, precision = result
+                    if precision is None:
+                        continue  # no explicit precision token — rely on bare fallback
                     pf = find_pretrain_file_for_func(func_name, family_dir, pretrain_index)
                     if pf is not None:
                         index[(pf.name, func_name)].add(precision)
@@ -404,6 +409,8 @@ def compute_affected_from_wbc(
         if result is None:
             continue
         func_name, precision = result
+        if precision is None:
+            continue  # base config constant (no precision token) — tagged derivatives caught separately
         pf = find_pretrain_file_for_func(func_name, family_dir, pretrain_index)
         if pf is not None:
             affected.add(f"{pf.name}::{func_name}::{precision}")
@@ -486,27 +493,39 @@ def compute_affected_from_init(
             for f in funcs:
                 all_family_funcs |= expand_with_precisions(pf.name, f, func_precisions)
 
-    touched_funcs: set[str] = set()
+    # touched_entries: specific (func_name, precision_or_None) pairs from changed lines
+    touched_entries: set[tuple[str, str | None]] = set()
     non_import_change = False
 
     for _sign, text in raw_lines:
+        # lowercase pretrain_config function name references (no precision info here)
         names = re.findall(r"\b\w+_pretrain_config_\w+\b", text)
         if names:
-            touched_funcs.update(names)
+            for n in names:
+                touched_entries.add((n, None))
         elif re.search(r"^\s*(from|import)\s+", text):
-            pass  # import line without pretrain_config names — not a structural change
+            pass  # import line — not a structural change
+        elif re.search(r"\b\w+_PRETRAIN_CONFIG_\w+\b", text):
+            # uppercase constant name in a multi-line import/export block — map to (func, precision)
+            for const in re.findall(r"\b(\w+_PRETRAIN_CONFIG_\w+)\b", text):
+                result = pretrain_const_to_func_and_precision(const)
+                if result:
+                    touched_entries.add(result)  # (func_name, precision_or_None)
         elif text.strip() and not text.strip().startswith("#"):
             non_import_change = True
 
     if non_import_change:
         return all_family_funcs
 
-    if touched_funcs:
+    if touched_entries:
         affected: set[str] = set()
-        for func_name in touched_funcs:
+        for func_name, precision in touched_entries:
             for pf, funcs in pretrain_index.items():
                 if pf.parent == family_dir and func_name in funcs:
-                    affected |= expand_with_precisions(pf.name, func_name, func_precisions)
+                    if precision is not None:
+                        affected.add(f"{pf.name}::{func_name}::{precision}")
+                    else:
+                        affected |= expand_with_precisions(pf.name, func_name, func_precisions)
         return affected if affected else all_family_funcs
 
     return all_family_funcs
@@ -532,6 +551,8 @@ def compute_affected_from_wbc_files_mode(
                 if result is None:
                     continue
                 func_name, precision = result
+                if precision is None:
+                    continue  # base config constant — skip, tagged derivatives are separate entries
                 pf = find_pretrain_file_for_func(func_name, family_dir, pretrain_index)
                 if pf is not None:
                     affected.add(f"{pf.name}::{func_name}::{precision}")
@@ -584,7 +605,11 @@ def main() -> None:
     pretrain_static_wbc = build_pretrain_static_wbc(pretrain_files)
     func_precisions = build_func_precisions_index(pretrain_index)
 
-    affected: set[str] = set()
+    # wbc analysis is authoritative for precision: when wbc changes identify specific precisions
+    # for a (file, func) pair, non-wbc paths (pretrain/init/utils) must not expand that pair to
+    # all precisions — they would add noise (e.g. BF16) when only FP8_MX was actually changed.
+    wbc_affected: set[str] = set()
+    other_affected: set[str] = set()
 
     if args.files:
         for filepath in parse_files_list(stdin_text):
@@ -593,25 +618,25 @@ def main() -> None:
 
             if kind == "utils":
                 module_stem = Path(filepath).stem
-                affected |= compute_affected_from_utils(
+                other_affected |= compute_affected_from_utils(
                     module_stem, utils_transitive, pretrain_utils_deps, pretrain_index, func_precisions
                 )
             elif kind == "wbc":
                 if abs_path:
-                    affected |= compute_affected_from_wbc_files_mode(
+                    wbc_affected |= compute_affected_from_wbc_files_mode(
                         abs_path, pretrain_index, pretrain_static_wbc, func_precisions
                     )
             elif kind == "pretrain":
                 if abs_path:
                     for func in pretrain_index.get(abs_path, []):
-                        affected |= expand_with_precisions(abs_path.name, func, func_precisions)
+                        other_affected |= expand_with_precisions(abs_path.name, func, func_precisions)
             elif kind == "init":
                 if abs_path:
                     family_dir = abs_path.parent
                     for pf, funcs in pretrain_index.items():
                         if pf.parent == family_dir:
                             for f in funcs:
-                                affected |= expand_with_precisions(pf.name, f, func_precisions)
+                                other_affected |= expand_with_precisions(pf.name, f, func_precisions)
     else:
         touched_lines_map, raw_lines_map = parse_diff(stdin_text)
 
@@ -622,12 +647,12 @@ def main() -> None:
 
             if kind == "utils":
                 module_stem = Path(filepath).stem
-                affected |= compute_affected_from_utils(
+                other_affected |= compute_affected_from_utils(
                     module_stem, utils_transitive, pretrain_utils_deps, pretrain_index, func_precisions
                 )
             elif kind == "wbc":
                 if abs_path:
-                    affected |= compute_affected_from_wbc(
+                    wbc_affected |= compute_affected_from_wbc(
                         abs_path, touched_lines, raw_lines, pretrain_index, pretrain_static_wbc, func_precisions
                     )
                 else:
@@ -636,15 +661,22 @@ def main() -> None:
                     for pf, funcs in pretrain_index.items():
                         if pf.parent == family_dir:
                             for f in funcs:
-                                affected |= expand_with_precisions(pf.name, f, func_precisions)
+                                wbc_affected |= expand_with_precisions(pf.name, f, func_precisions)
             elif kind == "pretrain":
                 if abs_path:
-                    affected |= compute_affected_from_pretrain(
+                    other_affected |= compute_affected_from_pretrain(
                         abs_path, touched_lines, pretrain_index, func_precisions
                     )
             elif kind == "init":
                 if abs_path:
-                    affected |= compute_affected_from_init(abs_path, raw_lines, pretrain_index, func_precisions)
+                    other_affected |= compute_affected_from_init(
+                        abs_path, raw_lines, pretrain_index, func_precisions
+                    )
+
+    # For (file, func) pairs already covered by wbc with specific precisions, suppress the
+    # all-precision expansion that non-wbc paths produce — it would add irrelevant precisions.
+    wbc_funcs = {tuple(e.split("::")[:2]) for e in wbc_affected}
+    affected = wbc_affected | {e for e in other_affected if tuple(e.split("::")[:2]) not in wbc_funcs}
 
     if affected:
         for entry in sorted(affected):
