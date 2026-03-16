@@ -15,7 +15,6 @@
 
 import torch
 from megatron.core.activations import squared_relu
-from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
@@ -38,7 +37,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     # Model config
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 4B)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
         hidden_size=3072,
         mamba_num_heads=112,
@@ -172,7 +171,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     # Model config
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 8B)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
         hidden_size=4096,
         mamba_state_dim=128,
@@ -306,7 +305,7 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     # Model config
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 47B)
-        hybrid_override_pattern=(
+        hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
         ),
         num_layers=98,
@@ -442,7 +441,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     # Model config
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 56B)
-        hybrid_override_pattern=(
+        hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
             "M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
         ),
@@ -452,7 +451,6 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
         mamba_num_heads=256,
         ffn_hidden_size=32768,
         num_attention_heads=64,
-        attention_backend=AttnBackend.auto,
         # NemotronH base
         seq_length=8192,
         mamba_num_groups=8,
@@ -585,7 +583,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
     # Model config - NemotronH 4B
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 4B)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
         hidden_size=3072,
         mamba_num_heads=112,
@@ -715,7 +713,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     # Model config - NemotronH 8B
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 8B)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
         hidden_size=4096,
         mamba_state_dim=128,
@@ -841,7 +839,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     # Model config - NemotronH 47B
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 47B)
-        hybrid_override_pattern=(
+        hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
         ),
         num_layers=98,
@@ -969,7 +967,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     # Model config - NemotronH 56B
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 56B)
-        hybrid_override_pattern=(
+        hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
             "M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
         ),
@@ -979,7 +977,6 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
         mamba_num_heads=256,
         ffn_hidden_size=32768,
         num_attention_heads=64,
-        attention_backend=AttnBackend.auto,
         # NemotronH base
         seq_length=8192,
         mamba_num_groups=8,
@@ -1108,7 +1105,7 @@ def nemotronh_4b_peft_config(
     # Model config - PEFT uses same parallelism as SFT for 4B
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 4B)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
         hidden_size=3072,
         mamba_num_heads=112,
@@ -1256,7 +1253,7 @@ def nemotronh_8b_peft_config(
     # Model config - PEFT uses TP=1, SP=False
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 8B)
-        hybrid_override_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
         hidden_size=4096,
         mamba_state_dim=128,
@@ -1402,7 +1399,7 @@ def nemotronh_47b_peft_config(
     # Model config - PEFT uses TP=4, PP=1
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 47B)
-        hybrid_override_pattern=(
+        hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
         ),
         num_layers=98,
@@ -1550,7 +1547,7 @@ def nemotronh_56b_peft_config(
     # Model config - PEFT uses TP=4, PP=1
     cfg.model = MambaModelProvider(
         # Architecture (NemotronH 56B)
-        hybrid_override_pattern=(
+        hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
             "M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
         ),
@@ -1560,7 +1557,6 @@ def nemotronh_56b_peft_config(
         mamba_num_heads=256,
         ffn_hidden_size=32768,
         num_attention_heads=64,
-        attention_backend=AttnBackend.auto,
         # NemotronH base
         seq_length=8192,
         mamba_num_groups=8,

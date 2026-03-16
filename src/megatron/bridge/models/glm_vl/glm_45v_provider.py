@@ -53,7 +53,7 @@ class GLM45VModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     add_qkv_bias: bool = True
     seq_length: int = 131072
-    init_method_std: int = 0.02
+    init_method_std: float = 0.02
     hidden_dropout: float = 0.0
     vocab_size: int = 151552
     share_embeddings_and_output_weights: Optional[bool] = False

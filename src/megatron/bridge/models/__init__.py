@@ -25,6 +25,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.deepseek import (
+    DeepSeekV2Bridge,
+    DeepSeekV3Bridge,
+)
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
     CodeGemmaModelProvider7B,
@@ -120,6 +124,11 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider72B,
     Qwen25ModelProvider500M,
 )
+from megatron.bridge.models.qwen_omni import (
+    Qwen25OmniBridge,
+    Qwen25OmniModel,
+    Qwen25OmniModelProvider,
+)
 from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
     Qwen25VLModel,
@@ -154,6 +163,9 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    # DeepSeek Models
+    "DeepSeekV2Bridge",
+    "DeepSeekV3Bridge",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
@@ -235,6 +247,10 @@ __all__ = [
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronNano12Bv2VLModelProvider",
+    # Omni Models
+    "Qwen25OmniModel",
+    "Qwen25OmniBridge",
+    "Qwen25OmniModelProvider",
     "SarvamMLABridge",
     "SarvamMoEBridge",
 ]

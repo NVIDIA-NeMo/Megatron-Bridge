@@ -182,34 +182,102 @@ model_config = GPTModelProvider(
 
 #### Advanced MoE Features
 
-##### DeepEP Optimization
+Megatron Bridge provides several advanced optimizations for MoE models to improve performance on modern GPU architectures.
 
-Megatron Bridge includes DeepEP optimization for improved MoE performance on Ampere and Hopper GPUs:
+##### DeepEP and HybridEP Optimizations
+
+DeepEP and HybridEP are high-performance MoE token dispatchers that improve throughput and efficiency on specific GPU architectures:
+
+- **DeepEP**: Optimized for Ampere, Hopper, B200, and B300 GPUs
+- **HybridEP**: Optimized for GB200, GB300 with NVL72, and Ampere, Hopper, B200, B300 GPUs
+
+These dispatchers replace the standard token routing mechanism with an optimized "flex" dispatcher that provides better performance for MoE workloads.
+
+**Enable DeepEP:**
 
 ```python
-from megatron.bridge.training.deepep import apply_deepep
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+
+model_config = GPTModelProvider(
+    num_moe_experts=8,
+    expert_model_parallel_size=4,
+    # ... other model parameters
+)
 
 # Apply DeepEP optimization
-apply_deepep(model_config)  # Sets moe_token_dispatcher_type="flex" and other optimizations
+apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="deepep")
 ```
+
+**Enable HybridEP:**
+
+```python
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+
+model_config = GPTModelProvider(
+    num_moe_experts=8,
+    expert_model_parallel_size=4,
+    # ... other model parameters
+)
+
+# Apply HybridEP optimization
+apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="hybridep")
+```
+
+**GPU Architecture Requirements:**
+
+- **DeepEP**: Ampere (SM 8.x), Hopper (SM 9.x), B200, B300
+- **HybridEP**: GB200, GB300 with NVL72, Ampere (SM 8.x), Hopper (SM 9.x), B200, B300
+
+The system automatically validates GPU compatibility and issues warnings if the dispatcher is not supported on the current hardware.
 
 ##### Token Dropping for Load Balancing
 
-Token dropping improves performance by balancing work across experts:
+Token dropping improves MoE performance by balancing work across experts through capacity factors. This feature allows the model to drop tokens when experts are overloaded, preventing stragglers and improving overall throughput.
 
 ```python
+from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
-# Apply token drop settings for load balancing
-apply_moe_token_drop(model_config, moe_expert_capacity_factor=1.0)
+model_config = GPTModelProvider(
+    num_moe_experts=8,
+    moe_router_topk=2,
+    moe_token_dispatcher_type="alltoall",  # Required for token dropping
+    moe_router_load_balancing_type="aux_loss",  # Required load balancing type
+    # ... other model parameters
+)
+
+# Apply token dropping with capacity factor
+apply_moe_token_drop(
+    model_config,
+    moe_expert_capacity_factor=1.0,  # Capacity multiplier per expert
+    moe_pad_expert_input_to_capacity=True,  # Pad inputs to capacity length
+)
 ```
 
+**Configuration Parameters:**
+
+- `moe_expert_capacity_factor`: Controls the maximum number of tokens each expert can process. A factor of 1.0 means each expert can handle exactly its proportional share of tokens. Lower values (e.g., 0.8) drop more tokens but improve load balancing.
+- `moe_pad_expert_input_to_capacity`: When enabled, pads expert inputs to the capacity length for consistent batch sizes.
+
+**Requirements:**
+
+- Token dispatcher must be `alltoall` or `alltoall_seq`
+- Load balancing type must be `aux_loss`, `seq_aux_loss`, or `none`
+
+**Trade-offs:**
+
+Token dropping can improve training throughput by 10-30% in imbalanced MoE models, but may affect convergence if too aggressive. Start with a capacity factor of 1.0 and gradually reduce if needed.
+
 #### Complete MoE Configuration Example
+
+Here's a complete example showing how to configure an MoE model with advanced optimizations:
 
 ```python
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.deepep import apply_deepep
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 # Configure MoE model with expert parallelism
@@ -221,12 +289,25 @@ model_config = GPTModelProvider(
     # MoE configuration
     num_moe_experts=8,                    # 8 experts total
     moe_router_topk=2,                    # Activate 2 experts per token
+    moe_ffn_hidden_size=8192,            # Expert FFN hidden dimension
+    moe_token_dispatcher_type="alltoall", # Token dispatcher type
+    moe_router_load_balancing_type="aux_loss",  # Load balancing
     
     # Expert parallelism
     expert_model_parallel_size=4,         # Distribute experts across 4 GPUs
     expert_tensor_parallel_size=2,        # Apply TP within each expert
     
     # ... other model parameters
+)
+
+# Apply DeepEP optimization (for Ampere/Hopper GPUs)
+apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="deepep")
+
+# Apply token dropping for load balancing
+apply_moe_token_drop(
+    model_config,
+    moe_expert_capacity_factor=1.0,
+    moe_pad_expert_input_to_capacity=True,
 )
 
 config = ConfigContainer(
@@ -367,10 +448,14 @@ For example, with 32 GPUs total and the configuration above:
 - **Pipeline parallelism** can work across nodes but requires careful batch size tuning
 - **Context parallelism** is essential for long context scenarios
 - **Expert parallelism** is specific to MoE models and should match the number of experts
+- **DeepEP/HybridEP** provide optimized MoE token dispatching on supported GPU architectures
 
 ### Compatibility
 - **Sequence parallelism** requires `tensor_model_parallel_size > 1`
 - **Expert parallelism** requires MoE models (`num_moe_experts > 0`)
+- **DeepEP** requires Ampere, Hopper, B200, or B300 GPUs
+- **HybridEP** requires GB200, GB300 with NVL72, or Ampere, Hopper, B200, B300 GPUs
+- **Token dropping** requires `alltoall` or `alltoall_seq` token dispatcher
 - All parallelism strategies can be combined, but total parallelism must divide evenly into the world size
 
 ## Resources
@@ -379,4 +464,3 @@ For example, with 32 GPUs total and the configuration above:
 - [Scaling Language Model Training](https://developer.nvidia.com/blog/scaling-language-model-training-to-a-trillion-parameters-using-megatron/)
 - [Megatron-LM Repository](https://github.com/NVIDIA/Megatron-LM)
 - [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
-

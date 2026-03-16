@@ -30,7 +30,6 @@ This module provides two bridges:
 """
 
 import logging
-import os
 
 import torch
 
@@ -116,6 +115,9 @@ class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
 
         provider = Qwen35VLMoEModelProvider(**provider_kwargs)
 
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
+
         # --- Common Qwen3 LLM settings ---
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
@@ -171,15 +173,9 @@ class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
         # so each pair needs 32 dims total → sections [11, 11, 10].
         provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
 
-        # --- DEBUG: tiny model for quick testing ---
-        # Set QWEN35_DEBUG=1 to shrink the text model to 4 layers (1 GDN-GDN-GDN-Attn group)
-        # with fewer experts. Useful for conversion / forward-pass smoke tests.
-        if os.environ.get("QWEN35_DEBUG", "0") == "1":
-            logger.warning("QWEN35_DEBUG=1: overriding to tiny 4-layer model for debugging")
-            provider.num_layers = 4  # 3 GDN + 1 Attn (one full group)
-            # provider.num_moe_experts = 8  # 512 → 8
-            # provider.moe_router_topk = 2  # 10 → 2
-            # provider.moe_grouped_gemm = False
+        # --- MTP (Multi-Token Prediction) ---
+        if provider.mtp_num_layers:
+            provider.mtp_loss_scaling_factor = 0.1
 
         return provider
 
@@ -377,20 +373,60 @@ class Qwen35VLMoEBridge(Qwen3VLMoEBridge):
             ]
         )
 
-        # TODO: MTP (Multi-Token Prediction) mappings for VL context.
-        # "language_model.mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
-        # "language_model.mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
-        # "language_model.mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
-        # "language_model.mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
-        # "language_model.mtp.layers.0.transformer_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
-        # "language_model.mtp.layers.0.transformer_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
-        # "language_model.mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
-        # "language_model.mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
-        # "language_model.mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
-        # "language_model.mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
-        #
-        # Plus QKV, expert MLP, shared expert mappings for MTP layers.
-        # The exact prefix structure (language_model.mtp.* vs mtp.*) needs verification.
+        # =================================================================
+        # MTP (Multi-Token Prediction) mappings
+        # MTP uses standard attention (not GDN) and standard per-expert
+        # MoE format (unlike the fused gate_up_proj in main decoder).
+        # Megatron VL prefix: language_model.mtp.*
+        # HF prefix: mtp.* (top-level, not under model.language_model.)
+        # =================================================================
+        mtp_param_mappings = {
+            "language_model.mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
+            "language_model.mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
+            "language_model.mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
+            "language_model.mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+        }
+        for megatron_param, hf_param in mtp_param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        mapping_list.extend(
+            [
+                QKVMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
+                    q="mtp.layers.*.self_attn.q_proj.weight",
+                    k="mtp.layers.*.self_attn.k_proj.weight",
+                    v="mtp.layers.*.self_attn.v_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
+                    gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
+                    up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.shared_experts.linear_fc2.weight",
+                    hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.mtp.layers.0.mtp_model_layer.mlp.shared_experts.gate_weight",
+                    hf_param="mtp.layers.0.mlp.shared_expert_gate.weight",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)
 
@@ -436,6 +472,10 @@ class Qwen35VLBridge(MegatronModelBridge):
 
         provider = Qwen35VLModelProvider(**provider_kwargs)
 
+        # For VLMs, tie_word_embeddings lives on the top-level config, not text_config.
+        # text_config inherits PretrainedConfig's default of True which is wrong for 9B/27B.
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
+
         # --- Common Qwen3 LLM settings ---
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
@@ -470,6 +510,10 @@ class Qwen35VLBridge(MegatronModelBridge):
         provider.image_token_id = getattr(hf_config, "image_token_id", 248056)
         provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
         provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
+
+        # --- MTP (Multi-Token Prediction) ---
+        if provider.mtp_num_layers:
+            provider.mtp_loss_scaling_factor = 0.1
 
         return provider
 
@@ -607,6 +651,41 @@ class Qwen35VLBridge(MegatronModelBridge):
             ]
         )
 
-        # TODO: MTP mappings for dense Qwen3.5 VL (mtp_num_hidden_layers=1 in config)
+        # =================================================================
+        # MTP (Multi-Token Prediction) mappings
+        # MTP uses standard attention (not GDN) and dense MLP.
+        # Megatron VL prefix: language_model.mtp.*
+        # HF prefix: mtp.* (top-level, not under model.language_model.)
+        # =================================================================
+        mtp_param_mappings = {
+            "language_model.mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
+            "language_model.mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
+            "language_model.mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
+            "language_model.mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.mlp.linear_fc1.layer_norm_weight": "mtp.layers.0.post_attention_layernorm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.mlp.linear_fc2.weight": "mtp.layers.0.mlp.down_proj.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+            "language_model.mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+        }
+        for megatron_param, hf_param in mtp_param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        mapping_list.extend(
+            [
+                QKVMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
+                    q="mtp.layers.*.self_attn.q_proj.weight",
+                    k="mtp.layers.*.self_attn.k_proj.weight",
+                    v="mtp.layers.*.self_attn.v_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.linear_fc1.weight",
+                    gate="mtp.layers.*.mlp.gate_proj.weight",
+                    up="mtp.layers.*.mlp.up_proj.weight",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)
