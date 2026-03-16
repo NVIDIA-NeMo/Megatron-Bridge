@@ -13,12 +13,17 @@
 # limitations under the License.
 import json
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
 
+from megatron.bridge.data.datasets.packed_parquet import (
+    is_packed_parquet_spec,
+    resolve_packed_parquet_paths,
+)
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.data.datasets.sft import create_sft_dataset
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -113,7 +118,9 @@ def tokenize_dataset(
                     data[key] = val
             return
 
-        ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
+        def ceil_to_nearest(n, m):
+            return (n + m - 1) // m * m
+
         for data in dataset:
             max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
             pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id)
@@ -169,11 +176,18 @@ def prepare_packed_sequence_data(
     output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
 
     # save output data
-    if MultiStorageClientFeature.is_enabled():
-        msc = MultiStorageClientFeature.import_package()
-        msc.numpy.save(output_path, output_data)
+    output_path_str = str(output_path)
+    if output_path_str.lower().endswith((".parquet", ".pq")):
+        from megatron.bridge.data.datasets.packed_parquet import write_packed_parquet
+
+        write_packed_parquet(output_data, output_path)
     else:
-        np.save(output_path, output_data)
+        # Legacy .npy format
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            msc.numpy.save(output_path, output_data)
+        else:
+            np.save(output_path, output_data)
 
     # save packing metadata, packing_metadata is appended to the packing file if it exists
     if output_metadata_path is not None:
@@ -247,30 +261,66 @@ class PackedSequenceSpecs:
 
     def __post_init__(self):
         if self.packed_train_data_path is not None:
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                self.packed_train_data_path = msc.Path(self.packed_train_data_path)
-            else:
-                self.packed_train_data_path = Path(self.packed_train_data_path)
-            assert self.packed_train_data_path.suffix == ".npy", (
-                f"packed training data file must be a .npy file: {self.packed_train_data_path}"
-            )
-            assert self.packed_train_data_path.exists(), (
-                f"packed training data file does not exist: {self.packed_train_data_path}"
-            )
+            self._validate_packed_path("packed_train_data_path", self.packed_train_data_path)
 
         if self.packed_val_data_path is not None:
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                self.packed_val_data_path = msc.Path(self.packed_val_data_path)
-            else:
-                self.packed_val_data_path = Path(self.packed_val_data_path)
-            assert self.packed_val_data_path.suffix == ".npy", (
-                f"packed validation data file must be a .npy file: {self.packed_val_data_path}"
-            )
-            assert self.packed_val_data_path.exists(), (
-                f"packed validation data file does not exist: {self.packed_val_data_path}"
-            )
+            self._validate_packed_path("packed_val_data_path", self.packed_val_data_path)
 
         if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:
             raise ValueError("pad_seq_to_mult must be a positive integer when provided.")
+
+    def _validate_packed_path(self, attr_name: str, path_value: str) -> None:
+        """Validate a packed data path and store it appropriately.
+
+        For .npy files: strict validation with Path.exists()
+        For packed parquet specs: validate via resolution (supports dirs/globs)
+
+        Args:
+            attr_name: The attribute name being validated (for error messages)
+            path_value: The path value to validate
+
+        Raises:
+            FileNotFoundError: If the path does not exist or resolves to no files
+            ValueError: If the path format is invalid
+        """
+        path_str = str(path_value)
+
+        # Check if it's an .npy file (legacy format)
+        if path_str.lower().endswith(".npy"):
+            warnings.warn(
+                f"The .npy packed sequence format is deprecated and will be removed in the next release. "
+                f"Please use packed parquet format instead. Path: {path_str}",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                path_obj = msc.Path(path_str)
+            else:
+                path_obj = Path(path_str)
+
+            if not path_obj.exists():
+                raise FileNotFoundError(f"{attr_name} file does not exist: {path_str}")
+            setattr(self, attr_name, path_obj)
+            return
+
+        # Check if it's a packed parquet spec (file/dir/glob)
+        if is_packed_parquet_spec(path_str):
+            # Validate by resolving - this checks that files actually exist
+            try:
+                resolved_paths = resolve_packed_parquet_paths(path_str)
+                if len(resolved_paths) == 0:
+                    raise FileNotFoundError(f"{attr_name} resolved to no files: {path_str}")
+            except ValueError as e:
+                raise FileNotFoundError(f"{attr_name} could not be resolved: {path_str}. Error: {e}") from e
+
+            # Store the original string spec (not Path) to preserve globs
+            # The dataset loader will handle resolution
+            setattr(self, attr_name, path_str)
+            return
+
+        # Neither .npy nor valid packed parquet spec
+        raise ValueError(
+            f"{attr_name} must be a .npy file or a packed parquet spec "
+            f"(file/directory/glob ending in .parquet or .pq): {path_str}"
+        )
