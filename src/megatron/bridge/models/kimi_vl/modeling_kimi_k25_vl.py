@@ -89,13 +89,17 @@ class KimiK25VLModel(MegatronModule):
             import importlib
 
             _vit_module = importlib.import_module(MoonViT3dPretrainedModel.__module__)
-            _OrigEncoderInit = _vit_module.MoonViT3dEncoder.__init__
+            if not getattr(_vit_module.MoonViT3dEncoder, "_bridge_init_patched", False):
+                # Monkey patch MoonViT3dEncoder.__init__ to add missing use_deterministic_attn attribute
+                _orig_encoder_init = _vit_module.MoonViT3dEncoder.__init__
 
-            def _patched_encoder_init(self, *args, **kwargs):
-                self.use_deterministic_attn = False
-                _OrigEncoderInit(self, *args, **kwargs)
+                def _patched_encoder_init(self, *args, **kwargs):
+                    self.use_deterministic_attn = False
+                    _orig_encoder_init(self, *args, **kwargs)
 
-            _vit_module.MoonViT3dEncoder.__init__ = _patched_encoder_init
+                _vit_module.MoonViT3dEncoder.__init__ = _patched_encoder_init
+                _vit_module.MoonViT3dEncoder._bridge_init_patched = True
+
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
                 config.hf_model_path,
@@ -274,26 +278,6 @@ class KimiK25VLModel(MegatronModule):
             final_labels = None
 
         return final_embedding, final_attention_mask, final_labels, position_ids
-
-    def _compute_num_image_tokens_from_grid(self, grid_thws: torch.Tensor) -> List[int]:
-        """Pre-compute number of image tokens from grid_thws without running vision tower.
-
-        For 1 image per sample: num_tokens = (h // merge_h) * (w // merge_w)
-        With default merge_kernel_size=(2,2): num_tokens = (h // 2) * (w // 2)
-
-        Args:
-            grid_thws: Tensor of shape (batch_size, 3) with [t, h, w] per sample
-
-        Returns:
-            List of expected image token counts per sample
-        """
-        merge_h, merge_w = self.config.vision_config.merge_kernel_size
-        token_counts = []
-        for t, h, w in grid_thws.tolist():
-            # After patch merger: new_h = h // merge_h, new_w = w // merge_w
-            num_tokens = (h // merge_h) * (w // merge_w)
-            token_counts.append(num_tokens)
-        return token_counts
 
     def _extract_image_features(self, pixel_values, grid_thws):
         """Extract and project image features."""
