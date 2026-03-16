@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -146,7 +145,7 @@ def flux_14b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-def flux_14b_finetune_config(pretrained_checkpoint: Optional[str] = None) -> ConfigContainer:
+def flux_14b_finetune_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
     """
     Return a fine-tuning configuration for FLUX model.
 

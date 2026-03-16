@@ -18,8 +18,6 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from torch import int_repr
-
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import (
     DiffusionDataModule,
@@ -100,9 +98,8 @@ class FluxDatasetConfig(DatasetProvider):
             return mock_cfg.build_datasets(context)
 
         # Real data: path is set (string or list)
-        path_str = self.path if isinstance(self.path, str) else self.path[0]
         real_cfg = FluxDataModuleConfig(
-            path=path_str,
+            path=self.path,
             seq_length=self.seq_length,
             packing_buffer_size=self.packing_buffer_size,
             micro_batch_size=self.micro_batch_size,
@@ -122,7 +119,7 @@ class FluxDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
     packing_buffer_size: int
     micro_batch_size: int
     global_batch_size: int
-    num_workers: int_repr
+    num_workers: int
     dataloader_type: str = "external"
     vae_scale_factor: int = 8
     latent_channels: int = 16
