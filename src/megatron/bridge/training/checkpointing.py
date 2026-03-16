@@ -562,8 +562,7 @@ def save_checkpoint(
 
         save_ema_user_state(
             checkpoint_name_,
-            user_state,
-            pg_collection=pg_collection,
+            user_state
         )
 
     # Collect rng state across data parallel ranks.

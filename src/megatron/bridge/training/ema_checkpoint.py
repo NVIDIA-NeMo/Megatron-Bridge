@@ -21,11 +21,7 @@ def _ema_rank_filename(checkpoint_name: str, rank: int | None = None) -> str:
         rank = get_rank_safe()
     return os.path.join(checkpoint_name, EMA_DIRNAME, f"rank_{rank:05d}.pt")
 
-def save_ema_user_state(
-    checkpoint_name: str,
-    user_state: dict[str, Any],
-    pg_collection,
-) -> bool:
+def save_ema_user_state(checkpoint_name, user_state) -> bool:
     if not has_ema_state(user_state):
         return False
 
@@ -43,11 +39,6 @@ def save_ema_user_state(
         },
         "ema_updates": int(user_state.get("ema_updates", 0)),
         "ema_skipped_iters": int(user_state.get("ema_skipped_iters", 0)),
-        "parallelism": {
-            "tp": pg_collection.tp.size(),
-            "pp": pg_collection.pp.size(),
-            "dp": pg_collection.dp_cp.size(),
-        },
     }
     print_rank_0(
         f"[EMA SAVE] updates={payload['ema_updates']} "
@@ -59,11 +50,7 @@ def save_ema_user_state(
     os.replace(tmp_path, final_path)
     return True
 
-def load_ema_user_state(
-    checkpoint_name: str,
-    user_state: dict[str, Any],
-    pg_collection,
-) -> bool:
+def load_ema_user_state(checkpoint_name, user_state) -> bool:
     path = _ema_rank_filename(checkpoint_name)
 
     if not os.path.exists(path):
@@ -71,20 +58,8 @@ def load_ema_user_state(
 
     payload = torch.load(path, map_location="cpu", weights_only=False)
 
-    saved_parallelism = payload.get("parallelism")
-    if saved_parallelism is not None:
-        current_parallelism = {
-            "tp": pg_collection.tp.size(),
-            "pp": pg_collection.pp.size(),
-            "dp": pg_collection.dp_cp.size(),
-        }
-        if saved_parallelism != current_parallelism:
-            raise RuntimeError(
-                "EMA sidecar was saved with a different distributed topology. "
-                f"saved={saved_parallelism}, current={current_parallelism}"
-            )
-
     user_state["ema_state"] = payload["ema_state"]
     user_state["ema_updates"] = int(payload.get("ema_updates", 0))
     user_state["ema_skipped_iters"] = int(payload.get("ema_skipped_iters", 0))
+
     return True

@@ -135,7 +135,6 @@ def _pretrain(
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
     ckpt_context = setup_output.checkpointing_context
-    pg_collection = setup_output.pg_collection
     
     if ckpt_context is None:
         ckpt_context = {}
@@ -154,8 +153,7 @@ def _pretrain(
         ):
             restored = load_ema_user_state(
                 loaded_checkpoint_name,
-                callback_manager.user_state,
-                pg_collection=pg_collection,
+                callback_manager.user_state
             )
             if not restored:
                 print_rank_0(
@@ -175,7 +173,6 @@ def _pretrain(
                 valid_data_iterator,
                 state,
                 ckpt_context,
-                pg_collection,
                 callback_manager=callback_manager,
             )
 
