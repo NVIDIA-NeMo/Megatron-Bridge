@@ -8,7 +8,7 @@ description: Operational guide for enabling hierarchical context parallelism in 
 For stable background and recommendation level, see:
 
 - `docs/training/hybrid-context-parallel.md`
-- `knowledge/techniques/hybrid_context_parallel.yaml`
+- `card.yaml` (co-located)
 
 ## Enablement
 

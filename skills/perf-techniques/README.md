@@ -3,11 +3,11 @@
 This directory stores operational guides for performance and parallelism
 techniques.
 
-Use this split:
+Each technique lives in its own subfolder with two files:
 
-- `docs/training/*.md` for stable, human-facing guidance such as what a
-  technique is, when to use it, and durable conclusions.
-- `knowledge/techniques/*.yaml` for structured machine-readable technique cards.
-- `skills/perf-techniques/*.md` for code-near operational guidance such as how
-  to enable a technique, important pitfalls, source-code anchors, and
-  verification commands.
+- `SKILL.md` — operational guide (enablement, code anchors, pitfalls,
+  verification)
+- `card.yaml` — machine-readable structured metadata (validation status,
+  constraints, evidence)
+
+Stable human-facing docs live in `docs/training/*.md`.

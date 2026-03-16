@@ -8,7 +8,7 @@ description: Operational guide for enabling packed sequences and long-context co
 For stable background and recommendation level, see:
 
 - `docs/training/packed-sequences.md`
-- `knowledge/techniques/packed_sequences_long_context.yaml`
+- `card.yaml` (co-located)
 
 ## Enablement
 

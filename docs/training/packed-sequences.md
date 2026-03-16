@@ -86,4 +86,4 @@ The most stable caveats to remember are:
 - `docs/performance-guide.md`
 - `docs/training/hybrid-context-parallel.md`
 - `skills/perf-techniques/sequence-packing.md`
-- `knowledge/techniques/packed_sequences_long_context.yaml`
+- `skills/perf-techniques/sequence-packing/card.yaml`
