@@ -435,6 +435,53 @@ For example, with 32 GPUs total and the configuration above:
 - `context_parallel_size = 2`
 - `data_parallel_size = 32 / (2 × 4 × 2) = 2`
 
+## Strategy Selection Guide
+
+Choosing the right combination depends on model size, hardware topology,
+and sequence length.
+
+### Dense Models by Size
+
+| Model size | GPUs | Recommended starting point |
+|---|---|---|
+| < 1B | 1-8 | DP only |
+| 1-10B | 8-16 | TP=2-4 + DP |
+| 10-70B | 16-64 | TP=4-8 + PP=2-4 + DP |
+| 70-175B | 64-256 | TP=8 + PP=4-8 + DP |
+| 175-500B | 256-1024 | TP=8 + PP=8-16 + CP=2 + DP |
+
+### MoE Models
+
+MoE models differ fundamentally from dense models: only a fraction of
+parameters are active per token, so TP can often stay at 1 or 2. EP is
+the primary scaling dimension.
+
+| Total / active params | Typical layout |
+|---|---|
+| < 20B | EP only (TP=1, PP=1) |
+| 20-100B | TP=1-2 + PP=2-4 + EP=8-16 |
+| 100-500B | TP=2-4 + PP=8-16 + EP=8-32 |
+| 500B+ | TP=2 + PP=16 + EP=32-64 |
+
+### By Hardware Topology
+
+- **Single node with NVLink**: maximize TP within the node (up to TP=8).
+- **Multiple nodes with InfiniBand**: keep TP within a node, use PP across nodes.
+- **Limited network (Ethernet)**: minimize TP, prefer PP for cross-node scaling.
+
+### By Sequence Length
+
+| Sequence length | Recommendation |
+|---|---|
+| < 2K | standard TP + PP + DP |
+| 2K-8K | add SP (`sequence_parallel=True`) |
+| 8K-32K | add CP=2 |
+| 32K+ | add CP=4-8, consider hierarchical CP |
+
+For operational details on configuring combined parallelism, troubleshooting
+layouts, and memory estimation, see the
+[parallelism strategies skill](../skills/perf-techniques/parallelism-strategies.md).
+
 ## Configuration Guidelines
 
 ### Memory Optimization
@@ -457,6 +504,11 @@ For example, with 32 GPUs total and the configuration above:
 - **HybridEP** requires GB200, GB300 with NVL72, or Ampere, Hopper, B200, B300 GPUs
 - **Token dropping** requires `alltoall` or `alltoall_seq` token dispatcher
 - All parallelism strategies can be combined, but total parallelism must divide evenly into the world size
+
+## Related Artifacts
+
+- **Operational skill**: [skills/perf-techniques/parallelism-strategies.md](../skills/perf-techniques/parallelism-strategies.md) — enablement, pitfalls, memory estimation, verification
+- **Knowledge card**: [knowledge/techniques/parallelism_strategies.yaml](../knowledge/techniques/parallelism_strategies.yaml) — structured metadata and validation status
 
 ## Resources
 
