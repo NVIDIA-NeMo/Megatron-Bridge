@@ -15,6 +15,7 @@
 """
 Collation utilities for building VLM training batches from conversation examples.
 """
+from typing import Any
 
 import warnings
 
@@ -507,11 +508,231 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     return batch
 
 
+
+def _expand_image_tokens(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    grid_thws: torch.Tensor,
+    media_token_id: int,
+    merge_kernel_size: tuple[int, int] = (2, 2),
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Expand single image placeholder tokens to the correct number based on grid_thws.
+
+    For PP, this ensures the sequence length is fixed BEFORE the model forward pass,
+    eliminating dynamic sequence expansion inside the model.
+
+    Assumes 1 image per sample (1 placeholder per sequence).
+
+    Args:
+        input_ids: (seq_len,) tensor with 1 media_token_id placeholder
+        attention_mask: (seq_len,) tensor
+        grid_thws: (1, 3) tensor with [t, h, w] for the single image
+        media_token_id: Token ID of the image placeholder
+        merge_kernel_size: Vision tower's patch merge kernel, default (2, 2)
+
+    Returns:
+        expanded_input_ids: Input IDs with placeholder expanded to N tokens
+        expanded_attention_mask: Attention mask expanded accordingly
+    """
+    merge_h, merge_w = merge_kernel_size
+
+    # Calculate number of image tokens: (h // merge_h) * (w // merge_w)
+    t, h, w = grid_thws[0].tolist()
+    num_image_tokens = (h // merge_h) * (w // merge_w)
+
+    # Find the placeholder position
+    placeholder_positions = (input_ids == media_token_id).nonzero(as_tuple=True)[0]
+    if len(placeholder_positions) == 0:
+        # No placeholder found, return as-is
+        return input_ids, attention_mask
+
+    # For 1 image per sample, there should be exactly 1 placeholder
+    placeholder_pos = placeholder_positions[0].item()
+
+    # Build expanded tensors
+    before = input_ids[:placeholder_pos]
+    after = input_ids[placeholder_pos + 1 :]
+
+    # Expand: replace 1 placeholder with num_image_tokens placeholders
+    expanded_placeholder = torch.full((num_image_tokens,), media_token_id, dtype=input_ids.dtype)
+    expanded_input_ids = torch.cat([before, expanded_placeholder, after])
+
+    # Expand attention mask similarly
+    before_mask = attention_mask[:placeholder_pos]
+    after_mask = attention_mask[placeholder_pos + 1 :]
+    expanded_mask_tokens = torch.ones(num_image_tokens, dtype=attention_mask.dtype)
+    expanded_attention_mask = torch.cat([before_mask, expanded_mask_tokens, after_mask])
+
+    return expanded_input_ids, expanded_attention_mask
+
+
+def kimi_k25_vl_collate_fn(
+    examples: list[dict[str, Any]],
+    processor,
+    max_length: int | None = None,
+) -> dict[str, torch.Tensor]:
+    """Collate function for Kimi K2.5 VL processors with pre-expanded image tokens.
+
+    For pipeline parallelism, this function:
+    1. Processes each sample to get input_ids with 1 placeholder per image
+    2. Pre-expands the placeholder to N tokens (N = (h//2)*(w//2) from grid_thws)
+    3. Pads all sequences to fixed max_length
+    This ensures the model forward pass doesn't change sequence length dynamically.
+    """
+    skipped_tokens = extract_skipped_token_ids(processor)
+    conversations = [example["conversation"] for example in examples]
+
+    # Get media token ID
+    media_token_id = getattr(processor, "media_placeholder_token_id", None)
+    if media_token_id is None and hasattr(processor, "tokenizer"):
+        media_token_id = processor.tokenizer.convert_tokens_to_ids("<|media_pad|>")
+    if media_token_id is None:
+        media_token_id = 163605  # Default for Kimi K2.5
+
+    pad_token_id = getattr(processor.tokenizer, "pad_token_id", 0) or 0
+
+    # Get actual merge_kernel_size from processor's vision config
+    merge_kernel_size = (2, 2)  # default fallback
+    if hasattr(processor, "config") and hasattr(processor.config, "vision_config"):
+        merge_kernel_size = getattr(processor.config.vision_config, "merge_kernel_size", (2, 2))
+    elif hasattr(processor, "vision_config"):
+        merge_kernel_size = getattr(processor.vision_config, "merge_kernel_size", (2, 2))
+
+    # Process each sample individually
+    all_expanded = []
+    all_pixel_values = []
+    all_grid_thws = []
+
+    for i, conversation in enumerate(conversations):
+        # Collect medias for this conversation
+        medias = []
+        for message in conversation:
+            content = message.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image":
+                        medias.append({"type": "image", "image": item.get("image")})
+
+        text = processor.apply_chat_template(conversation, add_generation_prompt=False, tokenize=False)
+
+        processor_kwargs = {
+            "text": text,
+            "return_tensors": "pt",
+        }
+        if medias:
+            processor_kwargs["medias"] = medias
+
+        sample_batch = processor(**processor_kwargs)
+
+        input_ids = sample_batch["input_ids"][0]
+        attention_mask = sample_batch["attention_mask"][0]
+
+        # Pre-expand image tokens if we have grid_thws
+        if "grid_thws" in sample_batch and sample_batch["grid_thws"] is not None:
+            # print(f"using grid_thws: {sample_batch['grid_thws']} and pre-expand mode")
+            grid_thws = sample_batch["grid_thws"]
+            # print(f"before expand input_ids: {input_ids.shape}")
+
+            input_ids, attention_mask = _expand_image_tokens(
+                input_ids, attention_mask, grid_thws, media_token_id, merge_kernel_size
+            )
+            all_grid_thws.append(grid_thws)
+            # print(f"after expand input_ids: {input_ids.shape}")
+
+        if "pixel_values" in sample_batch:
+            all_pixel_values.append(sample_batch["pixel_values"])
+
+        all_expanded.append(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+            }
+        )
+
+    # Determine target length for padding
+    expanded_lens = [b["input_ids"].shape[0] for b in all_expanded]
+    batch_max = max(expanded_lens)
+
+    if max_length is not None:
+        target_len = max_length
+    else:
+        target_len = batch_max
+
+    # Pad/truncate to target_len
+    padded_input_ids = []
+    padded_attention_mask = []
+
+    for batch in all_expanded:
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+        seq_len = input_ids.shape[0]
+
+        if seq_len < target_len:
+            # Pad
+            pad_len = target_len - seq_len
+            input_ids = torch.cat([input_ids, torch.full((pad_len,), pad_token_id, dtype=input_ids.dtype)])
+            attention_mask = torch.cat([attention_mask, torch.zeros(pad_len, dtype=attention_mask.dtype)])
+        elif seq_len > target_len:
+            # Truncate
+            input_ids = input_ids[:target_len]
+            attention_mask = attention_mask[:target_len]
+
+        padded_input_ids.append(input_ids)
+        padded_attention_mask.append(attention_mask)
+
+    result = {
+        "input_ids": torch.stack(padded_input_ids),
+        "attention_mask": torch.stack(padded_attention_mask),
+    }
+
+    if all_pixel_values:
+        result["pixel_values"] = torch.cat(all_pixel_values, dim=0)
+    if all_grid_thws:
+        result["grid_thws"] = torch.cat(all_grid_thws, dim=0)  # (N, 3) with [t, h, w]
+
+    labels = result["input_ids"].clone()[:, 1:].contiguous()
+    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
+    labels[torch.isin(labels, skipped_tokens)] = -100
+    result["labels"] = labels
+    # Ensure position_ids exist for the model
+    if "position_ids" not in result:
+        result_size, seq_len = result["input_ids"].shape
+        result["position_ids"] = (
+            torch.arange(seq_len, device=result["input_ids"].device)
+            .unsqueeze(0)
+            .expand(result_size, -1)
+            .clone()
+            .contiguous()
+        )
+    # Prefer general search-based masking using structured example content (not template-specific)
+    loss_masks = [
+        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
+        for example, input_ids in zip(examples, result["input_ids"])  # type: ignore[arg-type]
+    ]
+    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=result["input_ids"].device)
+    # Shift loss mask to align with next-token labels timeline
+    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
+    # Enforce label masking to match shifted loss_mask
+    result["labels"] = result["labels"].masked_fill(loss_mask_t == 0, -100)
+    result["loss_mask"] = loss_mask_t.contiguous()
+
+    # Build visual inputs object and attach to batch; remove raw keys.
+    # Kimi processor outputs "grid_thws" (N, 3); pass full [t, h, w] as image_grid_thw.
+    visual_inputs = Qwen2_5_VLVisualInputs(
+        pixel_values=result.get("pixel_values"),
+        image_grid_thw=result.get("grid_thws"),
+    )
+    for k in ("pixel_values", "grid_thws"):
+        result.pop(k, None)
+    result["visual_inputs"] = visual_inputs
+    return result
+
 # Mapping of processor types to their collate functions
 COLLATE_FNS = {
     "Qwen2_5_VLProcessor": qwen2_5_collate_fn,
     "Qwen3VLProcessor": qwen2_5_collate_fn,
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
+    "KimiK25Processor": kimi_k25_vl_collate_fn,
     "default": default_collate_fn,
 }

@@ -405,7 +405,9 @@ def _generate_synthetic_vision_inputs(tokenizer, prompt: str, tp_size: int = 1):
     MEDIA_PLACEHOLDER_TOKEN_ID = 163605
 
     total_patches = GRID_T * GRID_H * GRID_W
-    pixel_values = torch.randn(total_patches, 3, PATCH_SIZE, PATCH_SIZE, dtype=torch.bfloat16)
+    # Use a fixed seed so all TP/EP ranks generate identical synthetic inputs
+    rng = torch.Generator().manual_seed(42)
+    pixel_values = torch.randn(total_patches, 3, PATCH_SIZE, PATCH_SIZE, dtype=torch.bfloat16, generator=rng)
     grid_thws = torch.tensor([[GRID_T, GRID_H, GRID_W]], dtype=torch.long)
 
     text_ids = tokenizer.encode(prompt, add_special_tokens=True)
@@ -564,18 +566,14 @@ def _load_hf_model(args, is_vl_model: bool):
     trust = is_safe_repo(trust_remote_code=args.trust_remote_code, hf_path=args.hf_model_path)
     model_class = get_model_class(args.model_class, is_vl_model, trust_remote_code=bool(args.trust_remote_code))
 
-    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=trust)
-    if _has_fp8_quantization(config):
-        hf_model = _load_hf_model_fp8(args.hf_model_path, config, model_class, trust)
-    else:
-        hf_model = model_class.from_pretrained(
-            args.hf_model_path,
-            torch_dtype=torch.bfloat16,
-            device_map="cuda",
-            trust_remote_code=trust,
-        )
-        hf_model = hf_model.eval()
-        print_rank_0(f"Loaded with {model_class.__name__}")
+    hf_model = model_class.from_pretrained(
+        args.hf_model_path,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        trust_remote_code=trust,
+    )
+    hf_model = hf_model.eval()
+    print_rank_0(f"Loaded with {model_class.__name__}")
 
     # Register debug hooks if enabled
     if args.enable_debug_hooks:

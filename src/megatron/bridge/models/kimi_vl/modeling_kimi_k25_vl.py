@@ -26,85 +26,6 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
-def squeeze_input_for_thd(input_ids, position_ids, padding_mask, attn_kwargs, seqlens_padding_value=-1000):
-    """
-    Squeeze batch dimension and prepare inputs for THD (total, hidden, depth) format.
-
-    This function removes the batch dimension from input tensors and processes attention
-    kwargs for use with Transformer Engine's THD format. It's typically used when the
-    batch has already been converted to THD format (with batch_size=1 as a placeholder
-    dimension) and that dimension needs to be removed.
-
-    The function performs three key operations:
-    1. Removes the batch dimension (dim 0) from input tensors
-    2. Filters out padding values from cumulative sequence length tensors
-    3. Converts max_seqlen from tensor to scalar if needed
-
-    Args:
-        input_ids (torch.Tensor): Input token IDs with shape [1, total_tokens] or
-            [1, total_tokens, hidden_dim]. The first dimension will be squeezed.
-        position_ids (torch.Tensor): Position IDs with shape [1, total_tokens].
-            The first dimension will be squeezed.
-        padding_mask (torch.Tensor): Padding mask with shape [1, total_tokens].
-            The first dimension will be squeezed.
-        attn_kwargs (dict): Dictionary of attention-related tensors. May contain:
-            - cu_seqlens: Cumulative sequence lengths [1, num_seqs+1]
-            - cu_seqlens_padded: Cumulative padded sequence lengths [1, num_seqs+1]
-            - max_seqlen: Maximum sequence length (tensor or int)
-            - Other attention parameters (will be squeezed if tensors)
-        seqlens_padding_value (int): Sentinel value used to indicate padding in
-            cu_seqlens and cu_seqlens_padded tensors. These values will be filtered
-            out. Default: -1000.
-
-    Returns:
-        tuple: A tuple containing:
-            - input_ids (torch.Tensor): Input IDs with batch dimension removed [total_tokens]
-                or [total_tokens, hidden_dim]
-            - position_ids (torch.Tensor): Position IDs with batch dimension removed [total_tokens]
-            - padding_mask (torch.Tensor): Padding mask with batch dimension removed [total_tokens]
-            - attn_kwargs (dict): Updated attention kwargs with:
-                - Batch dimensions removed from all tensor values
-                - Padding values filtered from cu_seqlens and cu_seqlens_padded
-                - max_seqlen converted to scalar if it was a tensor
-
-    Example:
-        >>> input_ids = torch.tensor([[1, 2, 3, 4, 5]])  # [1, 5]
-        >>> position_ids = torch.tensor([[0, 1, 2, 3, 4]])  # [1, 5]
-        >>> padding_mask = torch.tensor([[False, False, False, False, False]])  # [1, 5]
-        >>> attn_kwargs = {
-        ...     'cu_seqlens': torch.tensor([[0, 3, 5, -1000]]),  # [1, 4] with padding
-        ...     'cu_seqlens_padded': torch.tensor([[0, 3, 5, -1000]]),
-        ...     'max_seqlen': torch.tensor([3])
-        ... }
-        >>> ids, pos, mask, kwargs = squeeze_input_for_thd(
-        ...     input_ids, position_ids, padding_mask, attn_kwargs
-        ... )
-        >>> ids.shape
-        torch.Size([5])
-        >>> kwargs['cu_seqlens']  # Padding value filtered out
-        tensor([0, 3, 5])
-        >>> kwargs['max_seqlen']  # Converted to scalar
-        3
-
-    Note:
-        This function modifies attn_kwargs in-place. If you need to preserve the original
-        dictionary, pass a copy.
-    """
-    input_ids = input_ids.squeeze(0)
-    position_ids = position_ids.squeeze(0)
-    if padding_mask is not None:
-        padding_mask = padding_mask.squeeze(0)
-    for key, value in attn_kwargs.items():
-        if isinstance(value, torch.Tensor):
-            attn_kwargs[key] = value.squeeze(0)
-        if key in ["cu_seqlens", "cu_seqlens_padded"]:
-            attn_kwargs[key] = value[value != seqlens_padding_value].contiguous()
-        if key == "max_seqlen" and isinstance(value, torch.Tensor):
-            attn_kwargs[key] = value.item()
-
-    return input_ids, position_ids, padding_mask, attn_kwargs
-
-
 class KimiK25VLModel(MegatronModule):
     """
     Kimi K2.5 Vision-Language (VL) model wrapper for Megatron.
@@ -158,10 +79,6 @@ class KimiK25VLModel(MegatronModule):
         if config.hf_model_path is None:
             raise ValueError("hf_model_path must be set.")
 
-        KimiK25ForConditionalGeneration = get_class_from_dynamic_module(
-            "modeling_kimi_k25.KimiK25ForConditionalGeneration",
-            config.hf_model_path,
-        )
         if pre_process:
             # Load vision tower and projector classes from the custom HuggingFace model code
             MoonViT3dPretrainedModel = get_class_from_dynamic_module(
@@ -224,9 +141,6 @@ class KimiK25VLModel(MegatronModule):
 
         # don't use huggingface's function for PP
         self.media_placeholder_token_id = config.media_placeholder_token_id
-        # self._merge_input_ids_with_image_features = types.MethodType(
-        #     KimiK25ForConditionalGeneration._merge_input_ids_with_image_features, self
-        # )
 
 
     def set_input_tensor(self, input_tensor) -> None:
@@ -399,7 +313,6 @@ class KimiK25VLModel(MegatronModule):
         *,
         loss_mask: Optional[Tensor] = None,
         packed_seq_params: PackedSeqParams = None,
-        **kwargs,
     ) -> Tensor:
         r"""
         Args:
@@ -415,22 +328,10 @@ class KimiK25VLModel(MegatronModule):
             runtime_gather_output: If True, gather outputs across pipeline stages.
             loss_mask: Mask for loss computation.
         """
-
-        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
-            # TODO: FIX THIS THD format data
-            input_ids, position_ids, padding_mask, kwargs = squeeze_input_for_thd(
-                input_ids, position_ids, padding_mask, kwargs
-            )
-            attention_mask = None
-            if padding_mask is not None:
-                kwargs["padding_mask"] = padding_mask
-
         if self.pre_process:
             if inputs_embeds is None:
                 # GPTModel uses .embedding() not .get_input_embeddings()
-                inputs_embeds = self.language_model.embedding(
-                    input_ids=input_ids, position_ids=None
-                )  # [seq_len, batch, hidden]
+                inputs_embeds = self.language_model.embedding(input_ids=input_ids, position_ids=None)  # [seq_len, batch, hidden]
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [batch, seq_len, hidden]
 
             # Process vision features only on the first pipeline stage
@@ -441,15 +342,37 @@ class KimiK25VLModel(MegatronModule):
                 pixel_values = pixel_values.to(self.vision_tower.dtype)
                 image_features = self._extract_image_features(pixel_values, image_grid_thw)
 
+                # Truncate image features to match placeholder count in input_ids.
+                # get_batch() may have truncated input_ids to seq_length, removing
+                # some trailing placeholders while pixel_values stay intact.
+                num_placeholders = (input_ids == self.media_placeholder_token_id).sum().item()
+                if isinstance(image_features, list):
+                    image_features_cat = torch.cat(image_features, dim=0)
+                else:
+                    image_features_cat = image_features
+                if image_features_cat.shape[0] > num_placeholders:
+                    image_features_cat = image_features_cat[:num_placeholders]
+                # Wrap back as single-element list for _merge compatibility
+                image_features = [image_features_cat]
+
                 inputs_embeds = inputs_embeds.to(image_features[0].dtype)
 
-                inputs_embeds, attention_mask, labels, position_ids = self._merge_input_ids_with_image_features(
+                # Build attention_mask from input_ids if not provided (Megatron skips it by default)
+                if attention_mask is None:
+                    attention_mask = (input_ids != self.config.pad_token_id).long()
+
+                inputs_embeds, _, labels, position_ids = self._merge_input_ids_with_image_features(
                     image_features,
                     inputs_embeds,
                     input_ids,
                     attention_mask,
                     labels,
+                    target_seq_length=input_ids.shape[1],
                 )
+                # Reset attention_mask to None — Megatron computes causal masking internally.
+                # Passing a non-None 2D mask causes GPTModel to take a different code path
+                # than stage 1 (which has None), leading to PP hang.
+                attention_mask = None
 
             # Transpose back to (T, B, D) for Megatron language model
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
@@ -465,6 +388,7 @@ class KimiK25VLModel(MegatronModule):
             labels=labels,  # (B, T)
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 

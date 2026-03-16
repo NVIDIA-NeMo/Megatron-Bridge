@@ -16,7 +16,7 @@ import torch
 # Converted to Kimi-K2.5-VL recipe file for Kimi-K2.5-VL, compatible with the Kimi-K2.5-VL provider/model API.
 
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
-from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
@@ -50,7 +50,7 @@ def _get_kimi_k25_vl_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
-def kimi_k25_vl_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer:
+def kimi_k25_vl_sft_config(hf_path: str = "moonshotai/Kimi-K2.5", optimizer_type: str = "adam") -> ConfigContainer:
     """Return a pre-training config for Kimi-K2.5-VL (1T).
 
     Recommended parallelism: TP=2, PP=16, EP=32
@@ -58,7 +58,7 @@ def kimi_k25_vl_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer
     Args:
         optimizer_type: 'adam' or 'muon' (default).
     """
-    cfg = _pretrain_common()
+    cfg = _sft_common_vlm()
 
     cfg.model = KimiK25VLModelProvider(
         tensor_model_parallel_size=2,
@@ -94,6 +94,7 @@ def kimi_k25_vl_pretrain_config(optimizer_type: str = "adam") -> ConfigContainer
     cfg.dataset.sequence_length = 4096
     cfg.dataset.num_workers = 8
     cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.hf_processor_path = hf_path
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
